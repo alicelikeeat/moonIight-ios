@@ -144,7 +144,7 @@ struct SocialState: Codable, Equatable, Sendable {
     var schema: Int = SocialState.schemaVersion
     static let schemaVersion = 2
 
-    var me: Contact { contacts.first { $0.id == selfId } ?? Contact(id: selfId, name: "我", isSelf: true, isVirtual: false) }
+    var me: Contact { contacts.first { $0.id == selfId } ?? Contact(id: selfId, name: "我", isVirtual: false, isSelf: true) }
     func contact(_ id: String) -> Contact? { contacts.first { $0.id == id } }
     var friends: [Contact] { contacts.filter { !$0.isSelf } }
     func messagesOf(_ convId: String) -> [Message] {
@@ -162,7 +162,7 @@ struct SocialState: Codable, Equatable, Sendable {
     var totalUnread: Int { conversations.reduce(0) { $0 + unread($1.id) } }
 
     static func fresh() -> SocialState {
-        let me = Contact(name: "我", isSelf: true, isVirtual: false, avatarColor: 0, bio: "")
+        let me = Contact(name: "我", bio: "", avatarColor: 0, isVirtual: false, isSelf: true)
         return SocialState(selfId: me.id, contacts: [me])
     }
 }

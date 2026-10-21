@@ -34,7 +34,7 @@ enum SocialJSON {
         guard let selfId = o["selfId"] as? String, !selfId.isEmpty else { throw SocialJSONError.invalid }
         var contacts = arr(o["contacts"]).map(contact)
         if !contacts.contains(where: { $0.id == selfId }) {
-            contacts.insert(Contact(id: selfId, name: "我", isSelf: true, isVirtual: false), at: 0)
+            contacts.insert(Contact(id: selfId, name: "我", isVirtual: false, isSelf: true), at: 0)
         }
         return SocialState(
             selfId: selfId,
