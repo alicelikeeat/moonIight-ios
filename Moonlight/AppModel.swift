@@ -70,23 +70,27 @@ final class AppModel: ObservableObject {
 
     init() {
         Paths.ensureDirs()
+        var loadedSettings = AppSettings()
         if let data = AtomicFile.read(Paths.settingsFile), let s = AppSettings.load(data) {
-            settings = s
-        } else {
-            settings = AppSettings()
+            loadedSettings = s
         }
-        settings.ringAnim = RingAnimPick.normalize(settings.ringAnim)
+        loadedSettings.ringAnim = RingAnimPick.normalize(loadedSettings.ringAnim)
+        let loadedLibrary: LibrarySnapshot
         if let data = AtomicFile.read(Paths.libraryFile), let lib = try? JSONDecoder().decode(LibrarySnapshot.self, from: data) {
-            library = lib
+            loadedLibrary = lib
         } else {
-            library = LibrarySnapshot()
+            loadedLibrary = LibrarySnapshot()
         }
+        let loadedSocial: SocialState
         if let data = AtomicFile.read(Paths.socialFile), let s = try? SocialJSON.decode(data) {
-            social = s
+            loadedSocial = s
         } else {
-            social = .fresh()
+            loadedSocial = .fresh()
         }
-        feedOrder = library.entries.sorted { $0.createdAt > $1.createdAt }.map(\.id)
+        settings = loadedSettings
+        library = loadedLibrary
+        social = loadedSocial
+        feedOrder = loadedLibrary.entries.sorted { $0.createdAt > $1.createdAt }.map(\.id)
         clampFeed()
     }
 
@@ -502,7 +506,8 @@ final class AppModel: ObservableObject {
             return
         }
         editSocial { current in
-            let remap: (String) -> String = { $0 == incoming.selfId ? current.selfId : $0 }
+            let ownerId = current.selfId
+            let remap: (String) -> String = { $0 == incoming.selfId ? ownerId : $0 }
             var merged = current
             for c in incoming.contacts where c.id != incoming.selfId && !merged.contacts.contains(where: { $0.id == c.id }) {
                 merged.contacts.append(c)
