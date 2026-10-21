@@ -155,6 +155,7 @@ struct MeView: View {
 
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var ring: RingController
     @Environment(\.moon) private var colors
     @State private var exportURL: URL?
     @State private var importing = false
@@ -179,6 +180,28 @@ struct SettingsView: View {
                     ForEach(RingAnim.choices, id: \.self) { Text($0.short).tag($0.rawValue) }
                 }
                 Text(RingAnim.of(app.settings.ringAnim).hint)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            Section("星轨速度") {
+                HStack {
+                    Text("慢")
+                    Slider(value: Binding(
+                        get: { Double(app.settings.starSpeed) },
+                        set: { app.settings.starSpeed = RingMotion.clampSpeed(Float($0)); app.saveSettings() }
+                    ), in: 0.5...2)
+                    Text("快")
+                }
+                Text(String(format: "%.2f×", app.settings.starSpeed))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                HStack {
+                    Button("慢") { app.settings.starSpeed = 0.7; app.saveSettings() }
+                    Button("标准") { app.settings.starSpeed = 1; app.saveSettings() }
+                    Button("快") { app.settings.starSpeed = 1.4; app.saveSettings() }
+                    Button("试一试") { previewStar() }
+                }
+                Text("按钮从屏幕上方的天空旋转落下，沿螺旋加速，落地略微过冲后回到完整大小。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -214,7 +237,7 @@ struct SettingsView: View {
                 Button("导入备份") { importing = true }
             }
             Section("关于") {
-                Text("月光 0.1 · iOS")
+                Text("月光 0.2 · iOS")
                 Text("不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -232,6 +255,18 @@ struct SettingsView: View {
                 if ok { url.stopAccessingSecurityScopedResource() }
             }
         }
+    }
+
+    private func previewStar() {
+        let origin = CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY)
+        ring.present(origin: origin, items: [
+            RingItem(title: "收藏", systemImage: "heart") {},
+            RingItem(title: "倍速", systemImage: "speedometer") {},
+            RingItem(title: "声音", systemImage: "speaker.wave.2") {},
+            RingItem(title: "分享", systemImage: "square.and.arrow.up") {},
+        ], groups: [
+            MenuGroup(title: "预览", items: [RingItem(title: "关闭", systemImage: "xmark") {}]),
+        ], settings: app.settings, overMedia: false, styleOverride: .star)
     }
 
     private var animBinding: Binding<String> {

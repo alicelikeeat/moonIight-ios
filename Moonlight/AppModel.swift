@@ -70,7 +70,7 @@ final class AppModel: ObservableObject {
 
     init() {
         Paths.ensureDirs()
-        if let data = AtomicFile.read(Paths.settingsFile), let s = try? JSONDecoder().decode(AppSettings.self, from: data) {
+        if let data = AtomicFile.read(Paths.settingsFile), let s = AppSettings.load(data) {
             settings = s
         } else {
             settings = AppSettings()

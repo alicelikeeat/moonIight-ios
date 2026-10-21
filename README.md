@@ -1,6 +1,8 @@
 # 月光 · iOS
 
-这是 Android 版「月光」（`com.moonlight.feed`）的 iOS 原生 SwiftUI 版本，当前是 **0.1**。界面是简体中文。包名 `com.moonlight.feed`，最低系统 iOS 16。
+这是 Android 版「月光」（`com.moonlight.feed`）的 iOS 原生 SwiftUI 版本，当前是 **0.2**。界面是简体中文。包名 `com.moonlight.feed`，最低系统 iOS 16。
+
+0.2 补上了 v5 的长按圆环：旋转、荷花、星轨、月光和随机。星轨从屏幕上方旋转着沿螺旋落下，设置里可以调 0.5×–2×。在影像上打开的圆环用深色玻璃，其它页面跟随主题。和 Android v5.0 还差什么见 [FEATURE_PARITY.md](FEATURE_PARITY.md)。
 
 这个仓库打出来的是**未签名**的 `.ipa`。没有 Mac、也没有付费 Apple 开发者账号时，用 AltStore 或 Sideloadly，用你自己的 Apple ID 在安装时重新签名，就可以装到自己的 iPhone 上。
 

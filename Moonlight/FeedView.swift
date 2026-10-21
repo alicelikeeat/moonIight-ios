@@ -101,7 +101,7 @@ struct FeedView: View {
         let groups = feedGroups(entry)
         ring.fingerDown = true
         ring.finger = point
-        ring.present(origin: point, items: items, groups: groups, settings: app.settings)
+        ring.present(origin: point, items: items, groups: groups, settings: app.settings, overMedia: true)
     }
 
     private func feedRingItems(_ entry: MediaEntry) -> [RingItem] {

@@ -60,7 +60,7 @@ struct RootView: View {
         }
         .sheet(isPresented: Binding(get: { ring.sheet != nil }, set: { if !$0 { ring.sheet = nil } })) {
             if let groups = ring.sheet {
-                MoreSheet(groups: groups) { ring.sheet = nil }
+                MoreSheet(groups: groups, forceDark: ring.sheetDark) { ring.sheet = nil }
             }
         }
         .sheet(item: $app.composer) { draft in
@@ -119,7 +119,7 @@ struct RootView: View {
                         app.saveSettings()
                     },
                 ]),
-            ], settings: app.settings)
+            ], settings: app.settings, overMedia: app.tab == .home && !app.feedItems.isEmpty)
         })
     }
 

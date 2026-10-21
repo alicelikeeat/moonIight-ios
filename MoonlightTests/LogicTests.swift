@@ -35,39 +35,65 @@ final class LogicTests: XCTestCase {
 
     func testStarFlight() {
         let first = RingMotion.pose(.star, 0, 1, false)
-        XCTAssertLessThanOrEqual(first.scale, 0.15)
+        XCTAssertLessThanOrEqual(first.scale, 0.08)
         XCTAssertEqual(first.lift, 1, accuracy: 0.0001)
-        XCTAssertEqual(first.ang, RingMotion.starSweep, accuracy: 0.001)
-        XCTAssertGreaterThan(first.rf, 1.5)
-        let flight = (0...82).map { RingMotion.pose(.star, Float($0) / 100, 1, false) }
-        for pair in zip(flight, flight.dropFirst()) {
-            XCTAssertGreaterThan(pair.1.scale, pair.0.scale)
-            XCTAssertLessThanOrEqual(pair.1.ang, pair.0.ang)
-            XCTAssertLessThanOrEqual(pair.1.lift, pair.0.lift)
+        XCTAssertEqual(first.rot, RingMotion.starSpin, accuracy: 0.01)
+        XCTAssertGreaterThanOrEqual(first.ang, 360)
+        let step: Float = 0.05
+        let deltas = (0..<14).map { k in
+            RingMotion.starTravel((Float(k) + 1) * step) - RingMotion.starTravel(Float(k) * step)
         }
-        XCTAssertEqual(RingMotion.starScale(RingMotion.starLand), 1.06, accuracy: 0.001)
-        let settle = (82...100).map { RingMotion.pose(.star, Float($0) / 100, 1, false).scale }
-        for pair in zip(settle, settle.dropFirst()) {
-            XCTAssertLessThanOrEqual(pair.1, pair.0)
+        for pair in zip(deltas, deltas.dropFirst()) {
+            XCTAssertGreaterThan(pair.1, pair.0)
         }
-        XCTAssertEqual(settle.last ?? 0, 1, accuracy: 0)
-        XCTAssertGreaterThan(RingMotion.pose(.star, 0.3, 1, false).fx, 0.3)
-        XCTAssertEqual(RingMotion.pose(.star, 1, 1, false).fx, 0, accuracy: 0)
+        XCTAssertGreaterThan(RingMotion.starSpeed(0.7), RingMotion.starSpeed(0.1))
+        XCTAssertEqual(RingMotion.starScale(RingMotion.starLand), RingMotion.starOvershoot, accuracy: 0.001)
+        let land = RingMotion.pose(.star, RingMotion.starLand + 0.001, 1, false)
+        XCTAssertGreaterThan(land.scale, 1.1)
+        let mid = RingMotion.pose(.star, RingMotion.starLand + 0.12, 1, false)
+        XCTAssertGreaterThan(mid.fx2, 0.3)
+        XCTAssertLessThan(mid.rf, 1)
+        XCTAssertGreaterThan(RingMotion.pose(.star, 0.93, 1, false).fx3, 0.3)
+        for i in 0..<8 {
+            let rest = RingMotion.pose(.star, 1, 1, false, depth: RingMotion.starDepth(i))
+            XCTAssertTrue(rest.isRest, "button \(i)")
+            XCTAssertEqual(rest.fx2, 0, accuracy: 0)
+            XCTAssertEqual(rest.fx3, 0, accuracy: 0)
+        }
+        let depths = (0..<12).map { RingMotion.starDepth($0) }
+        XCTAssertTrue(depths.allSatisfy { $0 >= 0.8 && $0 <= 1.2 })
+        XCTAssertGreaterThan(Set(depths.map { Int($0 * 1000) }).count, 6)
+        let far = RingMotion.pose(.star, 0.2, 1, false, depth: 0.8)
+        let near = RingMotion.pose(.star, 0.2, 1, false, depth: 1.2)
+        XCTAssertLessThan(far.scale, near.scale)
+        XCTAssertGreaterThan(far.lift, near.lift)
+        XCTAssertLessThan(far.alpha, near.alpha)
     }
 
     func testStarCloseReverses() {
         let gone = RingMotion.pose(.star, 1, 0, true)
-        XCTAssertLessThanOrEqual(gone.scale, 0.15)
-        XCTAssertEqual(gone.ang, RingMotion.starSweep, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(gone.scale, 0.08)
         XCTAssertEqual(gone.lift, 1, accuracy: 0.0001)
+        XCTAssertEqual(gone.rot, -RingMotion.starSpin, accuracy: 0.01)
+        XCTAssertEqual(gone.alpha, 0, accuracy: 0.0001)
+        let lifts = (0...100).reversed().map { RingMotion.pose(.star, 1, Float($0) / 100, true).lift }
+        for pair in zip(lifts, lifts.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(pair.1, pair.0)
+        }
     }
 
     func testStarTiming() {
-        XCTAssertEqual(RingMotion.openMs(.star, 4), 635)
+        let standard = RingMotion.openMs(.star, 4)
+        XCTAssertEqual(standard, RingMotion.starFlightMs + 3 * RingMotion.starStaggerMs(4))
+        XCTAssertEqual(RingMotion.openMs(.star, 4, 2), standard / 2)
+        XCTAssertEqual(RingMotion.openMs(.star, 4, 0.5), standard * 2)
+        XCTAssertEqual(RingMotion.openMs(.star, 4, 9), RingMotion.openMs(.star, 4, 2))
+        XCTAssertGreaterThan(RingMotion.settleDeadlineMs(.star, 4, 1, 0.5), RingMotion.openMs(.star, 4, 0.5))
+        XCTAssertEqual(RingMotion.openMs(.lotus, 4), RingMotion.openMs(.lotus, 4, 2))
         for n in 2...6 {
             let ms = RingMotion.openMs(.star, n)
-            XCTAssertGreaterThanOrEqual(ms, 500)
-            XCTAssertLessThanOrEqual(ms, 700)
+            XCTAssertGreaterThanOrEqual(ms, 850)
+            XCTAssertLessThanOrEqual(ms, 1200)
         }
     }
 

@@ -25,6 +25,8 @@ struct RingSession: Identifiable {
     var style: RingAnim
     var backdrop: MenuBackdrop
     var select: MenuSelect
+    var overMedia: Bool
+    var starSpeed: Float
     var started = Date()
 }
 
@@ -35,20 +37,22 @@ final class RingController: ObservableObject {
     @Published var finger = CGPoint.zero
     @Published var expanded: UUID?
     @Published var sheet: [MenuGroup]?
+    @Published var sheetDark = false
     @Published var closing = false
     @Published var settled = false
     @Published var closeStarted: Date?
     private var closeTask: Task<Void, Never>?
     private var landed: Set<Int> = []
 
-    func present(origin: CGPoint, items: [RingItem], groups: [MenuGroup], settings: AppSettings) {
+    func present(origin: CGPoint, items: [RingItem], groups: [MenuGroup], settings: AppSettings, overMedia: Bool = false, styleOverride: RingAnim? = nil) {
         closeTask?.cancel()
         let reduce = UIAccessibility.isReduceMotionEnabled
-        let style = RingAnimPick.pick(
+        let picked = styleOverride ?? RingAnimPick.pick(
             setting: settings.ringAnim,
             enabled: RingAnimPick.parseSet(settings.ringAnimSet),
             animatorScale: reduce ? 0 : 1
         )
+        let style: RingAnim = reduce ? .fade : picked
         landed = []
         expanded = nil
         closing = false
@@ -59,7 +63,9 @@ final class RingController: ObservableObject {
             groups: groups,
             style: style,
             backdrop: settings.menuBackdrop,
-            select: settings.menuSelect
+            select: settings.menuSelect,
+            overMedia: overMedia,
+            starSpeed: RingMotion.clampSpeed(settings.starSpeed)
         )
         Haptics.light()
     }
@@ -127,6 +133,7 @@ final class RingController: ObservableObject {
 
     func openSheet() {
         let groups = session?.groups ?? []
+        sheetDark = session?.overMedia ?? false
         beginClose()
         if !groups.isEmpty { sheet = groups }
     }
@@ -179,7 +186,7 @@ struct RingOverlay: View {
             left: margin, top: top, right: Double(size.width) - margin, bottom: bottom,
             radius: radius, itemR: itemR + 22
         )
-        let deadline = Double(RingMotion.openMs(session.style, session.items.count)) / 1000 + 0.08
+        let deadline = Double(RingMotion.openMs(session.style, session.items.count, session.starSpeed)) / 1000 + 0.08
         return TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: ring.settled && !ring.closing)) { timeline in
             let elapsed = timeline.date.timeIntervalSince(session.started)
             let closingT = ring.closing ? min(1, max(0, elapsed > 0 ? closeProgress(session) : 0)) : 0
@@ -191,7 +198,7 @@ struct RingOverlay: View {
                     guard session.style == .star else { return }
                     for i in session.items.indices {
                         let pose = buttonPose(session, index: i, elapsed: elapsed, closing: closingT)
-                        drawTrail(context: context, geo: geo, index: i, pose: pose, size: size)
+                        drawTrail(context: context, geo: geo, index: i, pose: pose, size: size, session: session, elapsed: elapsed)
                     }
                 }
                 .allowsHitTesting(false)
@@ -234,10 +241,11 @@ struct RingOverlay: View {
         let spinFlight = 0.62
         switch session.style {
         case .star:
-            let local = elapsed - stagger * Double(index)
-            let o = Float(min(1, max(0, local / flight)))
+            let speed = Double(RingMotion.clampSpeed(session.starSpeed))
+            let local = elapsed - (stagger / speed) * Double(index)
+            let o = Float(min(1, max(0, local / (flight / speed))))
             let cl = Float(ring.closing ? closeClock() : 1)
-            return RingMotion.pose(.star, ring.closing ? 1 : o, cl, ring.closing)
+            return RingMotion.pose(.star, ring.closing ? 1 : o, cl, ring.closing, depth: RingMotion.starDepth(index))
         case .spin:
             let raw = (elapsed - 0.02 * Double(index)) / spinFlight
             let o = Float(min(1.15, max(0, raw)))
@@ -262,38 +270,59 @@ struct RingOverlay: View {
     private func buttonCenter(geo: RadialResult, index: Int, pose: RingMotion.Pose, size: CGSize) -> CGPoint {
         let r = geo.radius * Double(pose.rf)
         let (x, y) = geo.pos(index, r: r, extraDeg: Double(pose.ang))
-        let lift = Double(pose.lift) * min(Double(size.height) * 0.46, 320)
+        let lift = Double(pose.lift) * (Double(size.height) * 0.92 + 40)
         let sink = Double(pose.sink) * 48
         return CGPoint(x: x, y: y - lift + sink)
     }
 
-    private func drawTrail(context: GraphicsContext, geo: RadialResult, index: Int, pose: RingMotion.Pose, size: CGSize) {
-        guard pose.fx > 0.02 || pose.lift > 0.02 else { return }
+    private func drawTrail(context: GraphicsContext, geo: RadialResult, index: Int, pose: RingMotion.Pose, size: CGSize, session: RingSession, elapsed: TimeInterval) {
+        guard session.style == .star else { return }
+        let speed = Double(RingMotion.clampSpeed(session.starSpeed))
+        let stagger = Double(RingMotion.starStaggerMs(session.items.count)) / 1000 / speed
+        let flight = Double(RingMotion.starFlightMs) / 1000 / speed
+        let o = Float(min(1, max(0, (elapsed - stagger * Double(index)) / flight)))
+        let travel = RingMotion.starTravel(ring.closing ? 1 : o)
+        guard pose.fx > 0.02 || pose.lift > 0.02 || pose.fx2 > 0.02 else { return }
         var dot = RingMotion.Pose()
-        let steps = 14
+        let steps = 16
         for s in 0..<steps {
             let back = Float(s) / Float(steps)
-            let u = max(0, RingMotion.starTravel(min(pose.lift > 0 ? 1 - pose.lift : 1, 1)) - back * 0.38)
+            let u = max(0, travel - back * 0.42)
             RingMotion.starOrbit(u, &dot)
+            dot.lift *= (1.15 - 0.15 * RingMotion.starDepth(index))
             let center = buttonCenter(geo: geo, index: index, pose: dot, size: size)
-            let alpha = Double(pose.fx) * Double(steps - s) / Double(steps) * 0.85
-            let radius = 7.0 * Double(steps - s) / Double(steps) + 1.5
-            let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-            context.fill(Path(ellipseIn: rect), with: .color(Color(red: 0.95, green: 0.90, blue: 0.72).opacity(alpha)))
-            if s % 3 == 0 {
-                let spark = CGRect(x: center.x + 8, y: center.y - 10, width: 2.2, height: 2.2)
-                context.fill(Path(ellipseIn: spark), with: .color(Color.white.opacity(alpha)))
+            let fade = Double(steps - s) / Double(steps)
+            let alpha = Double(max(pose.fx, 0.15)) * fade
+            let cool = 11.0 * fade + 2
+            let warm = 6.5 * fade + 1.4
+            let core = 2.4 * fade + 0.8
+            func blob(_ radius: Double, _ color: Color) {
+                let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+                context.fill(Path(ellipseIn: rect), with: .color(color))
             }
+            blob(cool, Color(red: 0.62, green: 0.74, blue: 0.95).opacity(alpha * 0.28))
+            blob(warm, Color(red: 0.98, green: 0.78, blue: 0.45).opacity(alpha * 0.55))
+            blob(core, Color.white.opacity(alpha * 0.9))
         }
-        if pose.fx2 > 0.05 {
-            let center = buttonCenter(geo: geo, index: index, pose: pose, size: size)
-            let glow = CGRect(x: center.x - 34, y: center.y - 34, width: 68, height: 68)
-            context.fill(Path(ellipseIn: glow), with: .color(Color(red: 0.95, green: 0.91, blue: 0.75).opacity(Double(pose.fx2) * 0.45)))
+        let center = buttonCenter(geo: geo, index: index, pose: pose, size: size)
+        if pose.fx2 > 0.02 {
+            let burst = 18 + Double(pose.fx2) * 46
+            let ring = CGRect(x: center.x - burst, y: center.y - burst, width: burst * 2, height: burst * 2)
+            context.stroke(Path(ellipseIn: ring), with: .color(Color(red: 1, green: 0.94, blue: 0.78).opacity(Double(pose.fx2) * 0.85)), lineWidth: 2)
+            context.fill(Path(ellipseIn: ring.insetBy(dx: burst * 0.35, dy: burst * 0.35)), with: .color(Color.white.opacity(Double(pose.fx2) * 0.35)))
+            for k in 0..<8 {
+                let a = Double(k) / 8 * Double.pi * 2 + Double(pose.fx2)
+                let dist = 16 + Double(pose.fx2) * 28
+                let spark = CGRect(x: center.x + cos(a) * dist - 1.6, y: center.y + sin(a) * dist - 1.6, width: 3.2, height: 3.2)
+                context.fill(Path(ellipseIn: spark), with: .color(Color.white.opacity(Double(pose.fx2) * 0.9)))
+            }
         }
     }
 
     private func ringButton(_ item: RingItem, pose: RingMotion.Pose, center: CGPoint, session: RingSession, parentAngle: Double, radius: Double) -> some View {
         let highlighted = ring.fingerDown && session.select == .drag && near(ring.finger, session: session, center: center)
+        let ink: Color = session.overMedia ? .white : Color.primary
+        let plate = session.overMedia ? MoonColors.media.glassTint : Color.primary.opacity(0.08)
         return ZStack {
             if session.style == .lotus {
                 lotus(pose: pose)
@@ -301,18 +330,29 @@ struct RingOverlay: View {
             VStack(spacing: 6) {
                 Image(systemName: item.systemImage)
                     .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(ink)
                     .frame(width: 56, height: 56)
                     .background(.ultraThinMaterial, in: Circle())
-                    .background(Circle().fill(highlighted ? Color.white.opacity(0.28) : MoonColors.media.glassTint))
-                    .overlay(Circle().stroke(Color.white.opacity(0.55), lineWidth: 0.8))
+                    .background(Circle().fill(highlighted ? Color.white.opacity(0.28) : plate))
+                    .overlay(Circle().stroke(session.overMedia ? Color.white.opacity(0.55) : Color.primary.opacity(0.18), lineWidth: 0.8))
+                    .overlay {
+                        if pose.fx3 > 0.05 {
+                            Circle()
+                                .trim(from: 0.05, to: 0.28)
+                                .stroke(Color.white.opacity(Double(pose.fx3)), lineWidth: 2)
+                                .rotationEffect(.degrees(Double(pose.fx3) * 220))
+                                .padding(2)
+                        }
+                    }
                     .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                    .rotationEffect(.degrees(Double(pose.rot)))
                 Text(item.title)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white)
-                    .shadow(color: .black.opacity(session.backdrop.labelShadow ? 0.8 : 0.3), radius: 3, y: 1)
+                    .foregroundColor(ink)
+                    .shadow(color: .black.opacity(session.backdrop.labelShadow || !session.overMedia ? 0.35 : 0.8), radius: 3, y: 1)
                     .opacity(Double(pose.label))
             }
-            .scaleEffect(max(0.12, CGFloat(pose.scale)))
+            .scaleEffect(max(0.05, CGFloat(pose.scale)))
             .opacity(Double(pose.alpha))
             .onTapGesture {
                 guard item.enabled else { return }
@@ -320,6 +360,10 @@ struct RingOverlay: View {
                 if item.children.isEmpty {
                     item.action()
                     ring.dismiss()
+                } else if item.children.count > 6 {
+                    ring.sheetDark = session.overMedia
+                    ring.sheet = [MenuGroup(title: item.title, items: item.children)]
+                    ring.beginClose()
                 } else {
                     ring.expanded = ring.expanded == item.id ? nil : item.id
                 }
@@ -344,7 +388,7 @@ struct RingOverlay: View {
                 } label: {
                     Text(child.title)
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
+                        .foregroundColor((ring.session?.overMedia ?? false) ? .white : Color.primary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .background(.ultraThinMaterial, in: Capsule())
@@ -424,8 +468,10 @@ struct RingOverlay: View {
 
 struct MoreSheet: View {
     var groups: [MenuGroup]
+    var forceDark: Bool
     var onClose: () -> Void
-    @Environment(\.moon) private var colors
+    @Environment(\.moon) private var theme
+    private var colors: MoonColors { forceDark ? .media : theme }
     var body: some View {
         NavigationStack {
             ScrollView {

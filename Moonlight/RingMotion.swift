@@ -2,9 +2,11 @@ import Foundation
 
 /// Pure motion curves for 长按动画. Progress is linear 0…1; the resting pose is always full size.
 enum RingMotion {
-    static let starLand: Float = 0.82
-    static let starSweep: Float = 280
-    static let starFlightMs: Int64 = 500
+    static let starLand: Float = 0.72
+    static let starSweep: Float = 400
+    static let starSpin: Float = 540
+    static let starOvershoot: Float = 1.16
+    static let starFlightMs: Int64 = 900
 
     struct Pose: Equatable {
         var rf: Float = 1
@@ -16,8 +18,10 @@ enum RingMotion {
         var label: Float = 1
         var fx: Float = 0
         var fx2: Float = 0
+        var rot: Float = 0
+        var fx3: Float = 0
         var isRest: Bool {
-            rf == 1 && ang == 0 && lift == 0 && sink == 0 && scale == 1 && alpha == 1 && label == 1
+            rf == 1 && ang == 0 && lift == 0 && sink == 0 && scale == 1 && alpha == 1 && label == 1 && rot == 0
         }
     }
 
@@ -44,20 +48,41 @@ enum RingMotion {
 
     static func starStaggerMs(_ n: Int) -> Int64 {
         if n <= 1 { return 0 }
-        return min(45, 180 / Int64(n - 1))
+        return min(70, 240 / Int64(n - 1))
     }
 
+    /// 0 high in the sky … 1 in the slot. Drifts, then accelerates.
     static func starTravel(_ o: Float) -> Float {
         let x = clamp01(o / starLand)
-        return 1 - fpow(1 - x, 2.4)
+        return 0.15 * x + 0.85 * fpow(x, 2.2)
+    }
+
+    /// Normalised speed along the fall. Zero after touchdown.
+    static func starSpeed(_ o: Float) -> Float {
+        if o >= starLand { return 0 }
+        let x = clamp01(o / starLand)
+        return (0.15 + 1.87 * fpow(x, 1.2)) / 2.02
     }
 
     static func starScale(_ o: Float) -> Float {
         if o < starLand {
-            return 0.12 + 0.94 * fpow(starTravel(o), 1.3)
+            return 0.06 + (starOvershoot - 0.06) * fpow(starTravel(o), 0.9)
         }
-        return 1.06 - 0.06 * smooth(0, 1, (o - starLand) / (1 - starLand))
+        return starOvershoot - (starOvershoot - 1) * smooth(0, 1, (o - starLand) / (1 - starLand))
     }
+
+    static func starLanding(_ o: Float) -> Float {
+        if o <= starLand { return 0 }
+        return clamp01((o - starLand) / (1 - starLand))
+    }
+
+    /// Parallax 0.8…1.2. Far buttons start smaller, dimmer, and higher. The resting pose ignores this.
+    static func starDepth(_ i: Int) -> Float {
+        let h = sin(Float(i) * 91.7 + 3.1) * 43758.547
+        return 0.8 + 0.4 * (h - floor(h))
+    }
+
+    static func clampSpeed(_ v: Float) -> Float { min(2, max(0.5, v)) }
 
     static func lotusInner(_ b: Float) -> Float { unfurl(clamp01(b / 0.70)) }
     static func lotusOuter(_ b: Float) -> Float { unfurl(clamp01((b - 0.25) / 0.75)) }
@@ -70,7 +95,7 @@ enum RingMotion {
     static func moonDark(_ scene: Float) -> Float { easeOutCubic(clamp01(scene * 1.8)) }
     static func moonGlow(_ scene: Float) -> Float { smooth(0.25, 1, scene) }
 
-    static func pose(_ style: RingAnim, _ o0: Float, _ cl0: Float, _ closing: Bool) -> Pose {
+    static func pose(_ style: RingAnim, _ o0: Float, _ cl0: Float, _ closing: Bool, depth: Float = 1) -> Pose {
         let o = style == .spin ? min(1.25, max(0, o0)) : clamp01(o0)
         let cl: Float = closing ? clamp01(cl0) : 1
         var out = Pose()
@@ -95,23 +120,31 @@ enum RingMotion {
         case .star:
             if !closing {
                 let u = starTravel(o)
+                let land = starLanding(o)
                 starOrbit(u, &out)
-                out.scale = starScale(o)
-                out.alpha = smooth(0, 0.10, o)
-                out.label = smooth(0.78, 1, o)
-                out.fx = smooth(0, 0.08, o) * (1 - smooth(0.55, 1, u))
-                if o < starLand {
-                    out.fx2 = 0
+                if land > 0 {
+                    out.rf = 1 - 0.07 * sin(land * Float.pi) * (1 - land)
+                    out.rot = -14 * sin(land * Float.pi * 1.5) * (1 - land)
                 } else {
-                    out.fx2 = sin(clamp01((o - starLand) / (1 - starLand)) * Float.pi)
+                    out.rot = starSpin * fpow(1 - u, 1.5)
                 }
+                let near = clamp01(u)
+                let depthMix = clamp01((depth - 0.8) / 0.4)
+                out.scale = starScale(o) * (depth + (1 - depth) * near)
+                out.lift *= (1.15 - 0.15 * depth)
+                out.alpha = smooth(0, 0.10, o) * (0.55 + 0.45 * depthMix + (0.45 - 0.45 * depthMix) * near)
+                out.label = smooth(0.80, 1, o)
+                out.fx = smooth(0, 0.06, o) * (0.35 + 0.65 * starSpeed(o)) * (1 - smooth(0.92, 1, u))
+                out.fx2 = land
+                out.fx3 = land < 0.3 ? 0 : sin(clamp01((land - 0.3) / 0.7) * Float.pi)
             } else {
-                let u = cl * cl * (3 - 2 * cl)
-                starOrbit(u, &out)
-                out.scale = 0.12 + 0.88 * u
+                let r = (1 - cl) * (1 - cl)
+                starOrbit(1 - r, &out)
+                out.rot = -starSpin * fpow(r, 1.2)
+                out.scale = 0.06 + 0.94 * (1 - r) * (depth + (1 - depth) * (1 - r))
                 out.alpha = smooth(0, 0.35, cl)
                 out.label = cl * cl * cl
-                out.fx = (1 - u) * smooth(0, 0.3, cl)
+                out.fx = (1 - cl) * smooth(0, 0.3, cl)
             }
         case .moon:
             let lit = o * cl
@@ -133,6 +166,8 @@ enum RingMotion {
             out.scale = 1
             out.alpha = 1
             out.label = 1
+            out.rot = 0
+            out.fx3 = 0
             if style == .star { out.fx2 = 0 }
         }
         return out
@@ -140,24 +175,27 @@ enum RingMotion {
 
     static func starOrbit(_ u: Float, _ out: inout Pose) {
         let r = 1 - clamp01(u)
-        out.rf = 1 + 0.62 * fpow(r, 1.15)
-        out.ang = starSweep * r
-        out.lift = r * r
+        out.rf = 1 + 0.9 * fpow(r, 1.1)
+        out.ang = starSweep * fpow(r, 1.15)
+        out.lift = fpow(r, 2.6)
     }
 
-    static func openMs(_ style: RingAnim, _ n: Int) -> Int64 {
+    static func openMs(_ style: RingAnim, _ n: Int, _ starSpeed: Float = 1) -> Int64 {
         switch style {
         case .spin: return 600 + 25 * Int64(n)
         case .lotus: return 520 + 38 * Int64(n)
-        case .star: return starFlightMs + starStaggerMs(n) * Int64(max(0, n - 1))
+        case .star:
+            let rate = clampSpeed(starSpeed)
+            let span = starFlightMs + starStaggerMs(n) * Int64(max(0, n - 1))
+            return Int64(Double(span) / Double(rate))
         case .moon: return 150 + 360 + 60 * Int64(n)
         case .fade: return 150
         }
     }
 
-    static func settleDeadlineMs(_ style: RingAnim, _ n: Int, _ animatorScale: Float) -> Int64 {
+    static func settleDeadlineMs(_ style: RingAnim, _ n: Int, _ animatorScale: Float, _ starSpeed: Float = 1) -> Int64 {
         let scale = min(10, max(0, animatorScale))
-        let base = Float(openMs(style, n) + 250) * scale
+        let base = Float(openMs(style, n, starSpeed) + 250) * scale
         return Int64(base) + 120
     }
 }

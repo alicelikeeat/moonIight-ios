@@ -196,6 +196,23 @@ struct AppSettings: Codable, Equatable, Sendable {
     var chatServerURL: String = ""
     var feedMuted: Bool = false
     var homeBackdropPath: String?
+    /// 星轨速度 0.5…2. 慢 0.7 · 标准 1 · 快 1.4.
+    var starSpeed: Float = 1
+
+    /// Missing keys from older builds keep their defaults instead of wiping the file.
+    static func load(_ data: Data) -> AppSettings? {
+        if var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            decoded.starSpeed = RingMotion.clampSpeed(decoded.starSpeed)
+            return decoded
+        }
+        guard var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if obj["starSpeed"] == nil { obj["starSpeed"] = 1.0 }
+        guard JSONSerialization.isValidJSONObject(obj),
+              let patched = try? JSONSerialization.data(withJSONObject: obj),
+              var decoded = try? JSONDecoder().decode(AppSettings.self, from: patched) else { return nil }
+        decoded.starSpeed = RingMotion.clampSpeed(decoded.starSpeed)
+        return decoded
+    }
 }
 
 enum RingAnim: String, Codable, CaseIterable, Sendable {
