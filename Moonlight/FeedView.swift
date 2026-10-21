@@ -120,7 +120,7 @@ struct FeedView: View {
                     RingItem(title: sec == 0 ? "关闭" : "\(sec) 秒", systemImage: "timer") {
                         app.updateEntry(entry.id) { $0.dwellSeconds = sec }
                     }
-                }),
+                }) {},
                 RingItem(title: "设为背景", systemImage: "photo") {
                     app.settings.homeBackdropPath = entry.localPath ?? entry.remoteURL
                     app.saveSettings()
@@ -137,7 +137,7 @@ struct FeedView: View {
                     app.feedPlayer.speed = s
                     if app.feedPlayer.playWhenReady { app.feedPlayer.play() }
                 }
-            }),
+            }) {},
             RingItem(title: app.feedPlayer.isMuted ? "打开声音" : "静音", systemImage: app.feedPlayer.isMuted ? "speaker.wave.2" : "speaker.slash") {
                 app.feedPlayer.isMuted.toggle()
                 app.settings.feedMuted = app.feedPlayer.isMuted

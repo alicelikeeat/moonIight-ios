@@ -7,7 +7,7 @@ struct RingItem: Identifiable {
     var systemImage: String
     var children: [RingItem] = []
     var enabled: Bool = true
-    var action: () -> Void
+    var action: () -> Void = {}
 }
 
 struct MenuGroup: Identifiable {
@@ -228,7 +228,7 @@ struct RingOverlay: View {
         _ = session
         // Closing uses a fresh clock stored by flipping `closing`; approximate with 300ms from now-ish.
         // The controller sleeps 320ms. We animate cl with a local state instead.
-        1
+        return 1
     }
 
     private func buttonPose(_ session: RingSession, index: Int, elapsed: TimeInterval, closing _: Double) -> RingMotion.Pose {
