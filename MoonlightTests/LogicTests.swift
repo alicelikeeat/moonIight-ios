@@ -326,6 +326,151 @@ final class LogicTests: XCTestCase {
         XCTAssertEqual(String(data: AtomicFile.read(url) ?? Data(), encoding: .utf8), "two")
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path + ".tmp"))
     }
+
+    func testTimedHoldTiers() throws {
+        let w: Float = 1080
+        let h: Float = 2400
+        let off = (Float(300), Float(600))
+        func machine(timedOn: Bool = true, timedMs: Int64 = 5000, autoFire: Bool = true, centerOn: Bool = true) -> HoldMachine {
+            HoldMachine(cfg: HoldConfig(longMs: 500, timedOn: timedOn, timedMs: timedMs, autoFire: autoFire, centerOn: centerOn, slopPx: 24))
+        }
+
+        let tap = machine()
+        tap.down(0, off.0, off.1, w, h)
+        XCTAssertNil(tap.tick(300))
+        XCTAssertEqual(tap.up(400), .tap)
+
+        let long = machine()
+        long.down(0, off.0, off.1, w, h)
+        XCTAssertNil(long.tick(499))
+        XCTAssertEqual(long.tick(500), .long)
+        long.ring(.feedItem, nil)
+        XCTAssertEqual(long.up(2000), .long)
+
+        let timed = machine()
+        timed.down(0, off.0, off.1, w, h)
+        _ = timed.tick(500)
+        timed.ring(.feedItem, "fav")
+        XCTAssertTrue(timed.showing)
+        XCTAssertEqual(timed.tier(), .timed)
+        XCTAssertNil(timed.tick(4999))
+        XCTAssertEqual(timed.tick(5000), .timed(.feedItem, "fav", false))
+        XCTAssertNil(timed.tick(6000))
+        XCTAssertEqual(timed.up(6500), .timed)
+
+        let bare = machine()
+        bare.down(0, off.0, off.1, w, h)
+        _ = bare.tick(500)
+        bare.ring(.tab, nil)
+        XCTAssertEqual(bare.tick(5000), .timed(.tab, nil, false))
+        let noFire = machine(autoFire: false)
+        noFire.down(0, off.0, off.1, w, h)
+        _ = noFire.tick(500)
+        noFire.ring(.tab, "random")
+        XCTAssertEqual(noFire.tick(5000), .timed(.tab, nil, false))
+
+        for (_, opts) in TimedActions.byContext {
+            for opt in opts {
+                XCTAssertFalse(opt.titles.contains { $0.contains("删除") }, opt.key)
+            }
+        }
+        let blocked = machine()
+        blocked.down(0, off.0, off.1, w, h)
+        _ = blocked.tick(500)
+        blocked.ring(.feedItem, "delete")
+        XCTAssertEqual(blocked.tick(5000), .timed(.feedItem, nil, false))
+        let evil = RingItem(title: "收藏", systemImage: "heart", key: "fav", destructive: true)
+        XCTAssertNil(TimedActions.resolve(items: [evil], groups: [], context: .feedItem, key: "fav"))
+        let ok = [
+            RingItem(title: "删除", systemImage: "trash", destructive: true),
+            RingItem(title: "收藏", systemImage: "heart"),
+        ]
+        XCTAssertEqual(TimedActions.resolve(items: ok, groups: [], context: .feedItem, key: "fav")?.title, "收藏")
+        XCTAssertNil(TimedActions.resolve(items: ok, groups: [], context: .player, key: "fav"))
+        XCTAssertEqual(TimedActions.sanitize(["FEED_ITEM": "delete", "TAB": "random"]), ["TAB": "random"])
+
+        let centre = machine(timedMs: 3000)
+        centre.down(0, w / 2 + 40, h / 2 - 30, w, h)
+        XCTAssertTrue(centre.inCenter)
+        _ = centre.tick(500)
+        centre.ring(.feedItem, "fav")
+        XCTAssertEqual(centre.tier(), .center)
+        XCTAssertNil(centre.tick(3000))
+        XCTAssertEqual(centre.tick(5000), .center)
+        XCTAssertEqual(centre.up(5200), .center)
+
+        let onlyCentre = machine(timedOn: false)
+        onlyCentre.down(0, w / 2, h / 2, w, h)
+        XCTAssertEqual(onlyCentre.tick(500), .long)
+        XCTAssertEqual(onlyCentre.tick(5000), .center)
+
+        let radius = w * 0.30 / 2
+        let inside = machine()
+        inside.down(0, w / 2 + radius - 1, h / 2, w, h)
+        XCTAssertTrue(inside.inCenter)
+        inside.down(0, w / 2 + radius + 2, h / 2, w, h)
+        XCTAssertFalse(inside.inCenter)
+        let centreOff = machine(centerOn: false)
+        centreOff.down(0, w / 2, h / 2, w, h)
+        _ = centreOff.tick(500)
+        XCTAssertEqual(centreOff.tier(), .none)
+        centreOff.ring(.feedItem, "fav")
+        XCTAssertEqual(centreOff.tier(), .timed)
+
+        let slop = machine()
+        slop.down(0, w / 2, h / 2, w, h)
+        XCTAssertNil(slop.move(w / 2 + 10, h / 2 + 10))
+        _ = slop.tick(500)
+        slop.ring(.feedItem, "fav")
+        XCTAssertEqual(slop.move(w / 2 + 30, h / 2), .cancelled)
+        XCTAssertNil(slop.tick(5000))
+        XCTAssertNil(slop.tick(9000))
+        XCTAssertFalse(slop.showing)
+        XCTAssertEqual(slop.up(9100), .cancelled)
+
+        let nowhere = machine()
+        nowhere.down(0, off.0, off.1, w, h)
+        _ = nowhere.tick(500)
+        XCTAssertFalse(nowhere.showing)
+        XCTAssertNil(nowhere.tick(20_000))
+        XCTAssertEqual(nowhere.up(20_001), .long)
+
+        let deferred = machine()
+        deferred.down(0, off.0, off.1, w, h)
+        _ = deferred.tick(500)
+        deferred.ring(.momentVideo, "mv_mute", deferred: true)
+        deferred.ring(.feedItem, "fav")
+        XCTAssertEqual(deferred.tick(5000), .timed(.momentVideo, "mv_mute", true))
+
+        let progress = machine()
+        progress.down(1000, off.0, off.1, w, h)
+        _ = progress.tick(1500)
+        progress.ring(.tab, nil)
+        XCTAssertEqual(progress.progress(1500), 0, accuracy: 0.0001)
+        XCTAssertEqual(progress.progress(1000 + 500 + 2250), 0.5, accuracy: 0.001)
+        XCTAssertEqual(progress.progress(99_999), 1, accuracy: 0)
+        XCTAssertEqual(progress.elapsed(4200), 3200)
+        XCTAssertEqual(HoldConfig.timedMs(seconds: 3), 3000)
+        XCTAssertGreaterThanOrEqual(HoldConfig.timedMs(seconds: 3), 1000)
+        XCTAssertEqual(HoldConfig.timedMs(seconds: 99), 15_000)
+
+        let parent = RingItem(title: "保存", systemImage: "square.and.arrow.down", children: [
+            RingItem(title: "保存到相册", systemImage: "a"),
+            RingItem(title: "下载", systemImage: "b"),
+        ])
+        let tiles = PanelFlatten.tiles(items: [RingItem(title: "播放", systemImage: "play"), parent], groups: [])
+        XCTAssertEqual(tiles.map(\.title), ["播放", "保存 · 保存到相册", "保存 · 下载"])
+
+        let raw = #"{"timedOn":true,"timedSeconds":99,"timedAssign":{"FEED_ITEM":"delete","TAB":"random"},"centerPanel":false,"starSpeed":9}"#
+        let loaded = try XCTUnwrap(AppSettings.load(Data(raw.utf8)))
+        XCTAssertEqual(loaded.timedSeconds, 15, accuracy: 0.001)
+        XCTAssertEqual(loaded.timedAssign["TAB"], "random")
+        XCTAssertNil(loaded.timedAssign["FEED_ITEM"])
+        XCTAssertFalse(loaded.centerPanel)
+        XCTAssertEqual(loaded.starSpeed, 2, accuracy: 0)
+        XCTAssertFalse(AppSettings().timedOn)
+        XCTAssertTrue(AppSettings().centerPanel)
+    }
 }
 
 final class FakePlay: Playable {

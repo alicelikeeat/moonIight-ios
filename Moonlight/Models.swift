@@ -198,19 +198,46 @@ struct AppSettings: Codable, Equatable, Sendable {
     var homeBackdropPath: String?
     /// 星轨速度 0.5…2. 慢 0.7 · 标准 1 · 快 1.4.
     var starSpeed: Float = 1
+    /// 定时长按. Off by default; the centre 全部按键 panel is its own switch.
+    var timedOn: Bool = false
+    var timedSeconds: Float = 5
+    var timedShowTime: Bool = true
+    var timedCountdown: Bool = true
+    var timedAutoFire: Bool = true
+    /// HoldContext raw value → TimedActions key. Destructive keys are dropped on load.
+    var timedAssign: [String: String] = [:]
+    var centerPanel: Bool = true
 
     /// Missing keys from older builds keep their defaults instead of wiping the file.
     static func load(_ data: Data) -> AppSettings? {
-        if var decoded = try? JSONDecoder().decode(AppSettings.self, from: data) {
-            decoded.starSpeed = RingMotion.clampSpeed(decoded.starSpeed)
-            return decoded
-        }
         guard var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        if obj["starSpeed"] == nil { obj["starSpeed"] = 1.0 }
+        let defaults: [String: Any] = [
+            "theme": "system",
+            "videoDisplay": "SMART",
+            "menuBackdrop": "BLUR",
+            "menuSelect": "TAP",
+            "ringAnim": "STAR",
+            "ringAnimSet": "SPIN,LOTUS,STAR,MOON",
+            "pexelsKey": "",
+            "pixabayKey": "",
+            "chatServerURL": "",
+            "feedMuted": false,
+            "starSpeed": 1.0,
+            "timedOn": false,
+            "timedSeconds": 5.0,
+            "timedShowTime": true,
+            "timedCountdown": true,
+            "timedAutoFire": true,
+            "timedAssign": [String: String](),
+            "centerPanel": true,
+        ]
+        for (key, value) in defaults where obj[key] == nil { obj[key] = value }
         guard JSONSerialization.isValidJSONObject(obj),
               let patched = try? JSONSerialization.data(withJSONObject: obj),
               var decoded = try? JSONDecoder().decode(AppSettings.self, from: patched) else { return nil }
         decoded.starSpeed = RingMotion.clampSpeed(decoded.starSpeed)
+        decoded.timedSeconds = HoldConfig.clampSeconds(decoded.timedSeconds)
+        decoded.timedAssign = TimedActions.sanitize(decoded.timedAssign)
         return decoded
     }
 }

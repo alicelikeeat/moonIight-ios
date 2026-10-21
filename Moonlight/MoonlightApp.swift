@@ -5,12 +5,14 @@ import UIKit
 struct MoonlightApp: App {
     @StateObject private var app = AppModel()
     @StateObject private var ring = RingController()
+    @StateObject private var hold = HoldController()
 
     var body: some Scene {
         WindowGroup {
             AppRoot()
                 .environmentObject(app)
                 .environmentObject(ring)
+                .environmentObject(hold)
         }
     }
 }
@@ -36,6 +38,7 @@ struct AppRoot: View {
 struct RootView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
+    @EnvironmentObject private var hold: HoldController
     @Environment(\.moon) private var colors
 
     var body: some View {
@@ -53,6 +56,7 @@ struct RootView: View {
             if ring.session != nil {
                 RingOverlay(ring: ring)
             }
+            HoldChrome()
             tabBar
             if let toast = app.toast {
                 ToastBar(text: toast, undo: app.undo)
@@ -68,6 +72,10 @@ struct RootView: View {
         }
         .sheet(item: $app.fullPlayer) { entry in
             FullPlayerView(entry: entry)
+        }
+        .onAppear {
+            hold.app = app
+            hold.ring = ring
         }
     }
 
@@ -101,25 +109,44 @@ struct RootView: View {
             .foregroundColor(app.tab == item ? (app.tab == .home ? MoonColors.media.accent : colors.accent) : (app.tab == .home ? Color.white.opacity(0.72) : colors.textDim))
             .frame(maxWidth: .infinity)
         }
-        .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in
+        .holdTrack(onBegan: { point in
             guard item == .home else { return }
             let origin = CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.height - 120)
-            ring.present(origin: origin, items: [
+            let items = [
                 RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease", children: FeedScope.allCases.map { scope in
                     RingItem(title: scope.label, systemImage: "circle") { app.setScope(scope) }
                 }) {},
-                RingItem(title: "随机一条", systemImage: "shuffle") { app.randomItem() },
-                RingItem(title: "重新洗牌", systemImage: "arrow.triangle.2.circlepath") { app.shuffleFeed() },
-                RingItem(title: "回到顶部", systemImage: "arrow.up") { app.feedIndex = 0 },
-            ], groups: [
+                RingItem(title: "随机一条", systemImage: "shuffle", key: "random") { app.randomItem() },
+                RingItem(title: "重新洗牌", systemImage: "arrow.triangle.2.circlepath", key: "reshuffle") { app.shuffleFeed() },
+                RingItem(title: "回到顶部", systemImage: "arrow.up", key: "top") { app.feedIndex = 0 },
+            ]
+            let groups = [
                 MenuGroup(title: "声音", items: [
-                    RingItem(title: app.settings.feedMuted ? "打开声音" : "静音", systemImage: "speaker") {
+                    RingItem(title: app.settings.feedMuted ? "打开声音" : "静音", systemImage: "speaker", key: "mute") {
                         app.settings.feedMuted.toggle()
                         app.feedPlayer.isMuted = app.settings.feedMuted
                         app.saveSettings()
                     },
                 ]),
-            ], settings: app.settings, overMedia: app.tab == .home && !app.feedItems.isEmpty)
+                MenuGroup(title: "全局", items: [
+                    RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.showToast("录屏在下一版用系统 ReplayKit，只录本应用") },
+                    RingItem(title: "发动态", systemImage: "square.and.pencil", key: "compose") { app.composer = ComposerDraft(authorId: app.social.selfId) },
+                    RingItem(title: "设置", systemImage: "gearshape", key: "settings") { app.tab = .me; app.requestSettings = true },
+                ]),
+            ]
+            ring.present(origin: origin, items: items, groups: groups, settings: app.settings, overMedia: app.tab == .home && !app.feedItems.isEmpty)
+            hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(items: items, groups: groups, context: .tab, title: "首页", overMedia: app.tab == .home && !app.feedItems.isEmpty))
+        }, onChanged: { point in
+            guard item == .home else { return }
+            hold.move(point)
+            ring.finger = point
+        }, onEnded: { _ in
+            guard item == .home else { return }
+            let outcome = hold.lift()
+            ring.fingerDown = false
+            if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
+                ring.selectDrag(at: ring.finger)
+            }
         })
     }
 

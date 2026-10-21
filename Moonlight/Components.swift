@@ -68,7 +68,8 @@ struct MediaTouchLayer: UIViewRepresentable {
         double.numberOfTapsRequired = 2
         single.require(toFail: double)
         let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
-        hold.minimumPressDuration = 0.42
+        hold.minimumPressDuration = 0.5
+        hold.allowableMovement = 10_000
         hold.cancelsTouchesInView = true
         view.addGestureRecognizer(single)
         view.addGestureRecognizer(double)

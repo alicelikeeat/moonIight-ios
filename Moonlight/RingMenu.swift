@@ -7,6 +7,8 @@ struct RingItem: Identifiable {
     var systemImage: String
     var children: [RingItem] = []
     var enabled: Bool = true
+    var key: String?
+    var destructive: Bool = false
     var action: () -> Void = {}
 }
 

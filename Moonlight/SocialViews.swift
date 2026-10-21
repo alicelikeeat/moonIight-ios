@@ -79,7 +79,11 @@ struct MomentCard: View {
                 }
                 Spacer()
             }
-            if !moment.text.isEmpty { Text(moment.text).font(.system(size: 16)) }
+            .onLongPressGesture(minimumDuration: 0.5) { openRing() }
+            if !moment.text.isEmpty {
+                Text(moment.text).font(.system(size: 16))
+                    .onLongPressGesture(minimumDuration: 0.5) { openRing() }
+            }
             media
             HStack(spacing: 18) {
                 react("hand.thumbsup", moment.likes.count, moment.likes.contains(app.social.selfId)) { app.toggleLike(moment: moment.id, who: app.social.selfId) }
@@ -101,7 +105,6 @@ struct MomentCard: View {
         .padding(14)
         .moonGlass(colors, radius: 20)
         .onTapGesture(count: 2) { app.likeOnly(moment: moment.id, who: app.social.selfId); Haptics.soft() }
-        .onLongPressGesture(minimumDuration: 0.45) { openRing() }
         .alert("评论", isPresented: $showComment) {
             TextField("说点什么", text: $comment)
             Button("发送") { app.addComment(moment: moment.id, author: app.social.selfId, text: comment); comment = "" }
@@ -117,12 +120,14 @@ struct MomentCard: View {
                 RemoteOrLocalImage(url: first.displayURL, art: first.coverURL, mode: .fill)
                     .frame(height: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .onLongPressGesture(minimumDuration: 0.5) { openRing() }
             } else {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                     ForEach(moment.attachments.prefix(4)) { att in
                         RemoteOrLocalImage(url: att.displayURL, art: att.coverURL, mode: .fill)
                             .frame(height: 110)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .onLongPressGesture(minimumDuration: 0.5) { openRing() }
                     }
                 }
             }
@@ -187,6 +192,8 @@ struct MomentCard: View {
 
 struct MomentVideo: View {
     @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var ring: RingController
+    @EnvironmentObject private var hold: HoldController
     var attachment: Attachment
     @StateObject private var session = PlayerSession()
 
@@ -205,22 +212,70 @@ struct MomentVideo: View {
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { session.toggle() }
-        .onLongPressGesture(minimumDuration: 0.45) {
-            app.fullPlayer = MediaEntry(
-                id: attachment.libraryEntryId ?? attachment.id,
-                kind: .video,
-                title: attachment.title.isEmpty ? "视频" : attachment.title,
-                localPath: attachment.localPath,
-                remoteURL: attachment.remoteURL,
-                coverURL: attachment.coverURL,
-                platform: attachment.localPath == nil ? PlatformID.url : PlatformID.local,
-                source: "moment"
-            )
-        }
+        .holdTrack(onBegan: { point in beganHold(point) }, onChanged: { hold.move($0) }, onEnded: { _ in hold.lift() })
         .onAppear {
             if let url = playURL { session.load(url: url, autoplay: true, muted: true) }
         }
         .onDisappear { session.pause() }
+    }
+
+    private func beganHold(_ point: CGPoint) {
+        let entry = playerEntry
+        let items = videoRing(entry)
+        let bounds = UIScreen.main.bounds
+        let deferOpen = app.settings.timedOn || HoldMachine.inCenter(
+            x: Float(point.x), y: Float(point.y), width: Float(bounds.width), height: Float(bounds.height)
+        ) && app.settings.centerPanel
+        let present = {
+            ring.present(origin: point, items: items, groups: [], settings: app.settings, overMedia: false)
+        }
+        if deferOpen {
+            hold.arm(
+                origin: point,
+                settings: app.settings,
+                catalog: RingCatalog(items: items, groups: [], context: .momentVideo, title: entry.title, overMedia: false),
+                onRelease: { app.fullPlayer = entry },
+                onDeferredOpen: present
+            )
+        } else {
+            app.fullPlayer = entry
+        }
+    }
+
+    private var playerEntry: MediaEntry {
+        MediaEntry(
+            id: attachment.libraryEntryId ?? attachment.id,
+            kind: .video,
+            title: attachment.title.isEmpty ? "视频" : attachment.title,
+            localPath: attachment.localPath,
+            remoteURL: attachment.remoteURL,
+            coverURL: attachment.coverURL,
+            platform: attachment.localPath == nil ? PlatformID.url : PlatformID.local,
+            source: "moment"
+        )
+    }
+
+    private func videoRing(_ entry: MediaEntry) -> [RingItem] {
+        [
+            RingItem(title: session.showsPlaying ? "暂停" : "播放", systemImage: session.showsPlaying ? "pause" : "play", key: "mv_play") {
+                session.toggle()
+            },
+            RingItem(title: "进入播放页面", systemImage: "arrow.up.left.and.arrow.down.right", key: "mv_open") {
+                app.fullPlayer = entry
+            },
+            RingItem(title: session.isMuted ? "打开声音" : "静音", systemImage: "speaker", key: "mv_mute") {
+                session.isMuted.toggle()
+            },
+            RingItem(title: "保存", systemImage: "square.and.arrow.down", children: [
+                RingItem(title: "保存到相册", systemImage: "square.and.arrow.down", key: "mv_save") {
+                    if let id = attachment.libraryEntryId, let item = app.entry(id) { app.saveToPhotos(item) }
+                    else { app.showToast("这支视频还没在库里") }
+                },
+                RingItem(title: "下载", systemImage: "arrow.down.circle", enabled: entry.localPath == nil && DownloadPolicy.canDownload(entry).ok) {
+                    app.download(entry)
+                },
+            ]) {},
+        ]
     }
 
     private var playURL: URL? {

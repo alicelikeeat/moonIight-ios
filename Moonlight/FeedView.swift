@@ -5,6 +5,7 @@ import UIKit
 struct FeedView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
+    @EnvironmentObject private var hold: HoldController
     @State private var chrome = true
     @State private var heart = false
 
@@ -27,11 +28,15 @@ struct FeedView: View {
                         onLongChanged: { point in
                             ring.fingerDown = true
                             ring.finger = point
+                            hold.move(point)
                         },
                         onLongEnded: { point in
+                            let outcome = hold.lift()
                             ring.fingerDown = false
                             ring.finger = point
-                            if app.settings.menuSelect == .drag { ring.selectDrag(at: point) }
+                            if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
+                                ring.selectDrag(at: point)
+                            }
                         }
                     )
                     .environmentObject(app)
@@ -59,7 +64,15 @@ struct FeedView: View {
             Text("从相册导入，或去发现里找公开影像。").font(.system(size: 14)).foregroundColor(.white.opacity(0.7))
             PhotosImportButton(title: "导入照片或视频")
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 80)
+        .holdTrack(
+            onBegan: { point in
+                hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(overMedia: true))
+            },
+            onChanged: { hold.move($0) },
+            onEnded: { _ in _ = hold.lift() }
+        )
     }
 
     private func loadCurrent() {
@@ -102,20 +115,25 @@ struct FeedView: View {
         ring.fingerDown = true
         ring.finger = point
         ring.present(origin: point, items: items, groups: groups, settings: app.settings, overMedia: true)
+        hold.arm(
+            origin: point,
+            settings: app.settings,
+            catalog: RingCatalog(items: items, groups: groups, context: .feedItem, title: entry.title, overMedia: true)
+        )
     }
 
     private func feedRingItems(_ entry: MediaEntry) -> [RingItem] {
         if entry.kind == .embed || entry.embedURL != nil {
             return [
-                RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart") { app.toggleFavorite(entry.id) },
+                RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart", key: "fav") { app.toggleFavorite(entry.id) },
                 RingItem(title: "浏览器打开", systemImage: "safari") { openExternal(entry) },
                 RingItem(title: "下一个同源", systemImage: "forward.end") { nextSame(entry) },
-                RingItem(title: "分享", systemImage: "square.and.arrow.up") { share(entry) },
+                RingItem(title: "分享", systemImage: "square.and.arrow.up", key: "share") { share(entry) },
             ]
         }
         if entry.kind == .image {
             return [
-                RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart") { app.toggleFavorite(entry.id) },
+                RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart", key: "fav") { app.toggleFavorite(entry.id) },
                 RingItem(title: "停留", systemImage: "timer", children: [3, 5, 8, 0].map { sec in
                     RingItem(title: sec == 0 ? "关闭" : "\(sec) 秒", systemImage: "timer") {
                         app.updateEntry(entry.id) { $0.dwellSeconds = sec }
@@ -131,14 +149,14 @@ struct FeedView: View {
         }
         let speeds: [Float] = [0.5, 1, 1.5, 2]
         return [
-            RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart") { app.toggleFavorite(entry.id) },
+            RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart", key: "fav") { app.toggleFavorite(entry.id) },
             RingItem(title: "倍速", systemImage: "speedometer", children: speeds.map { s in
                 RingItem(title: s == 1 ? "1×" : String(format: "%g×", s), systemImage: "speedometer") {
                     app.feedPlayer.speed = s
                     if app.feedPlayer.playWhenReady { app.feedPlayer.play() }
                 }
             }) {},
-            RingItem(title: app.feedPlayer.isMuted ? "打开声音" : "静音", systemImage: app.feedPlayer.isMuted ? "speaker.wave.2" : "speaker.slash") {
+            RingItem(title: app.feedPlayer.isMuted ? "打开声音" : "静音", systemImage: app.feedPlayer.isMuted ? "speaker.wave.2" : "speaker.slash", key: "mute") {
                 app.feedPlayer.isMuted.toggle()
                 app.settings.feedMuted = app.feedPlayer.isMuted
                 app.feedPlayer.player.isMuted = app.feedPlayer.isMuted
@@ -150,13 +168,13 @@ struct FeedView: View {
 
     private func shareSave(_ entry: MediaEntry) -> RingItem {
         var children = [
-            RingItem(title: "分享", systemImage: "square.and.arrow.up") { share(entry) },
-            RingItem(title: "保存到相册", systemImage: "square.and.arrow.down") { app.saveToPhotos(entry) },
+            RingItem(title: "分享", systemImage: "square.and.arrow.up", key: "share") { share(entry) },
+            RingItem(title: "保存到相册", systemImage: "square.and.arrow.down", key: "save") { app.saveToPhotos(entry) },
         ]
         if DownloadPolicy.canDownload(entry).ok && entry.localPath == nil {
             children.append(RingItem(title: "下载", systemImage: "arrow.down.circle") { app.download(entry) })
         }
-        children.append(RingItem(title: "发到朋友圈", systemImage: "person.2") {
+        children.append(RingItem(title: "发到朋友圈", systemImage: "person.2", key: "post") {
             app.composer = ComposerDraft(authorId: app.social.selfId, attachments: [app.attachment(from: entry)])
         })
         return RingItem(title: "分享·保存", systemImage: "square.and.arrow.up", children: children) {}
@@ -165,10 +183,10 @@ struct FeedView: View {
     private func feedGroups(_ entry: MediaEntry) -> [MenuGroup] {
         let policy = DownloadPolicy.canDownload(entry)
         var shareItems = [
-            RingItem(title: "分享", systemImage: "square.and.arrow.up") { share(entry) },
-            RingItem(title: "保存到相册", systemImage: "square.and.arrow.down") { app.saveToPhotos(entry) },
+            RingItem(title: "分享", systemImage: "square.and.arrow.up", key: "share") { share(entry) },
+            RingItem(title: "保存到相册", systemImage: "square.and.arrow.down", key: "save") { app.saveToPhotos(entry) },
             RingItem(title: "下载到我的下载", systemImage: "arrow.down.circle", enabled: policy.ok) { app.download(entry) },
-            RingItem(title: "发到朋友圈", systemImage: "person.2") {
+            RingItem(title: "发到朋友圈", systemImage: "person.2", key: "post") {
                 app.composer = ComposerDraft(authorId: app.social.selfId, attachments: [app.attachment(from: entry)])
             },
         ]
@@ -177,10 +195,10 @@ struct FeedView: View {
         }
         return [
             MenuGroup(title: "播放", items: [
-                RingItem(title: app.feedPlayer.showsPlaying ? "暂停" : "播放", systemImage: app.feedPlayer.showsPlaying ? "pause" : "play") {
+                RingItem(title: app.feedPlayer.showsPlaying ? "暂停" : "播放", systemImage: app.feedPlayer.showsPlaying ? "pause" : "play", key: "play") {
                     if entry.kind == .video { app.feedPlayer.toggle() }
                 },
-                RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat") { app.feedPlayer.loop.toggle() },
+                RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat", key: "loop") { app.feedPlayer.loop.toggle() },
                 RingItem(title: app.feedPlayer.isMuted ? "取消静音" : "静音", systemImage: "speaker") {
                     app.feedPlayer.isMuted.toggle()
                     app.settings.feedMuted = app.feedPlayer.isMuted
@@ -199,14 +217,14 @@ struct FeedView: View {
                         else { item.fillOverride = nil }
                     }
                 },
-                RingItem(title: "信息", systemImage: "info.circle") { app.infoEntry = entry },
+                RingItem(title: "信息", systemImage: "info.circle", key: "info") { app.infoEntry = entry },
             ]),
             MenuGroup(title: "分享与保存", items: shareItems),
             MenuGroup(title: "整理", items: [
                 RingItem(title: entry.hidden ? "取消隐藏" : "隐藏", systemImage: "eye.slash") { app.setHidden(entry.id, !entry.hidden) },
             ]),
             MenuGroup(title: "危险", danger: true, items: [
-                RingItem(title: "删除", systemImage: "trash") { app.deleteEntry(entry.id) },
+                RingItem(title: "删除", systemImage: "trash", destructive: true) { app.deleteEntry(entry.id) },
             ]),
         ]
     }

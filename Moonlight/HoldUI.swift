@@ -1,0 +1,415 @@
+import SwiftUI
+import UIKit
+
+struct RingCatalog {
+    var items: [RingItem] = []
+    var groups: [MenuGroup] = []
+    var context: HoldContext?
+    var title: String?
+    var overMedia = false
+}
+
+struct MasterPanel: Identifiable {
+    let id = UUID()
+    var sections: [PanelSection]
+    var overMedia: Bool
+}
+
+struct PanelSection: Identifiable {
+    let id = UUID()
+    var title: String
+    var tiles: [RingItem]
+}
+
+/// Drives HoldMachine from a recognized long-press through lift, including the readout and 全部按键.
+@MainActor
+final class HoldController: ObservableObject {
+    let machine = HoldMachine()
+    @Published var showing = false
+    @Published var elapsedMs: Int64 = 0
+    @Published var progress: Float = 0
+    @Published var tier: HoldTier = .none
+    @Published var anchor: CGPoint = .zero
+    @Published var panel: MasterPanel?
+    private var timer: Timer?
+    private var catalog = RingCatalog()
+    private var pendingRelease: (() -> Void)?
+    private var pendingFired = false
+    private var onDeferredOpen: (() -> Void)?
+    weak var app: AppModel?
+    weak var ring: RingController?
+
+    var engaged: Bool { machine.phase != .idle }
+
+    func arm(
+        origin: CGPoint,
+        settings: AppSettings,
+        catalog: RingCatalog,
+        onRelease: (() -> Void)? = nil,
+        onDeferredOpen: (() -> Void)? = nil
+    ) {
+        let now = Self.clock()
+        let bounds = UIScreen.main.bounds
+        machine.cfg = HoldConfig.from(settings)
+        machine.down(now - machine.cfg.longMs, Float(origin.x), Float(origin.y), Float(bounds.width), Float(bounds.height))
+        _ = machine.tick(now)
+        let assigned = catalog.context.flatMap { settings.timedAssign[$0.rawValue] }
+        machine.ring(catalog.context, assigned, deferred: onDeferredOpen != nil)
+        self.catalog = catalog
+        self.pendingRelease = onRelease
+        self.pendingFired = false
+        self.onDeferredOpen = onDeferredOpen
+        anchor = origin
+        refresh(now)
+        startTimer()
+    }
+
+    func move(_ point: CGPoint) {
+        guard engaged else { return }
+        anchor = point
+        if machine.move(Float(point.x), Float(point.y)) != nil {
+            refresh(Self.clock())
+        }
+    }
+
+    @discardableResult
+    func lift() -> HoldOutcome {
+        guard engaged else { return .long }
+        let now = Self.clock()
+        let out = machine.up(now)
+        stopTimer()
+        if let pendingRelease, !pendingFired, out == .long || out == .cancelled || out == .tap {
+            pendingRelease()
+        }
+        pendingRelease = nil
+        onDeferredOpen = nil
+        showing = false
+        return out
+    }
+
+    func dismissPanel() { panel = nil }
+
+    private func startTimer() {
+        stopTimer()
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        let now = Self.clock()
+        if let event = machine.tick(now) {
+            handle(event)
+        }
+        refresh(now)
+        if machine.phase == .idle || machine.phase == .fired || machine.phase == .cancelled {
+            if machine.phase != .cancelled { stopTimer() }
+            if machine.phase == .fired { showing = false }
+        }
+    }
+
+    private func handle(_ event: HoldEvent) {
+        switch event {
+        case .long, .cancelled:
+            break
+        case .center:
+            pendingFired = true
+            Haptics.confirm()
+            panel = makePanel()
+            ring?.sheet = nil
+            ring?.dismiss()
+        case .timed(_, let key, let deferred):
+            if deferred { onDeferredOpen?() }
+            let item = TimedActions.resolve(items: catalog.items, groups: catalog.groups, context: catalog.context, key: key)
+            if let item {
+                pendingFired = true
+                ring?.dismiss()
+                item.action()
+                let reversible = catalog.context.flatMap { TimedActions.option($0, key)?.reversible } ?? false
+                if reversible {
+                    app?.showToast("定时长按 · \(item.title)", undo: item.action)
+                } else {
+                    app?.showToast("定时长按 · \(item.title)")
+                }
+                Haptics.confirm()
+            } else {
+                Haptics.tick()
+            }
+        }
+    }
+
+    private func refresh(_ now: Int64) {
+        elapsedMs = machine.elapsed(now)
+        progress = machine.progress(now)
+        tier = machine.tier()
+        let wants = app?.settings.timedOn == true || app?.settings.centerPanel == true
+        showing = machine.showing && wants
+    }
+
+    private func makePanel() -> MasterPanel {
+        var sections: [PanelSection] = []
+        let current = PanelFlatten.tiles(items: catalog.items, groups: catalog.groups)
+        if !current.isEmpty {
+            let name = catalog.title.map { "当前内容 · \($0)" } ?? "当前内容"
+            sections.append(PanelSection(title: name, tiles: current))
+        }
+        let page = pageTiles()
+        if !page.isEmpty { sections.append(PanelSection(title: "页面", tiles: page)) }
+        sections.append(PanelSection(title: "全局", tiles: globalTiles()))
+        return MasterPanel(sections: sections, overMedia: catalog.overMedia)
+    }
+
+    private func pageTiles() -> [RingItem] {
+        guard let app else { return [] }
+        switch app.tab {
+        case .home:
+            return [
+                RingItem(title: "随机一条", systemImage: "shuffle", key: "random") { [weak app] in app?.randomItem() },
+                RingItem(title: "重新洗牌", systemImage: "arrow.triangle.2.circlepath", key: "reshuffle") { [weak app] in app?.shuffleFeed() },
+                RingItem(title: "回到顶部", systemImage: "arrow.up", key: "top") { [weak app] in app?.feedIndex = 0 },
+                RingItem(title: app.settings.feedMuted ? "打开声音" : "静音", systemImage: "speaker", key: "mute") { [weak app] in
+                    guard let app else { return }
+                    app.settings.feedMuted.toggle()
+                    app.feedPlayer.isMuted = app.settings.feedMuted
+                    app.saveSettings()
+                },
+            ]
+        case .moments:
+            return [
+                RingItem(title: "发动态", systemImage: "square.and.pencil", key: "compose") { [weak app] in
+                    guard let app else { return }
+                    app.composer = ComposerDraft(authorId: app.social.selfId)
+                },
+            ]
+        case .discover, .capture, .me:
+            return []
+        }
+    }
+
+    private func globalTiles() -> [RingItem] {
+        [
+            RingItem(title: "录屏", systemImage: "record.circle", key: "record") { [weak self] in
+                self?.app?.showToast("录屏在下一版用系统 ReplayKit，只录本应用")
+            },
+            RingItem(title: "设置", systemImage: "gearshape", key: "settings") { [weak self] in
+                self?.app?.tab = .me
+                self?.app?.requestSettings = true
+            },
+            RingItem(title: "外观", systemImage: "circle.lefthalf.filled") { [weak self] in
+                guard let app = self?.app else { return }
+                switch app.settings.theme {
+                case .system: app.settings.theme = .dark
+                case .dark: app.settings.theme = .light
+                case .light: app.settings.theme = .system
+                }
+                app.saveSettings()
+                app.showToast("外观 · \(app.settings.theme.label)")
+            },
+            RingItem(title: "拍摄", systemImage: "circle.fill") { [weak self] in self?.app?.tab = .capture },
+            RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease") { [weak self] in
+                guard let app = self?.app else { return }
+                let order = FeedScope.allCases
+                let idx = order.firstIndex(of: app.feedScope) ?? 0
+                app.setScope(order[(idx + 1) % order.count])
+            },
+            RingItem(title: "最近删除", systemImage: "trash") { [weak self] in
+                self?.app?.showToast("最近删除还在后面的版本")
+            },
+        ]
+    }
+
+    private static func clock() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+}
+
+struct HoldChrome: View {
+    @EnvironmentObject private var hold: HoldController
+    @EnvironmentObject private var app: AppModel
+    @Environment(\.moon) private var colors
+
+    var body: some View {
+        ZStack {
+            if hold.showing { indicator }
+            if hold.panel != nil { panel }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+    }
+
+    private var indicator: some View {
+        let tier = hold.tier
+        let progress = CGFloat(hold.progress)
+        let accent = tier == .center ? Color(red: 0.812, green: 0.859, blue: 1) : Color(red: 1, green: 0.824, blue: 0.478)
+        let r: CGFloat = tier == .center ? 28 : 46
+        ZStack {
+            if app.settings.timedCountdown {
+                countdown(tier: tier, progress: progress, radius: r, accent: accent)
+                    .position(hold.anchor)
+            }
+            if app.settings.timedShowTime {
+                let seconds = Double(hold.elapsedMs) / 1000
+                let label = (tier == .center ? "全部按键 · " : "") + String(format: "%.1fs", seconds)
+                let toRight = hold.anchor.x < UIScreen.main.bounds.width / 2
+                Text(label)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.black.opacity(0.55), in: Capsule())
+                    .overlay(Capsule().stroke(accent.opacity(0.7), lineWidth: 0.5))
+                    .position(x: hold.anchor.x + (toRight ? r + 54 : -(r + 54)), y: hold.anchor.y)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder private func countdown(tier: HoldTier, progress: CGFloat, radius: CGFloat, accent: Color) -> some View {
+        if tier == .center {
+            moon(progress: progress, radius: radius, accent: accent)
+        } else {
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.30), lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(accent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                ZStack {
+                    Circle().fill(Color.white).frame(width: 8, height: 8).offset(y: -radius)
+                }
+                .rotationEffect(.degrees(360 * progress))
+            }
+            .frame(width: radius * 2, height: radius * 2)
+        }
+    }
+
+    private func moon(progress: CGFloat, radius: CGFloat, accent: Color) -> some View {
+        ZStack {
+            Circle().fill(Color.white.opacity(0.16)).frame(width: radius * 2, height: radius * 2)
+            Circle().fill(accent.opacity(0.92)).frame(width: radius * 2, height: radius * 2)
+            Circle()
+                .fill(Color(red: 0.102, green: 0.125, blue: 0.200).opacity(0.92 * (1 - progress)))
+                .frame(width: radius * 2.04, height: radius * 2.04)
+                .offset(x: radius * 2.1 * progress)
+        }
+        .frame(width: radius * 2, height: radius * 2)
+        .clipShape(Circle())
+        .overlay(Circle().stroke(Color.white.opacity(0.55), lineWidth: 1))
+    }
+
+    private var panel: some View {
+        let spec = hold.panel
+        let ink = (spec?.overMedia == true) ? MoonColors.media : colors
+        ZStack {
+            Color.black.opacity(ink.dark ? 0.45 : 0.25)
+                .onTapGesture { hold.dismissPanel() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "square.grid.2x2")
+                        Text("全部按键").font(.system(size: 22, weight: .semibold))
+                        Spacer()
+                        Button("关闭") { hold.dismissPanel() }
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    ForEach(spec?.sections ?? []) { section in
+                        Text(section.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(ink.textDim)
+                        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+                        LazyVGrid(columns: columns, spacing: 8) {
+                            ForEach(section.tiles) { tile in
+                                Button {
+                                    Haptics.tick()
+                                    hold.dismissPanel()
+                                    tile.action()
+                                } label: {
+                                    VStack(spacing: 6) {
+                                        Image(systemName: tile.systemImage).font(.system(size: 18))
+                                        Text(tile.title)
+                                            .font(.system(size: 11))
+                                            .multilineTextAlignment(.center)
+                                            .lineLimit(2)
+                                    }
+                                    .foregroundColor(tile.destructive ? ink.danger : ink.text)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 78)
+                                    .background(ink.text.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(18)
+            }
+            .foregroundColor(ink.text)
+            .moonGlass(ink, radius: 30)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 28)
+        }
+    }
+}
+
+private struct GlobalFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+/// Stationary hold for 0.5s, then tracks the finger until lift. Coordinates are in the window.
+struct HoldTrack: ViewModifier {
+    var onBegan: (CGPoint) -> Void
+    var onChanged: (CGPoint) -> Void
+    var onEnded: (CGPoint) -> Void
+    @State private var frame: CGRect = .zero
+    @State private var down: CGPoint?
+    @State private var armed = false
+    @State private var generation = 0
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: GlobalFrameKey.self, value: geo.frame(in: .global))
+                }
+            )
+            .onPreferenceChange(GlobalFrameKey.self) { frame = $0 }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0).onChanged { value in
+                    let point = window(value.location)
+                    if down == nil {
+                        down = point
+                        let gen = generation
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            guard gen == generation, down != nil else { return }
+                            armed = true
+                            onBegan(down ?? point)
+                        }
+                    } else if armed {
+                        onChanged(point)
+                    }
+                }.onEnded { value in
+                    generation += 1
+                    let was = armed
+                    let point = window(value.location)
+                    armed = false
+                    down = nil
+                    if was { onEnded(point) }
+                }
+            )
+    }
+
+    private func window(_ local: CGPoint) -> CGPoint {
+        CGPoint(x: frame.minX + local.x, y: frame.minY + local.y)
+    }
+}
+
+extension View {
+    func holdTrack(onBegan: @escaping (CGPoint) -> Void, onChanged: @escaping (CGPoint) -> Void, onEnded: @escaping (CGPoint) -> Void) -> some View {
+        modifier(HoldTrack(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded))
+    }
+}

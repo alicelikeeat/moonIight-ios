@@ -55,6 +55,10 @@ struct MeView: View {
             .navigationBarHidden(true)
             .navigationDestination(isPresented: $showLibrary) { LibraryView() }
             .navigationDestination(isPresented: $showSettings) { SettingsView() }
+            .onAppear { if app.requestSettings { showSettings = true; app.requestSettings = false } }
+            .moonOnChange(of: app.requestSettings) { on in
+                if on { showSettings = true; app.requestSettings = false }
+            }
             .moonOnChange(of: avatarItem) { item in
                 guard let item else { return }
                 Task {
@@ -205,6 +209,44 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            Section {
+                Toggle("定时长按", isOn: binding(\.timedOn))
+                if app.settings.timedOn {
+                    Picker("触发时间", selection: thresholdChoice) {
+                        Text("5 秒").tag(0)
+                        Text("10 秒").tag(1)
+                        Text("自定义").tag(2)
+                    }
+                    if thresholdChoice.wrappedValue == 2 {
+                        HStack {
+                            Text("3 秒")
+                            Slider(value: Binding(
+                                get: { Double(app.settings.timedSeconds) },
+                                set: { app.settings.timedSeconds = HoldConfig.clampSeconds(Float(($0 * 2).rounded() / 2)); app.saveSettings() }
+                            ), in: 3...15)
+                            Text("15 秒")
+                        }
+                        Text(String(format: "%.1f 秒", app.settings.timedSeconds))
+                            .font(.caption).foregroundColor(.secondary)
+                    }
+                    Toggle("显示计时", isOn: binding(\.timedShowTime))
+                    Toggle("倒计时动画", isOn: binding(\.timedCountdown))
+                    Toggle("到时自动触发", isOn: binding(\.timedAutoFire))
+                    ForEach(HoldContext.allCases, id: \.self) { ctx in
+                        Picker("分配 · \(ctx.label)", selection: assignBinding(ctx)) {
+                            Text("不分配").tag("")
+                            ForEach(TimedActions.options(ctx)) { option in
+                                Text(option.label).tag(option.key)
+                            }
+                        }
+                    }
+                }
+                Toggle("全部按键", isOn: binding(\.centerPanel))
+            } header: {
+                Text("定时长按")
+            } footer: {
+                Text("长按照常打开菜单。继续按住到设定时间，分配给该场景的按钮会执行，可撤销的会给出撤销。删除不能被分配。手指移动超过一小段会取消计时。在屏幕中心圆里按住 5 秒打开全部按键。")
+            }
             Section("动画池（随机时使用）") {
                 ForEach(RingAnim.choices, id: \.self) { style in
                     Toggle(style.label, isOn: Binding(
@@ -237,7 +279,7 @@ struct SettingsView: View {
                 Button("导入备份") { importing = true }
             }
             Section("关于") {
-                Text("月光 0.2 · iOS")
+                Text("月光 0.3 · iOS")
                 Text("不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -267,6 +309,38 @@ struct SettingsView: View {
         ], groups: [
             MenuGroup(title: "预览", items: [RingItem(title: "关闭", systemImage: "xmark") {}]),
         ], settings: app.settings, overMedia: false, styleOverride: .star)
+    }
+
+    private var thresholdChoice: Binding<Int> {
+        Binding(
+            get: {
+                if abs(app.settings.timedSeconds - 5) < 0.05 { return 0 }
+                if abs(app.settings.timedSeconds - 10) < 0.05 { return 1 }
+                return 2
+            },
+            set: { choice in
+                switch choice {
+                case 0: app.settings.timedSeconds = 5
+                case 1: app.settings.timedSeconds = 10
+                default:
+                    if abs(app.settings.timedSeconds - 5) < 0.05 || abs(app.settings.timedSeconds - 10) < 0.05 {
+                        app.settings.timedSeconds = 7
+                    }
+                }
+                app.saveSettings()
+            }
+        )
+    }
+
+    private func assignBinding(_ ctx: HoldContext) -> Binding<String> {
+        Binding(
+            get: { app.settings.timedAssign[ctx.rawValue] ?? "" },
+            set: { value in
+                if value.isEmpty { app.settings.timedAssign.removeValue(forKey: ctx.rawValue) }
+                else if TimedActions.assignable(ctx, value) { app.settings.timedAssign[ctx.rawValue] = value }
+                app.saveSettings()
+            }
+        )
     }
 
     private var animBinding: Binding<String> {
@@ -330,6 +404,8 @@ struct ComposerSheet: View {
 
 struct FullPlayerView: View {
     @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var ring: RingController
+    @EnvironmentObject private var hold: HoldController
     @Environment(\.dismiss) private var dismiss
     var entry: MediaEntry
     @StateObject private var session = PlayerSession()
@@ -344,22 +420,33 @@ struct FullPlayerView: View {
             MediaTouchLayer(
                 onSingle: { session.toggle() },
                 onDouble: { app.favoriteOnly(entry.id) },
-                onLongBegan: { _ in },
-                onLongChanged: { _ in },
-                onLongEnded: { _ in }
+                onLongBegan: { point in openPlayerRing(point) },
+                onLongChanged: { point in
+                    ring.finger = point
+                    hold.move(point)
+                },
+                onLongEnded: { _ in
+                    let outcome = hold.lift()
+                    ring.fingerDown = false
+                    if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
+                        ring.selectDrag(at: ring.finger)
+                    }
+                }
             )
+            if ring.session != nil { RingOverlay(ring: ring) }
+            HoldChrome()
             VStack {
                 HStack {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.down").foregroundColor(.white).padding(12).background(.ultraThinMaterial, in: Circle())
                     }
                     Spacer()
-                    Text(entry.title).foregroundColor(.white).lineLimit(1)
+                    Text(entry.title).foregroundColor(.white).lineLimit(1).allowsHitTesting(false)
                     Spacer()
-                    Color.clear.frame(width: 44, height: 44)
+                    Color.clear.frame(width: 44, height: 44).allowsHitTesting(false)
                 }
                 .padding(.top, ScreenInsets.top)
-                Spacer()
+                Spacer().allowsHitTesting(false)
             }
             if !session.showsPlaying {
                 Image(systemName: "play.fill").font(.system(size: 28)).foregroundColor(.white)
@@ -372,5 +459,37 @@ struct FullPlayerView: View {
             if let url = entry.playbackURL { session.load(url: url, autoplay: true, muted: false) }
         }
         .onDisappear { session.pause() }
+    }
+
+    private func openPlayerRing(_ point: CGPoint) {
+        let items = [
+            RingItem(title: entry.favorite ? "已收藏" : "收藏", systemImage: entry.favorite ? "heart.fill" : "heart", key: "fav") { app.toggleFavorite(entry.id) },
+            RingItem(title: session.isMuted ? "打开声音" : "静音", systemImage: "speaker", key: "mute") { session.isMuted.toggle() },
+            RingItem(title: "分享", systemImage: "square.and.arrow.up", key: "share") { sharePlayer() },
+            RingItem(title: "保存到相册", systemImage: "square.and.arrow.down", key: "save") { app.saveToPhotos(entry) },
+        ]
+        let groups = [
+            MenuGroup(title: "更多", items: [
+                RingItem(title: "随机一条", systemImage: "shuffle", key: "random") { app.randomItem() },
+                RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.showToast("录屏在下一版用系统 ReplayKit，只录本应用") },
+            ]),
+        ]
+        ring.fingerDown = true
+        ring.finger = point
+        ring.present(origin: point, items: items, groups: groups, settings: app.settings, overMedia: true)
+        hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(items: items, groups: groups, context: .player, title: entry.title, overMedia: true))
+    }
+
+    private func sharePlayer() {
+        var items: [Any] = [entry.title]
+        if let path = entry.localPath { items = [URL(fileURLWithPath: path)] }
+        else if let remote = entry.remoteURL, let url = URL(string: remote) { items = [url] }
+        let av = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }?
+            .rootViewController?
+            .present(av, animated: true)
     }
 }

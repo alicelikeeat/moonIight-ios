@@ -58,6 +58,7 @@ final class AppModel: ObservableObject {
     @Published var discoverResults: [MediaEntry] = []
     @Published var discoverBusy = false
     @Published var discoverError: String?
+    @Published var requestSettings = false
 
     let feedPlayer = PlayerSession()
     let localTransport = LocalTransport()
