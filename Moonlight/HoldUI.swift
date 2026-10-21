@@ -247,7 +247,7 @@ struct HoldChrome: View {
         let progress = CGFloat(hold.progress)
         let accent = tier == .center ? Color(red: 0.812, green: 0.859, blue: 1) : Color(red: 1, green: 0.824, blue: 0.478)
         let r: CGFloat = tier == .center ? 28 : 46
-        ZStack {
+        return ZStack {
             if app.settings.timedCountdown {
                 countdown(tier: tier, progress: progress, radius: r, accent: accent)
                     .position(hold.anchor)
@@ -305,7 +305,7 @@ struct HoldChrome: View {
     private var panel: some View {
         let spec = hold.panel
         let ink = (spec?.overMedia == true) ? MoonColors.media : colors
-        ZStack {
+        return ZStack {
             Color.black.opacity(ink.dark ? 0.45 : 0.25)
                 .onTapGesture { hold.dismissPanel() }
             ScrollView {
