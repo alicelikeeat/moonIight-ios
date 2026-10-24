@@ -196,7 +196,7 @@ final class HoldController: ObservableObject {
     private func globalTiles() -> [RingItem] {
         [
             RingItem(title: "录屏", systemImage: "record.circle", key: "record") { [weak self] in
-                self?.app?.showToast("录屏在下一版用系统 ReplayKit，只录本应用")
+                self?.app?.toggleRecording()
             },
             RingItem(title: "设置", systemImage: "gearshape", key: "settings") { [weak self] in
                 self?.app?.tab = .me
@@ -219,8 +219,8 @@ final class HoldController: ObservableObject {
                 let idx = order.firstIndex(of: app.feedScope) ?? 0
                 app.setScope(order[(idx + 1) % order.count])
             },
-            RingItem(title: "最近删除", systemImage: "trash") { [weak self] in
-                self?.app?.showToast("最近删除还在后面的版本")
+            RingItem(title: "最近删除", systemImage: "trash", key: "recent") { [weak self] in
+                self?.app?.showTrash = true
             },
         ]
     }
@@ -332,7 +332,8 @@ struct HoldChrome: View {
                                     tile.action()
                                 } label: {
                                     VStack(spacing: 6) {
-                                        Image(systemName: tile.systemImage).font(.system(size: 18))
+                                        SkinBadge(systemImage: tile.systemImage, key: tile.key, title: tile.title, skins: app.settings.buttonSkins, ink: tile.destructive ? ink.danger : ink.text)
+                                            .frame(width: 28, height: 28)
                                         Text(tile.title)
                                             .font(.system(size: 11))
                                             .multilineTextAlignment(.center)

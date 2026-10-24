@@ -207,6 +207,13 @@ struct AppSettings: Codable, Equatable, Sendable {
     /// HoldContext raw value → TimedActions key. Destructive keys are dropped on load.
     var timedAssign: [String: String] = [:]
     var centerPanel: Bool = true
+    var buttonSkins: [String: ButtonSkin] = [:]
+    var momentAutoplay: MomentAutoplay = .all
+    var momentAutoplayIds: [String] = []
+    var homeBackdropVideo: Bool = false
+    var iconPreset: String = IconPreset.primary.rawValue
+    var bgRefreshOn: Bool = true
+    var lastRefreshAt: Int64 = 0
 
     /// Missing keys from older builds keep their defaults instead of wiping the file.
     static func load(_ data: Data) -> AppSettings? {
@@ -230,6 +237,13 @@ struct AppSettings: Codable, Equatable, Sendable {
             "timedAutoFire": true,
             "timedAssign": [String: String](),
             "centerPanel": true,
+            "buttonSkins": [String: Any](),
+            "momentAutoplay": "all",
+            "momentAutoplayIds": [String](),
+            "homeBackdropVideo": false,
+            "iconPreset": "primary",
+            "bgRefreshOn": true,
+            "lastRefreshAt": 0,
         ]
         for (key, value) in defaults where obj[key] == nil { obj[key] = value }
         guard JSONSerialization.isValidJSONObject(obj),

@@ -7,7 +7,8 @@ struct MeView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
     @Environment(\.moon) private var colors
-    @State private var showLibrary = false
+    @State private var meSheet: MeSheet?
+    @State private var coverPlaying = true
     @State private var avatarItem: PhotosPickerItem?
     @State private var coverItem: PhotosPickerItem?
     @State private var editingName = false
@@ -23,7 +24,7 @@ struct MeView: View {
                         cover(me)
                             .frame(height: 180)
                             .clipped()
-                        PhotosPicker(selection: $coverItem, matching: .images) {
+                        PhotosPicker(selection: $coverItem, matching: .any(of: [.images, .videos])) {
                             Text("换封面").font(.system(size: 12, weight: .semibold))
                                 .padding(.horizontal, 10).padding(.vertical, 6)
                                 .background(.ultraThinMaterial, in: Capsule())
@@ -42,9 +43,9 @@ struct MeView: View {
                     .padding(.horizontal, 16)
                     .offset(y: -28)
                     VStack(spacing: 10) {
-                        navRow("库", "square.grid.2x2", id: "me.library") { showLibrary = true }
+                        navRow("库", "square.grid.2x2", id: "me.library") { meSheet = .library }
                         navRow("编辑资料", "pencil", id: "me.edit") { name = me.name; bio = me.bio; editingName = true }
-                        navRow("设置", "gearshape", id: "me.settings") { app.requestSettings = true }
+                        navRow("设置", "gearshape", id: "me.settings") { meSheet = .settings }
                     }
                     .padding(.horizontal, 16)
                 }
@@ -54,20 +55,18 @@ struct MeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .moonOnChange(of: avatarItem) { item in
                 guard let item else { return }
+                let contact = me.id
                 Task {
-                    if let data = try? await item.loadTransferable(type: Data.self) {
-                        app.copyProfileData(contactId: me.id, data: data, cover: false)
-                    }
-                    avatarItem = nil
+                    await app.importProfile(item: item, contactId: contact, cover: false)
+                    await MainActor.run { avatarItem = nil }
                 }
             }
             .moonOnChange(of: coverItem) { item in
                 guard let item else { return }
+                let contact = me.id
                 Task {
-                    if let data = try? await item.loadTransferable(type: Data.self) {
-                        app.copyProfileData(contactId: me.id, data: data, cover: true)
-                    }
-                    coverItem = nil
+                    await app.importProfile(item: item, contactId: contact, cover: true)
+                    await MainActor.run { coverItem = nil }
                 }
             }
             .alert("编辑资料", isPresented: $editingName) {
@@ -82,42 +81,75 @@ struct MeView: View {
                 Button("取消", role: .cancel) {}
             }
         }
-        .sheet(isPresented: $showLibrary) {
-            NavigationStack {
-                LibraryView()
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("完成") { showLibrary = false }
-                        }
-                    }
-            }
+        .onAppear { if app.requestSettings { meSheet = .settings } }
+        .moonOnChange(of: app.requestSettings) { on in
+            if on { meSheet = .settings }
         }
-        .sheet(isPresented: Binding(get: { app.requestSettings }, set: { app.requestSettings = $0 })) {
-            NavigationStack {
-                SettingsView()
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("完成") { app.requestSettings = false }
-                                .accessibilityIdentifier("settings.done")
+        .sheet(item: $meSheet, onDismiss: { app.requestSettings = false }) { sheet in
+            switch sheet {
+            case .library:
+                NavigationStack {
+                    LibraryView()
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("完成") { meSheet = nil }
+                            }
                         }
-                    }
+                }
+            case .settings:
+                NavigationStack {
+                    SettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("完成") { meSheet = nil }
+                                    .accessibilityIdentifier("settings.done")
+                            }
+                        }
+                }
+            case .focus:
+                focusSheet(cover: false)
+            case .coverFocus:
+                focusSheet(cover: true)
             }
         }
     }
 
+    private func focusSheet(cover: Bool) -> some View {
+        let me = app.social.me
+        return FocusEditor(
+            path: cover ? me.coverPath : me.avatarPath,
+            video: cover ? me.coverVideo : me.avatarVideo,
+            focus: Binding(
+                get: { (cover ? app.social.me.coverFocus : app.social.me.avatarFocus) ?? MediaFocus() },
+                set: { value in
+                    let next = value.clamped()
+                    app.editSocial { s in
+                        guard let i = s.contacts.firstIndex(where: { $0.id == s.selfId }) else { return }
+                        if cover { s.contacts[i].coverFocus = next } else { s.contacts[i].avatarFocus = next }
+                    }
+                }
+            )
+        )
+    }
+
     private func cover(_ me: Contact) -> some View {
-        Group {
-            if let path = me.coverPath, FileManager.default.fileExists(atPath: path) {
-                RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill)
+        let focus = me.coverFocus ?? MediaFocus()
+        return Group {
+            if let path = me.coverPath, me.coverVideo, FileManager.default.fileExists(atPath: path), coverPlaying {
+                LoopFilm(ref: path)
+            } else if let path = me.coverPath, FileManager.default.fileExists(atPath: path), let image = UIImage(contentsOfFile: path) {
+                Image(uiImage: image).resizable().scaledToFill()
             } else {
                 ArtPlate(seed: 0)
             }
         }
+        .scaleEffect(CGFloat(focus.scale))
+        .offset(x: CGFloat(focus.x - 0.5) * 80, y: CGFloat(focus.y - 0.5) * 40)
         .onLongPressGesture(minimumDuration: 0.45) { profileRing(me, cover: true) }
     }
 
     private func avatar(_ me: Contact) -> some View {
-        PhotosPicker(selection: $avatarItem, matching: .images) {
+        PhotosPicker(selection: $avatarItem, matching: .any(of: [.images, .videos])) {
             Group {
                 if let path = me.avatarPath, FileManager.default.fileExists(atPath: path) {
                     RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill)
@@ -137,21 +169,17 @@ struct MeView: View {
         ring.present(origin: CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY), items: [
             RingItem(title: "更换", systemImage: "photo") { app.showToast(cover ? "点右上角换封面" : "点头像换一张") },
             RingItem(title: "调整位置", systemImage: "arrow.up.and.down.and.arrow.left.and.right") {
-                app.editSocial { s in
-                    guard let i = s.contacts.firstIndex(where: { $0.id == me.id }) else { return }
-                    if cover {
-                        var f = s.contacts[i].coverFocus ?? MediaFocus()
-                        f.y = min(1, f.y + 0.1)
-                        s.contacts[i].coverFocus = f
-                    } else {
-                        var f = s.contacts[i].avatarFocus ?? MediaFocus()
-                        f.scale = min(MediaFocus.maxScale, f.scale + 0.15)
-                        s.contacts[i].avatarFocus = f
-                    }
-                }
-                app.showToast("已微调位置")
+                meSheet = cover ? .coverFocus : .focus
             },
-            RingItem(title: "播放", systemImage: "play") { app.showToast("封面视频会在后续版本循环播放") },
+            RingItem(title: coverPlaying ? "暂停" : "播放", systemImage: coverPlaying ? "pause" : "play") {
+                let current = cover ? app.social.me.coverVideo : app.social.me.avatarVideo
+                let path = cover ? app.social.me.coverPath : app.social.me.avatarPath
+                guard current, path != nil else {
+                    app.showToast(cover ? "封面还是图片，换一段视频才能循环播放" : "头像还是图片，换一段视频才能循环播放")
+                    return
+                }
+                coverPlaying.toggle()
+            },
             RingItem(title: "恢复默认", systemImage: "arrow.uturn.backward") { app.restoreProfile(contactId: me.id, cover: cover) },
         ], groups: [], settings: app.settings)
     }
@@ -182,15 +210,62 @@ struct MeView: View {
     }
 }
 
+enum MeSheet: String, Identifiable {
+    case library, settings, focus, coverFocus
+    var id: String { rawValue }
+}
+
+enum SettingsPage: String, Identifiable {
+    case skins, icons, autoplay, focus, trash
+    var id: String { rawValue }
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
     @Environment(\.moon) private var colors
     @State private var exportURL: URL?
     @State private var importing = false
+    @State private var page: SettingsPage?
+    @State private var backdropItem: PhotosPickerItem?
 
     var body: some View {
         Form {
+            Section("功能") {
+                Button("按键背景") { page = .skins }
+                    .accessibilityIdentifier("settings.skins")
+                Button("主屏幕图标") { page = .icons }
+                    .accessibilityIdentifier("settings.icons")
+                Button("朋友圈播放 · \(app.settings.momentAutoplay.label)") { page = .autoplay }
+                    .accessibilityIdentifier("settings.autoplay")
+                PhotosPicker(selection: $backdropItem, matching: .any(of: [.images, .videos])) {
+                    Text("首页背景")
+                }
+                .accessibilityIdentifier("settings.backdrop")
+                Button("清除首页背景") {
+                    app.settings.homeBackdropPath = nil
+                    app.settings.homeBackdropVideo = false
+                    app.saveSettings()
+                }
+                Button("调整头像位置") { page = .focus }
+                    .accessibilityIdentifier("settings.focus")
+                Button("最近删除") { page = .trash }
+                    .accessibilityIdentifier("settings.trash")
+                Toggle("后台刷新公开源", isOn: Binding(
+                    get: { app.settings.bgRefreshOn },
+                    set: {
+                        app.settings.bgRefreshOn = $0
+                        app.saveSettings()
+                        BGRefresh.schedule(enabled: $0)
+                    }
+                ))
+                .accessibilityIdentifier("settings.refresh")
+                if app.settings.lastRefreshAt > 0 {
+                    Text("上次刷新已记下").font(.caption).foregroundColor(.secondary)
+                } else {
+                    Text("系统决定什么时候跑，不保证立刻执行。").font(.caption).foregroundColor(.secondary)
+                }
+            }
             Section("外观") {
                 Picker("主题", selection: binding(\.theme)) {
                     ForEach(ThemeMode.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -304,7 +379,7 @@ struct SettingsView: View {
                 Button("导入备份") { importing = true }
             }
             Section("关于") {
-                Text("月光 0.3.1 · iOS")
+                Text("月光 1.0 · iOS")
                 Text("不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -314,6 +389,33 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("settings.root")
         .background { SystemGlassFill(dark: colors.dark) }
+        .sheet(item: $page) { page in
+            switch page {
+            case .skins: ButtonSkinsView()
+            case .icons: IconPickerView()
+            case .autoplay: AutoplaySheet()
+            case .focus:
+                FocusEditor(
+                    path: app.social.me.avatarPath,
+                    video: app.social.me.avatarVideo,
+                    focus: Binding(
+                        get: { app.social.me.avatarFocus ?? MediaFocus() },
+                        set: { value in
+                            let next = value.clamped()
+                            app.editSocial { s in
+                                guard let i = s.contacts.firstIndex(where: { $0.id == s.selfId }) else { return }
+                                s.contacts[i].avatarFocus = next
+                            }
+                        }
+                    )
+                )
+            case .trash: TrashView()
+            }
+        }
+        .moonOnChange(of: backdropItem) { item in
+            guard let item else { return }
+            Task { await importBackdrop(item) }
+        }
         .sheet(isPresented: Binding(get: { exportURL != nil }, set: { if !$0 { exportURL = nil } })) {
             if let exportURL { ShareSheet(items: [exportURL]) }
         }
@@ -324,6 +426,40 @@ struct SettingsView: View {
                 if ok { url.stopAccessingSecurityScopedResource() }
             }
         }
+    }
+
+    private func importBackdrop(_ item: PhotosPickerItem) async {
+        let video = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+        Paths.ensureDirs()
+        if video, let movie = try? await item.loadTransferable(type: MovieFile.self) {
+            let ext = movie.url.pathExtension.isEmpty ? "mov" : movie.url.pathExtension
+            let dest = Paths.media.appendingPathComponent("bg_\(IDs.new()).\(ext)")
+            do {
+                try FileManager.default.copyItem(at: movie.url, to: dest)
+                await MainActor.run {
+                    app.settings.homeBackdropPath = dest.path
+                    app.settings.homeBackdropVideo = true
+                    app.saveSettings()
+                    app.showToast("已设为视频背景")
+                }
+            } catch {
+                await MainActor.run { app.showToast("没能保存背景") }
+            }
+        } else if let data = try? await item.loadTransferable(type: Data.self) {
+            let dest = Paths.media.appendingPathComponent("bg_\(IDs.new()).jpg")
+            do {
+                try data.write(to: dest)
+                await MainActor.run {
+                    app.settings.homeBackdropPath = dest.path
+                    app.settings.homeBackdropVideo = false
+                    app.saveSettings()
+                    app.showToast("已设为背景")
+                }
+            } catch {
+                await MainActor.run { app.showToast("没能保存背景") }
+            }
+        }
+        await MainActor.run { backdropItem = nil }
     }
 
     private func previewStar() {
@@ -499,7 +635,7 @@ struct FullPlayerView: View {
         let groups = [
             MenuGroup(title: "更多", items: [
                 RingItem(title: "随机一条", systemImage: "shuffle", key: "random") { app.randomItem() },
-                RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.showToast("录屏在下一版用系统 ReplayKit，只录本应用") },
+                RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.toggleRecording() },
             ]),
         ]
         ring.fingerDown = true

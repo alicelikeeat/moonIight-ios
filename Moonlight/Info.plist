@@ -22,6 +22,40 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+		</dict>
+		<key>CFBundleAlternateIcons</key>
+		<dict>
+			<key>IconInk</key>
+			<dict>
+				<key>CFBundleIconName</key>
+				<string>IconInk</string>
+			</dict>
+			<key>IconPaper</key>
+			<dict>
+				<key>CFBundleIconName</key>
+				<string>IconPaper</string>
+			</dict>
+			<key>IconCrescent</key>
+			<dict>
+				<key>CFBundleIconName</key>
+				<string>IconCrescent</string>
+			</dict>
+		</dict>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.moonlight.feed.refresh</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

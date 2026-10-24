@@ -1,8 +1,21 @@
 import SwiftUI
 import UIKit
 
+final class MoonAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey]? = nil) -> Bool {
+        BGRefresh.install()
+        return true
+    }
+
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        TransferHub.completions[identifier] = completionHandler
+        TransferHub.center?.wake(identifier)
+    }
+}
+
 @main
 struct MoonlightApp: App {
+    @UIApplicationDelegateAdaptor(MoonAppDelegate.self) var delegate
     @StateObject private var app = AppModel()
     @StateObject private var ring = RingController()
     @StateObject private var hold = HoldController()
@@ -101,6 +114,15 @@ struct RootView: View {
                     .allowsHitTesting(hold.panel != nil)
             }
         }
+        .overlay(alignment: .top) {
+            RecordPill(recorder: app.recorder) { app.toggleRecording() }
+                .padding(.top, 8)
+        }
+        .overlay {
+            if let title = app.shredTitle {
+                ShredderCurtain(title: title)
+            }
+        }
         .overlay(alignment: .bottom) {
             if let toast = app.toast {
                 ToastBar(text: toast, undo: app.undo)
@@ -108,6 +130,7 @@ struct RootView: View {
                     .padding(.bottom, 8)
             }
         }
+        .sheet(isPresented: $app.showTrash) { TrashView() }
         .sheet(isPresented: Binding(get: { ring.sheet != nil }, set: { if !$0 { ring.sheet = nil } })) {
             if let groups = ring.sheet {
                 MoreSheet(groups: groups, forceDark: ring.sheetDark) { ring.sheet = nil }
@@ -148,9 +171,10 @@ struct RootView: View {
                 },
             ]),
             MenuGroup(title: "全局", items: [
-                RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.showToast("录屏在下一版用系统 ReplayKit，只录本应用") },
+                RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.toggleRecording() },
                 RingItem(title: "发动态", systemImage: "square.and.pencil", key: "compose") { app.composer = ComposerDraft(authorId: app.social.selfId) },
                 RingItem(title: "设置", systemImage: "gearshape", key: "settings") { app.tab = .me; app.requestSettings = true },
+                RingItem(title: "最近删除", systemImage: "trash", key: "recent") { app.showTrash = true },
             ]),
         ]
         ring.present(origin: point, items: items, groups: groups, settings: app.settings, overMedia: overMedia)

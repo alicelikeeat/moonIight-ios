@@ -116,7 +116,7 @@ struct MomentCard: View {
     @ViewBuilder private var media: some View {
         if let first = moment.attachments.first {
             if first.kind == .video {
-                MomentVideo(attachment: first)
+                MomentVideo(momentID: moment.id, attachment: first)
             } else if moment.attachments.count == 1 {
                 RemoteOrLocalImage(url: first.displayURL, art: first.coverURL, mode: .fill)
                     .frame(height: 220)
@@ -195,8 +195,10 @@ struct MomentVideo: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
     @EnvironmentObject private var hold: HoldController
+    var momentID: String
     var attachment: Attachment
     @StateObject private var session = PlayerSession()
+    @State private var claimed = false
 
     var body: some View {
         ZStack {
@@ -218,9 +220,17 @@ struct MomentVideo: View {
         }
         .holdTrack(onBegan: { point in beganHold(point) }, onChanged: { hold.move($0) }, onEnded: { _ in hold.lift() })
         .onAppear {
-            if let url = playURL { session.load(url: url, autoplay: true, muted: true) }
+            let allow = app.claimMomentSlot(momentID)
+            claimed = allow
+            if allow, let url = playURL {
+                session.loop = true
+                session.load(url: url, autoplay: true, muted: true)
+            }
         }
-        .onDisappear { session.pause() }
+        .onDisappear {
+            if claimed { app.releaseMomentSlot(momentID) }
+            session.pause()
+        }
     }
 
     private func beganHold(_ point: CGPoint) {

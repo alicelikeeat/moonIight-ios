@@ -32,10 +32,12 @@ actor StoreWriter {
         return generation
     }
 
-    func writeIfCurrent(generation g: Int, social: Data, library: Data, settings: Data) {
+    func writeIfCurrent(generation g: Int, social: Data, library: Data, settings: Data, trash: Data, transfers: Data) {
         guard g == generation else { return }
         try? AtomicFile.write(social, to: Paths.socialFile)
         try? AtomicFile.write(library, to: Paths.libraryFile)
         try? AtomicFile.write(settings, to: Paths.settingsFile)
+        try? AtomicFile.write(trash, to: Paths.trashFile)
+        try? AtomicFile.write(transfers, to: Paths.transfersFile)
     }
 }

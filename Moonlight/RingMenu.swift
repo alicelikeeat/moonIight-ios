@@ -143,6 +143,7 @@ final class RingController: ObservableObject {
 
 struct RingOverlay: View {
     @ObservedObject var ring: RingController
+    @EnvironmentObject private var app: AppModel
     var body: some View {
         GeometryReader { geo in
             let frame = geo.frame(in: .global)
@@ -337,9 +338,7 @@ struct RingOverlay: View {
                 lotus(pose: pose)
             }
             VStack(spacing: 6) {
-                Image(systemName: item.systemImage)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(ink)
+                SkinBadge(systemImage: item.systemImage, key: item.key, title: item.title, skins: app.settings.buttonSkins, ink: ink)
                     .frame(width: 56, height: 56)
                     .moonDisc(overMedia: session.overMedia)
                     .background(Circle().fill(highlighted ? Color.white.opacity(0.28) : plate))
@@ -468,6 +467,8 @@ struct RingOverlay: View {
         }
         .position(x: geo.centerX, y: geo.centerY)
         .disabled(!has)
+        .accessibilityIdentifier("ring.more")
+        .accessibilityLabel("更多")
     }
 
     private func near(_ global: CGPoint, session: RingSession, center: CGPoint) -> Bool {

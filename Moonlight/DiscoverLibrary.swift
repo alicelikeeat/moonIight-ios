@@ -43,6 +43,11 @@ struct DiscoverView: View {
                         Text(error).font(.system(size: 13)).foregroundColor(colors.textDim)
                             .accessibilityIdentifier("discover.error")
                     }
+                    if !app.refreshCache.isEmpty {
+                        Text("后台带到 \(app.refreshCache.count) 条公开影像")
+                            .font(.system(size: 13, weight: .semibold))
+                            .accessibilityIdentifier("discover.refresh")
+                    }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                         ForEach(app.discoverResults) { entry in
                             Button { app.addRemote(entry) } label: {
@@ -103,6 +108,8 @@ struct LibraryView: View {
     @Environment(\.moon) private var colors
     @Environment(\.dismiss) private var dismiss
     @State private var filter = 0
+    @State private var picking = false
+    @State private var picked = Set<String>()
 
     var body: some View {
         let items = filtered
@@ -114,7 +121,15 @@ struct LibraryView: View {
                     Text("下载").tag(2)
                 }
                 .pickerStyle(.segmented)
+                .accessibilityIdentifier("library.filters")
                 if filter == 2 {
+                    Text("我的下载")
+                        .font(.system(size: 15, weight: .semibold))
+                        .accessibilityIdentifier("library.downloads")
+                    if app.library.downloads.isEmpty {
+                        Text("还没有主动下载").font(.system(size: 13)).foregroundColor(colors.textDim)
+                    }
+                    Text("自动缓存不会出现在这里").font(.caption).foregroundColor(colors.textDim)
                     ForEach(app.library.downloads) { task in
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -129,9 +144,28 @@ struct LibraryView: View {
                         .moonGlass(colors, radius: 14)
                     }
                 }
+                if picking {
+                    Text(items.isEmpty ? "先导入内容，再多选" : "已选 \(picked.count) 项")
+                        .font(.system(size: 13))
+                        .foregroundColor(colors.textDim)
+                        .accessibilityIdentifier("library.picking")
+                    if !picked.isEmpty {
+                        HStack {
+                            Button("收藏") { for id in picked { app.favoriteOnly(id) } }
+                            Button("删除") { for id in picked { app.deleteEntry(id) }; picked.removeAll() }
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                    }
+                }
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     ForEach(items) { entry in
-                        Button { app.focus(id: entry.id) } label: {
+                        Button {
+                            if picking {
+                                if picked.contains(entry.id) { picked.remove(entry.id) } else { picked.insert(entry.id) }
+                            } else {
+                                app.focus(id: entry.id)
+                            }
+                        } label: {
                             ZStack(alignment: .topTrailing) {
                                 RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill)
                                     .frame(height: 120)
@@ -139,6 +173,13 @@ struct LibraryView: View {
                                     .clipped()
                                 if entry.favorite {
                                     Image(systemName: "heart.fill").font(.system(size: 11)).foregroundColor(colors.heart).padding(6)
+                                }
+                                if picking {
+                                    Image(systemName: picked.contains(entry.id) ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(.white)
+                                        .padding(6)
+                                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                                        .allowsHitTesting(false)
                                 }
                             }
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -156,6 +197,15 @@ struct LibraryView: View {
         .background { SystemGlassFill(dark: colors.dark) }
         .navigationTitle("库")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(picking ? "完成选择" : "多选") {
+                    picking.toggle()
+                    if !picking { picked.removeAll() }
+                }
+                .accessibilityIdentifier("library.multi")
+            }
+        }
     }
 
     private var filtered: [MediaEntry] {
@@ -186,7 +236,7 @@ struct LibraryView: View {
                 app.composer = ComposerDraft(authorId: app.social.selfId, attachments: [app.attachment(from: entry)])
             },
             RingItem(title: "分享", systemImage: "square.and.arrow.up") { share(entry) },
-            RingItem(title: "多选", systemImage: "checkmark.circle") { app.showToast("多选还在后面的版本") },
+            RingItem(title: "多选", systemImage: "checkmark.circle") { picking = true },
         ]
     }
 

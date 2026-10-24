@@ -1,10 +1,10 @@
 # 月光 · iOS
 
-这是 Android 版「月光」（`com.moonlight.feed`）的 iOS 原生 SwiftUI 版本，当前是 **0.3.1**。界面是简体中文。包名 `com.moonlight.feed`，最低系统 iOS 16。
+这是 Android 版「月光」（`com.moonlight.feed`）的 iOS 原生 SwiftUI 版本，当前是 **1.0**。界面是简体中文。包名 `com.moonlight.feed`，最低系统 iOS 16。
 
-0.3.1 修了一个真机问题：启动后每个按钮都点不动。底栏改成系统 TabView，页面背景改成系统玻璃（iOS 26 用 Liquid Glass，更早的系统用 Material），不再自绘全屏动画层。长按和短按可以落在同一个按钮上：短按执行按钮，长按仍打开圆环。
+1.0 补上录屏（只录本应用）、29 个按键的图片或视频背景、朋友圈自动播放、头像封面的位置编辑、首页图片或视频背景、碎纸机和最近删除、主动下载和自动缓存、四套预设图标，以及后台刷新公开源。底栏仍是系统 TabView，页面仍是系统玻璃。短按执行按钮，长按仍打开圆环。
 
-0.3 补上定时长按和屏幕中心按住 5 秒的「全部按键」。定时长按默认关闭，到时只执行分配好的、非破坏性的按钮，并可以撤销。0.2 的长按圆环还在：旋转、荷花、星轨、月光和随机。和 Android v5.0 还差什么见 [FEATURE_PARITY.md](FEATURE_PARITY.md)。
+0.3.1 修了启动后按钮点不动。0.3 是定时长按和屏幕中心按住 5 秒的「全部按键」。和 Android v5.0 还差什么见 [FEATURE_PARITY.md](FEATURE_PARITY.md)。
 
 这个仓库打出来的是**未签名**的 `.ipa`。没有 Mac、也没有付费 Apple 开发者账号时，用 AltStore 或 Sideloadly，用你自己的 Apple ID 在安装时重新签名，就可以装到自己的 iPhone 上。
 

@@ -471,6 +471,79 @@ final class LogicTests: XCTestCase {
         XCTAssertEqual(loaded.starSpeed, 2, accuracy: 0)
         XCTAssertFalse(AppSettings().timedOn)
         XCTAssertTrue(AppSettings().centerPanel)
+        XCTAssertEqual(loaded.momentAutoplay, .all)
+        XCTAssertTrue(loaded.buttonSkins.isEmpty)
+        XCTAssertEqual(loaded.iconPreset, IconPreset.primary.rawValue)
+        XCTAssertTrue(loaded.bgRefreshOn)
+    }
+
+    func testV1ParityRules() {
+        XCTAssertEqual(ButtonSkinID.allCases.count, 29)
+        XCTAssertEqual(ButtonSkins.count, 29)
+        XCTAssertEqual(ButtonSkins.identify(key: "record", title: "别的"), .record)
+        XCTAssertEqual(ButtonSkins.identify(key: nil, title: "已收藏"), .fav)
+        XCTAssertEqual(ButtonSkins.identify(key: "mv_save", title: "保存到相册"), .save)
+
+        var skins: [String: ButtonSkin] = [:]
+        let photo = ButtonSkin(path: "/tmp/a.jpg", video: false)
+        ButtonSkins.assign([.fav, .mute], skin: photo, into: &skins)
+        XCTAssertEqual(skins.count, 2)
+        let video = ButtonSkin(path: "/tmp/a.mov", video: true)
+        ButtonSkins.assignAll(video, into: &skins)
+        XCTAssertEqual(skins.count, 29)
+        XCTAssertTrue(skins.values.allSatisfy(\.video))
+        ButtonSkins.clear([.fav], skins: &skins)
+        XCTAssertNil(skins[ButtonSkinID.fav.rawValue])
+
+        let ids = (0..<8).map { "b\($0)" }
+        XCTAssertEqual(SkinPlayBudget.playing(ids).count, 4)
+        XCTAssertEqual(SkinPlayBudget.playing(["a", "a", "b"]).count, 2)
+
+        XCTAssertFalse(MomentPlay.allows(mode: .off, momentID: "m", picked: [], already: 0))
+        XCTAssertTrue(MomentPlay.allows(mode: .all, momentID: "m", picked: [], already: 5))
+        XCTAssertFalse(MomentPlay.allows(mode: .all, momentID: "m", picked: [], already: 6))
+        XCTAssertTrue(MomentPlay.allows(mode: .picked, momentID: "m", picked: ["m"], already: 0))
+        XCTAssertFalse(MomentPlay.allows(mode: .picked, momentID: "x", picked: ["m"], already: 0))
+
+        var bin: [TrashItem] = []
+        let entry = MediaEntry(kind: .image, title: "月亮")
+        TrashBin.shredEntry(entry, into: &bin, now: 10)
+        XCTAssertEqual(bin.count, 1)
+        let moment = Moment(authorId: "me", text: "晚安")
+        TrashBin.shredMoment(moment, into: &bin, now: 11)
+        XCTAssertEqual(bin.count, 2)
+        let back = TrashBin.take(bin[0].id, from: &bin)
+        XCTAssertEqual(back?.moment?.text, "晚安")
+        XCTAssertEqual(bin.count, 1)
+        XCTAssertEqual(bin[0].entry?.title, "月亮")
+
+        XCTAssertTrue(DownloadLane.active.listsInLibrary)
+        XCTAssertFalse(DownloadLane.auto.listsInLibrary)
+        let url = URL(string: "https://archive.org/download/film/a.mp4")!
+        let ranged = ResumePlan.request(url: url, receivedBytes: 2048)
+        XCTAssertEqual(ranged.value(forHTTPHeaderField: "Range"), "bytes=2048-")
+        XCTAssertNil(ResumePlan.request(url: url, receivedBytes: 0).value(forHTTPHeaderField: "Range"))
+        let ns = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled, userInfo: [NSURLSessionDownloadTaskResumeData: Data([1, 2, 3])])
+        XCTAssertEqual(ResumePlan.resumeData(from: ns), Data([1, 2, 3]))
+        XCTAssertEqual(TransferRestart.choose(received: 10, hasResume: true, hasPartial: true), .resume)
+        XCTAssertEqual(TransferRestart.choose(received: 10, hasResume: false, hasPartial: true), .range(10))
+        XCTAssertEqual(TransferRestart.choose(received: 10, hasResume: false, hasPartial: false), .full)
+
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dest = dir.appendingPathComponent("a.bin")
+        let part = dir.appendingPathComponent("b.bin")
+        try? Data([1, 2]).write(to: dest)
+        try? Data([3]).write(to: part)
+        try? FileJoin.append(part: part, onto: dest)
+        XCTAssertEqual(try? Data(contentsOf: dest), Data([1, 2, 3]))
+
+        XCTAssertEqual(IconPreset.allCases.map(\.alternateName), [nil, "IconInk", "IconPaper", "IconCrescent"])
+        let kept = MediaEntry(kind: .video, title: "old", remoteURL: "https://example.com/a.mp4")
+        let extra = MediaEntry(kind: .video, title: "new", remoteURL: "https://example.com/b.mp4")
+        let dup = MediaEntry(kind: .video, title: "again", remoteURL: "https://example.com/a.mp4")
+        let merged = PublicRefresh.merge(existing: [kept], incoming: [extra, dup])
+        XCTAssertEqual(merged.map(\.title), ["old", "new"])
     }
 }
 

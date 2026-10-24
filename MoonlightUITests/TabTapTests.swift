@@ -68,7 +68,7 @@ final class TabTapTests: XCTestCase {
             settingsPage.waitForExistence(timeout: 5)
                 || app.staticTexts["外观"].waitForExistence(timeout: 2)
                 || app.staticTexts["主题"].waitForExistence(timeout: 2)
-                || app.staticTexts["月光 0.3.1 · iOS"].waitForExistence(timeout: 2),
+                || app.staticTexts["月光 1.0 · iOS"].waitForExistence(timeout: 2),
             "设置页没有出现\n\(app.debugDescription)"
         )
         let done = app.buttons["settings.done"]
@@ -76,6 +76,81 @@ final class TabTapTests: XCTestCase {
 
         home.tap()
         XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5) || app.staticTexts["还没有内容"].waitForExistence(timeout: 2))
+    }
+
+    func testV1EntryPoints() {
+        openSettings()
+        openSheet("settings.skins", root: "skins.root", done: "skins.done", expect: ["29 个按键"])
+        openSheet("settings.icons", root: "icons.root", done: "icons.done", expect: ["墨色", "素纸", "新月"])
+        openSheet("settings.autoplay", root: "moment.autoplay", done: "autoplay.done", expect: ["全部", "指定", "关闭"])
+
+        XCTAssertTrue(app.descendants(matching: .any)["settings.backdrop"].waitForExistence(timeout: 4), "没有首页背景入口")
+        openSheet("settings.focus", root: "focus.editor", done: "focus.done")
+        let trash = app.descendants(matching: .any)["settings.trash"]
+        XCTAssertTrue(trash.waitForExistence(timeout: 4))
+        if trash.isHittable { trash.tap() } else { trash.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.descendants(matching: .any)["trash.root"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["最近删除是空的"].waitForExistence(timeout: 3) || app.descendants(matching: .any)["trash.empty"].exists)
+        app.buttons["trash.done"].tap()
+
+        let refresh = app.switches["后台刷新公开源"]
+        let refreshId = app.descendants(matching: .any)["settings.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 4) || refreshId.waitForExistence(timeout: 2), "没有后台刷新开关\n\(app.debugDescription)")
+
+        app.buttons["settings.done"].tap()
+        let library = app.buttons["me.library"]
+        XCTAssertTrue(library.waitForExistence(timeout: 5))
+        library.tap()
+        let downloads = app.buttons["下载"]
+        XCTAssertTrue(downloads.waitForExistence(timeout: 5))
+        downloads.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["library.downloads"].waitForExistence(timeout: 5), "我的下载没有出现\n\(app.debugDescription)")
+        app.buttons["library.multi"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["library.picking"].waitForExistence(timeout: 4), "多选没有进入选择\n\(app.debugDescription)")
+    }
+
+    func testRecordFromTheRing() {
+        let jump = app.buttons["home.discover"]
+        XCTAssertTrue(jump.waitForExistence(timeout: 12))
+        jump.press(forDuration: 1.1)
+        let more = app.buttons["ring.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5), "长按没有打开圆环上的更多\n\(app.debugDescription)")
+        more.tap()
+        let record = app.buttons["录屏"]
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        record.tap()
+        let pill = app.descendants(matching: .any)["record.pill"]
+        let denied = app.staticTexts["这台设备现在不能录屏"]
+        XCTAssertTrue(
+            pill.waitForExistence(timeout: 4) || denied.waitForExistence(timeout: 3),
+            "录屏没有开始，也没有说明这台设备不能录\n\(app.debugDescription)"
+        )
+        if pill.exists, app.buttons["停止"].exists { app.buttons["停止"].tap() }
+    }
+
+    private func openSettings() {
+        let me = tab("我")
+        XCTAssertTrue(me.waitForExistence(timeout: 12))
+        me.tap()
+        let settings = app.buttons["me.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["settings.root"].waitForExistence(timeout: 5))
+    }
+
+    private func openSheet(_ button: String, root: String, done: String, expect: [String] = []) {
+        let opener = app.descendants(matching: .any)[button]
+        XCTAssertTrue(opener.waitForExistence(timeout: 5), "找不到 \(button)\n\(app.debugDescription)")
+        if opener.isHittable { opener.tap() } else { opener.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.descendants(matching: .any)[root].waitForExistence(timeout: 5), "\(root) 没有出现\n\(app.debugDescription)")
+        for text in expect {
+            let label = app.staticTexts[text]
+            let button = app.buttons[text]
+            XCTAssertTrue(label.waitForExistence(timeout: 3) || button.waitForExistence(timeout: 2), "缺少 \(text)\n\(app.debugDescription)")
+        }
+        let close = app.buttons[done]
+        XCTAssertTrue(close.waitForExistence(timeout: 3), "找不到 \(done)\n\(app.debugDescription)")
+        close.tap()
     }
 
     /// The same control must both accept a short tap and a long-press that opens the ring.

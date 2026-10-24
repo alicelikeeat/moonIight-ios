@@ -151,8 +151,9 @@ struct FeedView: View {
                 }) {},
                 RingItem(title: "设为背景", systemImage: "photo") {
                     app.settings.homeBackdropPath = entry.localPath ?? entry.remoteURL
+                    app.settings.homeBackdropVideo = entry.kind == .video
                     app.saveSettings()
-                    app.showToast("已设为背景")
+                    app.showToast(entry.kind == .video ? "已设为视频背景" : "已设为背景")
                 },
                 shareSave(entry),
             ]
@@ -183,6 +184,7 @@ struct FeedView: View {
         ]
         if DownloadPolicy.canDownload(entry).ok && entry.localPath == nil {
             children.append(RingItem(title: "下载", systemImage: "arrow.down.circle") { app.download(entry) })
+            children.append(RingItem(title: "自动缓存", systemImage: "arrow.down.doc") { app.download(entry, lane: .auto) })
         }
         children.append(RingItem(title: "发到朋友圈", systemImage: "person.2", key: "post") {
             app.composer = ComposerDraft(authorId: app.social.selfId, attachments: [app.attachment(from: entry)])
@@ -196,6 +198,7 @@ struct FeedView: View {
             RingItem(title: "分享", systemImage: "square.and.arrow.up", key: "share") { share(entry) },
             RingItem(title: "保存到相册", systemImage: "square.and.arrow.down", key: "save") { app.saveToPhotos(entry) },
             RingItem(title: "下载到我的下载", systemImage: "arrow.down.circle", enabled: policy.ok) { app.download(entry) },
+            RingItem(title: "自动缓存", systemImage: "arrow.down.doc", enabled: policy.ok) { app.download(entry, lane: .auto) },
             RingItem(title: "发到朋友圈", systemImage: "person.2", key: "post") {
                 app.composer = ComposerDraft(authorId: app.social.selfId, attachments: [app.attachment(from: entry)])
             },
@@ -329,7 +332,9 @@ struct FeedPage: View {
 
     @ViewBuilder private var backdrop: some View {
         if let path = app.settings.homeBackdropPath {
-            if path.hasPrefix("http"), let url = URL(string: path) {
+            if app.settings.homeBackdropVideo {
+                LoopFilm(ref: path).allowsHitTesting(false)
+            } else if path.hasPrefix("http"), let url = URL(string: path) {
                 RemoteOrLocalImage(url: url, mode: .fill).allowsHitTesting(false)
             } else if FileManager.default.fileExists(atPath: path) {
                 RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill).allowsHitTesting(false)

@@ -59,15 +59,23 @@ final class AppModel: ObservableObject {
     @Published var discoverBusy = false
     @Published var discoverError: String?
     @Published var requestSettings = false
+    @Published var trash: [TrashItem] = []
+    @Published var showTrash = false
+    @Published var shredTitle: String?
+    @Published var refreshCache: [MediaEntry] = []
+    @Published var momentSlots: [String] = []
 
     let feedPlayer = PlayerSession()
+    let recorder = RecorderModel()
     let localTransport = LocalTransport()
     let remoteTransport = RemoteTransport(config: ChatServerConfig())
     private let writer = StoreWriter()
+    private let transfers = TransferCenter()
+    private var transferJobs: [TransferJob] = []
     private var saveTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
     private var dwellTask: Task<Void, Never>?
-    private var downloadSessions: [String: URLSession] = [:]
+    private var shredTask: Task<Void, Never>?
 
     init() {
         Paths.ensureDirs()
@@ -91,8 +99,30 @@ final class AppModel: ObservableObject {
         settings = loadedSettings
         library = loadedLibrary
         social = loadedSocial
+        if let data = AtomicFile.read(Paths.trashFile), let items = try? JSONDecoder().decode([TrashItem].self, from: data) {
+            trash = items
+        }
+        if let data = AtomicFile.read(Paths.transfersFile), let jobs = try? JSONDecoder().decode([TransferJob].self, from: data) {
+            transferJobs = jobs
+        }
+        if let data = AtomicFile.read(Paths.refreshFile), let items = try? JSONDecoder().decode([MediaEntry].self, from: data) {
+            refreshCache = items
+        }
         feedOrder = loadedLibrary.entries.sorted { $0.createdAt > $1.createdAt }.map(\.id)
         clampFeed()
+        AppHooks.model = self
+        BGRefresh.install()
+        BGRefresh.schedule(enabled: settings.bgRefreshOn)
+        transfers.onProgress = { [weak self] id, fraction, received in
+            self?.noteTransfer(id, fraction: fraction, received: received)
+        }
+        transfers.onResume = { [weak self] id, path in
+            self?.noteResume(id, path: path)
+        }
+        transfers.onFinish = { [weak self] id, file, error in
+            self?.finishTransfer(id, file: file, error: error)
+        }
+        transfers.attach(jobs: transferJobs)
     }
 
     var feedItems: [MediaEntry] {
@@ -170,14 +200,12 @@ final class AppModel: ObservableObject {
         guard let old = entry(id) else { return }
         library.entries.removeAll { $0.id == id }
         feedOrder.removeAll { $0 == id }
+        TrashBin.shredEntry(old, into: &trash, now: nowMs())
         clampFeed()
         scheduleSave()
+        playShred(old.title)
         showToast("已删除", undo: { [weak self] in
-            guard let self else { return }
-            self.library.entries.insert(old, at: 0)
-            self.feedOrder.insert(old.id, at: 0)
-            self.scheduleSave()
-            self.showToast("已撤销")
+            self?.restoreEntry(old.id)
         })
     }
 
@@ -284,40 +312,24 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func download(_ entry: MediaEntry) {
+    func download(_ entry: MediaEntry, lane: DownloadLane = .active) {
         let policy = DownloadPolicy.canDownload(entry)
-        guard policy.ok, let remote = entry.remoteURL, let url = URL(string: remote), !DownloadPolicy.isStreamURL(remote) else {
+        guard policy.ok, let remote = entry.remoteURL, URL(string: remote) != nil, !DownloadPolicy.isStreamURL(remote) else {
             showToast(policy.reason ?? "不能下载")
             return
         }
-        if entry.localPath != nil { showToast("已经在本地"); return }
-        var task = DownloadTask(url: remote, title: entry.title)
-        library.downloads.insert(task, at: 0)
+        if lane == .active && entry.localPath != nil { showToast("已经在本地"); return }
+        let id = IDs.new()
+        let job = TransferJob(id: id, url: remote, title: entry.title, lane: lane, entry: entry)
+        transferJobs.insert(job, at: 0)
+        if lane.listsInLibrary {
+            library.downloads.insert(DownloadTask(id: id, url: remote, title: entry.title), at: 0)
+            showToast("开始下载")
+        } else {
+            showToast("已开始自动缓存，不会出现在我的下载")
+        }
         scheduleSave()
-        let box = DownloadBox(taskId: task.id)
-        box.onProgress = { [weak self] p in
-            self?.patchDownload(task.id) { $0.progress = p }
-        }
-        box.onFinish = { [weak self] file, error in
-            guard let self else { return }
-            self.downloadSessions[task.id] = nil
-            if let file {
-                self.patchDownload(task.id) { $0.done = true; $0.progress = 1; $0.localPath = file.path; $0.error = nil }
-                let saved = MediaEntry(kind: entry.kind == .image ? .image : .video, title: entry.title, localPath: file.path, coverURL: entry.coverURL, platform: PlatformID.local, author: entry.author, source: "download", byteSize: taskByteSize(file.path))
-                self.library.entries.insert(saved, at: 0)
-                self.feedOrder.insert(saved.id, at: 0)
-                self.scheduleSave()
-                self.showToast("下载完成")
-            } else {
-                self.patchDownload(task.id) { $0.error = error ?? "下载失败" }
-                self.showToast(error ?? "下载失败")
-            }
-        }
-        let session = URLSession(configuration: .default, delegate: box, delegateQueue: nil)
-        box.session = session
-        downloadSessions[task.id] = session
-        session.downloadTask(with: url).resume()
-        showToast("开始下载")
+        transfers.start(job)
     }
 
     private func taskByteSize(_ path: String) -> Int64 {
@@ -386,7 +398,10 @@ final class AppModel: ObservableObject {
     func deleteMoment(_ id: String) {
         guard let old = social.moments.first(where: { $0.id == id }) else { return }
         editSocial { $0 = SocialOps.deleteMoment($0, id) }
-        showToast("已删除", undo: { [weak self] in self?.editSocial { $0 = SocialOps.upsertMoment($0, old) } })
+        TrashBin.shredMoment(old, into: &trash, now: nowMs())
+        scheduleSave()
+        playShred(old.text.isEmpty ? "一条动态" : old.text)
+        showToast("已删除", undo: { [weak self] in self?.restoreMoment(old.id) })
     }
 
     func postMoment(authorId: String, text: String, attachments: [Attachment]) {
@@ -564,13 +579,15 @@ final class AppModel: ObservableObject {
         let socialData = SocialJSON.encode(social)
         let libraryData = (try? JSONEncoder().encode(library)) ?? Data()
         let settingsData = (try? JSONEncoder().encode(settings)) ?? Data()
+        let trashData = (try? JSONEncoder().encode(trash)) ?? Data()
+        let transferData = (try? JSONEncoder().encode(transferJobs)) ?? Data()
         let writer = self.writer
         saveTask = Task {
             if Task.isCancelled { return }
             let g = await writer.bump()
             try? await Task.sleep(nanoseconds: 250_000_000)
             if Task.isCancelled { return }
-            await writer.writeIfCurrent(generation: g, social: socialData, library: libraryData, settings: settingsData)
+            await writer.writeIfCurrent(generation: g, social: socialData, library: libraryData, settings: settingsData, trash: trashData, transfers: transferData)
         }
     }
 
@@ -581,8 +598,169 @@ final class AppModel: ObservableObject {
         let socialData = SocialJSON.encode(social)
         let libraryData = (try? JSONEncoder().encode(library)) ?? Data()
         let settingsData = (try? JSONEncoder().encode(settings)) ?? Data()
+        let trashData = (try? JSONEncoder().encode(trash)) ?? Data()
+        let transferData = (try? JSONEncoder().encode(transferJobs)) ?? Data()
         let g = await writer.bump()
-        await writer.writeIfCurrent(generation: g, social: socialData, library: libraryData, settings: settingsData)
+        await writer.writeIfCurrent(generation: g, social: socialData, library: libraryData, settings: settingsData, trash: trashData, transfers: transferData)
+    }
+
+    func toggleRecording() {
+        recorder.toggle(onSaved: { [weak self] url in
+            guard let self else { return }
+            let saved = MediaEntry(kind: .video, title: "录屏", localPath: url.path, platform: PlatformID.local, source: "local", byteSize: self.taskByteSize(url.path))
+            self.library.entries.insert(saved, at: 0)
+            self.feedOrder.insert(saved.id, at: 0)
+            self.scheduleSave()
+            self.showToast("录屏已放进库")
+        }, onUnavailable: { [weak self] in
+            self?.showToast("这台设备现在不能录屏")
+        }, onEmpty: { [weak self] in
+            self?.showToast("没有录下画面")
+        })
+    }
+
+    func applyIcon(_ preset: IconPreset) {
+        settings.iconPreset = preset.rawValue
+        saveSettings()
+        UIApplication.shared.setAlternateIconName(preset.alternateName) { error in
+            DispatchQueue.main.async {
+                if error != nil { self.showToast("没能换上这个图标") }
+                else { self.showToast("图标已换成\(preset.title)") }
+            }
+        }
+    }
+
+    func absorbRefresh(_ incoming: [MediaEntry]) {
+        refreshCache = PublicRefresh.merge(existing: refreshCache, incoming: incoming)
+        settings.lastRefreshAt = nowMs()
+        if let data = try? JSONEncoder().encode(refreshCache) {
+            try? AtomicFile.write(data, to: Paths.refreshFile)
+        }
+        saveSettings()
+    }
+
+    func claimMomentSlot(_ id: String) -> Bool {
+        if momentSlots.contains(id) { return true }
+        let allowed = MomentPlay.allows(
+            mode: settings.momentAutoplay,
+            momentID: id,
+            picked: Set(settings.momentAutoplayIds),
+            already: momentSlots.count
+        )
+        guard allowed else { return false }
+        momentSlots.append(id)
+        return true
+    }
+
+    func releaseMomentSlot(_ id: String) { momentSlots.removeAll { $0 == id } }
+
+    func restoreTrash(_ id: String) {
+        guard let item = TrashBin.take(id, from: &trash) else { return }
+        if let entry = item.entry {
+            if !library.entries.contains(where: { $0.id == entry.id }) {
+                library.entries.insert(entry, at: 0)
+                feedOrder.insert(entry.id, at: 0)
+            }
+        }
+        if let moment = item.moment {
+            editSocial { $0 = SocialOps.upsertMoment($0, moment) }
+        }
+        scheduleSave()
+        showToast("已还原")
+    }
+
+    func forgetTrash(_ id: String) {
+        _ = TrashBin.take(id, from: &trash)
+        scheduleSave()
+    }
+
+    func emptyTrash() {
+        trash = []
+        scheduleSave()
+        showToast("已清空最近删除")
+    }
+
+    func importProfile(item: PhotosPickerItem, contactId: String, cover: Bool) async {
+        let video = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
+        if video, let movie = try? await item.loadTransferable(type: MovieFile.self) {
+            copyProfile(contactId: contactId, file: movie.url, video: true, cover: cover)
+        } else if let data = try? await item.loadTransferable(type: Data.self) {
+            copyProfileData(contactId: contactId, data: data, cover: cover)
+        }
+    }
+
+    private func restoreEntry(_ id: String) {
+        if let item = trash.first(where: { $0.entry?.id == id }) {
+            restoreTrash(item.id)
+        }
+    }
+
+    private func restoreMoment(_ id: String) {
+        if let item = trash.first(where: { $0.moment?.id == id }) {
+            restoreTrash(item.id)
+        }
+    }
+
+    private func playShred(_ title: String) {
+        shredTitle = title
+        shredTask?.cancel()
+        shredTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            if Task.isCancelled { return }
+            if self?.shredTitle == title { self?.shredTitle = nil }
+        }
+    }
+
+    private func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+    private func noteTransfer(_ id: String, fraction: Double, received: Int64) {
+        if let i = transferJobs.firstIndex(where: { $0.id == id }) {
+            transferJobs[i].received = received
+        }
+        patchDownload(id) { task in
+            task.progress = fraction
+        }
+    }
+
+    private func noteResume(_ id: String, path: String) {
+        if let i = transferJobs.firstIndex(where: { $0.id == id }) {
+            transferJobs[i].resumeFile = path
+            transferJobs[i].retried = true
+            scheduleSave()
+        }
+    }
+
+    private func finishTransfer(_ id: String, file: URL?, error: String?) {
+        guard let index = transferJobs.firstIndex(where: { $0.id == id }) else { return }
+        let job = transferJobs[index]
+        if let file {
+            transferJobs[index].done = true
+            transferJobs[index].error = nil
+            if job.lane.listsInLibrary {
+                patchDownload(id) { $0.done = true; $0.progress = 1; $0.localPath = file.path; $0.error = nil }
+                let source = job.entry
+                let saved = MediaEntry(
+                    kind: source?.kind == .image ? .image : .video,
+                    title: job.title,
+                    localPath: file.path,
+                    coverURL: source?.coverURL,
+                    platform: PlatformID.local,
+                    author: source?.author ?? "",
+                    source: "download",
+                    byteSize: taskByteSize(file.path)
+                )
+                library.entries.insert(saved, at: 0)
+                feedOrder.insert(saved.id, at: 0)
+                showToast("下载完成")
+            }
+        } else {
+            transferJobs[index].error = error ?? "下载失败"
+            if job.lane.listsInLibrary {
+                patchDownload(id) { $0.error = error ?? "下载失败" }
+                showToast(error ?? "下载失败")
+            }
+        }
+        scheduleSave()
     }
 
     func armDwell(for entry: MediaEntry?) {
