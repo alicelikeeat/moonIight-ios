@@ -42,7 +42,7 @@ struct RootView: View {
     @Environment(\.moon) private var colors
 
     var body: some View {
-        ZStack {
+        VStack(spacing: 0) {
             Group {
                 switch app.tab {
                 case .home: FeedView()
@@ -53,8 +53,6 @@ struct RootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
             tabBar
         }
         .overlay {
