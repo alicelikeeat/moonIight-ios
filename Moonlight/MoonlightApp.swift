@@ -19,12 +19,13 @@ struct MoonlightApp: App {
 
 struct AppRoot: View {
     @EnvironmentObject private var app: AppModel
-    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        RootView()
-            .environment(\.moon, app.settings.theme.colors(system: colorScheme))
+        // Reading colorScheme in the same view that sets preferredColorScheme cycles
+        // AttributeGraph on iOS 18+. The cycle renders once, then drops later updates,
+        // so every button looks tappable and nothing on screen changes.
+        ThemeRoot()
             .preferredColorScheme(app.settings.theme.preferred)
             .moonOnChange(of: scenePhase) { phase in
                 if phase != .active {
@@ -32,6 +33,16 @@ struct AppRoot: View {
                     Task { await app.flush() }
                 }
             }
+    }
+}
+
+private struct ThemeRoot: View {
+    @EnvironmentObject private var app: AppModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        RootView()
+            .environment(\.moon, app.settings.theme.colors(system: colorScheme))
     }
 }
 
@@ -53,6 +64,7 @@ struct RootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .id(app.tab)
             tabBar
         }
         .overlay {
@@ -87,7 +99,21 @@ struct RootView: View {
         .onAppear {
             hold.app = app
             hold.ring = ring
+            paintWindow()
         }
+    }
+
+    /// Fills the status-bar gap without ignoresSafeArea, which cycles layout against the tab bar.
+    private func paintWindow() {
+        let style = UITraitCollection.current.userInterfaceStyle
+        let dark = app.settings.theme == .dark || (app.settings.theme == .system && style == .dark)
+        let color = dark
+            ? UIColor(red: 0.027, green: 0.031, blue: 0.043, alpha: 1)
+            : UIColor(red: 0.969, green: 0.961, blue: 0.937, alpha: 1)
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .forEach { $0.backgroundColor = color }
     }
 
     private var tabBar: some View {

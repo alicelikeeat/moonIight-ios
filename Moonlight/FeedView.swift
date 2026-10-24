@@ -12,7 +12,7 @@ struct FeedView: View {
     var body: some View {
         let items = app.feedItems
         ZStack {
-            Color.black.ignoresSafeArea(edges: [.top, .horizontal]).allowsHitTesting(false)
+            Color.black.allowsHitTesting(false)
             if items.isEmpty {
                 empty
             } else {
@@ -42,17 +42,19 @@ struct FeedView: View {
                     .environmentObject(app)
                     .environmentObject(ring))
                 }
-                .ignoresSafeArea(edges: [.top, .horizontal])
             }
         }
         .moonOnChange(of: app.feedIndex) { _ in
             chrome = true
-            loadCurrent()
+            // Publishing the player from inside the update that observed feedIndex cycles the graph.
+            DispatchQueue.main.async { loadCurrent() }
         }
         .moonOnChange(of: app.tab) { tab in
             if tab != .home { app.feedPlayer.pause() }
         }
-        .onAppear { loadCurrent() }
+        .onAppear {
+            DispatchQueue.main.async { loadCurrent() }
+        }
         .sheet(isPresented: $app.jumpVisible) { jumpSheet(items) }
         .sheet(item: $app.infoEntry) { entry in InfoCard(entry: entry) }
     }
@@ -326,31 +328,30 @@ struct FeedPage: View {
             }
         }
         .background(Color.black.allowsHitTesting(false))
-        .ignoresSafeArea(edges: [.top, .horizontal])
     }
 
     @ViewBuilder private var backdrop: some View {
         if let path = app.settings.homeBackdropPath {
             if path.hasPrefix("http"), let url = URL(string: path) {
-                RemoteOrLocalImage(url: url, mode: .fill).ignoresSafeArea().allowsHitTesting(false)
+                RemoteOrLocalImage(url: url, mode: .fill).allowsHitTesting(false)
             } else if FileManager.default.fileExists(atPath: path) {
-                RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill).ignoresSafeArea().allowsHitTesting(false)
+                RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill).allowsHitTesting(false)
             }
         }
     }
 
     @ViewBuilder private func media(in size: CGSize) -> some View {
         if entry.kind == .embed, let raw = entry.embedURL, let url = URL(string: raw), active {
-            WebEmbedView(url: url).ignoresSafeArea(edges: [.top, .horizontal])
+            WebEmbedView(url: url)
         } else if entry.kind == .video && entry.embedURL == nil {
             if active {
                 PlayerLayerView(
                     player: app.feedPlayer.player,
                     gravity: Gravity.choose(mode: app.settings.videoDisplay, video: app.feedPlayer.naturalSize, view: size, override: entry.fillOverride)
                 )
-                .ignoresSafeArea().allowsHitTesting(false)
+                .allowsHitTesting(false)
             } else {
-                RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill).ignoresSafeArea().allowsHitTesting(false)
+                RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill).allowsHitTesting(false)
             }
             if active && !app.feedPlayer.showsPlaying && app.feedPlayer.errorText == nil {
                 Image(systemName: "play.fill")
@@ -365,7 +366,7 @@ struct FeedPage: View {
             }
         } else {
             RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL ?? entry.remoteURL, mode: app.settings.videoDisplay == .fill ? .fill : .fit)
-                .ignoresSafeArea().allowsHitTesting(false)
+                .allowsHitTesting(false)
         }
     }
 

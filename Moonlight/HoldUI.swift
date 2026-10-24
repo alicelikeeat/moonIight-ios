@@ -240,6 +240,8 @@ struct HoldChrome: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea()
+        // The countdown is visual only. An idle or counting full-screen layer must not eat taps.
+        .allowsHitTesting(hold.panel != nil)
     }
 
     private var indicator: some View {
@@ -357,6 +359,9 @@ struct HoldChrome: View {
 
 /// Long-press that does not cancel the Button underneath.
 /// A SwiftUI DragGesture(minimumDistance: 0) on iOS 18+ swallows every tap in the same view.
+/// The recognizer is attached only to a view the same size as this control. Putting it on the
+/// immediate superview is what made every button on iPhone dead: that superview is often the
+/// full-screen hosting view.
 struct HoldTrack: ViewModifier {
     var onBegan: (CGPoint) -> Void
     var onChanged: (CGPoint) -> Void
@@ -381,14 +386,18 @@ private struct HoldProbe: UIViewRepresentable {
     func makeUIView(context: Context) -> HoldProbeView {
         let view = HoldProbeView()
         view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
         view.coordinator = context.coordinator
         return view
     }
 
     func updateUIView(_ uiView: HoldProbeView, context: Context) {
+        // Do not install recognizers here. Adding one during a SwiftUI update re-enters
+        // layout and cycles AttributeGraph, which then drops the next button action.
         context.coordinator.parent = self
         uiView.coordinator = context.coordinator
-        uiView.installIfNeeded()
+        uiView.isUserInteractionEnabled = false
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -409,43 +418,89 @@ private struct HoldProbe: UIViewRepresentable {
     }
 }
 
+/// A long-press that must not block SwiftUI Button taps on the same control.
+private final class FriendlyLongPress: UILongPressGestureRecognizer {
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+}
+
 private final class HoldSimultaneous: NSObject, UIGestureRecognizerDelegate {
+    weak var probe: HoldProbeView?
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let probe, probe.window != nil, probe.bounds.width > 1, probe.bounds.height > 1 else { return false }
+        let point = touch.location(in: probe)
+        return probe.bounds.contains(point)
+    }
 }
 
 private final class HoldProbeView: UIView {
     weak var coordinator: HoldProbe.Coordinator?
-    private var recognizer: UILongPressGestureRecognizer?
+    private var recognizer: FriendlyLongPress?
     private let simultaneous = HoldSimultaneous()
+    private var installed = false
+    private var scheduled = false
+    private var attempts = 0
 
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        installIfNeeded()
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !installed, !scheduled else { return }
+        scheduled = true
+        // After this layout pass. Installing a recognizer inside layout re-enters SwiftUI.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scheduled = false
+            self.installIfNeeded()
+        }
     }
 
     func installIfNeeded() {
-        guard let coordinator, window != nil else { return }
-        guard let host = pressHost else { return }
-        if recognizer == nil {
-            let hold = UILongPressGestureRecognizer(target: coordinator, action: #selector(HoldProbe.Coordinator.hold(_:)))
-            hold.minimumPressDuration = 0.5
-            hold.allowableMovement = 10_000
-            hold.cancelsTouchesInView = false
-            hold.delaysTouchesBegan = false
-            hold.delaysTouchesEnded = false
-            hold.delegate = simultaneous
-            recognizer = hold
+        guard !installed, let coordinator, window != nil else { return }
+        attempts += 1
+        if attempts > 40 {
+            installed = true
+            return
         }
-        guard let recognizer else { return }
-        if recognizer.view !== host {
-            recognizer.view?.removeGestureRecognizer(recognizer)
-            host.addGestureRecognizer(recognizer)
-        }
+        guard bounds.width > 1, bounds.height > 1 else { return }
+        // No same-sized ancestor means the only parent is the full-screen host. Skip it.
+        guard let host = safeHost else { return }
+        let hold = FriendlyLongPress(target: coordinator, action: #selector(HoldProbe.Coordinator.hold(_:)))
+        hold.minimumPressDuration = 0.5
+        hold.allowableMovement = 10_000
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
+        hold.delaysTouchesEnded = false
+        simultaneous.probe = self
+        hold.delegate = simultaneous
+        installed = true
+        host.addGestureRecognizer(hold)
+        recognizer = hold
     }
 
-    /// The view this probe decorates. Stay on that view so the recognizer cannot cover the window.
-    private var pressHost: UIView? {
-        guard let host = superview, !(host is UIWindow) else { return nil }
-        return host
+    /// An ancestor no larger than this control. A bigger host is the full-screen layer that ate every tap.
+    private var safeHost: UIView? {
+        guard bounds.width > 1, bounds.height > 1 else { return nil }
+        let screen = window?.bounds ?? UIScreen.main.bounds
+        if bounds.width > screen.width * 0.9 && bounds.height > screen.height * 0.4 { return nil }
+        let maxW = bounds.width * 1.2 + 12
+        let maxH = bounds.height * 1.2 + 12
+        var best: UIView?
+        var current = superview
+        var hops = 0
+        while let view = current, !(view is UIWindow), hops < 8 {
+            if view.bounds.width > maxW || view.bounds.height > maxH { break }
+            best = view
+            current = view.superview
+            hops += 1
+        }
+        return best
     }
 }

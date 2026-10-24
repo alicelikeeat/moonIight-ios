@@ -109,8 +109,8 @@ struct MoonBackground: View {
                     .blur(radius: 40)
                     .offset(x: 80, y: -40)
             }
-            .ignoresSafeArea()
-            // Decorative only. On iOS 18+ a safe-area-ignoring background still wins hit testing and makes every button feel dead.
+            // Stay inside the safe area. ignoresSafeArea here both wins hit testing on iOS 18+
+            // and cycles AttributeGraph against the tab bar, so later taps never redraw.
             .allowsHitTesting(false)
     }
 }
