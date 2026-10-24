@@ -60,7 +60,7 @@ struct MediaTouchLayer: UIViewRepresentable {
     var onLongChanged: (CGPoint) -> Void
     var onLongEnded: (CGPoint) -> Void
     var onSwipeLeft: (() -> Void)? = nil
-    var onPinch: ((Bool) -> Void)? = nil
+    var onPinch: ((Bool?) -> Void)? = nil
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -151,7 +151,7 @@ struct MediaTouchLayer: UIViewRepresentable {
         @objc func swipe(_ g: UIPanGestureRecognizer) {
             guard g.state == .ended, let view = g.view else { return }
             let move = g.translation(in: view)
-            guard SwipeInfo.opens(dx: move.x, dy: move.y) else { return }
+            guard SwipeInfo.opensInfo(translationX: move.x, translationY: move.y) else { return }
             blockSingle = true
             generation += 1
             parent.onSwipeLeft?()
@@ -163,10 +163,9 @@ struct MediaTouchLayer: UIViewRepresentable {
                 blockSingle = true
                 generation += 1
             case .ended:
-                switch PinchFill.decide(scale: g.scale) {
-                case .fill: parent.onPinch?(true)
-                case .fit: parent.onPinch?(false)
-                case .stay: break
+                let scale = g.scale
+                if scale >= 1.12 || scale <= 0.88 {
+                    parent.onPinch?(PinchRule.override(scale: scale, current: nil))
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.blockSingle = false }
             default:

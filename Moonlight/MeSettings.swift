@@ -671,7 +671,7 @@ struct FullPlayerView: View {
                     onSwipeLeft: { app.infoEntry = entry },
                     onPinch: { fill in
                         app.updateEntry(entry.id) { $0.fillOverride = fill }
-                        app.showToast(fill ? "已铺满" : "已完整")
+                        app.showToast(fill == true ? "已铺满" : "跟随设置")
                     }
                 )
                 if ring.session != nil { RingOverlay(ring: ring) }

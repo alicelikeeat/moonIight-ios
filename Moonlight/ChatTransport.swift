@@ -56,7 +56,7 @@ struct ChatServerConfig: Equatable, Sendable {
 }
 
 /// HTTP status, body, and a transport error string. Nil status means the request never completed.
-typealias ChatExchange = @Sendable (URLRequest) async -> (Int?, Data?, String?)
+typealias ChatExchange = (URLRequest) async -> (Int?, Data?, String?)
 
 /// A small public JSON API. No account, no key. The phone only talks to the URL the user typed.
 enum ChatWire {

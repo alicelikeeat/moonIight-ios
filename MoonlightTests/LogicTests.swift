@@ -303,12 +303,12 @@ final class LogicTests: XCTestCase {
     }
 
     func testSwipePinchAndThreads() {
-        XCTAssertTrue(SwipeInfo.opens(dx: -80, dy: 10))
-        XCTAssertFalse(SwipeInfo.opens(dx: -20, dy: 4))
-        XCTAssertFalse(SwipeInfo.opens(dx: -80, dy: 90))
-        XCTAssertEqual(PinchFill.decide(scale: 1.3), .fill)
-        XCTAssertEqual(PinchFill.decide(scale: 0.7), .fit)
-        XCTAssertEqual(PinchFill.decide(scale: 1), .stay)
+        XCTAssertTrue(SwipeInfo.opensInfo(translationX: -80, translationY: 10))
+        XCTAssertFalse(SwipeInfo.opensInfo(translationX: -20, translationY: 4))
+        XCTAssertFalse(SwipeInfo.opensInfo(translationX: -80, translationY: 90))
+        XCTAssertEqual(PinchRule.override(scale: 1.3, current: nil), true)
+        XCTAssertNil(PinchRule.override(scale: 0.7, current: true))
+        XCTAssertEqual(PinchRule.override(scale: 1, current: true), true)
         let parent = Comment(id: "p", authorId: "me", text: "根", createdAt: 1)
         let child = Comment(id: "c", authorId: "me", text: "回", replyToId: "p", createdAt: 2)
         let lines = CommentTree.flat([child, parent])
