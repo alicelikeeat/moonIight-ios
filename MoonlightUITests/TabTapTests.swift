@@ -135,8 +135,12 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(more.waitForExistence(timeout: 5), "长按没有打开圆环上的更多\n\(app.debugDescription)")
         more.tap()
         let record = app.buttons["录屏"]
-        XCTAssertTrue(record.waitForExistence(timeout: 5))
-        record.tap()
+        let recordId = app.descendants(matching: .any)["more.record"]
+        XCTAssertTrue(
+            record.waitForExistence(timeout: 5) || recordId.waitForExistence(timeout: 2),
+            "更多里没有录屏\n\(app.debugDescription)"
+        )
+        if record.exists { record.tap() } else { recordId.tap() }
         let pill = app.descendants(matching: .any)["record.pill"]
         let denied = app.staticTexts["这台设备现在不能录屏"]
         XCTAssertTrue(
@@ -202,7 +206,12 @@ final class TabTapTests: XCTestCase {
             "相机既没有快门，也没有说明这台设备没有相机\n\(app.debugDescription)"
         )
         if missing.exists {
-            XCTAssertTrue(library.waitForExistence(timeout: 2), "没有相机时不能改从相册选")
+            let album = app.buttons["从相册选照片"]
+            let albumText = app.staticTexts["从相册选照片"]
+            XCTAssertTrue(
+                library.waitForExistence(timeout: 2) || album.waitForExistence(timeout: 2) || albumText.waitForExistence(timeout: 1),
+                "没有相机时不能改从相册选\n\(app.debugDescription)"
+            )
         }
         app.buttons["camera.close"].tap()
     }

@@ -123,7 +123,7 @@ final class HoldController: ObservableObject {
             pendingFired = true
             Haptics.confirm()
             panel = makePanel()
-            ring?.sheet = nil
+            ring?.menu = nil
             ring?.dismiss()
         case .timed(_, let key, let deferred):
             if deferred { onDeferredOpen?() }
@@ -405,16 +405,28 @@ enum TabChrome {
 
     /// The system tab bar stays in the tree when SwiftUI's toolbar visibility does not stick.
     /// Hidden bars are not hittable, which is what the immersive playback test watches.
+    /// Forcing a visible bar back on while a sheet is presenting cancels that sheet, so a bar
+    /// that is already showing is left alone, and so is any bar under a presented controller.
     static func setBarHidden(_ hidden: Bool) {
         let windows = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
         for window in windows {
             guard let bar = anyTabBar(window.rootViewController) else { continue }
+            if !hidden {
+                let alreadyShown = !bar.isHidden && bar.alpha > 0.99
+                if alreadyShown || isPresenting(window.rootViewController) { continue }
+            }
             if bar.isHidden != hidden { bar.isHidden = hidden }
             let alpha: CGFloat = hidden ? 0 : 1
             if abs(bar.alpha - alpha) > 0.01 { bar.alpha = alpha }
         }
+    }
+
+    private static func isPresenting(_ vc: UIViewController?) -> Bool {
+        guard let vc else { return false }
+        if vc.presentedViewController != nil { return true }
+        return vc.children.contains { isPresenting($0) }
     }
 
     private static func anyTabBar(_ vc: UIViewController?) -> UITabBar? {
@@ -632,9 +644,14 @@ final class FriendlyLongPress: UILongPressGestureRecognizer {
 }
 
 enum LongPressInstall {
+    /// Movement allowed before the press is recognized. A scroll that travels farther than this
+    /// fails the recognizer and keeps going. Once the ring has opened, UIKit no longer applies
+    /// this limit, so the finger can still drag onto a button or across the tab bar.
+    static let slop: CGFloat = 32
+
     static func configure(_ hold: UILongPressGestureRecognizer) {
         hold.minimumPressDuration = 0.5
-        hold.allowableMovement = 10_000
+        hold.allowableMovement = slop
         hold.cancelsTouchesInView = false
         hold.delaysTouchesBegan = false
         hold.delaysTouchesEnded = false

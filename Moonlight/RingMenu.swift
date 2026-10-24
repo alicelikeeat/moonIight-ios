@@ -19,6 +19,14 @@ struct MenuGroup: Identifiable {
     var items: [RingItem]
 }
 
+/// Captured menu for the more sheet. The groups travel with the item so the sheet
+/// is never built from a binding that SwiftUI clears while it is presenting.
+struct RingSheet: Identifiable {
+    let id = UUID()
+    var groups: [MenuGroup]
+    var dark: Bool
+}
+
 struct RingSession: Identifiable {
     let id = UUID()
     var origin: CGPoint
@@ -40,8 +48,7 @@ final class RingController: ObservableObject {
     @Published var fingerDown = false
     @Published var finger = CGPoint.zero
     @Published var expanded: UUID?
-    @Published var sheet: [MenuGroup]?
-    @Published var sheetDark = false
+    @Published var menu: RingSheet?
     @Published var closing = false
     @Published var settled = false
     @Published var closeStarted: Date?
@@ -185,9 +192,10 @@ final class RingController: ObservableObject {
 
     func openSheet() {
         let groups = session?.groups ?? []
-        sheetDark = session?.overMedia ?? false
+        let dark = session?.overMedia ?? false
         beginClose()
-        if !groups.isEmpty { sheet = groups }
+        guard !groups.isEmpty else { return }
+        menu = RingSheet(groups: groups, dark: dark)
     }
 }
 
@@ -464,8 +472,7 @@ struct RingOverlay: View {
                     item.action()
                     ring.dismiss()
                 } else if item.children.count > 6 {
-                    ring.sheetDark = session.overMedia
-                    ring.sheet = [MenuGroup(title: item.title, items: item.children)]
+                    ring.menu = RingSheet(groups: [MenuGroup(title: item.title, items: item.children)], dark: session.overMedia)
                     ring.beginClose()
                 } else {
                     ring.expanded = ring.expanded == item.id ? nil : item.id
@@ -653,6 +660,7 @@ struct MoreSheet: View {
                                         HStack(spacing: 12) {
                                             Image(systemName: item.systemImage)
                                                 .frame(width: 24)
+                                                .accessibilityHidden(true)
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(item.title).font(.system(size: 16, weight: .medium))
                                             }
@@ -663,6 +671,8 @@ struct MoreSheet: View {
                                         .padding(.vertical, 12)
                                     }
                                     .disabled(!item.enabled)
+                                    .accessibilityLabel(item.title)
+                                    .accessibilityIdentifier(item.key.map { "more.\($0)" } ?? "more.\(item.title)")
                                     if item.id != group.items.last?.id {
                                         Divider().opacity(0.3).padding(.leading, 50)
                                     }
@@ -676,6 +686,7 @@ struct MoreSheet: View {
             }
             .background { SystemGlassFill(dark: colors.dark) }
             .navigationTitle("更多")
+            .accessibilityIdentifier("more.sheet")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

@@ -136,10 +136,8 @@ struct RootView: View {
             }
         }
         .sheet(isPresented: $app.showTrash) { TrashView() }
-        .sheet(isPresented: Binding(get: { ring.sheet != nil }, set: { if !$0 { ring.sheet = nil } })) {
-            if let groups = ring.sheet {
-                MoreSheet(groups: groups, forceDark: ring.sheetDark) { ring.sheet = nil }
-            }
+        .sheet(item: $ring.menu) { menu in
+            MoreSheet(groups: menu.groups, forceDark: menu.dark) { ring.menu = nil }
         }
         .sheet(item: $app.composer) { draft in
             ComposerSheet(draft: draft)

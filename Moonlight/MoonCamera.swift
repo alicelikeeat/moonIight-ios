@@ -63,8 +63,10 @@ struct MoonCamera: View {
                     .padding(.horizontal, 18)
                     .padding(.vertical, 10)
                     .moonCapsule(overMedia: true)
+                    .accessibilityIdentifier("camera.library")
             }
             .accessibilityIdentifier("camera.library")
+            .accessibilityLabel(video ? "从相册选视频" : "从相册选照片")
             Button("关闭") { onCancel() }
                 .accessibilityIdentifier("camera.close")
         }
