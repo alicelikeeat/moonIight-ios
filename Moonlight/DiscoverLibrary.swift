@@ -15,6 +15,7 @@ struct DiscoverView: View {
                     Text("公开影像来自 Archive.org、NASA、维基共享资源。Pexels / Pixabay 需要你自己的密钥。")
                         .font(.system(size: 13))
                         .foregroundColor(colors.textDim)
+                        .accessibilityIdentifier("discover.root")
                     HStack {
                         TextField("搜索月亮、海洋、城市…", text: $query)
                             .textFieldStyle(.plain)
