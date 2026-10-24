@@ -8,7 +8,6 @@ struct MeView: View {
     @EnvironmentObject private var ring: RingController
     @Environment(\.moon) private var colors
     @State private var showSettings = false
-    @State private var showLibrary = false
     @State private var avatarItem: PhotosPickerItem?
     @State private var coverItem: PhotosPickerItem?
     @State private var editingName = false
@@ -43,9 +42,9 @@ struct MeView: View {
                     .padding(.horizontal, 16)
                     .offset(y: -28)
                     VStack(spacing: 10) {
-                        navRow("库", "square.grid.2x2", id: "me.library") { showLibrary = true }
+                        navLink("库", "square.grid.2x2", id: "me.library") { LibraryView() }
                         navRow("编辑资料", "pencil", id: "me.edit") { name = me.name; bio = me.bio; editingName = true }
-                        navRow("设置", "gearshape", id: "me.settings") { showSettings = true }
+                        navLink("设置", "gearshape", id: "me.settings") { SettingsView() }
                     }
                     .padding(.horizontal, 16)
                 }
@@ -53,7 +52,6 @@ struct MeView: View {
             }
             .background { SystemGlassFill(dark: colors.dark) }
             .navigationBarHidden(true)
-            .navigationDestination(isPresented: $showLibrary) { LibraryView() }
             .navigationDestination(isPresented: $showSettings) { SettingsView() }
             .onAppear { if app.requestSettings { showSettings = true; app.requestSettings = false } }
             .moonOnChange(of: app.requestSettings) { on in
@@ -142,16 +140,29 @@ struct MeView: View {
         ], groups: [], settings: app.settings)
     }
 
+    private func rowContents(_ title: String, _ symbol: String) -> some View {
+        HStack {
+            Image(systemName: symbol).frame(width: 28)
+            Text(title).font(.system(size: 16, weight: .medium))
+            Spacer()
+            Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(colors.textDim)
+        }
+        .padding(14)
+        .moonGlass(colors, radius: 16)
+    }
+
     private func navRow(_ title: String, _ symbol: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack {
-                Image(systemName: symbol).frame(width: 28)
-                Text(title).font(.system(size: 16, weight: .medium))
-                Spacer()
-                Image(systemName: "chevron.right").font(.system(size: 13)).foregroundColor(colors.textDim)
-            }
-            .padding(14)
-            .moonGlass(colors, radius: 16)
+            rowContents(title, symbol)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(colors.text)
+        .accessibilityIdentifier(id)
+    }
+
+    private func navLink<Destination: View>(_ title: String, _ symbol: String, id: String, @ViewBuilder destination: () -> Destination) -> some View {
+        NavigationLink(destination: destination()) {
+            rowContents(title, symbol)
         }
         .buttonStyle(.plain)
         .foregroundColor(colors.text)
@@ -289,6 +300,8 @@ struct SettingsView: View {
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("settings.root")
+        .background { SystemGlassFill(dark: colors.dark) }
         .sheet(isPresented: Binding(get: { exportURL != nil }, set: { if !$0 { exportURL = nil } })) {
             if let exportURL { ShareSheet(items: [exportURL]) }
         }

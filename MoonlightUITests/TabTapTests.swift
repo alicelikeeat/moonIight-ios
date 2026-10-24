@@ -63,9 +63,13 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
         XCTAssertTrue(settings.isHittable, "设置点不到")
         settings.tap()
+        let settingsPage = app.descendants(matching: .any)["settings.root"]
         XCTAssertTrue(
-            app.staticTexts["主题"].waitForExistence(timeout: 5) || app.buttons["主题"].waitForExistence(timeout: 2),
-            "设置页没有出现"
+            settingsPage.waitForExistence(timeout: 5)
+                || app.staticTexts["外观"].waitForExistence(timeout: 2)
+                || app.staticTexts["主题"].waitForExistence(timeout: 2)
+                || app.staticTexts["月光 0.3.1 · iOS"].waitForExistence(timeout: 2),
+            "设置页没有出现\n\(app.debugDescription)"
         )
 
         home.tap()
