@@ -301,10 +301,10 @@ struct FeedView: View {
         }
         return [
             MenuGroup(title: "播放", items: [
-                RingItem(title: app.feedPlayer.showsPlaying ? "暂停" : "播放", systemImage: app.feedPlayer.showsPlaying ? "pause" : "play", key: "play", enabled: native) {
+                RingItem(title: app.feedPlayer.showsPlaying ? "暂停" : "播放", systemImage: app.feedPlayer.showsPlaying ? "pause" : "play", enabled: native, key: "play") {
                     if native { app.feedPlayer.toggle() }
                 },
-                RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat", key: "loop", enabled: native) { app.feedPlayer.loop.toggle() },
+                RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat", enabled: native, key: "loop") { app.feedPlayer.loop.toggle() },
                 RingItem(title: app.feedPlayer.isMuted ? "取消静音" : "静音", systemImage: "speaker", enabled: native) {
                     app.feedPlayer.isMuted.toggle()
                     app.settings.feedMuted = app.feedPlayer.isMuted
@@ -325,7 +325,7 @@ struct FeedView: View {
                     }
                 },
                 RingItem(title: "信息", systemImage: "info.circle", key: "info") { app.infoEntry = entry },
-                RingItem(title: "全屏播放", systemImage: "arrow.up.left.and.arrow.down.right", key: "browser", enabled: native || (entry.kind == .embed && !(entry.embedURL ?? "").isEmpty)) { app.fullPlayer = entry },
+                RingItem(title: "全屏播放", systemImage: "arrow.up.left.and.arrow.down.right", enabled: native || (entry.kind == .embed && !(entry.embedURL ?? "").isEmpty), key: "browser") { app.fullPlayer = entry },
                 RingItem(title: "用哔哩哔哩打开", systemImage: "arrow.up.right.square", enabled: entry.resolvedPlatform == PlatformID.bili && !(entry.biliBvid ?? "").isEmpty) {
                     if let bvid = entry.biliBvid { BiliLinks.open(bvid: bvid) }
                 },

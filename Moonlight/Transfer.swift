@@ -194,6 +194,7 @@ enum BGRefresh {
         var follows: [FollowedSource] = []
     }
 
+    @MainActor
     private static func plan() -> Plan {
         if let model = AppHooks.model {
             return Plan(enabled: model.settings.bgRefreshOn, follows: model.settings.follows)
@@ -206,7 +207,7 @@ enum BGRefresh {
 
     private static func run(_ task: BGAppRefreshTask) {
         let work = Task { () -> [MediaEntry] in
-            let current = await MainActor.run { plan() }
+            let current = await plan()
             guard current.enabled else { return [] }
             schedule(enabled: true)
             var items = await NASAAPI.search(query: "moon", limit: 3)
