@@ -409,9 +409,14 @@ private struct HoldProbe: UIViewRepresentable {
     }
 }
 
+private final class HoldSimultaneous: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+}
+
 private final class HoldProbeView: UIView {
     weak var coordinator: HoldProbe.Coordinator?
     private var recognizer: UILongPressGestureRecognizer?
+    private let simultaneous = HoldSimultaneous()
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
@@ -428,6 +433,7 @@ private final class HoldProbeView: UIView {
             hold.cancelsTouchesInView = false
             hold.delaysTouchesBegan = false
             hold.delaysTouchesEnded = false
+            hold.delegate = simultaneous
             recognizer = hold
         }
         guard let recognizer else { return }

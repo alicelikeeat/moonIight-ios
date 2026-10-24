@@ -61,6 +61,13 @@ struct FeedView: View {
         VStack(spacing: 16) {
             Image(systemName: "moon.stars").font(.system(size: 42)).foregroundColor(MoonColors.dark.accent)
             Text("还没有内容").font(.system(size: 20, weight: .semibold)).foregroundColor(.white)
+                .holdTrack(
+                    onBegan: { point in
+                        hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(overMedia: true))
+                    },
+                    onChanged: { hold.move($0) },
+                    onEnded: { _ in _ = hold.lift() }
+                )
             Text("从相册导入，或去发现里找公开影像。").font(.system(size: 14)).foregroundColor(.white.opacity(0.7))
             PhotosImportButton(title: "导入照片或视频")
                 .accessibilityIdentifier("home.import")
@@ -74,13 +81,6 @@ struct FeedView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 80)
-        .holdTrack(
-            onBegan: { point in
-                hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(overMedia: true))
-            },
-            onChanged: { hold.move($0) },
-            onEnded: { _ in _ = hold.lift() }
-        )
     }
 
     private func loadCurrent() {

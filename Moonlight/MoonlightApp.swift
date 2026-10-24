@@ -108,25 +108,10 @@ struct RootView: View {
         .padding(.bottom, ScreenInsets.bottom > 0 ? 6 : 10)
     }
 
+    @ViewBuilder
     private func tab(_ item: AppTab) -> some View {
-        Button {
-            if app.tab == item && item == .home { app.feedIndex = 0 }
-            app.tab = item
-            Haptics.tick()
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: 18, weight: app.tab == item ? .semibold : .regular))
-                Text(item.title).font(.system(size: 10, weight: .medium))
-            }
-            .foregroundColor(app.tab == item ? (app.tab == .home ? MoonColors.media.accent : colors.accent) : (app.tab == .home ? Color.white.opacity(0.72) : colors.textDim))
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("tab.\(item.rawValue)")
-        .holdTrack(onBegan: { point in
-            guard item == .home else { return }
+        if item == .home {
+            tabButton(item).holdTrack(onBegan: { point in
             let origin = CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.height - 120)
             let items = [
                 RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease", children: FeedScope.allCases.map { scope in
@@ -153,17 +138,37 @@ struct RootView: View {
             ring.present(origin: origin, items: items, groups: groups, settings: app.settings, overMedia: app.tab == .home && !app.feedItems.isEmpty)
             hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(items: items, groups: groups, context: .tab, title: "首页", overMedia: app.tab == .home && !app.feedItems.isEmpty))
         }, onChanged: { point in
-            guard item == .home else { return }
             hold.move(point)
             ring.finger = point
         }, onEnded: { _ in
-            guard item == .home else { return }
             let outcome = hold.lift()
             ring.fingerDown = false
             if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
                 ring.selectDrag(at: ring.finger)
             }
         })
+        } else {
+            tabButton(item)
+        }
+    }
+
+    private func tabButton(_ item: AppTab) -> some View {
+        Button {
+            if app.tab == item && item == .home { app.feedIndex = 0 }
+            app.tab = item
+            Haptics.tick()
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 18, weight: app.tab == item ? .semibold : .regular))
+                Text(item.title).font(.system(size: 10, weight: .medium))
+            }
+            .foregroundColor(app.tab == item ? (app.tab == .home ? MoonColors.media.accent : colors.accent) : (app.tab == .home ? Color.white.opacity(0.72) : colors.textDim))
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tab.\(item.rawValue)")
     }
 
     private var capture: some View {
