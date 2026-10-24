@@ -66,7 +66,7 @@ struct DiscoverView: View {
                 .padding(16)
                 .padding(.bottom, 90)
             }
-            .background(MoonBackground(colors: colors))
+            .background { SystemGlassFill(dark: colors.dark) }
             .navigationTitle("发现")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -153,7 +153,7 @@ struct LibraryView: View {
             .padding(16)
             .padding(.bottom, 24)
         }
-        .background(MoonBackground(colors: colors))
+        .background { SystemGlassFill(dark: colors.dark) }
         .navigationTitle("库")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -231,7 +231,7 @@ struct CaptureView: View {
         }
         .foregroundColor(colors.text)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MoonBackground(colors: colors))
+        .background { SystemGlassFill(dark: colors.dark) }
         .sheet(isPresented: $cameraPhoto) {
             CameraPicker(video: false, onImage: { image in
                 cameraPhoto = false

@@ -71,20 +71,37 @@ extension ThemeMode {
     }
 }
 
-struct GlassBackground: ViewModifier {
-    var colors: MoonColors
-    var radius: CGFloat = 22
-    func body(content: Content) -> some View {
-        content
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .background(colors.glassTint, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(colors.glassStroke, lineWidth: 0.7))
-    }
-}
-
 extension View {
+    /// System glass. iOS 26 uses Liquid Glass; earlier systems use a system material.
+    /// The effect stays on this control and does not add a full-screen hit target.
+    @ViewBuilder
     func moonGlass(_ colors: MoonColors, radius: CGFloat = 22) -> some View {
-        modifier(GlassBackground(colors: colors, radius: radius))
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        if #available(iOS 26.0, *) {
+            self.glassEffect(colors.dark ? .regular.tint(Color.black.opacity(0.28)) : .regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+                .background(colors.glassTint, in: shape)
+                .overlay(shape.stroke(colors.glassStroke, lineWidth: 0.7))
+        }
+    }
+
+    @ViewBuilder
+    func moonDisc(overMedia: Bool) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(overMedia ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Circle())
+        } else {
+            self.background(.ultraThinMaterial, in: Circle())
+        }
+    }
+
+    @ViewBuilder
+    func moonCapsule(overMedia: Bool) -> some View {
+        if #available(iOS 26.0, *) {
+            self.glassEffect(overMedia ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Capsule())
+        } else {
+            self.background(.ultraThinMaterial, in: Capsule())
+        }
     }
 
     /// One-argument change handler that stays on the iOS 16 deployment target.
@@ -98,20 +115,23 @@ extension View {
     }
 }
 
-struct MoonBackground: View {
-    var colors: MoonColors
+/// Page fill behind content. System material or Liquid Glass only — no custom animation,
+/// no safe-area expansion, and no hit testing, so it cannot cover the tab bar.
+struct SystemGlassFill: View {
+    var dark: Bool
     var body: some View {
-        LinearGradient(colors: [colors.bgTop, colors.bgBottom], startPoint: .top, endPoint: .bottom)
-            .overlay(alignment: .topTrailing) {
-                Circle()
-                    .fill(colors.accent.opacity(colors.dark ? 0.14 : 0.18))
-                    .frame(width: 280, height: 280)
-                    .blur(radius: 40)
-                    .offset(x: 80, y: -40)
+        Group {
+            if #available(iOS 26.0, *) {
+                GlassEffectContainer(spacing: 0) {
+                    Color.clear.glassEffect(dark ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Rectangle())
+                }
+            } else if dark {
+                Rectangle().fill(.ultraThinMaterial)
+            } else {
+                Rectangle().fill(.regularMaterial)
             }
-            // Stay inside the safe area. ignoresSafeArea here both wins hit testing on iOS 18+
-            // and cycles AttributeGraph against the tab bar, so later taps never redraw.
-            .allowsHitTesting(false)
+        }
+        .allowsHitTesting(false)
     }
 }
 

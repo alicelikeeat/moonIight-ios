@@ -53,19 +53,42 @@ struct RootView: View {
     @Environment(\.moon) private var colors
 
     var body: some View {
-        VStack(spacing: 0) {
-            Group {
-                switch app.tab {
-                case .home: FeedView()
-                case .discover: DiscoverView()
-                case .capture: CaptureView()
-                case .moments: MomentsView()
-                case .me: MeView()
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .id(app.tab)
-            tabBar
+        TabView(selection: Binding(get: { app.tab }, set: { newValue in
+            if newValue == .home && app.tab == .home { app.feedIndex = 0 }
+            app.tab = newValue
+            Haptics.tick()
+        })) {
+            FeedView()
+                .tabItem { Label("首页", systemImage: "moon.stars") }
+                .tag(AppTab.home)
+            DiscoverView()
+                .tabItem { Label("发现", systemImage: "magnifyingglass") }
+                .tag(AppTab.discover)
+            CaptureView()
+                .tabItem { Label("拍摄", systemImage: "circle.fill") }
+                .tag(AppTab.capture)
+            MomentsView()
+                .tabItem { Label("朋友圈", systemImage: "person.2") }
+                .tag(AppTab.moments)
+            MeView()
+                .tabItem { Label("我", systemImage: "person") }
+                .tag(AppTab.me)
+        }
+        .tint(app.tab == .home ? MoonColors.media.accent : colors.accent)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarColorScheme(app.tab == .home ? ColorScheme.dark : nil, for: .tabBar)
+        .background {
+            GlobalLongPress(
+                onBegan: { point in beganPress(point) },
+                onChanged: { point in
+                    hold.move(point)
+                    ring.finger = point
+                    ring.fingerDown = true
+                },
+                onEnded: { point in endedPress(point) }
+            )
+            .allowsHitTesting(false)
         }
         .overlay {
             if ring.session != nil {
@@ -103,7 +126,48 @@ struct RootView: View {
         }
     }
 
-    /// Fills the status-bar gap without ignoresSafeArea, which cycles layout against the tab bar.
+    /// Long-press anywhere that does not already own a press (feed media, a video).
+    /// A short tap still reaches the button; this recognizer does not cancel it.
+    private func beganPress(_ point: CGPoint) {
+        PressGate.begin()
+        let overMedia = app.tab == .home && !app.feedItems.isEmpty
+        let items = [
+            RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease", children: FeedScope.allCases.map { scope in
+                RingItem(title: scope.label, systemImage: "circle") { app.setScope(scope) }
+            }) {},
+            RingItem(title: "随机一条", systemImage: "shuffle", key: "random") { app.randomItem() },
+            RingItem(title: "重新洗牌", systemImage: "arrow.triangle.2.circlepath", key: "reshuffle") { app.shuffleFeed() },
+            RingItem(title: "回到顶部", systemImage: "arrow.up", key: "top") { app.feedIndex = 0 },
+        ]
+        let groups = [
+            MenuGroup(title: "声音", items: [
+                RingItem(title: app.settings.feedMuted ? "打开声音" : "静音", systemImage: "speaker", key: "mute") {
+                    app.settings.feedMuted.toggle()
+                    app.feedPlayer.isMuted = app.settings.feedMuted
+                    app.saveSettings()
+                },
+            ]),
+            MenuGroup(title: "全局", items: [
+                RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.showToast("录屏在下一版用系统 ReplayKit，只录本应用") },
+                RingItem(title: "发动态", systemImage: "square.and.pencil", key: "compose") { app.composer = ComposerDraft(authorId: app.social.selfId) },
+                RingItem(title: "设置", systemImage: "gearshape", key: "settings") { app.tab = .me; app.requestSettings = true },
+            ]),
+        ]
+        ring.present(origin: point, items: items, groups: groups, settings: app.settings, overMedia: overMedia)
+        hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(items: items, groups: groups, context: .tab, title: app.tab.title, overMedia: overMedia))
+    }
+
+    private func endedPress(_ point: CGPoint) {
+        let outcome = hold.lift()
+        ring.fingerDown = false
+        ring.finger = point
+        if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
+            ring.selectDrag(at: point)
+        }
+        PressGate.end()
+    }
+
+    /// Fills the window behind the system glass without expanding the SwiftUI safe area.
     private func paintWindow() {
         let style = UITraitCollection.current.userInterfaceStyle
         let dark = app.settings.theme == .dark || (app.settings.theme == .system && style == .dark)
@@ -114,105 +178,6 @@ struct RootView: View {
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .forEach { $0.backgroundColor = color }
-    }
-
-    private var tabBar: some View {
-        HStack(spacing: 0) {
-            tab(.home)
-            tab(.discover)
-            capture
-            tab(.moments)
-            tab(.me)
-        }
-        .padding(.horizontal, 8)
-        .padding(.top, 8)
-        .padding(.bottom, max(8, ScreenInsets.bottom > 0 ? 4 : 10))
-        .moonGlass(app.tab == .home ? MoonColors.media : colors, radius: 28)
-        .padding(.horizontal, 12)
-        .padding(.bottom, ScreenInsets.bottom > 0 ? 6 : 10)
-    }
-
-    @ViewBuilder
-    private func tab(_ item: AppTab) -> some View {
-        if item == .home {
-            tabButton(item).holdTrack(onBegan: { point in
-            let origin = CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.height - 120)
-            let items = [
-                RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease", children: FeedScope.allCases.map { scope in
-                    RingItem(title: scope.label, systemImage: "circle") { app.setScope(scope) }
-                }) {},
-                RingItem(title: "随机一条", systemImage: "shuffle", key: "random") { app.randomItem() },
-                RingItem(title: "重新洗牌", systemImage: "arrow.triangle.2.circlepath", key: "reshuffle") { app.shuffleFeed() },
-                RingItem(title: "回到顶部", systemImage: "arrow.up", key: "top") { app.feedIndex = 0 },
-            ]
-            let groups = [
-                MenuGroup(title: "声音", items: [
-                    RingItem(title: app.settings.feedMuted ? "打开声音" : "静音", systemImage: "speaker", key: "mute") {
-                        app.settings.feedMuted.toggle()
-                        app.feedPlayer.isMuted = app.settings.feedMuted
-                        app.saveSettings()
-                    },
-                ]),
-                MenuGroup(title: "全局", items: [
-                    RingItem(title: "录屏", systemImage: "record.circle", key: "record") { app.showToast("录屏在下一版用系统 ReplayKit，只录本应用") },
-                    RingItem(title: "发动态", systemImage: "square.and.pencil", key: "compose") { app.composer = ComposerDraft(authorId: app.social.selfId) },
-                    RingItem(title: "设置", systemImage: "gearshape", key: "settings") { app.tab = .me; app.requestSettings = true },
-                ]),
-            ]
-            ring.present(origin: origin, items: items, groups: groups, settings: app.settings, overMedia: app.tab == .home && !app.feedItems.isEmpty)
-            hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(items: items, groups: groups, context: .tab, title: "首页", overMedia: app.tab == .home && !app.feedItems.isEmpty))
-        }, onChanged: { point in
-            hold.move(point)
-            ring.finger = point
-        }, onEnded: { _ in
-            let outcome = hold.lift()
-            ring.fingerDown = false
-            if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
-                ring.selectDrag(at: ring.finger)
-            }
-        })
-        } else {
-            tabButton(item)
-        }
-    }
-
-    private func tabButton(_ item: AppTab) -> some View {
-        Button {
-            if app.tab == item && item == .home { app.feedIndex = 0 }
-            app.tab = item
-            Haptics.tick()
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: item.symbol)
-                    .font(.system(size: 18, weight: app.tab == item ? .semibold : .regular))
-                Text(item.title).font(.system(size: 10, weight: .medium))
-            }
-            .foregroundColor(app.tab == item ? (app.tab == .home ? MoonColors.media.accent : colors.accent) : (app.tab == .home ? Color.white.opacity(0.72) : colors.textDim))
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("tab.\(item.rawValue)")
-    }
-
-    private var capture: some View {
-        Button {
-            app.tab = .capture
-            Haptics.light()
-        } label: {
-            ZStack {
-                Circle()
-                    .fill(app.tab == .capture ? colors.accent : Color.white.opacity(0.16))
-                    .frame(width: 46, height: 46)
-                Circle()
-                    .fill(app.tab == .capture ? colors.onAccent : colors.accent)
-                    .frame(width: 16, height: 16)
-            }
-            .frame(maxWidth: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("tab.capture")
     }
 }
 

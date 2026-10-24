@@ -357,11 +357,22 @@ struct HoldChrome: View {
     }
 }
 
+/// Set while a long-press is active so the button's touch-up does not also run.
+enum PressGate {
+    static var suppressTap = false
+    static func begin() { suppressTap = true }
+    static func end() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { suppressTap = false }
+    }
+}
+
+enum HitTags {
+    static let media = 7701
+}
+
 /// Long-press that does not cancel the Button underneath.
-/// A SwiftUI DragGesture(minimumDistance: 0) on iOS 18+ swallows every tap in the same view.
-/// The recognizer is attached only to a view the same size as this control. Putting it on the
-/// immediate superview is what made every button on iPhone dead: that superview is often the
-/// full-screen hosting view.
+/// The recognizer lives on the window, ignores touches outside this control, and never
+/// cancels or delays the button's tap.
 struct HoldTrack: ViewModifier {
     var onBegan: (CGPoint) -> Void
     var onChanged: (CGPoint) -> Void
@@ -375,6 +386,122 @@ struct HoldTrack: ViewModifier {
 extension View {
     func holdTrack(onBegan: @escaping (CGPoint) -> Void, onChanged: @escaping (CGPoint) -> Void, onEnded: @escaping (CGPoint) -> Void) -> some View {
         modifier(HoldTrack(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded))
+    }
+}
+
+/// A long-press that must not block SwiftUI Button taps on the same control.
+final class FriendlyLongPress: UILongPressGestureRecognizer {
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+}
+
+enum LongPressInstall {
+    static func configure(_ hold: UILongPressGestureRecognizer) {
+        hold.minimumPressDuration = 0.5
+        hold.allowableMovement = 10_000
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
+        hold.delaysTouchesEnded = false
+    }
+}
+
+private final class ProbeRegions {
+    static let shared = ProbeRegions()
+    let probes = NSHashTable<HoldProbeView>.weakObjects()
+    func owns(_ point: CGPoint, window: UIWindow) -> Bool {
+        for case let probe as HoldProbeView in probes.allObjects {
+            guard probe.window === window else { continue }
+            let rect = probe.convert(probe.bounds, to: window)
+            if rect.width > window.bounds.width * 0.9 && rect.height > window.bounds.height * 0.4 { continue }
+            if rect.width > 1, rect.height > 1, rect.contains(point) { return true }
+        }
+        return false
+    }
+}
+
+struct GlobalLongPress: UIViewRepresentable {
+    var onBegan: (CGPoint) -> Void
+    var onChanged: (CGPoint) -> Void
+    var onEnded: (CGPoint) -> Void
+
+    func makeUIView(context: Context) -> GlobalPressView {
+        let view = GlobalPressView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ uiView: GlobalPressView, context: Context) {
+        context.coordinator.parent = self
+        uiView.coordinator = context.coordinator
+        uiView.isUserInteractionEnabled = false
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var parent: GlobalLongPress
+        init(_ parent: GlobalLongPress) { self.parent = parent }
+
+        @objc func hold(_ gesture: UILongPressGestureRecognizer) {
+            let point = gesture.location(in: gesture.view?.window)
+            switch gesture.state {
+            case .began:
+                PressGate.begin()
+                parent.onBegan(point)
+            case .changed:
+                parent.onChanged(point)
+            case .ended, .cancelled, .failed:
+                parent.onEnded(point)
+                PressGate.end()
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            var view = touch.view
+            while let current = view {
+                if current.tag == HitTags.media { return false }
+                view = current.superview
+            }
+            guard let window = touch.window else { return true }
+            return !ProbeRegions.shared.owns(touch.location(in: window), window: window)
+        }
+    }
+}
+
+private final class GlobalPressView: UIView {
+    weak var coordinator: GlobalLongPress.Coordinator?
+    private var recognizer: FriendlyLongPress?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) }
+            recognizer = nil
+            return
+        }
+        DispatchQueue.main.async { [weak self] in self?.install() }
+    }
+
+    private func install() {
+        guard recognizer == nil, let coordinator, let window else { return }
+        let hold = FriendlyLongPress(target: coordinator, action: #selector(GlobalLongPress.Coordinator.hold(_:)))
+        LongPressInstall.configure(hold)
+        hold.delegate = coordinator
+        window.addGestureRecognizer(hold)
+        recognizer = hold
+    }
+
+    deinit {
+        if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) }
     }
 }
 
@@ -393,8 +520,6 @@ private struct HoldProbe: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: HoldProbeView, context: Context) {
-        // Do not install recognizers here. Adding one during a SwiftUI update re-enters
-        // layout and cycles AttributeGraph, which then drops the next button action.
         context.coordinator.parent = self
         uiView.coordinator = context.coordinator
         uiView.isUserInteractionEnabled = false
@@ -409,98 +534,69 @@ private struct HoldProbe: UIViewRepresentable {
         @objc func hold(_ gesture: UILongPressGestureRecognizer) {
             let point = gesture.location(in: gesture.view?.window)
             switch gesture.state {
-            case .began: parent.onBegan(point)
-            case .changed: parent.onChanged(point)
-            case .ended, .cancelled, .failed: parent.onEnded(point)
-            default: break
+            case .began:
+                PressGate.begin()
+                parent.onBegan(point)
+            case .changed:
+                parent.onChanged(point)
+            case .ended, .cancelled, .failed:
+                parent.onEnded(point)
+                PressGate.end()
+            default:
+                break
             }
         }
-    }
-}
-
-/// A long-press that must not block SwiftUI Button taps on the same control.
-private final class FriendlyLongPress: UILongPressGestureRecognizer {
-    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-}
-
-private final class HoldSimultaneous: NSObject, UIGestureRecognizerDelegate {
-    weak var probe: HoldProbeView?
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool { false }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        guard let probe, probe.window != nil, probe.bounds.width > 1, probe.bounds.height > 1 else { return false }
-        let point = touch.location(in: probe)
-        return probe.bounds.contains(point)
     }
 }
 
 private final class HoldProbeView: UIView {
     weak var coordinator: HoldProbe.Coordinator?
     private var recognizer: FriendlyLongPress?
-    private let simultaneous = HoldSimultaneous()
-    private var installed = false
-    private var scheduled = false
-    private var attempts = 0
+    private var gate: ProbeGate?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        guard !installed, !scheduled else { return }
-        scheduled = true
-        // After this layout pass. Installing a recognizer inside layout re-enters SwiftUI.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.scheduled = false
-            self.installIfNeeded()
-        }
-    }
-
-    func installIfNeeded() {
-        guard !installed, let coordinator, window != nil else { return }
-        attempts += 1
-        if attempts > 40 {
-            installed = true
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            ProbeRegions.shared.probes.remove(self)
+            if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) }
+            recognizer = nil
             return
         }
-        guard bounds.width > 1, bounds.height > 1 else { return }
-        // No same-sized ancestor means the only parent is the full-screen host. Skip it.
-        guard let host = safeHost else { return }
+        ProbeRegions.shared.probes.add(self)
+        DispatchQueue.main.async { [weak self] in self?.install() }
+    }
+
+    private func install() {
+        guard recognizer == nil, let coordinator, let window else { return }
+        let gate = ProbeGate(probe: self)
+        self.gate = gate
         let hold = FriendlyLongPress(target: coordinator, action: #selector(HoldProbe.Coordinator.hold(_:)))
-        hold.minimumPressDuration = 0.5
-        hold.allowableMovement = 10_000
-        hold.cancelsTouchesInView = false
-        hold.delaysTouchesBegan = false
-        hold.delaysTouchesEnded = false
-        simultaneous.probe = self
-        hold.delegate = simultaneous
-        installed = true
-        host.addGestureRecognizer(hold)
+        LongPressInstall.configure(hold)
+        hold.delegate = gate
+        window.addGestureRecognizer(hold)
         recognizer = hold
     }
 
-    /// An ancestor no larger than this control. A bigger host is the full-screen layer that ate every tap.
-    private var safeHost: UIView? {
-        guard bounds.width > 1, bounds.height > 1 else { return nil }
-        let screen = window?.bounds ?? UIScreen.main.bounds
-        if bounds.width > screen.width * 0.9 && bounds.height > screen.height * 0.4 { return nil }
-        let maxW = bounds.width * 1.2 + 12
-        let maxH = bounds.height * 1.2 + 12
-        var best: UIView?
-        var current = superview
-        var hops = 0
-        while let view = current, !(view is UIWindow), hops < 8 {
-            if view.bounds.width > maxW || view.bounds.height > maxH { break }
-            best = view
-            current = view.superview
-            hops += 1
-        }
-        return best
+    deinit {
+        ProbeRegions.shared.probes.remove(self)
+        if let recognizer { recognizer.view?.removeGestureRecognizer(recognizer) }
+    }
+}
+
+/// Receives a touch only when it lands on this control, and never when SwiftUI stretched the probe over the screen.
+private final class ProbeGate: NSObject, UIGestureRecognizerDelegate {
+    weak var probe: HoldProbeView?
+    init(probe: HoldProbeView) { self.probe = probe }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let probe, let window = probe.window else { return false }
+        let rect = probe.convert(probe.bounds, to: window)
+        if rect.width > window.bounds.width * 0.9 && rect.height > window.bounds.height * 0.4 { return false }
+        guard rect.width > 1, rect.height > 1 else { return false }
+        return rect.contains(touch.location(in: window))
     }
 }

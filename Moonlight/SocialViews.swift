@@ -32,7 +32,7 @@ struct MomentsView: View {
                 .padding(16)
                 .padding(.bottom, 100)
             }
-            .background(MoonBackground(colors: colors))
+            .background { SystemGlassFill(dark: colors.dark) }
             .navigationTitle("朋友圈")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -212,7 +212,10 @@ struct MomentVideo: View {
         .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture { session.toggle() }
+        .onTapGesture {
+            guard !PressGate.suppressTap else { return }
+            session.toggle()
+        }
         .holdTrack(onBegan: { point in beganHold(point) }, onChanged: { hold.move($0) }, onEnded: { _ in hold.lift() })
         .onAppear {
             if let url = playURL { session.load(url: url, autoplay: true, muted: true) }

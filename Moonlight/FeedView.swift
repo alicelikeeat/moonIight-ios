@@ -52,6 +52,7 @@ struct FeedView: View {
         .moonOnChange(of: app.tab) { tab in
             if tab != .home { app.feedPlayer.pause() }
         }
+        .environment(\.colorScheme, .dark)
         .onAppear {
             DispatchQueue.main.async { loadCurrent() }
         }
@@ -63,22 +64,18 @@ struct FeedView: View {
         VStack(spacing: 16) {
             Image(systemName: "moon.stars").font(.system(size: 42)).foregroundColor(MoonColors.dark.accent)
             Text("还没有内容").font(.system(size: 20, weight: .semibold)).foregroundColor(.white)
-                .holdTrack(
-                    onBegan: { point in
-                        hold.arm(origin: point, settings: app.settings, catalog: RingCatalog(overMedia: true))
-                    },
-                    onChanged: { hold.move($0) },
-                    onEnded: { _ in _ = hold.lift() }
-                )
             Text("从相册导入，或去发现里找公开影像。").font(.system(size: 14)).foregroundColor(.white.opacity(0.7))
             PhotosImportButton(title: "导入照片或视频")
                 .accessibilityIdentifier("home.import")
-            Button { app.tab = .discover } label: {
+            Button {
+                guard !PressGate.suppressTap else { return }
+                app.tab = .discover
+            } label: {
                 Text("去发现")
                     .font(.system(size: 15, weight: .semibold))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .moonCapsule(overMedia: true)
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -358,7 +355,7 @@ struct FeedPage: View {
                     .font(.system(size: 28))
                     .foregroundColor(.white)
                     .padding(22)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .moonDisc(overMedia: true)
                     .allowsHitTesting(false)
             }
             if let error = app.feedPlayer.errorText, active {
@@ -387,23 +384,25 @@ struct FeedPage: View {
             Spacer().allowsHitTesting(false)
             HStack {
                 Button {
+                    guard !PressGate.suppressTap else { return }
                     app.jumpVisible = true
                 } label: {
                     Text("\(min(app.feedIndex + 1, max(app.feedItems.count, 1)))/\(max(app.feedItems.count, 1))")
                         .font(.system(size: 13, weight: .semibold))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .moonCapsule(overMedia: true)
                 }
                 Spacer()
                 Button {
+                    guard !PressGate.suppressTap else { return }
                     app.toggleFavorite(entry.id)
                 } label: {
                     Image(systemName: entry.favorite ? "heart.fill" : "heart")
                         .font(.system(size: 22))
                         .foregroundColor(entry.favorite ? MoonColors.media.heart : .white)
                         .frame(width: 46, height: 46)
-                        .background(.ultraThinMaterial, in: Circle())
+                        .moonDisc(overMedia: true)
                 }
             }
             .padding(.horizontal, 16)
@@ -430,7 +429,7 @@ struct InfoCard: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(MoonBackground(colors: colors))
+        .background { SystemGlassFill(dark: colors.dark) }
         .presentationDetents([.medium])
     }
 
@@ -459,7 +458,7 @@ struct PhotosImportButton: View {
                 .font(.system(size: 15, weight: .semibold))
                 .padding(.horizontal, 18)
                 .padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: Capsule())
+                .moonCapsule(overMedia: true)
         }
         .moonOnChange(of: item) { newItem in
             guard let newItem else { return }

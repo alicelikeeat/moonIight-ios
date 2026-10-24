@@ -62,17 +62,20 @@ struct MediaTouchLayer: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .clear
+        view.tag = HitTags.media
         let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.single(_:)))
         single.numberOfTapsRequired = 1
         single.cancelsTouchesInView = false
+        single.delaysTouchesBegan = false
+        single.delaysTouchesEnded = false
         let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.double(_:)))
         double.numberOfTapsRequired = 2
         double.cancelsTouchesInView = false
-        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
-        hold.minimumPressDuration = 0.5
-        hold.allowableMovement = 10_000
-        hold.cancelsTouchesInView = false
-        hold.delaysTouchesBegan = false
+        double.delaysTouchesBegan = false
+        double.delaysTouchesEnded = false
+        let hold = FriendlyLongPress(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
+        LongPressInstall.configure(hold)
+        hold.minimumPressDuration = 0.45
         view.addGestureRecognizer(single)
         view.addGestureRecognizer(double)
         view.addGestureRecognizer(hold)
@@ -86,10 +89,11 @@ struct MediaTouchLayer: UIViewRepresentable {
         var parent: MediaTouchLayer
         init(_ parent: MediaTouchLayer) { self.parent = parent }
         private var generation = 0
+        private var blockSingle = false
         @objc func single(_ g: UITapGestureRecognizer) {
             let gen = generation
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
-                guard gen == self.generation else { return }
+                guard gen == self.generation, !self.blockSingle else { return }
                 self.parent.onSingle()
             }
         }
@@ -101,6 +105,9 @@ struct MediaTouchLayer: UIViewRepresentable {
             let point = g.location(in: g.view?.window)
             switch g.state {
             case .began:
+                blockSingle = true
+                generation += 1
+                PressGate.begin()
                 setScrollEnabled(false, from: g.view)
                 parent.onLongBegan(point)
             case .changed:
@@ -108,6 +115,8 @@ struct MediaTouchLayer: UIViewRepresentable {
             default:
                 setScrollEnabled(true, from: g.view)
                 parent.onLongEnded(point)
+                PressGate.end()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.blockSingle = false }
             }
         }
         private func setScrollEnabled(_ enabled: Bool, from view: UIView?) {

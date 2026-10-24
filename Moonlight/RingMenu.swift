@@ -153,6 +153,13 @@ struct RingOverlay: View {
                 if let session = ring.session {
                     ringBody(session, localOrigin: CGPoint(x: session.origin.x - frame.minX, y: session.origin.y - frame.minY), size: geo.size)
                 }
+                Text("圆环")
+                    .font(.system(size: 11))
+                    .foregroundColor(.white.opacity(0.02))
+                    .accessibilityIdentifier("ring.root")
+                    .frame(width: 48, height: 24)
+                    .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
         .ignoresSafeArea()
@@ -334,7 +341,7 @@ struct RingOverlay: View {
                     .font(.system(size: 20, weight: .medium))
                     .foregroundColor(ink)
                     .frame(width: 56, height: 56)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .moonDisc(overMedia: session.overMedia)
                     .background(Circle().fill(highlighted ? Color.white.opacity(0.28) : plate))
                     .overlay(Circle().stroke(session.overMedia ? Color.white.opacity(0.55) : Color.primary.opacity(0.18), lineWidth: 0.8))
                     .overlay {
@@ -515,7 +522,7 @@ struct MoreSheet: View {
                 }
                 .padding(16)
             }
-            .background(MoonBackground(colors: colors))
+            .background { SystemGlassFill(dark: colors.dark) }
             .navigationTitle("更多")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

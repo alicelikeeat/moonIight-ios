@@ -51,7 +51,7 @@ struct MeView: View {
                 }
                 .padding(.bottom, 100)
             }
-            .background(MoonBackground(colors: colors))
+            .background { SystemGlassFill(dark: colors.dark) }
             .navigationBarHidden(true)
             .navigationDestination(isPresented: $showLibrary) { LibraryView() }
             .navigationDestination(isPresented: $showSettings) { SettingsView() }
@@ -414,7 +414,7 @@ struct FullPlayerView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black.ignoresSafeArea().allowsHitTesting(false)
             if let url = entry.playbackURL {
                 PlayerLayerView(player: session.player, gravity: Gravity.choose(mode: app.settings.videoDisplay, video: session.naturalSize, view: UIScreen.main.bounds.size, override: entry.fillOverride))
                     .ignoresSafeArea()
@@ -452,10 +452,11 @@ struct FullPlayerView: View {
             }
             if !session.showsPlaying {
                 Image(systemName: "play.fill").font(.system(size: 28)).foregroundColor(.white)
-                    .padding(18).background(.ultraThinMaterial, in: Circle())
+                    .padding(18).moonDisc(overMedia: true)
                     .allowsHitTesting(false)
             }
         }
+        .environment(\.colorScheme, .dark)
         .onAppear {
             app.feedPlayer.pause()
             if let url = entry.playbackURL { session.load(url: url, autoplay: true, muted: false) }
