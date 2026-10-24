@@ -21,6 +21,7 @@ struct DiscoverView: View {
                             .padding(12)
                             .moonGlass(colors, radius: 14)
                         Button("搜索") { Task { await app.discover(query: query) } }
+                            .buttonStyle(.plain)
                             .font(.system(size: 15, weight: .semibold))
                             .padding(.horizontal, 12)
                             .accessibilityIdentifier("discover.search")
