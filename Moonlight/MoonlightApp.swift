@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 final class MoonAppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey]? = nil) -> Bool {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         BGRefresh.install()
         return true
     }
@@ -292,11 +292,22 @@ struct MoonTabBar: View {
         .padding(.bottom, 6)
         .environment(\.colorScheme, app.tab == .home ? .dark : scheme)
         .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isTabBar)
+        .modifier(TabBarTrait())
         .accessibilityIdentifier("moon.tabs")
         .allowsHitTesting(!suppressed)
         .opacity(suppressed ? 0.45 : 1)
         .background(TabBarFrameMark(active: true))
+    }
+}
+
+/// `.isTabBar` arrived in iOS 17. The custom bar still has an identifier on iOS 16.
+private struct TabBarTrait: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(iOS 17.0, *) {
+            content.accessibilityAddTraits(.isTabBar)
+        } else {
+            content
+        }
     }
 }
 

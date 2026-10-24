@@ -349,8 +349,8 @@ enum PeerTubeAPI {
             id: "pt-\(host)-\(uuid)", kind: .video, title: name,
             remoteURL: playback, coverURL: thumb,
             platform: PlatformID.peertube, embedURL: nil,
-            author: author, source: "peertube",
-            downloadURL: (downloadEnabled ? mp4 : nil)
+            downloadURL: (downloadEnabled ? mp4 : nil),
+            author: author, source: "peertube"
         )
     }
 
