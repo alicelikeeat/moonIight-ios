@@ -213,7 +213,13 @@ final class TabTapTests: XCTestCase {
                 "没有相机时不能改从相册选\n\(app.debugDescription)"
             )
         }
-        app.buttons["camera.close"].tap()
+        let close = app.buttons["camera.close"]
+        let closeLabel = app.buttons["关闭"]
+        XCTAssertTrue(
+            close.waitForExistence(timeout: 3) || closeLabel.waitForExistence(timeout: 2),
+            "相机没有关闭按钮\n\(app.debugDescription)"
+        )
+        if close.exists { close.tap() } else { closeLabel.tap() }
     }
 
     /// Dragging on the system tab bar changes tabs and never opens the ring, even if the press is slow.

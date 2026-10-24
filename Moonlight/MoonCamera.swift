@@ -48,7 +48,14 @@ struct MoonCamera: View {
                 }
             }
         }
-        .accessibilityIdentifier("camera.root")
+        .accessibilityElement(children: .contain)
+        .overlay(alignment: .topLeading) {
+            Color.clear
+                .frame(width: 4, height: 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("camera.root")
+                .accessibilityLabel("相机")
+        }
         .onAppear { rig.prepare(record: video) }
         .onDisappear { rig.stop() }
     }
