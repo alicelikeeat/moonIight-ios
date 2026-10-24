@@ -71,6 +71,8 @@ final class TabTapTests: XCTestCase {
                 || app.staticTexts["月光 0.3.1 · iOS"].waitForExistence(timeout: 2),
             "设置页没有出现\n\(app.debugDescription)"
         )
+        let done = app.buttons["settings.done"]
+        if done.waitForExistence(timeout: 2) { done.tap() }
 
         home.tap()
         XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5) || app.staticTexts["还没有内容"].waitForExistence(timeout: 2))

@@ -7,7 +7,7 @@ struct MeView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
     @Environment(\.moon) private var colors
-    @State private var showSettings = false
+    @State private var showLibrary = false
     @State private var avatarItem: PhotosPickerItem?
     @State private var coverItem: PhotosPickerItem?
     @State private var editingName = false
@@ -42,21 +42,16 @@ struct MeView: View {
                     .padding(.horizontal, 16)
                     .offset(y: -28)
                     VStack(spacing: 10) {
-                        navLink("库", "square.grid.2x2", id: "me.library") { LibraryView() }
+                        navRow("库", "square.grid.2x2", id: "me.library") { showLibrary = true }
                         navRow("编辑资料", "pencil", id: "me.edit") { name = me.name; bio = me.bio; editingName = true }
-                        navLink("设置", "gearshape", id: "me.settings") { SettingsView() }
+                        navRow("设置", "gearshape", id: "me.settings") { app.requestSettings = true }
                     }
                     .padding(.horizontal, 16)
                 }
                 .padding(.bottom, 100)
             }
             .background { SystemGlassFill(dark: colors.dark) }
-            .navigationBarHidden(true)
-            .navigationDestination(isPresented: $showSettings) { SettingsView() }
-            .onAppear { if app.requestSettings { showSettings = true; app.requestSettings = false } }
-            .moonOnChange(of: app.requestSettings) { on in
-                if on { showSettings = true; app.requestSettings = false }
-            }
+            .toolbar(.hidden, for: .navigationBar)
             .moonOnChange(of: avatarItem) { item in
                 guard let item else { return }
                 Task {
@@ -85,6 +80,27 @@ struct MeView: View {
                     app.upsertFriend(copy)
                 }
                 Button("取消", role: .cancel) {}
+            }
+        }
+        .sheet(isPresented: $showLibrary) {
+            NavigationStack {
+                LibraryView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { showLibrary = false }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: Binding(get: { app.requestSettings }, set: { app.requestSettings = $0 })) {
+            NavigationStack {
+                SettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("完成") { app.requestSettings = false }
+                                .accessibilityIdentifier("settings.done")
+                        }
+                    }
             }
         }
     }
@@ -152,17 +168,13 @@ struct MeView: View {
     }
 
     private func navRow(_ title: String, _ symbol: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            guard !PressGate.suppressTap else { return }
+            action()
+        } label: {
             rowContents(title, symbol)
-        }
-        .buttonStyle(.plain)
-        .foregroundColor(colors.text)
-        .accessibilityIdentifier(id)
-    }
-
-    private func navLink<Destination: View>(_ title: String, _ symbol: String, id: String, @ViewBuilder destination: () -> Destination) -> some View {
-        NavigationLink(destination: destination()) {
-            rowContents(title, symbol)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .foregroundColor(colors.text)
