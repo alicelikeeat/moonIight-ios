@@ -71,13 +71,16 @@ struct FeedView: View {
             Text("从相册导入，或去发现里找公开影像。").font(.system(size: 14)).foregroundColor(.white.opacity(0.7))
             PhotosImportButton(title: "导入照片或视频")
                 .accessibilityIdentifier("home.import")
-            Button("去发现") { app.tab = .discover }
-                .buttonStyle(.plain)
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(.ultraThinMaterial, in: Capsule())
-                .accessibilityIdentifier("home.discover")
+            Button { app.tab = .discover } label: {
+                Text("去发现")
+                    .font(.system(size: 15, weight: .semibold))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home.discover")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 80)

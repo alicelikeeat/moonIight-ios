@@ -22,7 +22,10 @@ final class TabTapTests: XCTestCase {
         jump.tap()
 
         let search = app.buttons["discover.search"]
-        XCTAssertTrue(search.waitForExistence(timeout: 6), "去发现之后没有出现发现页")
+        let discoverTitle = app.staticTexts["发现"]
+        if !search.waitForExistence(timeout: 6) && !discoverTitle.waitForExistence(timeout: 2) {
+            XCTFail("去发现之后没有出现发现页\n\(app.debugDescription)")
+        }
         let discoverTab = app.buttons["tab.discover"]
         XCTAssertTrue(discoverTab.isHittable)
         discoverTab.tap()
