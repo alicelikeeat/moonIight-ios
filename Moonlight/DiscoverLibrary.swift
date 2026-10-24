@@ -33,6 +33,7 @@ struct DiscoverView: View {
                             .padding(12)
                             .moonGlass(colors, radius: 14)
                         Button("加入") { addLink() }
+                            .accessibilityIdentifier("discover.add")
                             .font(.system(size: 15, weight: .semibold))
                         Button("订阅") { app.subscribe(link); link = "" }
                             .font(.system(size: 15, weight: .semibold))
@@ -63,26 +64,12 @@ struct DiscoverView: View {
                         Text("后台带到 \(app.refreshCache.count) 条公开影像")
                             .font(.system(size: 13, weight: .semibold))
                             .accessibilityIdentifier("discover.refresh")
+                        Text("点一条才会放进首页。后台刷新不会自己写入库。")
+                            .font(.system(size: 12))
+                            .foregroundColor(colors.textDim)
+                        resultGrid(app.refreshCache)
                     }
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                        ForEach(app.discoverResults) { entry in
-                            Button { app.addRemote(entry) } label: {
-                                ZStack(alignment: .bottomLeading) {
-                                    RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill)
-                                        .frame(height: 180)
-                                        .clipped()
-                                    LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(entry.platformLabel()).font(.system(size: 10, weight: .bold))
-                                        Text(entry.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
-                                    }
-                                    .foregroundColor(.white)
-                                    .padding(8)
-                                }
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            }
-                        }
-                    }
+                    resultGrid(app.discoverResults)
                 }
                 .padding(16)
                 .padding(.bottom, 90)
@@ -100,21 +87,33 @@ struct DiscoverView: View {
         .task { if app.discoverResults.isEmpty { await app.discover(query: "") } }
     }
 
-    private func addLink() {
-        let result = LinkResolver.resolve(link)
-        if let entry = result.entry {
-            if entry.platform == PlatformID.archive, let remote = entry.remoteURL,
-               let id = remote.split(separator: "/").dropFirst().first.map(String.init),
-               remote.contains("archive.org") {
-                app.addRemote(entry)
-            } else {
-                app.addRemote(entry)
+    private func resultGrid(_ entries: [MediaEntry]) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            ForEach(entries) { entry in
+                Button { app.addRemote(entry) } label: {
+                    ZStack(alignment: .bottomLeading) {
+                        RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill)
+                            .frame(height: 180)
+                            .clipped()
+                        LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.platformLabel()).font(.system(size: 10, weight: .bold))
+                            Text(entry.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                        }
+                        .foregroundColor(.white)
+                        .padding(8)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .accessibilityIdentifier("discover.card.\(entry.id)")
             }
-            link = ""
-            if let message = result.message { app.showToast(message) }
-        } else {
-            app.showToast(result.message ?? "无法识别这个链接")
         }
+    }
+
+    private func addLink() {
+        let raw = link
+        link = ""
+        Task { await app.addPasted(raw) }
     }
 }
 

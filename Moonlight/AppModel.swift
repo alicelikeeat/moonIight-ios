@@ -282,6 +282,36 @@ final class AppModel: ObservableObject {
         showToast("已加入首页")
     }
 
+    func addPasted(_ raw: String) async {
+        let result = await LinkResolver.resolvePlayable(raw)
+        if let entry = result.entry {
+            addRemote(entry)
+        } else {
+            showToast(result.message ?? "无法识别这个链接")
+        }
+    }
+
+    /// A saved PeerTube watch page has no file yet. Ask the instance again.
+    func rehydrate(_ entry: MediaEntry) async {
+        guard let remote = entry.remoteURL, let hit = PublicLink.peertubeVideo(remote) else {
+            showToast("这条还没有可播放的文件")
+            return
+        }
+        guard let fresh = await PeerTubeAPI.fetch(host: hit.host, id: hit.id) else {
+            showToast("暂时拉不到这条 PeerTube 视频")
+            return
+        }
+        updateEntry(entry.id) { item in
+            item.title = fresh.title
+            item.remoteURL = fresh.remoteURL
+            item.coverURL = fresh.coverURL
+            item.downloadURL = fresh.downloadURL
+            item.author = fresh.author
+            item.kind = .video
+        }
+        showToast("已更新播放地址")
+    }
+
     func importFile(at url: URL, kind: MediaKind, title: String, source: String, focusAfter: Bool = true) {
         Paths.ensureDirs()
         let ext = url.pathExtension.isEmpty ? (kind == .video ? "mov" : "jpg") : url.pathExtension
@@ -427,7 +457,11 @@ final class AppModel: ObservableObject {
         if PublicLink.normalizedHost(settings.peertubeInstance) != nil {
             all += await PeerTubeAPI.search(instance: settings.peertubeInstance, query: term)
         }
-        if let one = PublicLink.media(term) { all.insert(one, at: 0) }
+        if case .peertube(let host, let id) = PublicLink.parse(term) {
+            if let one = await PeerTubeAPI.fetch(host: host, id: id) { all.insert(one, at: 0) }
+        } else if let one = PublicLink.media(term) {
+            all.insert(one, at: 0)
+        }
         if case .youtubeFeed(let url) = PublicLink.parse(term), let feed = URL(string: url), let xml = await HTTP.text(feed) {
             all += FeedXML.youtube(xml)
         }

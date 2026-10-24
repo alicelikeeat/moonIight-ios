@@ -327,6 +327,7 @@ struct HoldChrome: View {
                         LazyVGrid(columns: columns, spacing: 8) {
                             ForEach(section.tiles) { tile in
                                 Button {
+                                    guard tile.enabled else { return }
                                     Haptics.tick()
                                     hold.dismissPanel()
                                     tile.action()
@@ -339,11 +340,12 @@ struct HoldChrome: View {
                                             .multilineTextAlignment(.center)
                                             .lineLimit(2)
                                     }
-                                    .foregroundColor(tile.destructive ? ink.danger : ink.text)
+                                    .foregroundColor(tile.enabled ? (tile.destructive ? ink.danger : ink.text) : ink.textDim)
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 78)
                                     .background(ink.text.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                                 }
+                                .disabled(!tile.enabled)
                             }
                         }
                     }

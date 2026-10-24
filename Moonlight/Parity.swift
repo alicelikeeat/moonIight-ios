@@ -315,6 +315,21 @@ enum PublicRefresh {
         }
         return out
     }
+
+    /// Writes a merged cache when the app model is not in memory yet.
+    static func write(_ incoming: [MediaEntry]) {
+        let existing: [MediaEntry]
+        if let data = AtomicFile.read(Paths.refreshFile),
+           let items = try? JSONDecoder().decode([MediaEntry].self, from: data) {
+            existing = items
+        } else {
+            existing = []
+        }
+        let merged = merge(existing: existing, incoming: incoming)
+        if let data = try? JSONEncoder().encode(merged) {
+            try? AtomicFile.write(data, to: Paths.refreshFile)
+        }
+    }
 }
 
 struct TransferJob: Codable, Equatable, Sendable {

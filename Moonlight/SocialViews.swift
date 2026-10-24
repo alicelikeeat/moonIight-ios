@@ -216,10 +216,9 @@ struct MomentVideo: View {
         .frame(height: 220)
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture {
-            guard !PressGate.suppressTap else { return }
+        .modifier(MomentPlayTap(enabled: attachment.kind != .embed) {
             session.toggle()
-        }
+        })
         .holdTrack(onBegan: { point in beganHold(point) }, onChanged: { hold.move($0) }, onEnded: { _ in hold.lift() })
         .onAppear {
             let allow = app.claimMomentSlot(momentID)
@@ -259,14 +258,16 @@ struct MomentVideo: View {
     }
 
     private var playerEntry: MediaEntry {
-        MediaEntry(
+        let embed = attachment.kind == .embed
+        return MediaEntry(
             id: attachment.libraryEntryId ?? attachment.id,
-            kind: .video,
+            kind: embed ? .embed : .video,
             title: attachment.title.isEmpty ? "视频" : attachment.title,
             localPath: attachment.localPath,
-            remoteURL: attachment.remoteURL,
+            remoteURL: embed ? nil : attachment.remoteURL,
             coverURL: attachment.coverURL,
-            platform: attachment.localPath == nil ? PlatformID.url : PlatformID.local,
+            platform: attachment.localPath == nil ? (embed ? PlatformID.web : PlatformID.url) : PlatformID.local,
+            embedURL: embed ? attachment.remoteURL : nil,
             source: "moment"
         )
     }
@@ -295,9 +296,26 @@ struct MomentVideo: View {
     }
 
     private var playURL: URL? {
+        if attachment.kind == .embed { return nil }
         if let path = attachment.localPath, FileManager.default.fileExists(atPath: path) { return URL(fileURLWithPath: path) }
         if let remote = attachment.remoteURL { return URL(string: remote) }
         return nil
+    }
+}
+
+private struct MomentPlayTap: ViewModifier {
+    var enabled: Bool
+    var action: () -> Void
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled {
+            content.onTapGesture {
+                guard !PressGate.suppressTap else { return }
+                action()
+            }
+        } else {
+            content
+        }
     }
 }
 

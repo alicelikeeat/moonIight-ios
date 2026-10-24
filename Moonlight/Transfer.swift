@@ -189,15 +189,41 @@ enum BGRefresh {
         try? BGTaskScheduler.shared.submit(request)
     }
 
+    private struct Plan {
+        var enabled = false
+        var follows: [FollowedSource] = []
+    }
+
+    private static func plan() -> Plan {
+        if let model = AppHooks.model {
+            return Plan(enabled: model.settings.bgRefreshOn, follows: model.settings.follows)
+        }
+        if let data = AtomicFile.read(Paths.settingsFile), let settings = AppSettings.load(data) {
+            return Plan(enabled: settings.bgRefreshOn, follows: settings.follows)
+        }
+        return Plan()
+    }
+
     private static func run(_ task: BGAppRefreshTask) {
-        schedule(enabled: true)
-        let work = Task {
-            let items = await NASAAPI.search(query: "moon", limit: 3)
-            await MainActor.run { AppHooks.model?.absorbRefresh(items) }
+        let work = Task { () -> [MediaEntry] in
+            let current = await MainActor.run { plan() }
+            guard current.enabled else { return [] }
+            schedule(enabled: true)
+            var items = await NASAAPI.search(query: "moon", limit: 3)
+            for source in current.follows {
+                items += await PeerTubeAPI.load(source)
+            }
+            return items
         }
         task.expirationHandler = { work.cancel() }
         Task {
-            await work.value
+            let items = await work.value
+            if !work.isCancelled, !items.isEmpty {
+                await MainActor.run {
+                    if let model = AppHooks.model { model.absorbRefresh(items) }
+                    else { PublicRefresh.write(items) }
+                }
+            }
             task.setTaskCompleted(success: !work.isCancelled)
         }
     }

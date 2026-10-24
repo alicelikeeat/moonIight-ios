@@ -183,6 +183,10 @@ struct FeedView: View {
 
     private func handleSingle(_ entry: MediaEntry) {
         let video = entry.kind == .video && entry.embedURL == nil
+        if video, entry.playbackURL == nil {
+            Task { await app.rehydrate(entry) }
+            return
+        }
         switch FeedTapRule.onTap(
             isVideo: video,
             active: true,
@@ -282,6 +286,7 @@ struct FeedView: View {
 
     private func feedGroups(_ entry: MediaEntry) -> [MenuGroup] {
         let policy = DownloadPolicy.canDownload(entry)
+        let native = entry.kind == .video && entry.embedURL == nil && entry.playbackURL != nil
         var shareItems = [
             RingItem(title: "分享", systemImage: "square.and.arrow.up", key: "share") { share(entry) },
             RingItem(title: "保存到相册", systemImage: "square.and.arrow.down", key: "save") { app.saveToPhotos(entry) },
@@ -296,22 +301,23 @@ struct FeedView: View {
         }
         return [
             MenuGroup(title: "播放", items: [
-                RingItem(title: app.feedPlayer.showsPlaying ? "暂停" : "播放", systemImage: app.feedPlayer.showsPlaying ? "pause" : "play", key: "play") {
-                    if entry.kind == .video { app.feedPlayer.toggle() }
+                RingItem(title: app.feedPlayer.showsPlaying ? "暂停" : "播放", systemImage: app.feedPlayer.showsPlaying ? "pause" : "play", key: "play", enabled: native) {
+                    if native { app.feedPlayer.toggle() }
                 },
-                RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat", key: "loop") { app.feedPlayer.loop.toggle() },
-                RingItem(title: app.feedPlayer.isMuted ? "取消静音" : "静音", systemImage: "speaker") {
+                RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat", key: "loop", enabled: native) { app.feedPlayer.loop.toggle() },
+                RingItem(title: app.feedPlayer.isMuted ? "取消静音" : "静音", systemImage: "speaker", enabled: native) {
                     app.feedPlayer.isMuted.toggle()
                     app.settings.feedMuted = app.feedPlayer.isMuted
                     app.saveSettings()
                 },
-                RingItem(title: "画面 · \(app.settings.videoDisplay.short)", systemImage: "crop") {
+                RingItem(title: "画面 · \(app.settings.videoDisplay.short)", systemImage: "crop", enabled: native) {
                     let order = VideoDisplay.allCases
                     let idx = order.firstIndex(of: app.settings.videoDisplay) ?? 0
                     app.settings.videoDisplay = order[(idx + 1) % order.count]
                     app.saveSettings()
                 },
-                RingItem(title: entry.fillOverride == true ? "这条铺满" : (entry.fillOverride == false ? "这条完整" : "这条跟随设置"), systemImage: "arrow.up.left.and.arrow.down.right") {
+                RingItem(title: entry.fillOverride == true ? "这条铺满" : (entry.fillOverride == false ? "这条完整" : "这条跟随设置"), systemImage: "arrow.up.left.and.arrow.down.right", enabled: native) {
+                    guard native else { return }
                     app.updateEntry(entry.id) { item in
                         if item.fillOverride == nil { item.fillOverride = true }
                         else if item.fillOverride == true { item.fillOverride = false }
@@ -319,7 +325,7 @@ struct FeedView: View {
                     }
                 },
                 RingItem(title: "信息", systemImage: "info.circle", key: "info") { app.infoEntry = entry },
-                RingItem(title: "全屏播放", systemImage: "arrow.up.left.and.arrow.down.right", key: "browser") { app.fullPlayer = entry },
+                RingItem(title: "全屏播放", systemImage: "arrow.up.left.and.arrow.down.right", key: "browser", enabled: native || (entry.kind == .embed && !(entry.embedURL ?? "").isEmpty)) { app.fullPlayer = entry },
                 RingItem(title: "用哔哩哔哩打开", systemImage: "arrow.up.right.square", enabled: entry.resolvedPlatform == PlatformID.bili && !(entry.biliBvid ?? "").isEmpty) {
                     if let bvid = entry.biliBvid { BiliLinks.open(bvid: bvid) }
                 },

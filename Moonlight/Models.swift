@@ -78,7 +78,10 @@ struct MediaEntry: Codable, Identifiable, Equatable, Sendable {
         if let localPath, FileManager.default.fileExists(atPath: localPath) {
             return URL(fileURLWithPath: localPath)
         }
-        if let remoteURL { return URL(string: remoteURL) }
+        if let remoteURL {
+            if PublicLink.peertubeVideo(remoteURL) != nil { return nil }
+            return URL(string: remoteURL)
+        }
         return nil
     }
 

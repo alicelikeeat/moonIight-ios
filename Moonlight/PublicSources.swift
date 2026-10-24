@@ -68,12 +68,9 @@ enum PublicLink {
                 platform: PlatformID.bili, embedURL: BiliLinks.player(aid: aid),
                 author: "哔哩哔哩", source: "bili"
             )
-        case .peertube(let host, let id):
-            return MediaEntry(
-                id: "pt-\(host)-\(id)", kind: .video, title: "PeerTube",
-                remoteURL: "https://\(host)/w/\(id)",
-                platform: PlatformID.peertube, author: host, source: "peertube"
-            )
+        case .peertube:
+            // A watch page is HTML. Native playback waits for /api/v1/videos/{id}.
+            return nil
         default:
             return nil
         }
@@ -341,21 +338,30 @@ enum PeerTubeAPI {
         let uuid = (o["uuid"] as? String) ?? (o["shortUUID"] as? String) ?? ""
         guard !uuid.isEmpty else { return nil }
         let name = (o["name"] as? String) ?? "PeerTube"
-        let page = (o["url"] as? String) ?? "https://\(host)/w/\(uuid)"
         let thumb = o["thumbnailUrl"] as? String ?? o["previewUrl"] as? String
         let author = ((o["account"] as? [String: Any])?["displayName"] as? String)
             ?? ((o["channel"] as? [String: Any])?["displayName"] as? String) ?? host
         let downloadEnabled = (o["downloadEnabled"] as? Bool) ?? false
         let mp4 = fileURL(o["files"] as? [[String: Any]])
         let hls = playlistURL(o["streamingPlaylists"] as? [[String: Any]])
-        let playback = mp4 ?? hls
+        guard let playback = mp4 ?? hls else { return nil }
         return MediaEntry(
             id: "pt-\(host)-\(uuid)", kind: .video, title: name,
-            remoteURL: playback ?? page, coverURL: thumb,
+            remoteURL: playback, coverURL: thumb,
             platform: PlatformID.peertube, embedURL: nil,
             author: author, source: "peertube",
             downloadURL: (downloadEnabled ? mp4 : nil)
         )
+    }
+
+    /// Loads `/api/v1/videos/{id}` and keeps the entry only when a file or playlist exists.
+    static func fetch(host: String, id: String) async -> MediaEntry? {
+        guard let host = PublicLink.normalizedHost(host),
+              let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              !safe.isEmpty,
+              let url = endpoint(host, "/api/v1/videos/\(safe)", [URLQueryItem(name: "nsfw", value: "false")]),
+              let text = await HTTP.text(url) else { return nil }
+        return entries(json: text, host: host).first
     }
 
     static func search(instance: String, query: String, count: Int = 8) async -> [MediaEntry] {
@@ -416,7 +422,9 @@ enum PeerTubeAPI {
     }
 
     private static func playlistURL(_ lists: [[String: Any]]?) -> String? {
-        lists?.compactMap { $0["playlistUrl"] as? String }.first { !$0.isEmpty }
+        lists?.compactMap { $0["playlistUrl"] as? String }.first { url in
+            !url.isEmpty && !url.lowercased().contains(".mpd")
+        }
     }
 
     private static func endpoint(_ host: String, _ path: String, _ query: [URLQueryItem]) -> URL? {

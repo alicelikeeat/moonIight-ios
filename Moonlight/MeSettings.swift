@@ -640,37 +640,45 @@ struct FullPlayerView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea().allowsHitTesting(false)
-            if let url = entry.playbackURL {
+            if entry.kind == .embed, let raw = entry.embedURL ?? entry.remoteURL, let url = URL(string: raw) {
+                WebEmbedView(url: url).ignoresSafeArea()
+            } else if entry.playbackURL != nil {
                 PlayerLayerView(player: session.player, gravity: Gravity.choose(mode: app.settings.videoDisplay, video: session.naturalSize, view: UIScreen.main.bounds.size, override: entry.fillOverride))
                     .ignoresSafeArea()
-            }
-            MediaTouchLayer(
-                onSingle: { session.toggle() },
-                onDouble: { app.favoriteOnly(entry.id) },
-                onLongBegan: { point in openPlayerRing(point) },
-                onLongChanged: { point in
-                    ring.finger = point
-                    hold.move(point)
-                },
-                onLongEnded: { _ in
-                    let outcome = hold.lift()
-                    ring.fingerDown = false
-                    if outcome != .timed && outcome != .center {
-                        if ring.session?.drop == true {
-                            ring.releaseFinger(at: ring.finger)
-                        } else if ring.session?.select == .drag || ring.session?.select == .slider {
-                            ring.selectDrag(at: ring.finger)
+                MediaTouchLayer(
+                    onSingle: { session.toggle() },
+                    onDouble: { app.favoriteOnly(entry.id) },
+                    onLongBegan: { point in openPlayerRing(point) },
+                    onLongChanged: { point in
+                        ring.finger = point
+                        hold.move(point)
+                    },
+                    onLongEnded: { _ in
+                        let outcome = hold.lift()
+                        ring.fingerDown = false
+                        if outcome != .timed && outcome != .center {
+                            if ring.session?.drop == true {
+                                ring.releaseFinger(at: ring.finger)
+                            } else if ring.session?.select == .drag || ring.session?.select == .slider {
+                                ring.selectDrag(at: ring.finger)
+                            }
                         }
                     }
+                )
+                if ring.session != nil { RingOverlay(ring: ring) }
+                HoldChrome()
+                if !session.showsPlaying {
+                    Image(systemName: "play.fill").font(.system(size: 28)).foregroundColor(.white)
+                        .padding(18).moonDisc(overMedia: true)
+                        .allowsHitTesting(false)
                 }
-            )
-            if ring.session != nil { RingOverlay(ring: ring) }
-            HoldChrome()
+            }
             VStack {
                 HStack {
                     Button { dismiss() } label: {
                         Image(systemName: "chevron.down").foregroundColor(.white).padding(12).background(.ultraThinMaterial, in: Circle())
                     }
+                    .accessibilityIdentifier("player.close")
                     Spacer()
                     Text(entry.title).foregroundColor(.white).lineLimit(1).allowsHitTesting(false)
                     Spacer()
@@ -679,16 +687,13 @@ struct FullPlayerView: View {
                 .padding(.top, ScreenInsets.top)
                 Spacer().allowsHitTesting(false)
             }
-            if !session.showsPlaying {
-                Image(systemName: "play.fill").font(.system(size: 28)).foregroundColor(.white)
-                    .padding(18).moonDisc(overMedia: true)
-                    .allowsHitTesting(false)
-            }
         }
         .environment(\.colorScheme, .dark)
         .onAppear {
             app.feedPlayer.pause()
-            if let url = entry.playbackURL { session.load(url: url, autoplay: true, muted: false) }
+            if entry.kind != .embed, let url = entry.playbackURL {
+                session.load(url: url, autoplay: true, muted: false)
+            }
         }
         .onDisappear { session.pause() }
     }

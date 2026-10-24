@@ -275,6 +275,9 @@ enum LinkResolver {
     }
 
     static func resolve(_ raw: String) -> Result {
+        if case .peertube = PublicLink.parse(raw) {
+            return Result(entry: nil, message: "PeerTube 需要先向实例确认播放地址")
+        }
         if let entry = PublicLink.media(raw) {
             return Result(entry: entry, message: nil)
         }
@@ -331,6 +334,17 @@ enum LinkResolver {
             kind: .embed, title: url.host ?? "网页", remoteURL: text,
             platform: PlatformID.web, embedURL: text, source: "web"
         ), message: nil)
+    }
+
+    /// PeerTube watch links are resolved through the instance API before they enter the library.
+    static func resolvePlayable(_ raw: String) async -> Result {
+        if case .peertube(let host, let id) = PublicLink.parse(raw) {
+            if let entry = await PeerTubeAPI.fetch(host: host, id: id) {
+                return Result(entry: entry, message: nil)
+            }
+            return Result(entry: nil, message: "暂时拉不到这条 PeerTube 视频")
+        }
+        return resolve(raw)
     }
 
     static func youtubeID(_ text: String) -> String? {

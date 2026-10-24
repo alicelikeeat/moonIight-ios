@@ -653,6 +653,28 @@ final class LogicTests: XCTestCase {
         XCTAssertTrue(DownloadPolicy.canDownload(rows[0]).ok)
         let locked = MediaEntry(kind: .video, title: "yt", platform: PlatformID.youtube, downloadURL: "https://tube.example.com/a.mp4")
         XCTAssertFalse(DownloadPolicy.canDownload(locked).ok)
+
+        XCTAssertNil(PublicLink.media("https://tube.example.com/w/abc123xyz"))
+        let pending = LinkResolver.resolve("https://tube.example.com/w/abc123xyz")
+        XCTAssertNil(pending.entry)
+        XCTAssertNotNil(pending.message)
+        let watch = MediaEntry(kind: .video, title: "页", remoteURL: "https://tube.example.com/w/abc123xyz", platform: PlatformID.peertube)
+        XCTAssertNil(watch.playbackURL)
+        let file = MediaEntry(kind: .video, title: "片", remoteURL: "https://tube.example.com/a.mp4", platform: PlatformID.peertube)
+        XCTAssertEqual(file.playbackURL?.absoluteString, "https://tube.example.com/a.mp4")
+
+        let streams = """
+        {"data":[
+          {"uuid":"hls-1","name":"流","downloadEnabled":true,"streamingPlaylists":[{"playlistUrl":"https://tube.example.com/a.m3u8"}]},
+          {"uuid":"empty-1","name":"空","url":"https://tube.example.com/w/empty-1"},
+          {"uuid":"dash-1","name":"dash","streamingPlaylists":[{"playlistUrl":"https://tube.example.com/a.mpd"}]}
+        ]}
+        """
+        let extra = PeerTubeAPI.entries(json: streams, host: "tube.example.com")
+        XCTAssertEqual(extra.count, 1)
+        XCTAssertEqual(extra[0].remoteURL, "https://tube.example.com/a.m3u8")
+        XCTAssertNil(extra[0].downloadURL)
+        XCTAssertFalse(DownloadPolicy.canDownload(extra[0]).ok)
     }
 }
 
