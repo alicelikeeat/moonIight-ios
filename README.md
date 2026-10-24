@@ -1,6 +1,8 @@
 # 月光 · iOS
 
-这是 Android 版「月光」（`com.moonlight.feed`）的 iOS 原生 SwiftUI 版本，当前是 **0.3**。界面是简体中文。包名 `com.moonlight.feed`，最低系统 iOS 16。
+这是 Android 版「月光」（`com.moonlight.feed`）的 iOS 原生 SwiftUI 版本，当前是 **0.3.1**。界面是简体中文。包名 `com.moonlight.feed`，最低系统 iOS 16。
+
+0.3.1 修了一个真机问题：全屏背景和按住层把点击吃掉，启动后每个按钮都点不动。背景不再参与命中测试，标签栏改到安全区里，按住手势不再取消按钮的点击。
 
 0.3 补上定时长按和屏幕中心按住 5 秒的「全部按键」。定时长按默认关闭，到时只执行分配好的、非破坏性的按钮，并可以撤销。0.2 的长按圆环还在：旋转、荷花、星轨、月光和随机。和 Android v5.0 还差什么见 [FEATURE_PARITY.md](FEATURE_PARITY.md)。
 

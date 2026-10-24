@@ -42,10 +42,10 @@ struct RootView: View {
     @Environment(\.moon) private var colors
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             Group {
                 switch app.tab {
-                case .home: FeedView().ignoresSafeArea()
+                case .home: FeedView()
                 case .discover: DiscoverView()
                 case .capture: CaptureView()
                 case .moments: MomentsView()
@@ -53,13 +53,26 @@ struct RootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            tabBar
+        }
+        .overlay {
             if ring.session != nil {
                 RingOverlay(ring: ring)
             }
-            HoldChrome()
-            tabBar
+        }
+        .overlay {
+            if hold.showing || hold.panel != nil {
+                HoldChrome()
+                    .allowsHitTesting(hold.panel != nil)
+            }
+        }
+        .overlay(alignment: .bottom) {
             if let toast = app.toast {
                 ToastBar(text: toast, undo: app.undo)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 8)
             }
         }
         .sheet(isPresented: Binding(get: { ring.sheet != nil }, set: { if !$0 { ring.sheet = nil } })) {
@@ -108,7 +121,10 @@ struct RootView: View {
             }
             .foregroundColor(app.tab == item ? (app.tab == .home ? MoonColors.media.accent : colors.accent) : (app.tab == .home ? Color.white.opacity(0.72) : colors.textDim))
             .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tab.\(item.rawValue)")
         .holdTrack(onBegan: { point in
             guard item == .home else { return }
             let origin = CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.height - 120)
@@ -164,7 +180,10 @@ struct RootView: View {
                     .frame(width: 16, height: 16)
             }
             .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("tab.capture")
     }
 }
 

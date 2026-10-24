@@ -21,6 +21,7 @@ struct MomentsView: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .padding(.horizontal, 16).padding(.vertical, 8)
                                 .moonGlass(colors, radius: 16)
+                                .accessibilityIdentifier("moments.demo")
                         }
                         .padding(.top, 48)
                     }

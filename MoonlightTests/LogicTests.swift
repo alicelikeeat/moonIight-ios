@@ -386,7 +386,8 @@ final class LogicTests: XCTestCase {
             RingItem(title: "收藏", systemImage: "heart"),
         ]
         XCTAssertEqual(TimedActions.resolve(items: ok, groups: [], context: .feedItem, key: "fav")?.title, "收藏")
-        XCTAssertNil(TimedActions.resolve(items: ok, groups: [], context: .player, key: "fav"))
+        XCTAssertNil(TimedActions.resolve(items: ok, groups: [], context: .tab, key: "fav"))
+        XCTAssertEqual(TimedActions.resolve(items: ok, groups: [], context: .player, key: "fav")?.title, "收藏")
         XCTAssertEqual(TimedActions.sanitize(["FEED_ITEM": "delete", "TAB": "random"]), ["TAB": "random"])
 
         let centre = machine(timedMs: 3000)

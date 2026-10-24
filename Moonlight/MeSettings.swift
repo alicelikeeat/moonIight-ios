@@ -43,9 +43,9 @@ struct MeView: View {
                     .padding(.horizontal, 16)
                     .offset(y: -28)
                     VStack(spacing: 10) {
-                        navRow("库", "square.grid.2x2") { showLibrary = true }
-                        navRow("编辑资料", "pencil") { name = me.name; bio = me.bio; editingName = true }
-                        navRow("设置", "gearshape") { showSettings = true }
+                        navRow("库", "square.grid.2x2", id: "me.library") { showLibrary = true }
+                        navRow("编辑资料", "pencil", id: "me.edit") { name = me.name; bio = me.bio; editingName = true }
+                        navRow("设置", "gearshape", id: "me.settings") { showSettings = true }
                     }
                     .padding(.horizontal, 16)
                 }
@@ -142,7 +142,7 @@ struct MeView: View {
         ], groups: [], settings: app.settings)
     }
 
-    private func navRow(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+    private func navRow(_ title: String, _ symbol: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
                 Image(systemName: symbol).frame(width: 28)
@@ -153,7 +153,9 @@ struct MeView: View {
             .padding(14)
             .moonGlass(colors, radius: 16)
         }
+        .buttonStyle(.plain)
         .foregroundColor(colors.text)
+        .accessibilityIdentifier(id)
     }
 }
 
@@ -279,7 +281,7 @@ struct SettingsView: View {
                 Button("导入备份") { importing = true }
             }
             Section("关于") {
-                Text("月光 0.3 · iOS")
+                Text("月光 0.3.1 · iOS")
                 Text("不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
                     .font(.caption)
                     .foregroundColor(.secondary)

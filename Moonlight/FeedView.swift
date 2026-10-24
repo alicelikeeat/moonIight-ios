@@ -12,7 +12,7 @@ struct FeedView: View {
     var body: some View {
         let items = app.feedItems
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color.black.ignoresSafeArea(edges: [.top, .horizontal]).allowsHitTesting(false)
             if items.isEmpty {
                 empty
             } else {
@@ -42,7 +42,7 @@ struct FeedView: View {
                     .environmentObject(app)
                     .environmentObject(ring))
                 }
-                .ignoresSafeArea()
+                .ignoresSafeArea(edges: [.top, .horizontal])
             }
         }
         .moonOnChange(of: app.feedIndex) { _ in
@@ -63,6 +63,14 @@ struct FeedView: View {
             Text("还没有内容").font(.system(size: 20, weight: .semibold)).foregroundColor(.white)
             Text("从相册导入，或去发现里找公开影像。").font(.system(size: 14)).foregroundColor(.white.opacity(0.7))
             PhotosImportButton(title: "导入照片或视频")
+                .accessibilityIdentifier("home.import")
+            Button("去发现") { app.tab = .discover }
+                .buttonStyle(.plain)
+                .font(.system(size: 15, weight: .semibold))
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: Capsule())
+                .accessibilityIdentifier("home.discover")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 80)
@@ -306,39 +314,40 @@ struct FeedPage: View {
                         .font(.system(size: 84))
                         .foregroundColor(MoonColors.media.heart)
                         .shadow(radius: 12)
+                        .allowsHitTesting(false)
                 }
                 if chrome { overlay(in: geo.size) }
                 if active && entry.kind == .video && app.feedPlayer.playbackState == PlayToggle.buffering && app.feedPlayer.playWhenReady {
-                    ProgressView().tint(.white)
+                    ProgressView().tint(.white).allowsHitTesting(false)
                 }
             }
         }
-        .background(Color.black)
-        .ignoresSafeArea()
+        .background(Color.black.allowsHitTesting(false))
+        .ignoresSafeArea(edges: [.top, .horizontal])
     }
 
     @ViewBuilder private var backdrop: some View {
         if let path = app.settings.homeBackdropPath {
             if path.hasPrefix("http"), let url = URL(string: path) {
-                RemoteOrLocalImage(url: url, mode: .fill).ignoresSafeArea()
+                RemoteOrLocalImage(url: url, mode: .fill).ignoresSafeArea().allowsHitTesting(false)
             } else if FileManager.default.fileExists(atPath: path) {
-                RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill).ignoresSafeArea()
+                RemoteOrLocalImage(url: URL(fileURLWithPath: path), mode: .fill).ignoresSafeArea().allowsHitTesting(false)
             }
         }
     }
 
     @ViewBuilder private func media(in size: CGSize) -> some View {
         if entry.kind == .embed, let raw = entry.embedURL, let url = URL(string: raw), active {
-            WebEmbedView(url: url).ignoresSafeArea()
+            WebEmbedView(url: url).ignoresSafeArea(edges: [.top, .horizontal])
         } else if entry.kind == .video && entry.embedURL == nil {
             if active {
                 PlayerLayerView(
                     player: app.feedPlayer.player,
                     gravity: Gravity.choose(mode: app.settings.videoDisplay, video: app.feedPlayer.naturalSize, view: size, override: entry.fillOverride)
                 )
-                .ignoresSafeArea()
+                .ignoresSafeArea().allowsHitTesting(false)
             } else {
-                RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill).ignoresSafeArea()
+                RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill).ignoresSafeArea().allowsHitTesting(false)
             }
             if active && !app.feedPlayer.showsPlaying && app.feedPlayer.errorText == nil {
                 Image(systemName: "play.fill")
@@ -353,7 +362,7 @@ struct FeedPage: View {
             }
         } else {
             RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL ?? entry.remoteURL, mode: app.settings.videoDisplay == .fill ? .fill : .fit)
-                .ignoresSafeArea()
+                .ignoresSafeArea().allowsHitTesting(false)
         }
     }
 
@@ -370,7 +379,8 @@ struct FeedPage: View {
             }
             .padding(.top, ScreenInsets.top + 8)
             .padding(.horizontal, 16)
-            Spacer()
+            .allowsHitTesting(false)
+            Spacer().allowsHitTesting(false)
             HStack {
                 Button {
                     app.jumpVisible = true
@@ -393,10 +403,9 @@ struct FeedPage: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, ScreenInsets.bottom + 78)
+            .padding(.bottom, 16)
         }
         .foregroundColor(.white)
-        .allowsHitTesting(true)
     }
 }
 

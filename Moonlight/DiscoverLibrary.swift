@@ -23,6 +23,7 @@ struct DiscoverView: View {
                         Button("搜索") { Task { await app.discover(query: query) } }
                             .font(.system(size: 15, weight: .semibold))
                             .padding(.horizontal, 12)
+                            .accessibilityIdentifier("discover.search")
                     }
                     HStack {
                         TextField("粘贴直链或官方页面", text: $link)
@@ -32,9 +33,13 @@ struct DiscoverView: View {
                         Button("加入") { addLink() }
                             .font(.system(size: 15, weight: .semibold))
                     }
-                    if app.discoverBusy { ProgressView("正在找公开影像…").tint(colors.accent) }
+                    if app.discoverBusy {
+                        ProgressView("正在找公开影像…").tint(colors.accent)
+                            .accessibilityIdentifier("discover.busy")
+                    }
                     if let error = app.discoverError {
                         Text(error).font(.system(size: 13)).foregroundColor(colors.textDim)
+                            .accessibilityIdentifier("discover.error")
                     }
                     LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                         ForEach(app.discoverResults) { entry in
@@ -215,6 +220,8 @@ struct CaptureView: View {
                     app.composer = ComposerDraft(authorId: app.social.selfId)
                     app.tab = .moments
                 } label: { rowLabel("发朋友圈", "square.and.pencil") }
+                .accessibilityIdentifier("capture.compose")
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 28)
             Spacer()
@@ -247,6 +254,7 @@ struct CaptureView: View {
 
     private func captureButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { rowLabel(title, symbol) }
+            .buttonStyle(.plain)
     }
 
     private func rowLabel(_ title: String, _ symbol: String) -> some View {

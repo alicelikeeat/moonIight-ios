@@ -10,8 +10,8 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    MARKETING_VERSION: "0.3.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "0.3.1"
+    CURRENT_PROJECT_VERSION: "4"
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     TARGETED_DEVICE_FAMILY: "1,2"
     SUPPORTS_MACCATALYST: NO
@@ -52,15 +52,29 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Moonlight.app/Moonlight"
         BUNDLE_LOADER: "$(TEST_HOST)"
+  MoonlightUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: MoonlightUITests
+    dependencies:
+      - target: Moonlight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.moonlight.feed.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Moonlight
 schemes:
   Moonlight:
     build:
       targets:
         Moonlight: all
         MoonlightTests: [test]
+        MoonlightUITests: [test]
     test:
       targets:
         - MoonlightTests
+        - MoonlightUITests
       gatherCoverageData: false
     run:
       config: Debug

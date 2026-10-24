@@ -64,13 +64,15 @@ struct MediaTouchLayer: UIViewRepresentable {
         view.backgroundColor = .clear
         let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.single(_:)))
         single.numberOfTapsRequired = 1
+        single.cancelsTouchesInView = false
         let double = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.double(_:)))
         double.numberOfTapsRequired = 2
-        single.require(toFail: double)
+        double.cancelsTouchesInView = false
         let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
         hold.minimumPressDuration = 0.5
         hold.allowableMovement = 10_000
-        hold.cancelsTouchesInView = true
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
         view.addGestureRecognizer(single)
         view.addGestureRecognizer(double)
         view.addGestureRecognizer(hold)
@@ -83,8 +85,18 @@ struct MediaTouchLayer: UIViewRepresentable {
     final class Coordinator: NSObject {
         var parent: MediaTouchLayer
         init(_ parent: MediaTouchLayer) { self.parent = parent }
-        @objc func single(_ g: UITapGestureRecognizer) { parent.onSingle() }
-        @objc func double(_ g: UITapGestureRecognizer) { parent.onDouble() }
+        private var generation = 0
+        @objc func single(_ g: UITapGestureRecognizer) {
+            let gen = generation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+                guard gen == self.generation else { return }
+                self.parent.onSingle()
+            }
+        }
+        @objc func double(_ g: UITapGestureRecognizer) {
+            generation += 1
+            parent.onDouble()
+        }
         @objc func hold(_ g: UILongPressGestureRecognizer) {
             let point = g.location(in: g.view?.window)
             switch g.state {

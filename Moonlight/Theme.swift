@@ -110,6 +110,8 @@ struct MoonBackground: View {
                     .offset(x: 80, y: -40)
             }
             .ignoresSafeArea()
+            // Decorative only. On iOS 18+ a safe-area-ignoring background still wins hit testing and makes every button feel dead.
+            .allowsHitTesting(false)
     }
 }
 

@@ -355,61 +355,91 @@ struct HoldChrome: View {
     }
 }
 
-private struct GlobalFrameKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
-}
-
-/// Stationary hold for 0.5s, then tracks the finger until lift. Coordinates are in the window.
+/// Long-press that does not cancel the Button underneath.
+/// A SwiftUI DragGesture(minimumDistance: 0) on iOS 18+ swallows every tap in the same view.
 struct HoldTrack: ViewModifier {
     var onBegan: (CGPoint) -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
-    @State private var frame: CGRect = .zero
-    @State private var down: CGPoint?
-    @State private var armed = false
-    @State private var generation = 0
 
     func body(content: Content) -> some View {
-        content
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: GlobalFrameKey.self, value: geo.frame(in: .global))
-                }
-            )
-            .onPreferenceChange(GlobalFrameKey.self) { frame = $0 }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 0).onChanged { value in
-                    let point = window(value.location)
-                    if down == nil {
-                        down = point
-                        let gen = generation
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            guard gen == generation, down != nil else { return }
-                            armed = true
-                            onBegan(down ?? point)
-                        }
-                    } else if armed {
-                        onChanged(point)
-                    }
-                }.onEnded { value in
-                    generation += 1
-                    let was = armed
-                    let point = window(value.location)
-                    armed = false
-                    down = nil
-                    if was { onEnded(point) }
-                }
-            )
-    }
-
-    private func window(_ local: CGPoint) -> CGPoint {
-        CGPoint(x: frame.minX + local.x, y: frame.minY + local.y)
+        content.background(HoldProbe(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded))
     }
 }
 
 extension View {
     func holdTrack(onBegan: @escaping (CGPoint) -> Void, onChanged: @escaping (CGPoint) -> Void, onEnded: @escaping (CGPoint) -> Void) -> some View {
         modifier(HoldTrack(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded))
+    }
+}
+
+private struct HoldProbe: UIViewRepresentable {
+    var onBegan: (CGPoint) -> Void
+    var onChanged: (CGPoint) -> Void
+    var onEnded: (CGPoint) -> Void
+
+    func makeUIView(context: Context) -> HoldProbeView {
+        let view = HoldProbeView()
+        view.isUserInteractionEnabled = false
+        view.coordinator = context.coordinator
+        return view
+    }
+
+    func updateUIView(_ uiView: HoldProbeView, context: Context) {
+        context.coordinator.parent = self
+        uiView.coordinator = context.coordinator
+        uiView.installIfNeeded()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject {
+        var parent: HoldProbe
+        init(_ parent: HoldProbe) { self.parent = parent }
+
+        @objc func hold(_ gesture: UILongPressGestureRecognizer) {
+            let point = gesture.location(in: gesture.view?.window)
+            switch gesture.state {
+            case .began: parent.onBegan(point)
+            case .changed: parent.onChanged(point)
+            case .ended, .cancelled, .failed: parent.onEnded(point)
+            default: break
+            }
+        }
+    }
+}
+
+private final class HoldProbeView: UIView {
+    weak var coordinator: HoldProbe.Coordinator?
+    private var recognizer: UILongPressGestureRecognizer?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        installIfNeeded()
+    }
+
+    func installIfNeeded() {
+        guard let coordinator, window != nil else { return }
+        guard let host = pressHost else { return }
+        if recognizer == nil {
+            let hold = UILongPressGestureRecognizer(target: coordinator, action: #selector(HoldProbe.Coordinator.hold(_:)))
+            hold.minimumPressDuration = 0.5
+            hold.allowableMovement = 10_000
+            hold.cancelsTouchesInView = false
+            hold.delaysTouchesBegan = false
+            hold.delaysTouchesEnded = false
+            recognizer = hold
+        }
+        guard let recognizer else { return }
+        if recognizer.view !== host {
+            recognizer.view?.removeGestureRecognizer(recognizer)
+            host.addGestureRecognizer(recognizer)
+        }
+    }
+
+    /// The view this probe decorates. Stay on that view so the recognizer cannot cover the window.
+    private var pressHost: UIView? {
+        guard let host = superview, !(host is UIWindow) else { return nil }
+        return host
     }
 }
