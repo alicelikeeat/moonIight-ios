@@ -275,6 +275,9 @@ enum LinkResolver {
     }
 
     static func resolve(_ raw: String) -> Result {
+        if let entry = PublicLink.media(raw) {
+            return Result(entry: entry, message: nil)
+        }
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: text), let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             return Result(entry: nil, message: "请粘贴 http(s) 链接")

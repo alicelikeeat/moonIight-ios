@@ -136,6 +136,26 @@ final class LogicTests: XCTestCase {
         XCTAssertEqual(FeedTapRule.onTap(isVideo: false, active: true), .toggleChrome)
         XCTAssertEqual(FeedTapRule.onTap(isVideo: true, active: false), .toggleChrome)
         XCTAssertEqual(FeedTapRule.onTap(isVideo: true, active: true, hasError: true), .toggleChrome)
+        XCTAssertEqual(FeedTapRule.onTap(isVideo: true, active: true, chromeVisible: false, autoHide: true), .revealChrome)
+        XCTAssertEqual(FeedTapRule.onTap(isVideo: true, active: true, chromeVisible: true, autoHide: true), .togglePlay)
+        XCTAssertEqual(FeedTapRule.onTap(isVideo: false, active: true, chromeVisible: false, autoHide: true), .toggleChrome)
+        XCTAssertTrue(ChromeTiming.shouldHide(autoHide: true, playing: true, quiet: 3, limit: 3))
+        XCTAssertFalse(ChromeTiming.shouldHide(autoHide: true, playing: true, quiet: 2.9, limit: 3))
+        XCTAssertFalse(ChromeTiming.shouldHide(autoHide: false, playing: true, quiet: 9, limit: 3))
+        XCTAssertFalse(ChromeTiming.shouldHide(autoHide: true, playing: false, quiet: 9, limit: 3))
+        XCTAssertEqual(ChromeTiming.clamp(0.1), 0.5, accuracy: 0.001)
+        XCTAssertEqual(ChromeTiming.clamp(99), 30, accuracy: 0.001)
+        XCTAssertEqual(ChromeTiming.seconds(3), 3, accuracy: 0.001)
+        XCTAssertFalse(FeedAutoplay.allowed(wifiOnly: true, pauseOnLowPower: false, expensive: true, lowPower: false, pathKnown: true))
+        XCTAssertTrue(FeedAutoplay.allowed(wifiOnly: true, pauseOnLowPower: false, expensive: true, lowPower: false, pathKnown: false))
+        XCTAssertFalse(FeedAutoplay.allowed(wifiOnly: false, pauseOnLowPower: true, expensive: false, lowPower: true, pathKnown: true))
+        XCTAssertTrue(FeedAutoplay.allowed(wifiOnly: false, pauseOnLowPower: true, expensive: false, lowPower: false, pathKnown: true))
+        let window = CGRect(x: 0, y: 0, width: 390, height: 844)
+        XCTAssertTrue(TabChrome.contains(CGPoint(x: 12, y: 800), tabTop: 760, window: window))
+        XCTAssertTrue(TabChrome.contains(CGPoint(x: 200, y: 843), tabTop: 760, window: window))
+        XCTAssertFalse(TabChrome.contains(CGPoint(x: 200, y: 400), tabTop: 760, window: window))
+        XCTAssertFalse(TabChrome.contains(CGPoint(x: 10, y: 759), tabTop: 760, window: window))
+        XCTAssertTrue(TabChrome.region(tabTop: 900, window: window).isNull)
     }
 
     func testFeedNav() {
@@ -475,6 +495,36 @@ final class LogicTests: XCTestCase {
         XCTAssertTrue(loaded.buttonSkins.isEmpty)
         XCTAssertEqual(loaded.iconPreset, IconPreset.primary.rawValue)
         XCTAssertTrue(loaded.bgRefreshOn)
+        XCTAssertEqual(loaded.menuSelect, .tap)
+        XCTAssertFalse(loaded.dropSelect)
+        XCTAssertEqual(AppSettings().menuSelect, .tap)
+        XCTAssertFalse(AppSettings().dropSelect)
+        XCTAssertTrue(AppSettings().tabLens)
+        XCTAssertTrue(AppSettings().feedMuted)
+        XCTAssertTrue(AppSettings().chromeAutoHide)
+        XCTAssertEqual(AppSettings().chromeHideSeconds, 3, accuracy: 0.001)
+        XCTAssertTrue(AppSettings().pauseOnLowPower)
+        XCTAssertFalse(AppSettings().autoplayWifiOnly)
+        XCTAssertEqual(AppSettings.load(Data(#"{"tabLens":false}"#.utf8))?.tabLens, false)
+        XCTAssertEqual(try XCTUnwrap(AppSettings.load(Data(#"{"chromeHideSeconds":99}"#.utf8))).chromeHideSeconds, 30, accuracy: 0.001)
+        let opted = AppSettings.load(Data(#"{"menuSelect":"DROP"}"#.utf8))
+        XCTAssertEqual(opted?.menuSelect, .tap)
+        XCTAssertEqual(opted?.dropSelect, true)
+        let spin = RingMotion.openMs(.spin, 4, 1)
+        XCTAssertEqual(spin, RingMotion.spinFlightMs + 3 * RingMotion.spinStaggerMs)
+        XCTAssertGreaterThanOrEqual(spin, 250)
+        XCTAssertLessThanOrEqual(spin, 350)
+        XCTAssertEqual(RingMotion.openMs(.spin, 4, 2), spin / 2)
+        XCTAssertEqual(RingMotion.openMs(.spin, 4, 0.5), spin * 2)
+        XCTAssertEqual(BubbleMotion.influence(distance: 0), 1, accuracy: 0.001)
+        XCTAssertEqual(BubbleMotion.influence(distance: 400), 0, accuracy: 0.001)
+        XCTAssertGreaterThan(BubbleMotion.influence(distance: 30), BubbleMotion.influence(distance: 120))
+        XCTAssertEqual(BubbleMotion.scaleBoost(0), 1, accuracy: 0.001)
+        XCTAssertEqual(BubbleMotion.scaleBoost(1), 1.25, accuracy: 0.001)
+        XCTAssertEqual(DropAim.decide(hit: nil, destructive: false, hasUndo: false, moved: 0), .stay)
+        XCTAssertEqual(DropAim.decide(hit: nil, destructive: false, hasUndo: false, moved: 40), .cancel)
+        XCTAssertEqual(DropAim.decide(hit: 1, destructive: true, hasUndo: false, moved: 40), .stay)
+        XCTAssertEqual(DropAim.decide(hit: 1, destructive: true, hasUndo: true, moved: 4), .fire(1))
     }
 
     func testV1ParityRules() {
@@ -544,6 +594,65 @@ final class LogicTests: XCTestCase {
         let dup = MediaEntry(kind: .video, title: "again", remoteURL: "https://example.com/a.mp4")
         let merged = PublicRefresh.merge(existing: [kept], incoming: [extra, dup])
         XCTAssertEqual(merged.map(\.title), ["old", "new"])
+    }
+
+    func testPublicSources() {
+        XCTAssertEqual(PublicLink.parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), .youtubeVideo("dQw4w9WgXcQ"))
+        XCTAssertEqual(PublicLink.parse("https://youtu.be/dQw4w9WgXcQ"), .youtubeVideo("dQw4w9WgXcQ"))
+        XCTAssertEqual(PublicLink.parse("https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx"), .youtubeChannel("UCxxxxxxxxxxxxxxxxxxxxxx"))
+        XCTAssertEqual(PublicLink.parse("https://www.bilibili.com/video/BV1xx411c7mD"), .biliBV("BV1xx411c7mD"))
+        XCTAssertEqual(PublicLink.parse("https://www.bilibili.com/video/av170001"), .biliAid("170001"))
+        if case .peertube(let host, let id) = PublicLink.parse("https://tube.example.com/w/abc123xyz") {
+            XCTAssertEqual(host, "tube.example.com")
+            XCTAssertEqual(id, "abc123xyz")
+        } else {
+            XCTFail("PeerTube 链接没有认出来")
+        }
+        let space = PublicLink.follow(from: "https://space.bilibili.com/42", instance: "")
+        XCTAssertNil(space.0)
+        XCTAssertNotNil(space.1)
+        let yt = PublicLink.media("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        XCTAssertEqual(yt?.kind, .embed)
+        XCTAssertTrue(yt?.embedURL?.contains("youtube.com/embed/dQw4w9WgXcQ") == true)
+        XCTAssertFalse(yt?.embedURL?.contains("googlevideo") == true)
+        let bili = PublicLink.media("BV1xx411c7mD")
+        XCTAssertEqual(bili?.embedURL, BiliLinks.player(bvid: "BV1xx411c7mD"))
+        XCTAssertFalse(bili?.embedURL?.contains("playurl") == true)
+        XCTAssertFalse(DownloadPolicy.canDownload(bili ?? MediaEntry(kind: .embed, title: "b")).ok)
+
+        let xml = """
+        <feed><entry>
+          <title>月亮 &amp; 海</title>
+          <yt:videoId>abcdefghijk</yt:videoId>
+          <name>频道</name>
+        </entry></feed>
+        """
+        let videos = FeedXML.youtube(xml)
+        XCTAssertEqual(videos.count, 1)
+        XCTAssertEqual(videos[0].title, "月亮 & 海")
+        XCTAssertEqual(videos[0].id, "yt-abcdefghijk")
+        XCTAssertEqual(videos[0].kind, .embed)
+        let biliXML = "<rss><item><title>片子</title><link>https://www.bilibili.com/video/BV1xx411c7mD</link></item></rss>"
+        XCTAssertEqual(FeedXML.bili(biliXML).first?.biliBvid, "BV1xx411c7mD")
+
+        let api = """
+        {"items":[{"id":{"videoId":"abcdefghijk"},"snippet":{"title":"检索","channelTitle":"人"}}]}
+        """
+        XCTAssertEqual(YouTubeAPI.entries(json: api).first?.embedURL?.contains("/embed/abcdefghijk"), true)
+
+        let pt = """
+        {"data":[
+          {"uuid":"11111111-2222-3333-4444-555555555555","name":"公开","downloadEnabled":true,"files":[{"fileUrl":"https://tube.example.com/a.mp4"}]},
+          {"uuid":"nsfw-1","name":"跳过","nsfw":true}
+        ]}
+        """
+        let rows = PeerTubeAPI.entries(json: pt, host: "tube.example.com")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].remoteURL, "https://tube.example.com/a.mp4")
+        XCTAssertEqual(rows[0].downloadURL, "https://tube.example.com/a.mp4")
+        XCTAssertTrue(DownloadPolicy.canDownload(rows[0]).ok)
+        let locked = MediaEntry(kind: .video, title: "yt", platform: PlatformID.youtube, downloadURL: "https://tube.example.com/a.mp4")
+        XCTAssertFalse(DownloadPolicy.canDownload(locked).ok)
     }
 }
 

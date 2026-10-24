@@ -1,5 +1,7 @@
 import AVFoundation
 import Combine
+import CoreVideo
+import Network
 import SwiftUI
 import UIKit
 
@@ -18,6 +20,7 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
     @Published private(set) var generation = 0
 
     private var endedFlag = false
+    private var resumeAfterBackground = false
     private var statusObs: NSKeyValueObservation?
     private var itemObs: NSKeyValueObservation?
     private var sizeObs: NSKeyValueObservation?
@@ -104,7 +107,16 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
     }
 
     func pauseForBackground() {
-        if playWhenReady || player.timeControlStatus == .playing { pause() }
+        let playing = playWhenReady || player.timeControlStatus == .playing
+        resumeAfterBackground = playing
+        if playing { pause() }
+    }
+
+    /// Continues a clip that was paused only because the app left the foreground.
+    func resumeAfterForeground() {
+        guard resumeAfterBackground else { return }
+        resumeAfterBackground = false
+        play()
     }
 
     func toggle() { PlayToggle.toggle(self) }
@@ -200,5 +212,87 @@ enum Gravity {
             override: override
         )
         return fill ? .resizeAspectFill : .resizeAspect
+    }
+}
+
+/// Watches whether the current path is cellular. Unknown until the first callback, which does not block autoplay.
+final class LinkMonitor {
+    static let shared = LinkMonitor()
+    private let monitor = NWPathMonitor()
+    private(set) var expensive = false
+    private(set) var known = false
+
+    private init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let expensive = path.isExpensive
+            DispatchQueue.main.async {
+                self?.expensive = expensive
+                self?.known = true
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "moon.link"))
+    }
+}
+
+/// A one-second silent clip so the immersive UI test can autoplay without a network asset.
+enum TinyClip {
+    static func write(to url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: 64,
+            AVVideoHeightKey: 64,
+        ]
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        let attrs: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+            kCVPixelBufferWidthKey as String: 64,
+            kCVPixelBufferHeightKey as String: 64,
+        ]
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: attrs)
+        guard writer.canAdd(input) else { throw CocoaError(.fileWriteUnknown) }
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+        let fps: Int32 = 10
+        for i in 0..<12 {
+            let deadline = Date().addingTimeInterval(1.5)
+            while !input.isReadyForMoreMediaData && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            guard input.isReadyForMoreMediaData else { break }
+            var buffer: CVPixelBuffer?
+            if let pool = adaptor.pixelBufferPool {
+                CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
+            }
+            if buffer == nil {
+                let options: [String: Any] = [
+                    kCVPixelBufferCGImageCompatibilityKey as String: true,
+                    kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+                ]
+                CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32BGRA, options as CFDictionary, &buffer)
+            }
+            guard let buffer else { continue }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                let bytes = CVPixelBufferGetDataSize(buffer)
+                memset(base, 0, bytes)
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            let time = CMTime(value: CMTimeValue(i), timescale: fps)
+            if !adaptor.append(buffer, withPresentationTime: time) { break }
+        }
+        input.markAsFinished()
+        let wait = DispatchSemaphore(value: 0)
+        writer.finishWriting { wait.signal() }
+        wait.wait()
+        if writer.status != .completed {
+            try? FileManager.default.removeItem(at: url)
+            throw writer.error ?? CocoaError(.fileWriteUnknown)
+        }
     }
 }

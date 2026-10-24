@@ -60,6 +60,10 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>bilibili</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>用于拍摄照片和视频，导入到月光。</string>
 	<key>NSMicrophoneUsageDescription</key>

@@ -27,6 +27,8 @@ struct RingSession: Identifiable {
     var style: RingAnim
     var backdrop: MenuBackdrop
     var select: MenuSelect
+    /// 水滴选择. Off unless the setting is on. Taps still work either way.
+    var drop: Bool
     var overMedia: Bool
     var starSpeed: Float
     var started = Date()
@@ -43,6 +45,9 @@ final class RingController: ObservableObject {
     @Published var closing = false
     @Published var settled = false
     @Published var closeStarted: Date?
+    @Published var bubbleLive = false
+    var overlayOrigin = CGPoint.zero
+    let bubbles = BubbleField()
     private var closeTask: Task<Void, Never>?
     private var landed: Set<Int> = []
 
@@ -59,13 +64,17 @@ final class RingController: ObservableObject {
         expanded = nil
         closing = false
         settled = false
+        bubbleLive = false
+        bubbles.reset()
+        bubbles.onNearest = { _ in Haptics.tick() }
         session = RingSession(
             origin: origin,
             items: Array(items.prefix(4)),
             groups: groups,
             style: style,
             backdrop: settings.menuBackdrop,
-            select: settings.menuSelect,
+            select: settings.menuSelect == .drop ? .tap : settings.menuSelect,
+            drop: settings.dropSelect || settings.menuSelect == .drop,
             overMedia: overMedia,
             starSpeed: RingMotion.clampSpeed(settings.starSpeed)
         )
@@ -95,7 +104,7 @@ final class RingController: ObservableObject {
 
     /// Drag-mode release. Recomputes the same full-screen layout the overlay uses.
     func selectDrag(at global: CGPoint) {
-        guard let session, session.select == .drag else { return }
+        guard let session, session.select == .drag || session.select == .slider, !session.drop else { return }
         let size = UIScreen.main.bounds.size
         let n = session.items.count
         let margin = 16.0
@@ -133,6 +142,47 @@ final class RingController: ObservableObject {
 
     func dismiss() { beginClose() }
 
+    /// Lift while 水滴选择 is on. The button under the droplet fires; empty space cancels; a still finger leaves the ring up.
+    func releaseFinger(at global: CGPoint) {
+        guard let session, session.drop else { return }
+        let local = CGPoint(x: global.x - overlayOrigin.x, y: global.y - overlayOrigin.y)
+        if !bubbles.lastCenters.isEmpty {
+            bubbles.step(
+                target: local,
+                centers: bubbles.lastCenters,
+                now: Date().timeIntervalSinceReferenceDate + 0.05,
+                tracking: true,
+                force: true
+            )
+        }
+        let moved = hypot(Double(global.x - session.origin.x), Double(global.y - session.origin.y))
+        guard let hit = bubbles.nearest, session.items.indices.contains(hit) else {
+            if case .cancel = DropAim.decide(hit: nil, destructive: false, hasUndo: false, moved: moved) {
+                dismiss()
+            }
+            return
+        }
+        let item = session.items[hit]
+        let decision = DropAim.decide(hit: hit, destructive: item.destructive, hasUndo: true, moved: moved)
+        switch decision {
+        case .fire:
+            guard item.enabled else { return }
+            if item.children.isEmpty {
+                // Destructive actions are deleteEntry, which already toasts 撤销. Nothing silent.
+                item.action()
+                if item.destructive { Haptics.warn() } else { Haptics.confirm() }
+                dismiss()
+            } else {
+                expanded = item.id
+                Haptics.tick()
+            }
+        case .cancel:
+            dismiss()
+        case .stay:
+            break
+        }
+    }
+
     func openSheet() {
         let groups = session?.groups ?? []
         sheetDark = session?.overMedia ?? false
@@ -164,7 +214,7 @@ struct RingOverlay: View {
             }
         }
         .ignoresSafeArea()
-        .allowsHitTesting(!(ring.fingerDown && ring.session?.select == .drag))
+        .allowsHitTesting(!(ring.fingerDown && ring.session?.drop == true))
     }
 
     @ViewBuilder private var backdrop: some View {
@@ -197,9 +247,23 @@ struct RingOverlay: View {
             radius: radius, itemR: itemR + 22
         )
         let deadline = Double(RingMotion.openMs(session.style, session.items.count, session.starSpeed)) / 1000 + 0.08
-        return TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: ring.settled && !ring.closing)) { timeline in
+        let paused = ring.settled && !ring.closing && !ring.fingerDown && !ring.bubbleLive
+        return TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: paused)) { timeline in
             let elapsed = timeline.date.timeIntervalSince(session.started)
             let closingT = ring.closing ? min(1, max(0, elapsed > 0 ? closeProgress(session) : 0)) : 0
+            let poses = session.items.indices.map { buttonPose(session, index: $0, elapsed: elapsed, closing: closingT) }
+            let centers = poses.indices.map { buttonCenter(geo: geo, index: $0, pose: poses[$0], size: size) }
+            let overlayOrigin = CGPoint(x: session.origin.x - localOrigin.x, y: session.origin.y - localOrigin.y)
+            let localFinger = CGPoint(x: ring.finger.x - overlayOrigin.x, y: ring.finger.y - overlayOrigin.y)
+            let _ = {
+                ring.overlayOrigin = overlayOrigin
+                ring.bubbles.step(
+                    target: localFinger,
+                    centers: centers,
+                    now: timeline.date.timeIntervalSinceReferenceDate,
+                    tracking: ring.fingerDown
+                )
+            }()
             ZStack {
                 if session.style == .moon {
                     moon(size: size, lit: ring.closing ? 0.3 : 1)
@@ -207,29 +271,38 @@ struct RingOverlay: View {
                 Canvas { context, _ in
                     guard session.style == .star else { return }
                     for i in session.items.indices {
-                        let pose = buttonPose(session, index: i, elapsed: elapsed, closing: closingT)
-                        drawTrail(context: context, geo: geo, index: i, pose: pose, size: size, session: session, elapsed: elapsed)
+                        drawTrail(context: context, geo: geo, index: i, pose: poses[i], size: size, session: session, elapsed: elapsed)
                     }
                 }
                 .allowsHitTesting(false)
                 ForEach(Array(session.items.enumerated()), id: \.element.id) { index, item in
-                    let pose = buttonPose(session, index: index, elapsed: elapsed, closing: closingT)
-                    let center = buttonCenter(geo: geo, index: index, pose: pose, size: size)
-                    ringButton(item, pose: pose, center: center, session: session, parentAngle: geo.angles[index], radius: geo.radius)
-                        .onAppear { }
-                        .moonOnChange(of: pose.fx2) { value in
-                            if value > 0.2 { ring.noteLanded(index) }
-                        }
+                    ringButton(
+                        item,
+                        pose: poses[index],
+                        center: centers[index],
+                        session: session,
+                        parentAngle: geo.angles[index],
+                        radius: geo.radius,
+                        influence: ring.bubbles.influence(index),
+                        finger: ring.bubbles.finger,
+                        time: Float(elapsed),
+                        index: index
+                    )
+                    .moonOnChange(of: poses[index].fx2) { value in
+                        if value > 0.2 { ring.noteLanded(index) }
+                    }
+                }
+                if ring.fingerDown && session.drop {
+                    FingerLens()
+                        .position(ring.bubbles.finger)
+                        .allowsHitTesting(false)
                 }
                 moreButton(session, geo: geo, elapsed: elapsed, closing: closingT, size: size)
             }
             .moonOnChange(of: timeline.date) { _ in
                 if !ring.closing && elapsed >= deadline { ring.settled = true }
-            }
-            .moonOnChange(of: ring.finger) { point in
-                guard ring.fingerDown, session.select == .drag else { return }
-                let local = CGPoint(x: point.x - (session.origin.x - localOrigin.x), y: point.y - (session.origin.y - localOrigin.y))
-                _ = local
+                let live = ring.bubbles.live
+                if ring.bubbleLive != live { ring.bubbleLive = live }
             }
         }
     }
@@ -248,7 +321,6 @@ struct RingOverlay: View {
         let n = session.items.count
         let stagger = Double(RingMotion.starStaggerMs(n)) / 1000
         let flight = Double(RingMotion.starFlightMs) / 1000
-        let spinFlight = 0.62
         switch session.style {
         case .star:
             let speed = Double(RingMotion.clampSpeed(session.starSpeed))
@@ -257,8 +329,11 @@ struct RingOverlay: View {
             let cl = Float(ring.closing ? closeClock() : 1)
             return RingMotion.pose(.star, ring.closing ? 1 : o, cl, ring.closing, depth: RingMotion.starDepth(index))
         case .spin:
-            let raw = (elapsed - 0.02 * Double(index)) / spinFlight
-            let o = Float(min(1.15, max(0, raw)))
+            let rate = Double(RingMotion.clampSpeed(session.starSpeed))
+            let flight = Double(RingMotion.spinFlightMs) / 1000 / rate
+            let stagger = Double(RingMotion.spinStaggerMs) / 1000 / rate
+            let raw = (elapsed - stagger * Double(index)) / flight
+            let o = Float(min(1, max(0, raw)))
             return RingMotion.pose(.spin, ring.closing ? 1 : o, Float(ring.closing ? closeClock() : 1), ring.closing)
         case .lotus:
             let o = Float(min(1, max(0, (elapsed - 0.038 * Double(index)) / 0.52)))
@@ -329,10 +404,15 @@ struct RingOverlay: View {
         }
     }
 
-    private func ringButton(_ item: RingItem, pose: RingMotion.Pose, center: CGPoint, session: RingSession, parentAngle: Double, radius: Double) -> some View {
-        let highlighted = ring.fingerDown && session.select == .drag && near(ring.finger, session: session, center: center)
+    private func ringButton(_ item: RingItem, pose: RingMotion.Pose, center: CGPoint, session: RingSession, parentAngle: Double, radius: Double, influence: Float = 0, finger: CGPoint = .zero, time: Float = 0, index: Int = 0) -> some View {
+        let highlighted = ring.fingerDown && ring.bubbles.nearest == index
+        let lift = influence
         let ink: Color = session.overMedia ? .white : Color.primary
         let plate = session.overMedia ? MoonColors.media.glassTint : Color.primary.opacity(0.08)
+        let boost = CGFloat(pose.scale) * CGFloat(BubbleMotion.scaleBoost(lift))
+        var shift = BubbleMotion.offset(from: center, to: finger, influence: lift)
+        shift.height += BubbleMotion.bob(influence: lift, time: time, index: index)
+        let wobble = BubbleMotion.wobbleDegrees(influence: lift, time: time, index: index)
         return ZStack {
             if session.style == .lotus {
                 lotus(pose: pose)
@@ -341,8 +421,14 @@ struct RingOverlay: View {
                 SkinBadge(systemImage: item.systemImage, key: item.key, title: item.title, skins: app.settings.buttonSkins, ink: ink)
                     .frame(width: 56, height: 56)
                     .moonDisc(overMedia: session.overMedia)
-                    .background(Circle().fill(highlighted ? Color.white.opacity(0.28) : plate))
-                    .overlay(Circle().stroke(session.overMedia ? Color.white.opacity(0.55) : Color.primary.opacity(0.18), lineWidth: 0.8))
+                    .background(Circle().fill(highlighted ? Color.white.opacity(0.34) : plate))
+                    .overlay(Circle().stroke(session.overMedia ? Color.white.opacity(0.55) : Color.primary.opacity(0.18), lineWidth: highlighted ? 1.6 : 0.8))
+                    .overlay {
+                        Circle()
+                            .fill(Color.white.opacity(Double(BubbleMotion.highlight(lift)) * 0.55))
+                            .padding(8)
+                            .allowsHitTesting(false)
+                    }
                     .overlay {
                         if pose.fx3 > 0.05 {
                             Circle()
@@ -352,18 +438,27 @@ struct RingOverlay: View {
                                 .padding(2)
                         }
                     }
-                    .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+                    .shadow(color: .black.opacity(0.18 + 0.32 * Double(lift)), radius: 8 + 14 * CGFloat(lift), y: 4 + 6 * CGFloat(lift))
                     .rotationEffect(.degrees(Double(pose.rot)))
                 Text(item.title)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(ink)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .moonCapsule(overMedia: session.overMedia || session.style == .moon || session.style == .lotus)
                     .shadow(color: .black.opacity(session.backdrop.labelShadow || !session.overMedia ? 0.35 : 0.8), radius: 3, y: 1)
                     .opacity(Double(pose.label))
             }
-            .scaleEffect(max(0.05, CGFloat(pose.scale)))
+            .scaleEffect(max(0.05, boost))
+            .rotationEffect(.degrees(Double(wobble)))
             .opacity(Double(pose.alpha))
+            .offset(shift)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(item.title)
+            .accessibilityIdentifier("ring.\(item.title)")
             .onTapGesture {
                 guard item.enabled else { return }
+                app.nudgeChrome()
                 Haptics.tick()
                 if item.children.isEmpty {
                     item.action()
@@ -399,8 +494,8 @@ struct RingOverlay: View {
                         .foregroundColor((ring.session?.overMedia ?? false) ? .white : Color.primary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().stroke(Color.white.opacity(0.4), lineWidth: 0.6))
+                        .moonCapsule(overMedia: ring.session?.overMedia ?? false)
+                        .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 0.6))
                 }
                 .offset(x: 92 * CGFloat(cos(rad)), y: 92 * CGFloat(sin(rad)))
                 .opacity(child.enabled ? 1 : 0.4)
@@ -411,35 +506,66 @@ struct RingOverlay: View {
     private func lotus(pose: RingMotion.Pose) -> some View {
         let inner = CGFloat(RingMotion.lotusInner(pose.fx))
         let outer = CGFloat(RingMotion.lotusOuter(pose.fx))
-        return ZStack {
+        let petals = ZStack {
             ForEach(0..<8, id: \.self) { i in
-                Capsule()
-                    .fill(Color.white.opacity(0.16))
-                    .frame(width: 16, height: 34)
+                glassPetal(width: 16, height: 34)
                     .offset(y: -30 * outer)
                     .rotationEffect(.degrees(Double(i) / 8 * 360))
                     .scaleEffect(max(0.2, outer))
             }
             ForEach(0..<5, id: \.self) { i in
-                Capsule()
-                    .fill(Color(red: 0.95, green: 0.9, blue: 0.78).opacity(0.28))
-                    .frame(width: 14, height: 26)
+                glassPetal(width: 14, height: 26, warm: true)
                     .offset(y: -22 * inner)
                     .rotationEffect(.degrees(Double(i) / 5 * 360 + 18))
                     .scaleEffect(max(0.2, inner))
             }
         }
         .allowsHitTesting(false)
+        return Group {
+            if #available(iOS 26.0, *) {
+                GlassEffectContainer(spacing: 10) { petals }
+            } else {
+                petals
+            }
+        }
+    }
+
+    @ViewBuilder private func glassPetal(width: CGFloat, height: CGFloat, warm: Bool = false) -> some View {
+        let tint = warm ? Color(red: 0.98, green: 0.91, blue: 0.72) : Color.white
+        if #available(iOS 26.0, *) {
+            Color.clear
+                .frame(width: width, height: height)
+                .glassEffect(.regular.tint(tint.opacity(0.45)), in: Capsule())
+        } else {
+            Capsule()
+                .fill(.ultraThinMaterial)
+                .frame(width: width, height: height)
+                .overlay(Capsule().fill(tint.opacity(0.28)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.55), lineWidth: 0.6))
+        }
     }
 
     private func moon(size: CGSize, lit: Double) -> some View {
-        Circle()
-            .fill(Color(red: 0.96, green: 0.94, blue: 0.86))
-            .frame(width: 84, height: 84)
-            .shadow(color: Color(red: 0.95, green: 0.9, blue: 0.7).opacity(0.8 * lit), radius: 30)
-            .position(x: size.width - 78, y: ScreenInsets.top + 70)
-            .opacity(lit)
-            .allowsHitTesting(false)
+        ZStack {
+            if #available(iOS 26.0, *) {
+                Circle()
+                    .fill(Color.clear)
+                    .frame(width: 84, height: 84)
+                    .glassEffect(.regular.tint(Color(red: 0.96, green: 0.93, blue: 0.82).opacity(0.7)), in: Circle())
+            } else {
+                Circle().fill(.ultraThinMaterial).frame(width: 84, height: 84)
+                Circle().fill(Color(red: 0.96, green: 0.94, blue: 0.86).opacity(0.62)).frame(width: 84, height: 84)
+            }
+            Circle()
+                .fill(LinearGradient(colors: [Color.white.opacity(0.85), Color.white.opacity(0.05)], startPoint: .topLeading, endPoint: .center))
+                .frame(width: 28, height: 28)
+                .offset(x: -16, y: -18)
+            Circle().stroke(Color.white.opacity(0.55), lineWidth: 1).frame(width: 84, height: 84)
+        }
+        .shadow(color: Color(red: 0.95, green: 0.9, blue: 0.7).opacity(0.85 * lit), radius: 28)
+        .position(x: size.width - 78, y: ScreenInsets.top + 70)
+        .opacity(lit)
+        .allowsHitTesting(false)
     }
 
     private func moreButton(_ session: RingSession, geo: RadialResult, elapsed: TimeInterval, closing: Double, size: CGSize) -> some View {
@@ -473,6 +599,31 @@ struct RingOverlay: View {
 
     private func near(_ global: CGPoint, session: RingSession, center: CGPoint) -> Bool {
         hypot(global.x - center.x, global.y - center.y) < 46
+    }
+}
+
+/// Glass droplet used only while 水滴选择 is on. It does not take taps.
+struct FingerLens: View {
+    var body: some View {
+        let side: CGFloat = 72
+        ZStack {
+            if #available(iOS 26.0, *) {
+                Circle()
+                    .fill(Color.clear)
+                    .frame(width: side, height: side)
+                    .glassEffect(.regular, in: Circle())
+            } else {
+                Circle().fill(.ultraThinMaterial).frame(width: side, height: side)
+                Circle().stroke(Color.white.opacity(0.5), lineWidth: 1).frame(width: side, height: side)
+            }
+            Circle()
+                .fill(LinearGradient(colors: [Color.white.opacity(0.82), Color.white.opacity(0.04)], startPoint: .topLeading, endPoint: .center))
+                .frame(width: side * 0.32, height: side * 0.32)
+                .offset(x: -side * 0.16, y: -side * 0.18)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
+        .accessibilityIdentifier("ring.drop")
+        .allowsHitTesting(false)
     }
 }
 

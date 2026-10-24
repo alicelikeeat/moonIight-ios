@@ -51,6 +51,8 @@ struct MediaEntry: Codable, Identifiable, Equatable, Sendable {
     var biliBvid: String?
     var platform: String?
     var embedURL: String?
+    /// Direct file the instance allows saving. Never a YouTube or Bilibili stream.
+    var downloadURL: String?
     var author: String = ""
     var favorite: Bool = false
     var hidden: Bool = false
@@ -138,9 +140,25 @@ enum VideoDisplay: String, Codable, CaseIterable, Sendable {
 }
 
 enum MenuSelect: String, Codable, CaseIterable, Sendable {
+    case drop = "DROP"
+    case slider = "SLIDER"
     case tap = "TAP"
+    /// Older builds stored drag-to-select as DRAG. Treated as 滑块.
     case drag = "DRAG"
-    var label: String { self == .tap ? "点击" : "拖动" }
+
+    /// 水滴 is not a picker item. It is the 水滴选择 toggle, off by default.
+    static let choices: [MenuSelect] = [.tap, .slider]
+
+    var label: String {
+        switch self {
+        case .drop: return "水滴"
+        case .slider, .drag: return "滑块"
+        case .tap: return "点击"
+        }
+    }
+
+    var followsFinger: Bool { self != .tap }
+    var isDrop: Bool { self == .drop }
 }
 
 enum MenuBackdrop: String, Codable, CaseIterable, Sendable {
@@ -188,13 +206,29 @@ struct AppSettings: Codable, Equatable, Sendable {
     var videoDisplay: VideoDisplay = .smart
     var menuBackdrop: MenuBackdrop = .blur
     var menuSelect: MenuSelect = .tap
+    /// Opt-in. Off: long-press only opens the ring. On: a glass droplet selects on release.
+    var dropSelect: Bool = false
+    /// Default on: the system tab bar keeps drag-to-switch. Off replaces it with a glass bar and no slider.
+    var tabLens: Bool = true
     /// Style name or "RANDOM".
     var ringAnim: String = RingAnim.star.rawValue
     var ringAnimSet: String = RingAnim.choices.map(\.rawValue).joined(separator: ",")
     var pexelsKey: String = ""
     var pixabayKey: String = ""
+    var youtubeKey: String = ""
+    var peertubeInstance: String = ""
+    var follows: [FollowedSource] = []
+    var hiddenFollowIDs: [String] = []
     var chatServerURL: String = ""
-    var feedMuted: Bool = false
+    var feedMuted: Bool = true
+    /// Hide the home-feed buttons while a video plays, then again after the quiet interval.
+    var chromeAutoHide: Bool = true
+    /// Seconds of quiet before the feed buttons hide again. 1, 2, 3, 5, 10, or a custom value.
+    var chromeHideSeconds: Float = 3
+    /// Skip home-feed autoplay while Low Power Mode is on.
+    var pauseOnLowPower: Bool = true
+    /// Skip home-feed autoplay on a cellular / expensive network.
+    var autoplayWifiOnly: Bool = false
     var homeBackdropPath: String?
     /// 星轨速度 0.5…2. 慢 0.7 · 标准 1 · 快 1.4.
     var starSpeed: Float = 1
@@ -223,12 +257,22 @@ struct AppSettings: Codable, Equatable, Sendable {
             "videoDisplay": "SMART",
             "menuBackdrop": "BLUR",
             "menuSelect": "TAP",
+            "dropSelect": false,
+            "tabLens": true,
             "ringAnim": "STAR",
             "ringAnimSet": "SPIN,LOTUS,STAR,MOON",
             "pexelsKey": "",
             "pixabayKey": "",
+            "youtubeKey": "",
+            "peertubeInstance": "",
+            "follows": [Any](),
+            "hiddenFollowIDs": [String](),
             "chatServerURL": "",
-            "feedMuted": false,
+            "feedMuted": true,
+            "chromeAutoHide": true,
+            "chromeHideSeconds": 3.0,
+            "pauseOnLowPower": true,
+            "autoplayWifiOnly": false,
             "starSpeed": 1.0,
             "timedOn": false,
             "timedSeconds": 5.0,
@@ -250,6 +294,12 @@ struct AppSettings: Codable, Equatable, Sendable {
               let patched = try? JSONSerialization.data(withJSONObject: obj),
               var decoded = try? JSONDecoder().decode(AppSettings.self, from: patched) else { return nil }
         decoded.starSpeed = RingMotion.clampSpeed(decoded.starSpeed)
+        decoded.chromeHideSeconds = ChromeTiming.clamp(decoded.chromeHideSeconds)
+        if decoded.menuSelect == .drop {
+            decoded.menuSelect = .tap
+            decoded.dropSelect = true
+        }
+        if decoded.menuSelect == .drag { decoded.menuSelect = .slider }
         decoded.timedSeconds = HoldConfig.clampSeconds(decoded.timedSeconds)
         decoded.timedAssign = TimedActions.sanitize(decoded.timedAssign)
         return decoded
@@ -283,7 +333,7 @@ enum RingAnim: String, Codable, CaseIterable, Sendable {
     }
     var hint: String {
         switch self {
-        case .spin: return "按钮沿弧线旋转弹出"
+        case .spin: return "按钮像气泡一样弹进圆环，略微过冲后停在原大"
         case .lotus: return "每个按钮从花苞中绽放，收起时合拢下沉"
         case .star: return "按钮从远处沿弧线绕着手指飞来，越来越近，落入圆环"
         case .moon: return "全屏暗下，只有按钮被月光照亮（忽略菜单背景）"

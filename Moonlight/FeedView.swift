@@ -8,6 +8,9 @@ struct FeedView: View {
     @EnvironmentObject private var hold: HoldController
     @State private var chrome = true
     @State private var heart = false
+    /// True after the viewer taps the picture open. The hide timer owns it until playback stops.
+    @State private var userChrome = false
+    @State private var hideToken = 0
 
     var body: some View {
         let items = app.feedItems
@@ -24,7 +27,10 @@ struct FeedView: View {
                         heart: heart && index == app.feedIndex,
                         onSingle: { handleSingle(items[index]) },
                         onDouble: { handleDouble(items[index]) },
-                        onLongBegan: { point in openRing(items[index], at: point) },
+                        onLongBegan: { point in
+                            TabChrome.setSuspended(true)
+                            openRing(items[index], at: point)
+                        },
                         onLongChanged: { point in
                             ring.fingerDown = true
                             ring.finger = point
@@ -34,9 +40,15 @@ struct FeedView: View {
                             let outcome = hold.lift()
                             ring.fingerDown = false
                             ring.finger = point
-                            if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
-                                ring.selectDrag(at: point)
+                            if outcome != .timed && outcome != .center {
+                                if ring.session?.drop == true {
+                                    ring.releaseFinger(at: point)
+                                } else if ring.session?.select == .drag || ring.session?.select == .slider {
+                                    ring.selectDrag(at: point)
+                                }
                             }
+                            TabChrome.setSuspended(false)
+                            app.nudgeChrome()
                         }
                     )
                     .environmentObject(app)
@@ -45,15 +57,41 @@ struct FeedView: View {
             }
         }
         .moonOnChange(of: app.feedIndex) { _ in
-            chrome = true
+            userChrome = false
+            hideToken += 1
+            publishChrome(true)
             // Publishing the player from inside the update that observed feedIndex cycles the graph.
             DispatchQueue.main.async { loadCurrent() }
         }
+        .moonOnChange(of: app.demoEntry?.id) { _ in
+            DispatchQueue.main.async { loadCurrent() }
+        }
         .moonOnChange(of: app.tab) { tab in
-            if tab != .home { app.feedPlayer.pause() }
+            if tab != .home {
+                app.feedPlayer.pause()
+                userChrome = false
+                publishChrome(true)
+            }
+        }
+        .moonOnChange(of: app.chromeGeneration) { _ in
+            if userChrome { scheduleHide() }
+        }
+        .onReceive(app.feedPlayer.$generation) { _ in syncChrome() }
+        .onReceive(NotificationCenter.default.publisher(for: .moonResumeFeed)) { _ in
+            guard app.tab == .home, FeedAutoplay.allowedNow(app.settings) else { return }
+            app.feedPlayer.resumeAfterForeground()
+        }
+        .task(id: hideToken) {
+            guard userChrome, app.settings.chromeAutoHide, nativeVideoPlaying else { return }
+            let wait = ChromeTiming.seconds(app.settings.chromeHideSeconds)
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            guard !Task.isCancelled, nativeVideoPlaying, app.settings.chromeAutoHide else { return }
+            userChrome = false
+            publishChrome(false)
         }
         .environment(\.colorScheme, .dark)
         .onAppear {
+            publishChrome(true)
             DispatchQueue.main.async { loadCurrent() }
         }
         .sheet(isPresented: $app.jumpVisible) { jumpSheet(items) }
@@ -90,6 +128,7 @@ struct FeedView: View {
         guard items.indices.contains(app.feedIndex) else {
             app.feedPlayer.load(url: nil, autoplay: false, muted: true)
             app.armDwell(for: nil)
+            syncChrome()
             return
         }
         let entry = items[app.feedIndex]
@@ -97,19 +136,68 @@ struct FeedView: View {
         guard app.tab == .home else { return }
         if entry.kind == .video, entry.embedURL == nil, let url = entry.playbackURL {
             let rate = app.feedPlayer.speed
-            app.feedPlayer.load(url: url, autoplay: true, muted: app.settings.feedMuted, rate: rate)
+            let play = FeedAutoplay.allowedNow(app.settings)
+            app.feedPlayer.loop = entry.id == AppModel.immersiveDemoID
+            app.feedPlayer.load(url: url, autoplay: play, muted: app.settings.feedMuted, rate: rate)
         } else {
+            app.feedPlayer.loop = false
             app.feedPlayer.load(url: nil, autoplay: false, muted: true)
         }
+        syncChrome()
+    }
+
+    private var nativeVideoPlaying: Bool {
+        guard app.feedItems.indices.contains(app.feedIndex) else { return false }
+        let entry = app.feedItems[app.feedIndex]
+        guard entry.kind == .video, entry.embedURL == nil else { return false }
+        if app.feedPlayer.errorText != nil { return false }
+        if app.feedPlayer.playbackState == PlayToggle.ended { return false }
+        return app.feedPlayer.playWhenReady || app.feedPlayer.showsPlaying
+    }
+
+    private func publishChrome(_ visible: Bool) {
+        chrome = visible
+        if app.feedChrome != visible { app.feedChrome = visible }
+    }
+
+    private func syncChrome() {
+        let playing = nativeVideoPlaying
+        if !playing || !app.settings.chromeAutoHide {
+            userChrome = false
+            publishChrome(true)
+            return
+        }
+        if !userChrome { publishChrome(false) }
+    }
+
+    private func revealAndArm() {
+        userChrome = true
+        publishChrome(true)
+        hideToken += 1
+    }
+
+    private func scheduleHide() {
+        guard userChrome, app.settings.chromeAutoHide, nativeVideoPlaying else { return }
+        hideToken += 1
     }
 
     private func handleSingle(_ entry: MediaEntry) {
         let video = entry.kind == .video && entry.embedURL == nil
-        switch FeedTapRule.onTap(isVideo: video, active: true, hasError: app.feedPlayer.hasError) {
+        switch FeedTapRule.onTap(
+            isVideo: video,
+            active: true,
+            hasError: app.feedPlayer.hasError,
+            chromeVisible: chrome,
+            autoHide: app.settings.chromeAutoHide
+        ) {
         case .togglePlay:
             app.feedPlayer.toggle()
+            app.nudgeChrome()
         case .toggleChrome:
-            chrome.toggle()
+            userChrome = false
+            publishChrome(!chrome)
+        case .revealChrome:
+            revealAndArm()
         }
     }
 
@@ -231,6 +319,10 @@ struct FeedView: View {
                     }
                 },
                 RingItem(title: "信息", systemImage: "info.circle", key: "info") { app.infoEntry = entry },
+                RingItem(title: "全屏播放", systemImage: "arrow.up.left.and.arrow.down.right", key: "browser") { app.fullPlayer = entry },
+                RingItem(title: "用哔哩哔哩打开", systemImage: "arrow.up.right.square", enabled: entry.resolvedPlatform == PlatformID.bili && !(entry.biliBvid ?? "").isEmpty) {
+                    if let bvid = entry.biliBvid { BiliLinks.open(bvid: bvid) }
+                },
             ]),
             MenuGroup(title: "分享与保存", items: shareItems),
             MenuGroup(title: "整理", items: [
@@ -313,7 +405,14 @@ struct FeedPage: View {
             ZStack {
                 backdrop
                 media(in: geo.size)
-                MediaTouchLayer(onSingle: onSingle, onDouble: onDouble, onLongBegan: onLongBegan, onLongChanged: onLongChanged, onLongEnded: onLongEnded)
+                MediaTouchLayer(
+                    identifier: active && entry.kind == .video && entry.embedURL == nil ? "home.playing" : "home.page",
+                    onSingle: onSingle,
+                    onDouble: onDouble,
+                    onLongBegan: onLongBegan,
+                    onLongChanged: onLongChanged,
+                    onLongEnded: onLongEnded
+                )
                 if heart {
                     Image(systemName: "heart.fill")
                         .font(.system(size: 84))
@@ -321,7 +420,11 @@ struct FeedPage: View {
                         .shadow(radius: 12)
                         .allowsHitTesting(false)
                 }
-                if chrome { overlay(in: geo.size) }
+                overlay(in: geo.size)
+                    .opacity(chrome ? 1 : 0)
+                    .offset(y: chrome ? 0 : 18)
+                    .allowsHitTesting(chrome)
+                    .animation(.easeInOut(duration: 0.28), value: chrome)
                 if active && entry.kind == .video && app.feedPlayer.playbackState == PlayToggle.buffering && app.feedPlayer.playWhenReady {
                     ProgressView().tint(.white).allowsHitTesting(false)
                 }
@@ -387,9 +490,10 @@ struct FeedPage: View {
             .padding(.horizontal, 16)
             .allowsHitTesting(false)
             Spacer().allowsHitTesting(false)
-            HStack {
+            HStack(alignment: .bottom) {
                 Button {
                     guard !PressGate.suppressTap else { return }
+                    app.nudgeChrome()
                     app.jumpVisible = true
                 } label: {
                     Text("\(min(app.feedIndex + 1, max(app.feedItems.count, 1)))/\(max(app.feedItems.count, 1))")
@@ -399,15 +503,36 @@ struct FeedPage: View {
                         .moonCapsule(overMedia: true)
                 }
                 Spacer()
-                Button {
-                    guard !PressGate.suppressTap else { return }
-                    app.toggleFavorite(entry.id)
-                } label: {
-                    Image(systemName: entry.favorite ? "heart.fill" : "heart")
-                        .font(.system(size: 22))
-                        .foregroundColor(entry.favorite ? MoonColors.media.heart : .white)
-                        .frame(width: 46, height: 46)
-                        .moonDisc(overMedia: true)
+                VStack(spacing: 14) {
+                    if entry.kind == .video && entry.embedURL == nil {
+                        Button {
+                            guard !PressGate.suppressTap else { return }
+                            app.nudgeChrome()
+                            app.feedPlayer.isMuted.toggle()
+                            app.settings.feedMuted = app.feedPlayer.isMuted
+                            app.feedPlayer.player.isMuted = app.feedPlayer.isMuted
+                            app.saveSettings()
+                        } label: {
+                            Image(systemName: app.feedPlayer.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 46, height: 46)
+                                .moonDisc(overMedia: true)
+                        }
+                        .accessibilityIdentifier("home.mute")
+                        .accessibilityLabel(app.feedPlayer.isMuted ? "打开声音" : "静音")
+                    }
+                    Button {
+                        guard !PressGate.suppressTap else { return }
+                        app.nudgeChrome()
+                        app.toggleFavorite(entry.id)
+                    } label: {
+                        Image(systemName: entry.favorite ? "heart.fill" : "heart")
+                            .font(.system(size: 22))
+                            .foregroundColor(entry.favorite ? MoonColors.media.heart : .white)
+                            .frame(width: 46, height: 46)
+                            .moonDisc(overMedia: true)
+                    }
                 }
             }
             .padding(.horizontal, 16)

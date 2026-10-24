@@ -64,6 +64,14 @@ final class AppModel: ObservableObject {
     @Published var shredTitle: String?
     @Published var refreshCache: [MediaEntry] = []
     @Published var momentSlots: [String] = []
+    /// Home-feed buttons and the tab bar. Hidden while an autoplaying video is clean full-screen.
+    @Published var feedChrome = true
+    /// Bumped when a button is used so the hide timer starts over.
+    @Published var chromeGeneration = 0
+    /// In-memory clip for the immersive UI test. Never written into the library.
+    @Published var demoEntry: MediaEntry?
+
+    static let immersiveDemoID = "immersive-demo"
 
     let feedPlayer = PlayerSession()
     let recorder = RecorderModel()
@@ -123,11 +131,52 @@ final class AppModel: ObservableObject {
             self?.finishTransfer(id, file: file, error: error)
         }
         transfers.attach(jobs: transferJobs)
+        _ = LinkMonitor.shared
+        if ProcessInfo.processInfo.arguments.contains("-MoonlightDrop") {
+            settings.dropSelect = true
+        }
+        if ProcessInfo.processInfo.arguments.contains("-MoonlightImmersive") {
+            settings.chromeAutoHide = true
+            settings.chromeHideSeconds = 1
+            settings.feedMuted = true
+            settings.pauseOnLowPower = false
+            settings.autoplayWifiOnly = false
+            installImmersiveDemo()
+        }
+    }
+
+    func nudgeChrome() { chromeGeneration += 1 }
+
+    private func installImmersiveDemo() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("moon-immersive.mov")
+        Task.detached { [weak self] in
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+            if size < 1500 {
+                try? FileManager.default.removeItem(at: url)
+                try? TinyClip.write(to: url)
+            }
+            let ready = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0) > 500
+            await self?.useImmersiveDemo(url, exists: ready)
+        }
+    }
+
+    private func useImmersiveDemo(_ url: URL, exists: Bool) {
+        guard exists else { return }
+        demoEntry = MediaEntry(
+            id: Self.immersiveDemoID,
+            kind: .video,
+            title: "沉浸",
+            localPath: url.path,
+            platform: PlatformID.local,
+            author: "测试",
+            source: "local"
+        )
+        feedIndex = 0
     }
 
     var feedItems: [MediaEntry] {
         let map = Dictionary(uniqueKeysWithValues: library.entries.map { ($0.id, $0) })
-        return feedOrder.compactMap { map[$0] }.filter { entry in
+        var items = feedOrder.compactMap { map[$0] }.filter { entry in
             if entry.hidden { return false }
             switch feedScope {
             case .all: return true
@@ -135,6 +184,10 @@ final class AppModel: ObservableObject {
             case .online: return entry.localPath == nil
             }
         }
+        if let demoEntry, !items.contains(where: { $0.id == demoEntry.id }) {
+            items.insert(demoEntry, at: 0)
+        }
+        return items
     }
 
     func entry(_ id: String) -> MediaEntry? { library.entries.first { $0.id == id } }
@@ -200,6 +253,9 @@ final class AppModel: ObservableObject {
         guard let old = entry(id) else { return }
         library.entries.removeAll { $0.id == id }
         feedOrder.removeAll { $0 == id }
+        if old.source == "follow", !settings.hiddenFollowIDs.contains(old.id) {
+            settings.hiddenFollowIDs.append(old.id)
+        }
         TrashBin.shredEntry(old, into: &trash, now: nowMs())
         clampFeed()
         scheduleSave()
@@ -216,7 +272,9 @@ final class AppModel: ObservableObject {
             showToast("已经在库里")
             return
         }
-        copy.id = IDs.new()
+        if !copy.id.hasPrefix("yt-") && !copy.id.hasPrefix("bv-") && !copy.id.hasPrefix("av-") && !copy.id.hasPrefix("pt-") {
+            copy.id = IDs.new()
+        }
         library.entries.insert(copy, at: 0)
         feedOrder.insert(copy.id, at: 0)
         scheduleSave()
@@ -314,7 +372,8 @@ final class AppModel: ObservableObject {
 
     func download(_ entry: MediaEntry, lane: DownloadLane = .active) {
         let policy = DownloadPolicy.canDownload(entry)
-        guard policy.ok, let remote = entry.remoteURL, URL(string: remote) != nil, !DownloadPolicy.isStreamURL(remote) else {
+        let remote = entry.downloadURL.flatMap { $0.isEmpty ? nil : $0 } ?? entry.remoteURL
+        guard policy.ok, let remote, URL(string: remote) != nil, !DownloadPolicy.isStreamURL(remote) else {
             showToast(policy.reason ?? "不能下载")
             return
         }
@@ -362,6 +421,16 @@ final class AppModel: ObservableObject {
         if !settings.pixabayKey.isEmpty {
             all += await PixabayAPI.search(key: settings.pixabayKey, query: term)
         }
+        if !settings.youtubeKey.isEmpty {
+            all += await YouTubeAPI.search(key: settings.youtubeKey, query: term)
+        }
+        if PublicLink.normalizedHost(settings.peertubeInstance) != nil {
+            all += await PeerTubeAPI.search(instance: settings.peertubeInstance, query: term)
+        }
+        if let one = PublicLink.media(term) { all.insert(one, at: 0) }
+        if case .youtubeFeed(let url) = PublicLink.parse(term), let feed = URL(string: url), let xml = await HTTP.text(feed) {
+            all += FeedXML.youtube(xml)
+        }
         var seen = Set<String>()
         discoverResults = all.filter { e in
             let key = e.remoteURL ?? e.embedURL ?? e.id
@@ -371,6 +440,53 @@ final class AppModel: ObservableObject {
         }
         discoverBusy = false
         if discoverResults.isEmpty { discoverError = "没有找到内容。换个词，或稍后再试。" }
+    }
+
+    func subscribe(_ raw: String) {
+        let parsed = PublicLink.follow(from: raw, instance: settings.peertubeInstance)
+        guard let follow = parsed.0 else {
+            showToast(parsed.1 ?? "不能订阅这个")
+            return
+        }
+        if settings.follows.contains(where: { $0.platform == follow.platform && $0.kind == follow.kind && $0.ref == follow.ref && $0.instance == follow.instance }) {
+            showToast("已经订阅了")
+            return
+        }
+        settings.follows.append(follow)
+        saveSettings()
+        showToast("已订阅 \(follow.title)")
+        Task { await refreshFollows() }
+    }
+
+    func removeFollow(_ id: String) {
+        settings.follows.removeAll { $0.id == id }
+        saveSettings()
+    }
+
+    func refreshFollows() async {
+        var gathered: [MediaEntry] = []
+        for source in settings.follows {
+            gathered += await PeerTubeAPI.load(source)
+        }
+        let hidden = Set(settings.hiddenFollowIDs)
+        for var item in gathered where !hidden.contains(item.id) {
+            item.source = "follow"
+            if let i = library.entries.firstIndex(where: { $0.id == item.id }) {
+                var old = library.entries[i]
+                old.title = item.title
+                old.remoteURL = item.remoteURL
+                old.embedURL = item.embedURL
+                old.coverURL = item.coverURL
+                old.downloadURL = item.downloadURL
+                old.author = item.author
+                library.entries[i] = old
+            } else {
+                library.entries.insert(item, at: 0)
+                feedOrder.insert(item.id, at: 0)
+            }
+        }
+        scheduleSave()
+        if !gathered.isEmpty { showToast("订阅更新了 \(gathered.count) 条") }
     }
 
     // MARK: social
@@ -557,7 +673,7 @@ final class AppModel: ObservableObject {
             libraryEntryId: entry.id,
             localPath: entry.localPath,
             coverURL: entry.coverURL ?? (entry.kind == .image ? entry.remoteURL : nil),
-            remoteURL: entry.remoteURL,
+            remoteURL: entry.kind == .embed ? (entry.embedURL ?? entry.remoteURL) : entry.remoteURL,
             title: entry.title
         )
     }

@@ -80,6 +80,15 @@ final class TabTapTests: XCTestCase {
 
     func testV1EntryPoints() {
         openSettings()
+        let drop = app.switches["水滴选择"]
+        let dropId = app.descendants(matching: .any)["settings.drop"]
+        if !(drop.waitForExistence(timeout: 2) || dropId.waitForExistence(timeout: 1)) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(drop.waitForExistence(timeout: 3) || dropId.waitForExistence(timeout: 2), "没有水滴选择开关\n\(app.debugDescription)")
+        if drop.exists, let value = drop.value as? String {
+            XCTAssertEqual(value, "0", "水滴选择应该默认关闭")
+        }
         openSheet("settings.skins", root: "skins.root", done: "skins.done", expect: ["29 个按键"])
         openSheet("settings.icons", root: "icons.root", done: "icons.done", expect: ["墨色", "素纸", "新月"])
         openSheet("settings.autoplay", root: "moment.autoplay", done: "autoplay.done", expect: ["全部", "指定", "关闭"])
@@ -153,6 +162,87 @@ final class TabTapTests: XCTestCase {
         close.tap()
     }
 
+    /// Dragging on the system tab bar changes tabs and never opens the ring, even if the press is slow.
+    func testDragOnTabBarSwitchesWithoutRing() {
+        let home = tab("首页")
+        XCTAssertTrue(home.waitForExistence(timeout: 12))
+        let discover = tab("发现")
+        XCTAssertTrue(discover.waitForExistence(timeout: 5))
+
+        let far = tab("朋友圈")
+        home.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.2, thenDragTo: far.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        XCTAssertFalse(app.descendants(matching: .any)["ring.root"].exists, "拖动底栏弹出了圆环")
+        XCTAssertTrue(waitUntil(timeout: 4) { !tab("首页").isSelected }, "拖动底栏没有换页\n\(app.debugDescription)")
+
+        if !home.isSelected { home.tap() }
+        XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5) || home.isSelected)
+        home.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 1.0)
+        XCTAssertFalse(app.descendants(matching: .any)["ring.root"].exists, "按在底栏上弹出了圆环")
+        if app.buttons["取消"].exists { app.buttons["取消"].tap() }
+    }
+
+    /// A long-press that starts in the content keeps the tab bar from switching, even when the finger ends on it.
+    func testLongPressDragOverTabBarDoesNotSwitch() {
+        let home = tab("首页")
+        XCTAssertTrue(home.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32))
+        let end = tab("发现").coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.85, thenDragTo: end)
+        let switched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: tab("发现"))
+        XCTAssertEqual(XCTWaiter.wait(for: [switched], timeout: 1.5), .timedOut, "长按内容后划过底栏却换了页")
+        XCTAssertTrue(home.isSelected)
+        XCTAssertFalse(app.buttons["discover.search"].exists)
+    }
+
+    /// 水滴选择: releasing on a ring button near the bottom fires it and does not switch tabs.
+    func testDropletReleaseNearTheBottom() {
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans", "-MoonlightDrop"]
+        app.launch()
+        let home = tab("首页")
+        XCTAssertTrue(home.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.74))
+        start.press(forDuration: 1.6)
+        let filter = app.descendants(matching: .any)["ring.筛选"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 4), "长按没有出现筛选\n\(app.debugDescription)")
+        let frame = filter.frame
+        let bounds = window.frame
+        let nx = (frame.midX - bounds.minX) / bounds.width
+        let ny = (frame.midY - bounds.minY) / bounds.height
+        XCTAssertGreaterThan(ny, 0.45, "筛选不在屏幕下半部，测不到靠近底栏的松手")
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.06, dy: 0.08)).tap()
+        let again = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.74))
+        let dest = window.coordinate(withNormalizedOffset: CGVector(dx: nx, dy: ny))
+        again.press(forDuration: 1.6, thenDragTo: dest)
+        let local = app.staticTexts["本地"]
+        let online = app.staticTexts["在线"]
+        let reshuffle = app.staticTexts["已重新洗牌"]
+        XCTAssertTrue(
+            local.waitForExistence(timeout: 4) || online.waitForExistence(timeout: 2) || reshuffle.waitForExistence(timeout: 2),
+            "水滴松手没有触发靠近底部的圆环按键\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(home.isSelected, "水滴松手时底栏把页面换了")
+        XCTAssertFalse(tab("发现").isSelected)
+    }
+
+    func testImmersiveChrome() {
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans", "-MoonlightImmersive"]
+        app.launch()
+        let playing = app.descendants(matching: .any)["home.playing"]
+        XCTAssertTrue(playing.waitForExistence(timeout: 15), "沉浸测试没有进入播放页\n\(app.debugDescription)")
+        let home = tab("首页")
+        XCTAssertTrue(waitUntil(timeout: 8) { !home.exists || !home.isHittable }, "播放时底栏还在\n\(app.debugDescription)")
+        playing.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+        XCTAssertTrue(waitUntil(timeout: 4) { home.exists && home.isHittable }, "点一下没有把底栏请回来\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 5) { !home.exists || !home.isHittable }, "安静之后底栏没有再消失\n\(app.debugDescription)")
+    }
+
     /// The same control must both accept a short tap and a long-press that opens the ring.
     func testTapAndLongPressCoexist() {
         let jump = app.buttons["home.discover"]
@@ -187,6 +277,19 @@ final class TabTapTests: XCTestCase {
         let button = app.buttons[title]
         if button.exists { return button }
         return bar
+    }
+
+    private func waitUntil(timeout: TimeInterval, _ check: @escaping () -> Bool) -> Bool {
+        let exp = expectation(description: "condition")
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+            if check() {
+                exp.fulfill()
+                timer.invalidate()
+            }
+        }
+        let result = XCTWaiter.wait(for: [exp], timeout: timeout)
+        timer.invalidate()
+        return result == .completed
     }
 
     private func discoverVisible() -> Bool {

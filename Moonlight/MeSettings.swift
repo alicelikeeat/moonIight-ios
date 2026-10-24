@@ -277,8 +277,48 @@ struct SettingsView: View {
                     ForEach(MenuBackdrop.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 Picker("长按菜单", selection: binding(\.menuSelect)) {
-                    ForEach(MenuSelect.allCases, id: \.self) { Text($0.label).tag($0) }
+                    ForEach(MenuSelect.choices, id: \.self) { Text($0.label).tag($0) }
                 }
+                Toggle("水滴选择", isOn: binding(\.dropSelect))
+                    .accessibilityIdentifier("settings.drop")
+                Text("默认关闭。长按只弹出圆环，点按键才会执行。打开后玻璃水滴跟着手指，松手落到的按键会执行。不管开不开，拖动时旁边的按键都会浮起来。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Toggle("底栏滑块", isOn: binding(\.tabLens))
+                    .accessibilityIdentifier("settings.tabLens")
+                Text("默认打开，底栏可以按住拖动换页。关掉后换成没有滑块的玻璃底栏。按在底栏上只换页；按在别的地方才弹出圆环。圆环开着时，同一根手指划过底栏也不会换页。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Toggle("按键自动隐藏", isOn: binding(\.chromeAutoHide))
+                    .accessibilityIdentifier("settings.chromeHide")
+                Picker("消失时间", selection: hideChoice) {
+                    Text("1 秒").tag(1)
+                    Text("2 秒").tag(2)
+                    Text("3 秒").tag(3)
+                    Text("5 秒").tag(5)
+                    Text("10 秒").tag(10)
+                    Text("自定义").tag(0)
+                }
+                .accessibilityIdentifier("settings.hideDelay")
+                if hideChoice.wrappedValue == 0 {
+                    HStack {
+                        Text("1 秒")
+                        Slider(value: Binding(
+                            get: { Double(app.settings.chromeHideSeconds) },
+                            set: { app.settings.chromeHideSeconds = ChromeTiming.clamp(Float($0.rounded())); app.saveSettings() }
+                        ), in: 1...30, step: 1)
+                        Text("30 秒")
+                    }
+                    Text(String(format: "%.0f 秒", app.settings.chromeHideSeconds))
+                        .font(.caption).foregroundColor(.secondary)
+                }
+                Text("视频播放时收起首页按键和底栏。点一下画面它们会以系统玻璃淡入，安静一段时间后再消失。点任何按键都会重新计时。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Toggle("低电量不自动播放", isOn: binding(\.pauseOnLowPower))
+                    .accessibilityIdentifier("settings.lowPower")
+                Toggle("蜂窝网络不自动播放", isOn: binding(\.autoplayWifiOnly))
+                    .accessibilityIdentifier("settings.wifiOnly")
                 Picker("长按动画", selection: animBinding) {
                     Text("随机").tag(RingAnim.random)
                     ForEach(RingAnim.choices, id: \.self) { Text($0.short).tag($0.rawValue) }
@@ -287,7 +327,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            Section("星轨速度") {
+            Section("圆环速度") {
                 HStack {
                     Text("慢")
                     Slider(value: Binding(
@@ -305,7 +345,7 @@ struct SettingsView: View {
                     Button("快") { app.settings.starSpeed = 1.4; app.saveSettings() }
                     Button("试一试") { previewStar() }
                 }
-                Text("按钮从屏幕上方的天空旋转落下，沿螺旋加速，落地略微过冲后回到完整大小。")
+                Text("这个速度同时作用在星轨和旋转上。旋转会像气泡一样弹到位。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -363,7 +403,11 @@ struct SettingsView: View {
             Section("图库密钥") {
                 SecureField("Pexels API Key", text: binding(\.pexelsKey))
                 SecureField("Pixabay API Key", text: binding(\.pixabayKey))
-                Text("留空则不请求这两家。不会内置任何密钥。").font(.caption).foregroundColor(.secondary)
+                SecureField("YouTube Data API Key", text: binding(\.youtubeKey))
+                TextField("PeerTube 实例，例如 example.com", text: binding(\.peertubeInstance))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Text("密钥和实例都留空则不请求。YouTube 搜索只用官方 Data API。不会内置任何密钥。").font(.caption).foregroundColor(.secondary)
             }
             Section("聊天服务器") {
                 TextField("https://", text: binding(\.chatServerURL))
@@ -472,6 +516,26 @@ struct SettingsView: View {
         ], groups: [
             MenuGroup(title: "预览", items: [RingItem(title: "关闭", systemImage: "xmark") {}]),
         ], settings: app.settings, overMedia: false, styleOverride: .star)
+    }
+
+    private var hideChoice: Binding<Int> {
+        Binding(
+            get: {
+                let seconds = Int(app.settings.chromeHideSeconds.rounded())
+                return ChromeTiming.presets.contains(Float(seconds)) ? seconds : 0
+            },
+            set: { choice in
+                if choice == 0 {
+                    let seconds = Int(app.settings.chromeHideSeconds.rounded())
+                    if ChromeTiming.presets.contains(Float(seconds)) {
+                        app.settings.chromeHideSeconds = 8
+                    }
+                } else {
+                    app.settings.chromeHideSeconds = ChromeTiming.clamp(Float(choice))
+                }
+                app.saveSettings()
+            }
+        )
     }
 
     private var thresholdChoice: Binding<Int> {
@@ -591,8 +655,12 @@ struct FullPlayerView: View {
                 onLongEnded: { _ in
                     let outcome = hold.lift()
                     ring.fingerDown = false
-                    if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
-                        ring.selectDrag(at: ring.finger)
+                    if outcome != .timed && outcome != .center {
+                        if ring.session?.drop == true {
+                            ring.releaseFinger(at: ring.finger)
+                        } else if ring.session?.select == .drag || ring.session?.select == .slider {
+                            ring.selectDrag(at: ring.finger)
+                        }
                     }
                 }
             )

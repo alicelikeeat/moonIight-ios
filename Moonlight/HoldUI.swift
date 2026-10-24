@@ -367,6 +367,170 @@ enum PressGate {
     }
 }
 
+/// Splits the screen with the system tab bar.
+/// A touch that begins inside the bar (including the home-indicator strip) belongs to the system.
+/// Once a ring or droplet session is active, the bar's own gestures are suspended so that same touch
+/// cannot switch tabs, and they are restored on release.
+enum TabChrome {
+    /// Top of the custom glass bar, in window coordinates, when 底栏滑块 is off.
+    static var customTop: CGFloat?
+    private static var saved: [Suspended] = []
+
+    private struct Suspended {
+        weak var view: UIView?
+        var interaction: Bool
+        var gestures: [(UIGestureRecognizer, Bool)]
+    }
+
+    /// Full-width strip from the top of the tab bar through the bottom of the window.
+    static func region(tabTop: CGFloat, window: CGRect) -> CGRect {
+        guard window.width > 1, window.height > 1, tabTop < window.maxY - 1, tabTop > window.minY else { return .null }
+        return CGRect(x: window.minX, y: tabTop, width: window.width, height: window.maxY - tabTop)
+    }
+
+    static func contains(_ point: CGPoint, tabTop: CGFloat, window: CGRect) -> Bool {
+        region(tabTop: tabTop, window: window).contains(point)
+    }
+
+    static func blocks(_ point: CGPoint, in window: UIWindow) -> Bool {
+        if let top = customTop, contains(point, tabTop: top, window: window.bounds) { return true }
+        for bar in visibleBars(in: window) {
+            let rect = bar.convert(bar.bounds, to: window)
+            if contains(point, tabTop: rect.minY, window: window.bounds) { return true }
+        }
+        return false
+    }
+
+    static func setSuspended(_ suspended: Bool) {
+        if !suspended {
+            for item in saved {
+                item.view?.isUserInteractionEnabled = item.interaction
+                for (gesture, enabled) in item.gestures { gesture.isEnabled = enabled }
+            }
+            saved.removeAll()
+            return
+        }
+        guard saved.isEmpty else { return }
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        for window in windows {
+            for bar in visibleBars(in: window) {
+                var gestures: [(UIGestureRecognizer, Bool)] = []
+                for host in gestureHosts(around: bar) {
+                    for gesture in host.gestureRecognizers ?? [] {
+                        gestures.append((gesture, gesture.isEnabled))
+                        gesture.isEnabled = false
+                    }
+                }
+                saved.append(Suspended(view: bar, interaction: bar.isUserInteractionEnabled, gestures: gestures))
+                bar.isUserInteractionEnabled = false
+            }
+        }
+    }
+
+    private static func visibleBars(in window: UIWindow) -> [UIView] {
+        var found = bars(in: window)
+        if let bar = tabController(window.rootViewController)?.tabBar,
+           isTabBar(bar),
+           !found.contains(where: { $0 === bar }) {
+            found.append(bar)
+        }
+        return found
+    }
+
+    private static func tabController(_ vc: UIViewController?) -> UITabBarController? {
+        if let tabs = vc as? UITabBarController { return tabs }
+        for child in vc?.children ?? [] {
+            if let found = tabController(child) { return found }
+        }
+        if let presented = vc?.presentedViewController, let found = tabController(presented) { return found }
+        return nil
+    }
+
+    private static func bars(in view: UIView) -> [UIView] {
+        var found: [UIView] = []
+        func walk(_ view: UIView) {
+            if isTabBar(view) { found.append(view) }
+            for sub in view.subviews { walk(sub) }
+        }
+        walk(view)
+        return found
+    }
+
+    private static func isTabBar(_ view: UIView) -> Bool {
+        guard !view.isHidden, view.alpha > 0.5 else { return false }
+        guard view.bounds.height > 20, view.bounds.height < 280, view.bounds.width > 80 else { return false }
+        if view is UITabBar { return true }
+        let name = String(describing: type(of: view))
+        return name.contains("TabBar") && !name.contains("Controller") && !name.contains("Item")
+    }
+
+    /// The bar itself, its short container, and any ancestor gesture whose type is the tab switcher.
+    private static func gestureHosts(around bar: UIView) -> [UIView] {
+        var hosts: [UIView] = [bar]
+        if let parent = bar.superview,
+           !(parent is UIWindow),
+           parent.bounds.height > 1, parent.bounds.height < 320, parent.bounds.width > 80 {
+            hosts.append(parent)
+        }
+        var ancestor = bar.superview
+        var hops = 0
+        while let current = ancestor, hops < 5, !(current is UIWindow) {
+            let switches = (current.gestureRecognizers ?? []).contains { gesture in
+                let name = String(describing: type(of: gesture))
+                return name.contains("Tab") || name.contains("Switch")
+            }
+            if switches { hosts.append(current) }
+            ancestor = current.superview
+            hops += 1
+        }
+        return hosts
+    }
+}
+
+struct TabBarFrameMark: UIViewRepresentable {
+    var active: Bool
+
+    func makeUIView(context: Context) -> TabBarMarkView {
+        let view = TabBarMarkView()
+        view.isUserInteractionEnabled = false
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
+        return view
+    }
+
+    func updateUIView(_ uiView: TabBarMarkView, context: Context) {
+        uiView.active = active
+        uiView.report()
+    }
+}
+
+final class TabBarMarkView: UIView {
+    var active = true
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { TabChrome.customTop = nil }
+        else { report() }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        report()
+    }
+
+    func report() {
+        guard active, let window, bounds.height > 1 else {
+            if !active { TabChrome.customTop = nil }
+            return
+        }
+        TabChrome.customTop = convert(bounds, to: window).minY
+    }
+}
+
 enum HitTags {
     static let media = 7701
 }
@@ -471,7 +635,9 @@ struct GlobalLongPress: UIViewRepresentable {
                 view = current.superview
             }
             guard let window = touch.window else { return true }
-            return !ProbeRegions.shared.owns(touch.location(in: window), window: window)
+            let point = touch.location(in: window)
+            if TabChrome.blocks(point, in: window) { return false }
+            return !ProbeRegions.shared.owns(point, window: window)
         }
     }
 }

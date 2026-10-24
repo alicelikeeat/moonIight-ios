@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Pure motion curves for 长按动画. Progress is linear 0…1; the resting pose is always full size.
@@ -101,12 +102,24 @@ enum RingMotion {
         var out = Pose()
         switch style {
         case .spin:
-            let t = o * cl
-            out.rf = 0.18 + 0.82 * t
-            out.ang = -62 * (1 - t)
-            out.scale = 0.35 + 0.65 * t
-            out.alpha = clamp01(t)
-            out.label = clamp01(t) * clamp01(t)
+            // Bubbles rise into their slots. A short spring overshoot, then full size — not a long spin.
+            if closing {
+                let t = cl
+                out.rf = 0.36 + 0.64 * t
+                out.ang = -12 * (1 - t)
+                out.sink = (1 - t) * (1 - t) * 0.85
+                out.scale = 0.12 + 0.88 * t
+                out.alpha = t
+                out.label = t * t
+            } else {
+                let s = backOut(clamp01(o), 1.65)
+                out.rf = 0.36 + 0.64 * s
+                out.ang = -12 * (1 - min(1, s))
+                out.sink = max(0, 1 - s) * 0.85
+                out.scale = 0.12 + 0.88 * s
+                out.alpha = clamp01(s * 1.15)
+                out.label = clamp01(s) * clamp01(s)
+            }
         case .lotus:
             let b: Float = closing ? cl : o
             out.rf = closing ? 1 : lotusSpread(b)
@@ -180,9 +193,15 @@ enum RingMotion {
         out.lift = fpow(r, 2.6)
     }
 
+    static let spinFlightMs: Int64 = 248
+    static let spinStaggerMs: Int64 = 20
+
     static func openMs(_ style: RingAnim, _ n: Int, _ starSpeed: Float = 1) -> Int64 {
         switch style {
-        case .spin: return 600 + 25 * Int64(n)
+        case .spin:
+            let rate = clampSpeed(starSpeed)
+            let span = spinFlightMs + spinStaggerMs * Int64(max(0, n - 1))
+            return Int64(Double(span) / Double(rate))
         case .lotus: return 520 + 38 * Int64(n)
         case .star:
             let rate = clampSpeed(starSpeed)
@@ -245,12 +264,52 @@ protocol Playable: AnyObject {
     func seekToStart()
 }
 
-enum FeedTap { case togglePlay, toggleChrome }
+enum FeedTap { case togglePlay, toggleChrome, revealChrome }
 
 enum FeedTapRule {
-    static func onTap(isVideo: Bool, active: Bool, hasError: Bool = false) -> FeedTap {
-        if isVideo && active && !hasError { return .togglePlay }
+    /// A hidden feed reveals its buttons on the single tap. A visible video still toggles play.
+    /// Double-tap like stays on its own recognizer; this only classifies the delayed single tap.
+    static func onTap(isVideo: Bool, active: Bool, hasError: Bool = false, chromeVisible: Bool = true, autoHide: Bool = false) -> FeedTap {
+        if isVideo && active && !hasError {
+            if autoHide && !chromeVisible { return .revealChrome }
+            return .togglePlay
+        }
         return .toggleChrome
+    }
+}
+
+enum ChromeTiming {
+    static let presets: [Float] = [1, 2, 3, 5, 10]
+
+    static func clamp(_ seconds: Float) -> Float {
+        min(30, max(0.5, seconds))
+    }
+
+    static func seconds(_ value: Float) -> TimeInterval {
+        TimeInterval(clamp(value))
+    }
+
+    static func shouldHide(autoHide: Bool, playing: Bool, quiet: TimeInterval, limit: TimeInterval) -> Bool {
+        autoHide && playing && quiet >= limit
+    }
+}
+
+/// Home-feed autoplay gate. The feed itself uses one shared player and pauses off-screen.
+enum FeedAutoplay {
+    static func allowed(wifiOnly: Bool, pauseOnLowPower: Bool, expensive: Bool, lowPower: Bool, pathKnown: Bool) -> Bool {
+        if pauseOnLowPower && lowPower { return false }
+        if wifiOnly && pathKnown && expensive { return false }
+        return true
+    }
+
+    static func allowedNow(_ settings: AppSettings) -> Bool {
+        allowed(
+            wifiOnly: settings.autoplayWifiOnly,
+            pauseOnLowPower: settings.pauseOnLowPower,
+            expensive: LinkMonitor.shared.expensive,
+            lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
+            pathKnown: LinkMonitor.shared.known
+        )
     }
 }
 
@@ -413,6 +472,16 @@ enum DownloadPolicy {
     static func canDownload(_ e: MediaEntry) -> (ok: Bool, reason: String?) {
         if e.localPath != nil { return (true, nil) }
         let platform = e.resolvedPlatform
+        if platform == PlatformID.youtube {
+            return (false, "YouTube 只能用官方播放器，不能下载")
+        }
+        if platform == PlatformID.bili {
+            return (false, "哔哩哔哩只能用官方播放器，不能下载")
+        }
+        if platform == PlatformID.peertube {
+            if let file = e.downloadURL, !file.isEmpty, !isStreamURL(file) { return (true, nil) }
+            return (false, "这个实例没有开放下载")
+        }
         if streamHosts.contains(platform) || e.kind == .embed {
             return (false, "只有网页播放器，不能下载")
         }
@@ -442,5 +511,147 @@ enum EmbedLinks {
     }
     static func bili(_ bvid: String, mute: Bool) -> String {
         "https://player.bilibili.com/player.html?bvid=\(bvid)&page=1&high_quality=1&autoplay=1&danmaku=0&mute=\(mute ? "1" : "0")"
+    }
+}
+
+/// How close a ring button is to the finger. 1 is touching, 0 is outside the falloff.
+enum BubbleMotion {
+    static let falloff: Float = 156
+    static let selectInfluence: Float = 0.42
+
+    static func influence(distance: Float, radius: Float = falloff) -> Float {
+        guard radius > 0 else { return 0 }
+        let t = RingMotion.clamp01(1 - distance / radius)
+        return t * t * (3 - 2 * t)
+    }
+
+    /// 1 at rest, 1.25 when the droplet is on the button.
+    static func scaleBoost(_ influence: Float) -> Float {
+        1 + 0.25 * RingMotion.clamp01(influence)
+    }
+
+    static func highlight(_ influence: Float) -> Float {
+        let t = RingMotion.clamp01(influence)
+        return t * t
+    }
+
+    /// Toward the finger, plus a little extra lift so the button floats up.
+    static func offset(from button: CGPoint, to finger: CGPoint, influence: Float) -> CGSize {
+        let dx = Float(finger.x - button.x)
+        let dy = Float(finger.y - button.y)
+        let len = max(1, hypot(dx, dy))
+        let pull = 16 * influence
+        let lift = 12 * influence
+        return CGSize(width: CGFloat(dx / len * pull), height: CGFloat(dy / len * pull - lift))
+    }
+
+    static func wobbleDegrees(influence: Float, time: Float, index: Int) -> Float {
+        let phase = time * 9 + Float(index) * 1.3
+        return sin(phase) * 3.4 * influence * influence
+    }
+
+    static func bob(influence: Float, time: Float, index: Int) -> CGFloat {
+        CGFloat(sin(time * 9 + Float(index) * 0.7) * 2.5 * influence * influence)
+    }
+}
+
+/// Smooths the droplet and each button's lift. One step per frame; never snaps to the new target.
+final class BubbleField {
+    private(set) var finger = CGPoint.zero
+    private var inf: [Int: Float] = [:]
+    private var ready = false
+    private var last = 0.0
+    private(set) var nearest: Int?
+    private(set) var lastCenters: [CGPoint] = []
+    var onNearest: ((Int) -> Void)?
+
+    func influence(_ index: Int) -> Float { inf[index] ?? 0 }
+    var live: Bool { inf.values.contains { $0 > 0.02 } }
+
+    func reset() {
+        ready = false
+        inf.removeAll()
+        nearest = nil
+        lastCenters = []
+        finger = .zero
+    }
+
+    func step(target: CGPoint, centers: [CGPoint], now: TimeInterval, tracking: Bool, force: Bool = false) {
+        let dt: Float
+        if !ready {
+            finger = target
+            ready = true
+            last = now
+            dt = 1 / 60
+        } else {
+            let raw = now - last
+            if !force && raw < 0.0005 { return }
+            dt = Float(min(0.05, max(1 / 120, raw)))
+            last = now
+        }
+        if tracking {
+            let blend = CGFloat(1 - exp(-dt * 16))
+            finger.x += (target.x - finger.x) * blend
+            finger.y += (target.y - finger.y) * blend
+        }
+        lastCenters = centers
+        let blend = 1 - exp(-dt * 18)
+        var best: Int?
+        var bestValue: Float = -1
+        var seen = Set<Int>()
+        for i in centers.indices {
+            seen.insert(i)
+            let c = centers[i]
+            let dist = hypot(Float(c.x - finger.x), Float(c.y - finger.y))
+            let goal: Float = tracking ? BubbleMotion.influence(distance: dist) : 0
+            let next = (inf[i] ?? 0) + (goal - (inf[i] ?? 0)) * blend
+            inf[i] = next
+            if tracking, next > bestValue {
+                bestValue = next
+                best = i
+            }
+        }
+        for key in Array(inf.keys) where !seen.contains(key) {
+            inf[key] = (inf[key] ?? 0) * (1 - blend)
+        }
+        let pick = (tracking && bestValue >= BubbleMotion.selectInfluence) ? best : nil
+        if pick != nearest {
+            nearest = pick
+            if let pick { onNearest?(pick) }
+        }
+    }
+}
+
+enum DropDecision: Equatable {
+    case fire(Int)
+    case cancel
+    case stay
+}
+
+enum DropAim {
+    static let moveThreshold: Double = 18
+
+    /// A destructive hit only fires when the action already has undo. Empty space cancels after a real drag.
+    static func decide(hit: Int?, destructive: Bool, hasUndo: Bool, moved: Double) -> DropDecision {
+        if let hit {
+            if destructive && !hasUndo { return .stay }
+            return .fire(hit)
+        }
+        return moved >= moveThreshold ? .cancel : .stay
+    }
+}
+
+enum PinchRule {
+    /// Fingers apart fills this item. Fingers together restores the global 视频显示 setting.
+    static func override(scale: CGFloat, current: Bool?) -> Bool? {
+        if scale >= 1.12 { return true }
+        if scale <= 0.88 { return nil }
+        return current
+    }
+}
+
+enum SwipeInfo {
+    static func opensInfo(translationX: CGFloat, translationY: CGFloat) -> Bool {
+        translationX <= -48 && abs(translationX) > abs(translationY) * 1.35
     }
 }

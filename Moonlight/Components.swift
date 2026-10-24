@@ -53,6 +53,7 @@ struct ShareSheet: UIViewControllerRepresentable {
 }
 
 struct MediaTouchLayer: UIViewRepresentable {
+    var identifier: String = ""
     var onSingle: () -> Void
     var onDouble: () -> Void
     var onLongBegan: (CGPoint) -> Void
@@ -63,6 +64,8 @@ struct MediaTouchLayer: UIViewRepresentable {
         let view = UIView()
         view.backgroundColor = .clear
         view.tag = HitTags.media
+        view.accessibilityIdentifier = identifier
+        view.isAccessibilityElement = !identifier.isEmpty
         let single = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.single(_:)))
         single.numberOfTapsRequired = 1
         single.cancelsTouchesInView = false
@@ -82,7 +85,11 @@ struct MediaTouchLayer: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) { context.coordinator.parent = self }
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.parent = self
+        uiView.accessibilityIdentifier = identifier
+        uiView.isAccessibilityElement = !identifier.isEmpty
+    }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject {

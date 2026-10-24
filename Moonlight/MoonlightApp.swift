@@ -44,6 +44,8 @@ struct AppRoot: View {
                 if phase != .active {
                     NotificationCenter.default.post(name: .moonPauseAll, object: nil)
                     Task { await app.flush() }
+                } else {
+                    NotificationCenter.default.post(name: .moonResumeFeed, object: nil)
                 }
             }
     }
@@ -66,31 +68,19 @@ struct RootView: View {
     @Environment(\.moon) private var colors
 
     var body: some View {
-        TabView(selection: Binding(get: { app.tab }, set: { newValue in
-            if newValue == .home && app.tab == .home { app.feedIndex = 0 }
-            app.tab = newValue
-            Haptics.tick()
-        })) {
-            FeedView()
-                .tabItem { Label("首页", systemImage: "moon.stars") }
-                .tag(AppTab.home)
-            DiscoverView()
-                .tabItem { Label("发现", systemImage: "magnifyingglass") }
-                .tag(AppTab.discover)
-            CaptureView()
-                .tabItem { Label("拍摄", systemImage: "circle.fill") }
-                .tag(AppTab.capture)
-            MomentsView()
-                .tabItem { Label("朋友圈", systemImage: "person.2") }
-                .tag(AppTab.moments)
-            MeView()
-                .tabItem { Label("我", systemImage: "person") }
-                .tag(AppTab.me)
+        Group {
+            if app.settings.tabLens {
+                systemTabs
+            } else {
+                page(app.tab)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if !feedChromeHidden {
+                            MoonTabBar(suppressed: ring.session != nil)
+                        }
+                    }
+            }
         }
-        .tint(app.tab == .home ? MoonColors.media.accent : colors.accent)
-        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
-        .toolbarColorScheme(app.tab == .home ? ColorScheme.dark : nil, for: .tabBar)
         .background {
             GlobalLongPress(
                 onBegan: { point in beganPress(point) },
@@ -102,6 +92,16 @@ struct RootView: View {
                 onEnded: { point in endedPress(point) }
             )
             .allowsHitTesting(false)
+        }
+        .overlay(alignment: .bottom) {
+            if ring.session != nil {
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 180)
+                    .ignoresSafeArea(edges: .bottom)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
+            }
         }
         .overlay {
             if ring.session != nil {
@@ -115,8 +115,11 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .top) {
-            RecordPill(recorder: app.recorder) { app.toggleRecording() }
+            RecordPill(recorder: app.recorder) { app.nudgeChrome(); app.toggleRecording() }
                 .padding(.top, 8)
+                .opacity(feedChromeHidden ? 0 : 1)
+                .allowsHitTesting(!feedChromeHidden)
+                .animation(.easeInOut(duration: 0.28), value: app.feedChrome)
         }
         .overlay {
             if let title = app.shredTitle {
@@ -128,6 +131,8 @@ struct RootView: View {
                 ToastBar(text: toast, undo: app.undo)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 8)
+                    .opacity(feedChromeHidden ? 0 : 1)
+                    .allowsHitTesting(!feedChromeHidden)
             }
         }
         .sheet(isPresented: $app.showTrash) { TrashView() }
@@ -147,12 +152,49 @@ struct RootView: View {
             hold.ring = ring
             paintWindow()
         }
+        .onDisappear { TabChrome.setSuspended(false) }
+    }
+
+    /// Home feed is full screen while a video is playing and the buttons are tucked away.
+    private var feedChromeHidden: Bool { app.tab == .home && !app.feedChrome }
+
+    private var systemTabs: some View {
+        TabView(selection: Binding(get: { app.tab }, set: { newValue in
+            app.nudgeChrome()
+            if newValue == .home && app.tab == .home { app.feedIndex = 0 }
+            app.tab = newValue
+            Haptics.tick()
+        })) {
+            page(.home).tabItem { Label("首页", systemImage: "moon.stars") }.tag(AppTab.home)
+            page(.discover).tabItem { Label("发现", systemImage: "magnifyingglass") }.tag(AppTab.discover)
+            page(.capture).tabItem { Label("拍摄", systemImage: "circle.fill") }.tag(AppTab.capture)
+            page(.moments).tabItem { Label("朋友圈", systemImage: "person.2") }.tag(AppTab.moments)
+            page(.me).tabItem { Label("我", systemImage: "person") }.tag(AppTab.me)
+        }
+        .tint(app.tab == .home ? MoonColors.media.accent : colors.accent)
+        .toolbar(feedChromeHidden ? .hidden : .visible, for: .tabBar)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(feedChromeHidden ? .hidden : .visible, for: .tabBar)
+        .toolbarColorScheme(app.tab == .home ? ColorScheme.dark : nil, for: .tabBar)
+        .animation(.easeInOut(duration: 0.28), value: app.feedChrome)
+    }
+
+    @ViewBuilder private func page(_ tab: AppTab) -> some View {
+        switch tab {
+        case .home: FeedView()
+        case .discover: DiscoverView()
+        case .capture: CaptureView()
+        case .moments: MomentsView()
+        case .me: MeView()
+        }
     }
 
     /// Long-press anywhere that does not already own a press (feed media, a video).
     /// A short tap still reaches the button; this recognizer does not cancel it.
     private func beganPress(_ point: CGPoint) {
+        TabChrome.setSuspended(true)
         PressGate.begin()
+        app.nudgeChrome()
         let overMedia = app.tab == .home && !app.feedItems.isEmpty
         let items = [
             RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease", children: FeedScope.allCases.map { scope in
@@ -185,9 +227,15 @@ struct RootView: View {
         let outcome = hold.lift()
         ring.fingerDown = false
         ring.finger = point
-        if outcome != .timed && outcome != .center && app.settings.menuSelect == .drag {
-            ring.selectDrag(at: point)
+        if outcome != .timed && outcome != .center {
+            if ring.session?.drop == true {
+                ring.releaseFinger(at: point)
+            } else if ring.session?.select == .drag || ring.session?.select == .slider {
+                ring.selectDrag(at: point)
+            }
         }
+        TabChrome.setSuspended(false)
+        app.nudgeChrome()
         PressGate.end()
     }
 
@@ -202,6 +250,53 @@ struct RootView: View {
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
             .forEach { $0.backgroundColor = color }
+    }
+}
+
+/// Glass tab bar with no drag-to-switch lens. Used when 底栏滑块 is off.
+struct MoonTabBar: View {
+    @EnvironmentObject private var app: AppModel
+    @Environment(\.moon) private var colors
+    @Environment(\.colorScheme) private var scheme
+    var suppressed: Bool
+
+    var body: some View {
+        let ink = app.tab == .home ? MoonColors.media : colors
+        HStack(spacing: 0) {
+            ForEach(AppTab.allCases) { tab in
+                Button {
+                    guard !PressGate.suppressTap, !suppressed else { return }
+                    app.nudgeChrome()
+                    if tab == .home && app.tab == .home { app.feedIndex = 0 }
+                    app.tab = tab
+                    Haptics.tick()
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: tab == .capture ? 22 : 17, weight: .semibold))
+                        Text(tab.title).font(.system(size: 10, weight: .medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 48)
+                    .foregroundColor(app.tab == tab ? ink.accent : ink.textDim)
+                    .contentShape(Rectangle())
+                }
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(app.tab == tab ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .moonGlass(ink, radius: 28)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
+        .environment(\.colorScheme, app.tab == .home ? .dark : scheme)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isTabBar)
+        .accessibilityIdentifier("moon.tabs")
+        .allowsHitTesting(!suppressed)
+        .opacity(suppressed ? 0.45 : 1)
+        .background(TabBarFrameMark(active: true))
     }
 }
 

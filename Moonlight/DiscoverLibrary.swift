@@ -12,7 +12,7 @@ struct DiscoverView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("公开影像来自 Archive.org、NASA、维基共享资源。Pexels / Pixabay 需要你自己的密钥。")
+                    Text("公开影像来自 Archive.org、NASA、维基共享资源。YouTube 用官方播放器，频道用 RSS。哔哩哔哩只用官方嵌入页。PeerTube 走实例自己的公开接口。")
                         .font(.system(size: 13))
                         .foregroundColor(colors.textDim)
                         .accessibilityIdentifier("discover.root")
@@ -34,6 +34,22 @@ struct DiscoverView: View {
                             .moonGlass(colors, radius: 14)
                         Button("加入") { addLink() }
                             .font(.system(size: 15, weight: .semibold))
+                        Button("订阅") { app.subscribe(link); link = "" }
+                            .font(.system(size: 15, weight: .semibold))
+                            .accessibilityIdentifier("discover.follow")
+                    }
+                    if !app.settings.follows.isEmpty {
+                        Text("订阅").font(.system(size: 13, weight: .semibold))
+                        ForEach(app.settings.follows) { source in
+                            HStack {
+                                Text(source.title).lineLimit(1)
+                                Spacer()
+                                Button("移除") { app.removeFollow(source.id) }
+                            }
+                            .font(.system(size: 13))
+                        }
+                        Button("刷新订阅") { Task { await app.refreshFollows() } }
+                            .accessibilityIdentifier("discover.refreshFollows")
                     }
                     if app.discoverBusy {
                         ProgressView("正在找公开影像…").tint(colors.accent)

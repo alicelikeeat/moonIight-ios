@@ -29,4 +29,5 @@ enum Paths {
 
 extension Notification.Name {
     static let moonPauseAll = Notification.Name("moon.pauseAll")
+    static let moonResumeFeed = Notification.Name("moon.resumeFeed")
 }

@@ -202,7 +202,9 @@ struct MomentVideo: View {
 
     var body: some View {
         ZStack {
-            if let url = playURL {
+            if attachment.kind == .embed, let raw = attachment.remoteURL, let url = URL(string: raw) {
+                WebEmbedView(url: url)
+            } else if let url = playURL {
                 PlayerLayerView(player: session.player, gravity: .resizeAspectFill)
                 if !session.showsPlaying {
                     Image(systemName: "play.fill").foregroundColor(.white).padding(12).background(.black.opacity(0.3), in: Circle())
