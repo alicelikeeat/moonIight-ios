@@ -266,6 +266,14 @@ protocol Playable: AnyObject {
 
 enum FeedTap { case togglePlay, toggleChrome, revealChrome }
 
+/// Whether the home-feed buttons and tab bar are on screen.
+enum FeedChromeRule {
+    static func shown(playing: Bool, autoHide: Bool, revealed: Bool) -> Bool {
+        if !playing || !autoHide { return true }
+        return revealed
+    }
+}
+
 enum FeedTapRule {
     /// A hidden feed reveals its buttons on the single tap. A visible video still toggles play.
     /// Double-tap like stays on its own recognizer; this only classifies the delayed single tap.

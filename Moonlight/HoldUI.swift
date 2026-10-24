@@ -403,6 +403,29 @@ enum TabChrome {
         return false
     }
 
+    /// The system tab bar stays in the tree when SwiftUI's toolbar visibility does not stick.
+    /// Hidden bars are not hittable, which is what the immersive playback test watches.
+    static func setBarHidden(_ hidden: Bool) {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+        for window in windows {
+            guard let bar = anyTabBar(window.rootViewController) else { continue }
+            if bar.isHidden != hidden { bar.isHidden = hidden }
+            let alpha: CGFloat = hidden ? 0 : 1
+            if abs(bar.alpha - alpha) > 0.01 { bar.alpha = alpha }
+        }
+    }
+
+    private static func anyTabBar(_ vc: UIViewController?) -> UITabBar? {
+        if let tabs = vc as? UITabBarController { return tabs.tabBar }
+        for child in vc?.children ?? [] {
+            if let found = anyTabBar(child) { return found }
+        }
+        if let presented = vc?.presentedViewController { return anyTabBar(presented) }
+        return nil
+    }
+
     static func setSuspended(_ suspended: Bool) {
         if !suspended {
             for item in saved {
@@ -488,6 +511,52 @@ enum TabChrome {
             hops += 1
         }
         return hosts
+    }
+}
+
+/// Re-applies tab-bar visibility after SwiftUI lays the bar back out.
+struct TabBarHider: UIViewRepresentable {
+    var hidden: Bool
+
+    func makeUIView(context: Context) -> TabBarHiderView {
+        let view = TabBarHiderView()
+        view.isUserInteractionEnabled = false
+        view.isAccessibilityElement = false
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: TabBarHiderView, context: Context) {
+        uiView.barHidden = hidden
+        uiView.apply()
+    }
+}
+
+final class TabBarHiderView: UIView {
+    var barHidden = false
+    private var ticket = 0
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        apply()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        apply()
+    }
+
+    func apply() {
+        ticket += 1
+        let ticket = ticket
+        let hidden = barHidden
+        TabChrome.setBarHidden(hidden)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, ticket == self.ticket else { return }
+            TabChrome.setBarHidden(hidden)
+        }
     }
 }
 

@@ -104,6 +104,16 @@ extension View {
         }
     }
 
+    /// Hides or shows the system tab bar. iOS 18 ignores the older toolbar visibility call on a TabView.
+    @ViewBuilder
+    func moonTabBarVisible(_ visible: Bool) -> some View {
+        if #available(iOS 18.0, *) {
+            self.toolbarVisibility(visible ? .visible : .hidden, for: .tabBar)
+        } else {
+            self.toolbar(visible ? .visible : .hidden, for: .tabBar)
+        }
+    }
+
     /// One-argument change handler that stays on the iOS 16 deployment target.
     @ViewBuilder
     func moonOnChange<V: Equatable>(of value: V, perform action: @escaping (V) -> Void) -> some View {

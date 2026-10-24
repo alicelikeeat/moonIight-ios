@@ -172,10 +172,11 @@ struct RootView: View {
             page(.me).tabItem { Label("我", systemImage: "person") }.tag(AppTab.me)
         }
         .tint(app.tab == .home ? MoonColors.media.accent : colors.accent)
-        .toolbar(feedChromeHidden ? .hidden : .visible, for: .tabBar)
+        .moonTabBarVisible(!feedChromeHidden)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(feedChromeHidden ? .hidden : .visible, for: .tabBar)
         .toolbarColorScheme(app.tab == .home ? ColorScheme.dark : nil, for: .tabBar)
+        .background(TabBarHider(hidden: feedChromeHidden))
         .animation(.easeInOut(duration: 0.28), value: app.feedChrome)
     }
 

@@ -58,6 +58,7 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
             return
         }
         let item = AVPlayerItem(url: url)
+        player.actionAtItemEnd = loop ? .none : .pause
         player.replaceCurrentItem(with: item)
         hasMedia = true
         playbackState = PlayToggle.idle
@@ -66,7 +67,9 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
             let failed = item.status == .failed
             let message = item.error?.localizedDescription
             DispatchQueue.main.async {
-                if failed { self?.errorText = message ?? "无法播放" }
+                guard let self, failed, item === self.player.currentItem else { return }
+                self.errorText = message ?? "无法播放"
+                self.generation += 1
             }
         }
         sizeObs = item.observe(\.presentationSize, options: [.new]) { [weak self] item, _ in
@@ -142,8 +145,14 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
         DispatchQueue.main.async { [weak self] in
             guard let self, item == self.player.currentItem else { return }
             if self.loop && self.playWhenReady {
-                self.seekToStart()
-                self.play()
+                self.endedFlag = false
+                let current = self.player.currentItem
+                self.player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+                    DispatchQueue.main.async {
+                        guard let self, finished, self.loop, self.playWhenReady, self.player.currentItem === current else { return }
+                        self.play()
+                    }
+                }
                 return
             }
             self.endedFlag = true
@@ -234,8 +243,11 @@ final class LinkMonitor {
     }
 }
 
-/// A one-second silent clip so the immersive UI test can autoplay without a network asset.
+/// A silent clip long enough for the immersive UI test to hide, reveal, and hide again.
 enum TinyClip {
+    /// The UI test needs the picture to keep playing for well over 15 seconds.
+    static let seconds: Int32 = 36
+
     static func write(to url: URL) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
@@ -258,8 +270,8 @@ enum TinyClip {
         writer.add(input)
         writer.startWriting()
         writer.startSession(atSourceTime: .zero)
-        let fps: Int32 = 10
-        for i in 0..<12 {
+        var written: Int32 = 0
+        for i in 0..<seconds {
             let deadline = Date().addingTimeInterval(1.5)
             while !input.isReadyForMoreMediaData && Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.02)
@@ -283,9 +295,16 @@ enum TinyClip {
                 memset(base, 0, bytes)
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
-            let time = CMTime(value: CMTimeValue(i), timescale: fps)
+            let time = CMTime(value: CMTimeValue(i), timescale: 1)
             if !adaptor.append(buffer, withPresentationTime: time) { break }
+            written += 1
         }
+        guard written == seconds else {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: url)
+            throw CocoaError(.fileWriteUnknown)
+        }
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(seconds), timescale: 1))
         input.markAsFinished()
         let wait = DispatchSemaphore(value: 0)
         writer.finishWriting { wait.signal() }

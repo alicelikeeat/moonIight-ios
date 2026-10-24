@@ -148,7 +148,7 @@ final class AppModel: ObservableObject {
     func nudgeChrome() { chromeGeneration += 1 }
 
     private func installImmersiveDemo() {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("moon-immersive.mov")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("moon-immersive-long.mov")
         Task.detached { [weak self] in
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
             if size < 1500 {
@@ -172,6 +172,11 @@ final class AppModel: ObservableObject {
             source: "local"
         )
         feedIndex = 0
+        // Start here, not from a later view update. The page can appear before SwiftUI
+        // runs the feed's load task, and a short clip would already have ended.
+        feedPlayer.loop = true
+        feedPlayer.load(url: url, autoplay: true, muted: settings.feedMuted)
+        if settings.chromeAutoHide { feedChrome = false }
     }
 
     var feedItems: [MediaEntry] {

@@ -59,9 +59,11 @@ struct FeedView: View {
         .moonOnChange(of: app.feedIndex) { _ in
             userChrome = false
             hideToken += 1
-            publishChrome(true)
             // Publishing the player from inside the update that observed feedIndex cycles the graph.
             DispatchQueue.main.async { loadCurrent() }
+        }
+        .moonOnChange(of: app.feedChrome) { visible in
+            if chrome != visible { chrome = visible }
         }
         .moonOnChange(of: app.demoEntry?.id) { _ in
             DispatchQueue.main.async { loadCurrent() }
@@ -94,8 +96,10 @@ struct FeedView: View {
             loadCurrent()
         }
         .onAppear {
+            if chrome != app.feedChrome { chrome = app.feedChrome }
             loadCurrent()
         }
+        .moonTabBarVisible(app.feedChrome)
         .sheet(isPresented: $app.jumpVisible) { jumpSheet(items) }
         .sheet(item: $app.infoEntry) { entry in InfoCard(entry: entry) }
     }
@@ -134,7 +138,10 @@ struct FeedView: View {
     private func loadCurrent() {
         let items = app.feedItems
         guard items.indices.contains(app.feedIndex) else {
-            app.feedPlayer.load(url: nil, autoplay: false, muted: true)
+            // A late empty pass must not stop the in-memory demo that just started.
+            if app.demoEntry == nil {
+                app.feedPlayer.load(url: nil, autoplay: false, muted: true)
+            }
             app.armDwell(for: nil)
             syncChrome()
             return
@@ -144,8 +151,9 @@ struct FeedView: View {
         guard app.tab == .home else { return }
         if entry.kind == .video, entry.embedURL == nil, let url = entry.playbackURL {
             let rate = app.feedPlayer.speed
-            let play = FeedAutoplay.allowedNow(app.settings)
-            app.feedPlayer.loop = entry.id == AppModel.immersiveDemoID
+            let demo = entry.id == AppModel.immersiveDemoID
+            let play = demo || FeedAutoplay.allowedNow(app.settings)
+            app.feedPlayer.loop = demo
             app.feedPlayer.load(url: url, autoplay: play, muted: app.settings.feedMuted, rate: rate)
         } else {
             app.feedPlayer.loop = false
@@ -170,12 +178,9 @@ struct FeedView: View {
 
     private func syncChrome() {
         let playing = nativeVideoPlaying
-        if !playing || !app.settings.chromeAutoHide {
-            userChrome = false
-            publishChrome(true)
-            return
-        }
-        if !userChrome { publishChrome(false) }
+        if !playing || !app.settings.chromeAutoHide { userChrome = false }
+        let shown = FeedChromeRule.shown(playing: playing, autoHide: app.settings.chromeAutoHide, revealed: userChrome)
+        if chrome != shown || app.feedChrome != shown { publishChrome(shown) }
     }
 
     private func revealAndArm() {
@@ -438,6 +443,7 @@ struct FeedPage: View {
                     .opacity(chrome ? 1 : 0)
                     .offset(y: chrome ? 0 : 18)
                     .allowsHitTesting(chrome)
+                    .accessibilityHidden(!chrome)
                     .animation(.easeInOut(duration: 0.28), value: chrome)
                 if active && entry.kind == .video && app.feedPlayer.playbackState == PlayToggle.buffering && app.feedPlayer.playWhenReady {
                     ProgressView().tint(.white).allowsHitTesting(false)
@@ -479,6 +485,7 @@ struct FeedPage: View {
                     .padding(22)
                     .moonDisc(overMedia: true)
                     .allowsHitTesting(false)
+                    .accessibilityIdentifier("home.paused")
             }
             if let error = app.feedPlayer.errorText, active {
                 Text(error).font(.system(size: 13)).foregroundColor(.white).padding(8).background(.black.opacity(0.45), in: Capsule())
