@@ -475,7 +475,7 @@ struct GlobalLongPress: UIViewRepresentable {
     }
 }
 
-private final class GlobalPressView: UIView {
+final class GlobalPressView: UIView {
     weak var coordinator: GlobalLongPress.Coordinator?
     private var recognizer: FriendlyLongPress?
 
