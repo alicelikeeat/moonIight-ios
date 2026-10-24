@@ -305,7 +305,7 @@ struct FeedView: View {
                     if native { app.feedPlayer.toggle() }
                 },
                 RingItem(title: app.feedPlayer.loop ? "循环开" : "循环关", systemImage: "repeat", enabled: native, key: "loop") { app.feedPlayer.loop.toggle() },
-                RingItem(title: app.feedPlayer.isMuted ? "取消静音" : "静音", systemImage: "speaker", enabled: native) {
+                RingItem(title: app.feedPlayer.isMuted ? "取消静音" : "静音", systemImage: "speaker", enabled: native, key: "mute") {
                     app.feedPlayer.isMuted.toggle()
                     app.settings.feedMuted = app.feedPlayer.isMuted
                     app.saveSettings()
