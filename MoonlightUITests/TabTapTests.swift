@@ -80,6 +80,9 @@ final class TabTapTests: XCTestCase {
 
     func testV1EntryPoints() {
         openSettings()
+        openSheet("settings.skins", root: "skins.root", done: "skins.done", expect: ["29 个按键"])
+        openSheet("settings.icons", root: "icons.root", done: "icons.done", expect: ["墨色", "素纸", "新月"])
+        openSheet("settings.autoplay", root: "moment.autoplay", done: "autoplay.done", expect: ["全部", "指定", "关闭"])
         let drop = app.switches["水滴选择"]
         let dropId = app.descendants(matching: .any)["settings.drop"]
         if !(drop.waitForExistence(timeout: 2) || dropId.waitForExistence(timeout: 1)) {
@@ -89,9 +92,6 @@ final class TabTapTests: XCTestCase {
         if drop.exists, let value = drop.value as? String {
             XCTAssertEqual(value, "0", "水滴选择应该默认关闭")
         }
-        openSheet("settings.skins", root: "skins.root", done: "skins.done", expect: ["29 个按键"])
-        openSheet("settings.icons", root: "icons.root", done: "icons.done", expect: ["墨色", "素纸", "新月"])
-        openSheet("settings.autoplay", root: "moment.autoplay", done: "autoplay.done", expect: ["全部", "指定", "关闭"])
 
         XCTAssertTrue(app.descendants(matching: .any)["settings.backdrop"].waitForExistence(timeout: 4), "没有首页背景入口")
         openSheet("settings.focus", root: "focus.editor", done: "focus.done")
@@ -219,8 +219,8 @@ final class TabTapTests: XCTestCase {
         let again = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.74))
         let dest = window.coordinate(withNormalizedOffset: CGVector(dx: nx, dy: ny))
         again.press(forDuration: 1.6, thenDragTo: dest)
-        let local = app.staticTexts["本地"]
-        let online = app.staticTexts["在线"]
+        let local = app.buttons["本地"]
+        let online = app.buttons["在线"]
         let reshuffle = app.staticTexts["已重新洗牌"]
         XCTAssertTrue(
             local.waitForExistence(timeout: 4) || online.waitForExistence(timeout: 2) || reshuffle.waitForExistence(timeout: 2),

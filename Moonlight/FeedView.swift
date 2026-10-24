@@ -90,9 +90,11 @@ struct FeedView: View {
             publishChrome(false)
         }
         .environment(\.colorScheme, .dark)
+        .task(id: currentPlaybackID) {
+            loadCurrent()
+        }
         .onAppear {
-            publishChrome(true)
-            DispatchQueue.main.async { loadCurrent() }
+            loadCurrent()
         }
         .sheet(isPresented: $app.jumpVisible) { jumpSheet(items) }
         .sheet(item: $app.infoEntry) { entry in InfoCard(entry: entry) }
@@ -121,6 +123,12 @@ struct FeedView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 80)
+    }
+
+    /// Changes when the clip on screen changes, including the in-memory immersive demo.
+    private var currentPlaybackID: String {
+        guard app.feedItems.indices.contains(app.feedIndex) else { return "empty" }
+        return app.feedItems[app.feedIndex].id
     }
 
     private func loadCurrent() {

@@ -261,8 +261,14 @@ enum FeedXML {
     }
 
     static func chunks(_ xml: String) -> [String] {
-        let parts = xml.components(separatedBy: "<entry") + xml.components(separatedBy: "<item")
-        return parts.filter { $0.contains("<title") || $0.contains("BV") || $0.contains("youtube") }
+        func rows(_ tag: String) -> [String] {
+            let pieces = xml.components(separatedBy: tag)
+            guard pieces.count > 1 else { return [] }
+            return Array(pieces.dropFirst())
+        }
+        return (rows("<entry") + rows("<item")).filter {
+            $0.contains("<title") || $0.contains("BV") || $0.contains("youtube")
+        }
     }
 
     static func slice(_ text: String, _ start: String, _ end: String) -> String? {
