@@ -173,7 +173,7 @@ final class TabTapTests: XCTestCase {
         home.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             .press(forDuration: 0.2, thenDragTo: far.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
         XCTAssertFalse(app.descendants(matching: .any)["ring.root"].exists, "拖动底栏弹出了圆环")
-        XCTAssertTrue(waitUntil(timeout: 4) { !tab("首页").isSelected }, "拖动底栏没有换页\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 4) { !self.tab("首页").isSelected }, "拖动底栏没有换页\n\(app.debugDescription)")
 
         if !home.isSelected { home.tap() }
         XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5) || home.isSelected)
