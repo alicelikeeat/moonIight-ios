@@ -76,7 +76,10 @@ final class AppModel: ObservableObject {
     let feedPlayer = PlayerSession()
     let recorder = RecorderModel()
     let localTransport = LocalTransport()
-    let remoteTransport = RemoteTransport(config: ChatServerConfig())
+    var remoteTransport: RemoteTransport { RemoteTransport(config: ChatServerConfig(baseURL: settings.chatServerURL)) }
+    @Published var chatConnected = false
+    private var socket: URLSessionWebSocketTask?
+    private var chatCursor: String?
     private let writer = StoreWriter()
     private let transfers = TransferCenter()
     private var transferJobs: [TransferJob] = []
@@ -544,10 +547,14 @@ final class AppModel: ObservableObject {
     func likeOnly(moment: String, who: String) { editSocial { $0 = SocialOps.likeOnly($0, moment, who) } }
     func toggleDislike(moment: String, who: String) { editSocial { $0 = SocialOps.toggleDislike($0, moment, who) } }
 
-    func addComment(moment: String, author: String, text: String) {
+    func addComment(moment: String, author: String, text: String, replyTo: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        editSocial { $0 = SocialOps.addComment($0, moment, Comment(authorId: author, text: trimmed)) }
+        editSocial { $0 = SocialOps.addComment($0, moment, Comment(authorId: author, text: trimmed, replyToId: replyTo)) }
+    }
+
+    func deleteComment(moment: String, id: String) {
+        editSocial { $0 = SocialOps.deleteComment($0, moment, id) }
     }
 
     func deleteMoment(_ id: String) {
@@ -610,6 +617,78 @@ final class AppModel: ObservableObject {
 
     func markRead(_ convId: String) {
         editSocial { $0 = SocialOps.markRead($0, convId, Int64(Date().timeIntervalSince1970 * 1000)) }
+    }
+
+    func storeChatImage(_ data: Data) -> Attachment? {
+        guard !data.isEmpty else { return nil }
+        Paths.ensureDirs()
+        let url = Paths.media.appendingPathComponent("chat_\(IDs.new()).jpg")
+        do {
+            try data.write(to: url)
+            return Attachment(kind: .image, localPath: url.path, mime: "image/jpeg", sizeBytes: Int64(data.count), title: "图片")
+        } catch {
+            return nil
+        }
+    }
+
+    func connectChat() async {
+        let transport = remoteTransport
+        guard transport.active else {
+            chatConnected = false
+            showToast("先填写聊天服务器")
+            return
+        }
+        let result = await transport.sync(cursor: chatCursor)
+        if let error = result.error {
+            chatConnected = false
+            showToast(error)
+            return
+        }
+        absorbRemote(result.messages)
+        chatCursor = result.cursor ?? chatCursor
+        chatConnected = true
+        showToast("已连接")
+        openSocket()
+    }
+
+    private func absorbRemote(_ messages: [Message]) {
+        editSocial { state in
+            for message in messages {
+                if !state.conversations.contains(where: { $0.id == message.conversationId }) {
+                    var members = [state.selfId]
+                    if message.senderId != state.selfId { members.append(message.senderId) }
+                    state.conversations.append(Conversation(id: message.conversationId, memberIds: members, remote: true))
+                }
+                state = SocialOps.putMessage(state, message)
+            }
+        }
+    }
+
+    private func openSocket() {
+        socket?.cancel(with: .goingAway, reason: nil)
+        socket = nil
+        guard let url = URL(string: ChatServerConfig(baseURL: settings.chatServerURL).wsURL()) else { return }
+        let task = URLSession.shared.webSocketTask(with: url)
+        socket = task
+        task.resume()
+        listen(task)
+    }
+
+    private func listen(_ task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            Task { @MainActor in
+                guard let self, self.socket === task else { return }
+                switch result {
+                case .failure:
+                    break
+                case .success(let message):
+                    if case .string(let text) = message, let data = text.data(using: .utf8), let decoded = ChatWire.decodeMessage(data) {
+                        self.absorbRemote([decoded])
+                    }
+                    self.listen(task)
+                }
+            }
+        }
     }
 
     func deleteMessage(_ id: String) { editSocial { $0 = SocialOps.deleteMessage($0, id) } }

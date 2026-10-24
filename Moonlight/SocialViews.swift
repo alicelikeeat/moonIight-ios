@@ -66,7 +66,6 @@ struct MomentCard: View {
     @EnvironmentObject private var ring: RingController
     @Environment(\.moon) private var colors
     var moment: Moment
-    @State private var comment = ""
     @State private var showComment = false
 
     var body: some View {
@@ -93,23 +92,24 @@ struct MomentCard: View {
                     Label("\(moment.comments.count)", systemImage: "text.bubble")
                         .font(.system(size: 13, weight: .medium))
                 }
+                .accessibilityIdentifier("moment.comment")
                 Spacer()
             }
             .foregroundColor(colors.text)
-            ForEach(moment.comments) { c in
+            ForEach(CommentTree.flat(moment.comments)) { line in
                 HStack(alignment: .top, spacing: 6) {
-                    Text(app.social.contact(c.authorId)?.name ?? "").font(.system(size: 13, weight: .semibold))
-                    Text(c.text).font(.system(size: 13))
+                    Text(app.social.contact(line.comment.authorId)?.name ?? "").font(.system(size: 13, weight: .semibold))
+                    Text(line.comment.text).font(.system(size: 13))
+                    Spacer(minLength: 0)
                 }
+                .padding(.leading, CGFloat(line.depth) * 16)
             }
         }
         .padding(14)
         .moonGlass(colors, radius: 20)
         .onTapGesture(count: 2) { app.likeOnly(moment: moment.id, who: app.social.selfId); Haptics.soft() }
-        .alert("评论", isPresented: $showComment) {
-            TextField("说点什么", text: $comment)
-            Button("发送") { app.addComment(moment: moment.id, author: app.social.selfId, text: comment); comment = "" }
-            Button("取消", role: .cancel) {}
+        .sheet(isPresented: $showComment) {
+            CommentThread(momentID: moment.id)
         }
     }
 
@@ -465,12 +465,67 @@ struct ChatListView: View {
     }
 }
 
+struct CommentThread: View {
+    @EnvironmentObject private var app: AppModel
+    @Environment(\.dismiss) private var dismiss
+    var momentID: String
+    @State private var text = ""
+    @State private var replyTo: String?
+
+    var body: some View {
+        let comments = app.social.moments.first { $0.id == momentID }?.comments ?? []
+        NavigationStack {
+            List {
+                if comments.isEmpty {
+                    Text("还没有评论。写第一条，也可以回复某一条。").foregroundColor(.secondary)
+                }
+                ForEach(CommentTree.flat(comments)) { line in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(app.social.contact(line.comment.authorId)?.name ?? "某人")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(line.comment.text).font(.system(size: 15))
+                        HStack {
+                            Button("回复") { replyTo = line.comment.id }
+                            Button("删除") { app.deleteComment(moment: momentID, id: line.comment.id) }
+                                .foregroundColor(.red)
+                        }
+                        .font(.system(size: 13))
+                    }
+                    .padding(.leading, CGFloat(line.depth) * 16)
+                }
+            }
+            .accessibilityIdentifier("comment.thread")
+            .navigationTitle("评论")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                Button("完成") { dismiss() }.accessibilityIdentifier("comment.done")
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    TextField(replyTo == nil ? "说点什么" : "回复这条", text: $text)
+                        .textFieldStyle(.roundedBorder)
+                    Button("发送") {
+                        app.addComment(moment: momentID, author: app.social.selfId, text: text, replyTo: replyTo)
+                        text = ""
+                        replyTo = nil
+                    }
+                    .font(.system(size: 15, weight: .semibold))
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
+            }
+        }
+    }
+}
+
 struct ChatThreadView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
     var conversationID: String
     @State private var text = ""
     @State private var senderId: String = ""
+    @State private var photoItem: PhotosPickerItem?
+    @State private var pending: Attachment?
 
     var body: some View {
         let conv = app.social.conversations.first { $0.id == conversationID }
@@ -491,7 +546,26 @@ struct ChatThreadView: View {
                     }
                 }
             }
+            if let pending {
+                HStack {
+                    RemoteOrLocalImage(url: pending.displayURL, mode: .fill)
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    Text("待发送的图片")
+                        .font(.system(size: 13))
+                    Spacer()
+                    Button("取消") { self.pending = nil }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            }
             HStack {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                }
+                .accessibilityIdentifier("chat.photo")
                 Menu {
                     ForEach(speakers) { person in
                         Button(person.name) { senderId = person.id }
@@ -504,12 +578,44 @@ struct ChatThreadView: View {
                 TextField("写一句。虚拟好友的每一句都由你来写。", text: $text)
                     .textFieldStyle(.roundedBorder)
                 Button("发送") {
-                    app.send(convId: conversationID, senderId: senderId.isEmpty ? app.social.selfId : senderId, text: text)
+                    let files = pending.map { [$0] } ?? []
+                    app.send(convId: conversationID, senderId: senderId.isEmpty ? app.social.selfId : senderId, text: text, attachments: files)
                     text = ""
+                    pending = nil
                 }
                 .font(.system(size: 15, weight: .semibold))
             }
             .padding(10)
+            if let conv {
+                Button(conv.remote ? "这条对话会发给服务器" : "这条对话只在本机") {
+                    guard !app.settings.chatServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        app.showToast("到设置里填写聊天服务器")
+                        return
+                    }
+                    app.editSocial { state in
+                        state.conversations = state.conversations.map { item in
+                            guard item.id == conv.id else { return item }
+                            var item = item
+                            item.remote.toggle()
+                            return item
+                        }
+                    }
+                }
+                .font(.system(size: 13))
+                .padding(.bottom, 8)
+                .accessibilityIdentifier("chat.remote")
+            }
+        }
+        .moonOnChange(of: photoItem) { item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let saved = app.storeChatImage(data) {
+                    pending = saved
+                } else {
+                    app.showToast("这张图没有放进聊天")
+                }
+                photoItem = nil
+            }
         }
         .navigationTitle(conv?.title ?? "聊天")
         .navigationBarTitleDisplayMode(.inline)
@@ -533,6 +639,12 @@ struct ChatThreadView: View {
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 Text(app.social.contact(message.senderId)?.name ?? "")
                     .font(.system(size: 11, weight: .medium)).foregroundColor(.secondary)
+                ForEach(message.attachments.filter { $0.kind == .image }) { file in
+                    RemoteOrLocalImage(url: file.displayURL, mode: .fill)
+                        .frame(width: 160, height: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .accessibilityIdentifier("chat.image")
+                }
                 Text(message.text.isEmpty ? " " : message.text)
                     .font(.system(size: 16))
                     .padding(10)

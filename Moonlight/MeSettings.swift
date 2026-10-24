@@ -413,9 +413,13 @@ struct SettingsView: View {
                 TextField("https://", text: binding(\.chatServerURL))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("连接") {}
-                    .disabled(true)
-                Text("即将推出。当前只有本机的 LocalTransport，RemoteTransport 不会联网。").font(.caption).foregroundColor(.secondary)
+                    .accessibilityIdentifier("settings.chatURL")
+                Button(app.chatConnected ? "已连接" : "连接") {
+                    Task { await app.connectChat() }
+                }
+                .disabled(app.settings.chatServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityIdentifier("settings.chatConnect")
+                Text("填写自己的服务器后点连接。协议是公开的 JSON：POST /v1/conversations/{id}/messages，GET /v1/sync。留空则只保存在本机，不会联网。").font(.caption).foregroundColor(.secondary)
             }
             Section("朋友圈") {
                 Button("载入示例好友") { app.loadDemo() }
@@ -663,6 +667,11 @@ struct FullPlayerView: View {
                                 ring.selectDrag(at: ring.finger)
                             }
                         }
+                    },
+                    onSwipeLeft: { app.infoEntry = entry },
+                    onPinch: { fill in
+                        app.updateEntry(entry.id) { $0.fillOverride = fill }
+                        app.showToast(fill ? "已铺满" : "已完整")
                     }
                 )
                 if ring.session != nil { RingOverlay(ring: ring) }

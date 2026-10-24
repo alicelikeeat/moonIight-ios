@@ -83,6 +83,18 @@ final class TabTapTests: XCTestCase {
         openSheet("settings.skins", root: "skins.root", done: "skins.done", expect: ["29 个按键"])
         openSheet("settings.icons", root: "icons.root", done: "icons.done", expect: ["墨色", "素纸", "新月"])
         openSheet("settings.autoplay", root: "moment.autoplay", done: "autoplay.done", expect: ["全部", "指定", "关闭"])
+        XCTAssertTrue(app.descendants(matching: .any)["settings.backdrop"].waitForExistence(timeout: 4), "没有首页背景入口")
+        openSheet("settings.focus", root: "focus.editor", done: "focus.done")
+        let trash = app.descendants(matching: .any)["settings.trash"]
+        XCTAssertTrue(trash.waitForExistence(timeout: 4))
+        if trash.isHittable { trash.tap() } else { trash.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.descendants(matching: .any)["trash.root"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["最近删除是空的"].waitForExistence(timeout: 3) || app.descendants(matching: .any)["trash.empty"].exists)
+        app.buttons["trash.done"].tap()
+        let refresh = app.switches["后台刷新公开源"]
+        let refreshId = app.descendants(matching: .any)["settings.refresh"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 4) || refreshId.waitForExistence(timeout: 2), "没有后台刷新开关\n\(app.debugDescription)")
+
         let drop = app.switches["水滴选择"]
         let dropId = app.descendants(matching: .any)["settings.drop"]
         if !(drop.waitForExistence(timeout: 2) || dropId.waitForExistence(timeout: 1)) {
@@ -93,18 +105,15 @@ final class TabTapTests: XCTestCase {
             XCTAssertEqual(value, "0", "水滴选择应该默认关闭")
         }
 
-        XCTAssertTrue(app.descendants(matching: .any)["settings.backdrop"].waitForExistence(timeout: 4), "没有首页背景入口")
-        openSheet("settings.focus", root: "focus.editor", done: "focus.done")
-        let trash = app.descendants(matching: .any)["settings.trash"]
-        XCTAssertTrue(trash.waitForExistence(timeout: 4))
-        if trash.isHittable { trash.tap() } else { trash.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(app.descendants(matching: .any)["trash.root"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["最近删除是空的"].waitForExistence(timeout: 3) || app.descendants(matching: .any)["trash.empty"].exists)
-        app.buttons["trash.done"].tap()
-
-        let refresh = app.switches["后台刷新公开源"]
-        let refreshId = app.descendants(matching: .any)["settings.refresh"]
-        XCTAssertTrue(refresh.waitForExistence(timeout: 4) || refreshId.waitForExistence(timeout: 2), "没有后台刷新开关\n\(app.debugDescription)")
+        let lens = app.switches["底栏滑块"]
+        let lensId = app.descendants(matching: .any)["settings.tabLens"]
+        if !(lens.waitForExistence(timeout: 2) || lensId.waitForExistence(timeout: 1)) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(lens.waitForExistence(timeout: 3) || lensId.waitForExistence(timeout: 2), "没有底栏滑块开关\n\(app.debugDescription)")
+        if lens.exists, let value = lens.value as? String {
+            XCTAssertEqual(value, "1", "底栏滑块应该默认打开")
+        }
 
         app.buttons["settings.done"].tap()
         let library = app.buttons["me.library"]
@@ -160,6 +169,42 @@ final class TabTapTests: XCTestCase {
         let close = app.buttons[done]
         XCTAssertTrue(close.waitForExistence(timeout: 3), "找不到 \(done)\n\(app.debugDescription)")
         close.tap()
+    }
+
+    /// A short drag is a scroll, not a long-press, so the ring stays closed and the tab does not change.
+    func testQuickDragDoesNotOpenTheRing() {
+        let home = tab("首页")
+        XCTAssertTrue(home.waitForExistence(timeout: 12))
+        XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5))
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+        start.press(forDuration: 0.05, thenDragTo: end)
+        XCTAssertFalse(app.descendants(matching: .any)["ring.root"].waitForExistence(timeout: 1), "快速滑动弹出了圆环")
+        XCTAssertTrue(home.isSelected, "快速滑动把底栏换了页")
+        XCTAssertTrue(app.buttons["home.discover"].isHittable, "快速滑动之后首页按钮不在了")
+    }
+
+    func testCameraSheetStaysUsable() {
+        let capture = tab("拍摄")
+        XCTAssertTrue(capture.waitForExistence(timeout: 12))
+        capture.tap()
+        let photo = app.buttons["capture.photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5))
+        photo.tap()
+        let root = app.descendants(matching: .any)["camera.root"]
+        XCTAssertTrue(root.waitForExistence(timeout: 5), "拍照没有打开相机\n\(app.debugDescription)")
+        let shutter = app.descendants(matching: .any)["camera.shutter"]
+        let missing = app.staticTexts["这台设备没有相机"]
+        let library = app.descendants(matching: .any)["camera.library"]
+        XCTAssertTrue(
+            shutter.waitForExistence(timeout: 3) || missing.waitForExistence(timeout: 2),
+            "相机既没有快门，也没有说明这台设备没有相机\n\(app.debugDescription)"
+        )
+        if missing.exists {
+            XCTAssertTrue(library.waitForExistence(timeout: 2), "没有相机时不能改从相册选")
+        }
+        app.buttons["camera.close"].tap()
     }
 
     /// Dragging on the system tab bar changes tabs and never opens the ring, even if the press is slow.

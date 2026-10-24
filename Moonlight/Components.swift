@@ -59,6 +59,8 @@ struct MediaTouchLayer: UIViewRepresentable {
     var onLongBegan: (CGPoint) -> Void
     var onLongChanged: (CGPoint) -> Void
     var onLongEnded: (CGPoint) -> Void
+    var onSwipeLeft: (() -> Void)? = nil
+    var onPinch: ((Bool) -> Void)? = nil
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -79,9 +81,19 @@ struct MediaTouchLayer: UIViewRepresentable {
         let hold = FriendlyLongPress(target: context.coordinator, action: #selector(Coordinator.hold(_:)))
         LongPressInstall.configure(hold)
         hold.minimumPressDuration = 0.45
+        let swipe = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.swipe(_:)))
+        swipe.cancelsTouchesInView = false
+        swipe.delaysTouchesBegan = false
+        swipe.maximumNumberOfTouches = 1
+        swipe.delegate = context.coordinator
+        let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pinch(_:)))
+        pinch.cancelsTouchesInView = false
+        pinch.delaysTouchesBegan = false
         view.addGestureRecognizer(single)
         view.addGestureRecognizer(double)
         view.addGestureRecognizer(hold)
+        view.addGestureRecognizer(swipe)
+        view.addGestureRecognizer(pinch)
         return view
     }
 
@@ -92,11 +104,21 @@ struct MediaTouchLayer: UIViewRepresentable {
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         var parent: MediaTouchLayer
         init(_ parent: MediaTouchLayer) { self.parent = parent }
         private var generation = 0
         private var blockSingle = false
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard let pan = gestureRecognizer as? UIPanGestureRecognizer else { return true }
+            let velocity = pan.velocity(in: pan.view)
+            return abs(velocity.x) > abs(velocity.y) * 1.15 && velocity.x < 0
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            otherGestureRecognizer is UILongPressGestureRecognizer || otherGestureRecognizer.view is UIScrollView
+        }
         @objc func single(_ g: UITapGestureRecognizer) {
             let gen = generation
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
@@ -124,6 +146,31 @@ struct MediaTouchLayer: UIViewRepresentable {
                 parent.onLongEnded(point)
                 PressGate.end()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.blockSingle = false }
+            }
+        }
+        @objc func swipe(_ g: UIPanGestureRecognizer) {
+            guard g.state == .ended, let view = g.view else { return }
+            let move = g.translation(in: view)
+            guard SwipeInfo.opens(dx: move.x, dy: move.y) else { return }
+            blockSingle = true
+            generation += 1
+            parent.onSwipeLeft?()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.blockSingle = false }
+        }
+        @objc func pinch(_ g: UIPinchGestureRecognizer) {
+            switch g.state {
+            case .began:
+                blockSingle = true
+                generation += 1
+            case .ended:
+                switch PinchFill.decide(scale: g.scale) {
+                case .fill: parent.onPinch?(true)
+                case .fit: parent.onPinch?(false)
+                case .stay: break
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.blockSingle = false }
+            default:
+                break
             }
         }
         private func setScrollEnabled(_ enabled: Bool, from view: UIView?) {

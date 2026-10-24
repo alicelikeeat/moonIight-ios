@@ -278,8 +278,8 @@ struct CaptureView: View {
             Text("拍照、录像，或从相册导入。")
                 .foregroundColor(colors.textDim)
             VStack(spacing: 12) {
-                captureButton("拍照", "camera") { cameraPhoto = true }
-                captureButton("录像", "video") { cameraVideo = true }
+                captureButton("拍照", "camera", id: "capture.photo") { cameraPhoto = true }
+                captureButton("录像", "video", id: "capture.video") { cameraVideo = true }
                 PhotosPicker(selection: $item, matching: .any(of: [.images, .videos])) {
                     rowLabel("导入", "photo.on.rectangle")
                 }
@@ -298,7 +298,7 @@ struct CaptureView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { SystemGlassFill(dark: colors.dark) }
         .sheet(isPresented: $cameraPhoto) {
-            CameraPicker(video: false, onImage: { image in
+            MoonCamera(video: false, onImage: { image in
                 cameraPhoto = false
                 if let data = image.jpegData(compressionQuality: 0.9) {
                     app.importImageData(data, title: "拍摄", source: "camera")
@@ -307,7 +307,7 @@ struct CaptureView: View {
             .ignoresSafeArea()
         }
         .sheet(isPresented: $cameraVideo) {
-            CameraPicker(video: true, onImage: { _ in cameraVideo = false }, onVideo: { url in
+            MoonCamera(video: true, onImage: { _ in cameraVideo = false }, onVideo: { url in
                 cameraVideo = false
                 app.importFile(at: url, kind: .video, title: "录像", source: "camera")
             }, onCancel: { cameraVideo = false })
@@ -319,9 +319,10 @@ struct CaptureView: View {
         }
     }
 
-    private func captureButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+    private func captureButton(_ title: String, _ symbol: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { rowLabel(title, symbol) }
             .buttonStyle(.plain)
+            .accessibilityIdentifier(id)
     }
 
     private func rowLabel(_ title: String, _ symbol: String) -> some View {

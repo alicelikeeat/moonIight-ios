@@ -167,6 +167,48 @@ struct SocialState: Codable, Equatable, Sendable {
     }
 }
 
+/// Roots sit at depth 0. A reply is indented under its parent. Deleting a comment takes its replies with it.
+enum CommentTree {
+    struct Line: Identifiable, Equatable {
+        var comment: Comment
+        var depth: Int
+        var id: String { comment.id }
+    }
+
+    static func flat(_ comments: [Comment]) -> [Line] {
+        let ids = Set(comments.map(\.id))
+        let roots = comments.filter { c in
+            guard let parent = c.replyToId else { return true }
+            return !ids.contains(parent)
+        }.sorted { $0.createdAt < $1.createdAt }
+        var out: [Line] = []
+        func walk(_ comment: Comment, _ depth: Int, _ seen: Set<String>) {
+            if seen.contains(comment.id) || depth > 12 { return }
+            out.append(Line(comment: comment, depth: depth))
+            var next = seen
+            next.insert(comment.id)
+            let kids = comments.filter { $0.replyToId == comment.id }.sorted { $0.createdAt < $1.createdAt }
+            for kid in kids { walk(kid, depth + 1, next) }
+        }
+        for root in roots { walk(root, 0, []) }
+        return out
+    }
+
+    static func removing(_ comments: [Comment], id: String) -> [Comment] {
+        var drop: Set<String> = [id]
+        var grew = true
+        while grew {
+            grew = false
+            for comment in comments {
+                if let parent = comment.replyToId, drop.contains(parent), drop.insert(comment.id).inserted {
+                    grew = true
+                }
+            }
+        }
+        return comments.filter { !drop.contains($0.id) }
+    }
+}
+
 enum SocialOps {
     static func upsertContact(_ s: SocialState, _ c: Contact) -> SocialState {
         var s = s
@@ -270,7 +312,7 @@ enum SocialOps {
         s.moments = s.moments.map { m in
             guard m.id == momentId else { return m }
             var m = m
-            m.comments.removeAll { $0.id == commentId }
+            m.comments = CommentTree.removing(m.comments, id: commentId)
             return m
         }
         return s

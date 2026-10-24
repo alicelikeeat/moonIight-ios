@@ -430,7 +430,13 @@ struct FeedPage: View {
                     onDouble: onDouble,
                     onLongBegan: onLongBegan,
                     onLongChanged: onLongChanged,
-                    onLongEnded: onLongEnded
+                    onLongEnded: onLongEnded,
+                    onSwipeLeft: { app.infoEntry = entry; app.nudgeChrome() },
+                    onPinch: { fill in
+                        app.updateEntry(entry.id) { $0.fillOverride = fill }
+                        app.showToast(fill ? "已铺满" : "已完整")
+                        app.nudgeChrome()
+                    }
                 )
                 if heart {
                     Image(systemName: "heart.fill")
@@ -570,6 +576,7 @@ struct InfoCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(entry.title).font(.system(size: 20, weight: .semibold))
+                .accessibilityIdentifier("info.card")
             Text(entry.author.isEmpty ? entry.platformLabel() : entry.author).foregroundColor(colors.textDim)
             label("来源", entry.platformLabel())
             if entry.byteSize > 0 { label("大小", byteString(entry.byteSize)) }

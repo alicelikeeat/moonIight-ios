@@ -266,6 +266,23 @@ protocol Playable: AnyObject {
 
 enum FeedTap { case togglePlay, toggleChrome, revealChrome }
 
+/// A left swipe opens the info card. A mostly vertical move stays with the pager.
+enum SwipeInfo {
+    static func opens(dx: CGFloat, dy: CGFloat) -> Bool {
+        dx <= -56 && abs(dx) > abs(dy) * 1.15
+    }
+}
+
+/// Pinch out fills the frame. Pinch in shows the whole picture.
+enum PinchFill {
+    enum Choice: Equatable { case fill, fit, stay }
+    static func decide(scale: CGFloat) -> Choice {
+        if scale >= 1.12 { return .fill }
+        if scale <= 0.88 { return .fit }
+        return .stay
+    }
+}
+
 /// Whether the home-feed buttons and tab bar are on screen.
 enum FeedChromeRule {
     static func shown(playing: Bool, autoHide: Bool, revealed: Bool) -> Bool {

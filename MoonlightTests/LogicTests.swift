@@ -278,14 +278,43 @@ final class LogicTests: XCTestCase {
         let local = await LocalTransport().send(message: message, conversation: conv)
         XCTAssertEqual(local.status, .sent)
         XCTAssertNil(local.error)
-        let remote = await RemoteTransport(config: ChatServerConfig(baseURL: "https://chat.example")).send(message: message, conversation: conv)
-        XCTAssertEqual(remote.status, .failed)
-        XCTAssertEqual(remote.error, "聊天服务器即将推出，消息仅保存在本机")
-        XCTAssertFalse(RemoteTransport(config: ChatServerConfig()).active)
+        let empty = RemoteTransport(config: ChatServerConfig())
+        XCTAssertFalse(empty.active)
+        let refused = await empty.send(message: message, conversation: conv)
+        XCTAssertEqual(refused.status, .failed)
+        XCTAssertEqual(refused.error, "还没有填写聊天服务器")
         XCTAssertEqual(ChatServerConfig(baseURL: "https://chat.example/").wsURL(), "wss://chat.example/v1/ws")
-        let sync = await RemoteTransport(config: ChatServerConfig()).sync(cursor: "abc")
+        let sync = await empty.sync(cursor: "abc")
         XCTAssertEqual(sync.cursor, "abc")
         XCTAssertTrue(sync.messages.isEmpty)
+        XCTAssertNil(sync.error)
+
+        let posted = await RemoteTransport(config: ChatServerConfig(baseURL: "https://chat.example"), exchange: { _ in
+            (200, #"{"id":"srv","serverAt":42}"#.data(using: .utf8), nil)
+        }).send(message: message, conversation: conv)
+        XCTAssertEqual(posted.status, .sent)
+        XCTAssertEqual(posted.serverAt, 42)
+
+        let down = await RemoteTransport(config: ChatServerConfig(baseURL: "https://chat.example"), exchange: { _ in
+            (nil, nil, "offline")
+        }).sync(cursor: "abc")
+        XCTAssertEqual(down.error, "offline")
+        XCTAssertEqual(down.cursor, "abc")
+    }
+
+    func testSwipePinchAndThreads() {
+        XCTAssertTrue(SwipeInfo.opens(dx: -80, dy: 10))
+        XCTAssertFalse(SwipeInfo.opens(dx: -20, dy: 4))
+        XCTAssertFalse(SwipeInfo.opens(dx: -80, dy: 90))
+        XCTAssertEqual(PinchFill.decide(scale: 1.3), .fill)
+        XCTAssertEqual(PinchFill.decide(scale: 0.7), .fit)
+        XCTAssertEqual(PinchFill.decide(scale: 1), .stay)
+        let parent = Comment(id: "p", authorId: "me", text: "根", createdAt: 1)
+        let child = Comment(id: "c", authorId: "me", text: "回", replyToId: "p", createdAt: 2)
+        let lines = CommentTree.flat([child, parent])
+        XCTAssertEqual(lines.map(\.comment.id), ["p", "c"])
+        XCTAssertEqual(lines.map(\.depth), [0, 1])
+        XCTAssertEqual(CommentTree.removing([parent, child], id: "p").map(\.id), [])
     }
 
     func testDownloadPolicyAndLinks() {
