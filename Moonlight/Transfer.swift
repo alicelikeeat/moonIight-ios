@@ -16,7 +16,7 @@ final class TransferCenter: NSObject, URLSessionDownloadDelegate {
     var onFinish: ((String, URL?, String?) -> Void)?
     var onResume: ((String, String) -> Void)?
     private let lock = NSLock()
-    private var sessions: [String: URLSession] = []
+    private var sessions: [String: URLSession] = [:]
     private var jobs: [String: TransferJob] = [:]
     private var settled = Set<String>()
 
