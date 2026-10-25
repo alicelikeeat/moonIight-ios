@@ -68,17 +68,12 @@ struct RootView: View {
     @Environment(\.moon) private var colors
 
     var body: some View {
-        Group {
-            if app.settings.tabLens {
-                systemTabs
-            } else {
-                page(app.tab)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if !feedChromeHidden {
-                            MoonTabBar(suppressed: ring.session != nil)
-                        }
-                    }
+        ZStack(alignment: .bottom) {
+            page(app.tab == .capture ? .home : app.tab)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !feedChromeHidden {
+                MoonTabBar(suppressed: ring.session != nil || app.fan != nil)
+                    .padding(.bottom, 4)
             }
         }
         .background {
@@ -135,6 +130,26 @@ struct RootView: View {
                     .allowsHitTesting(!feedChromeHidden)
             }
         }
+        .fullScreenCover(item: $app.camera) { mode in
+            MoonCamera(
+                video: mode.video,
+                onImage: { image in
+                    app.camera = nil
+                    if let data = image.jpegData(compressionQuality: 0.9) {
+                        app.importImageData(data, title: "拍摄", source: "camera")
+                    }
+                },
+                onVideo: { url in
+                    app.camera = nil
+                    app.importFile(at: url, kind: .video, title: "录像", source: "camera")
+                },
+                onCancel: { app.camera = nil }
+            )
+            .ignoresSafeArea()
+        }
+        .overlay {
+            if app.fan != nil { CaptureFanOverlay() }
+        }
         .sheet(isPresented: $app.showTrash) { TrashView() }
         .sheet(item: $ring.menu) { menu in
             MoreSheet(groups: menu.groups, forceDark: menu.dark) { ring.menu = nil }
@@ -156,33 +171,10 @@ struct RootView: View {
     /// Home feed is full screen while a video is playing and the buttons are tucked away.
     private var feedChromeHidden: Bool { app.tab == .home && !app.feedChrome }
 
-    private var systemTabs: some View {
-        TabView(selection: Binding(get: { app.tab }, set: { newValue in
-            app.nudgeChrome()
-            if newValue == .home && app.tab == .home { app.feedIndex = 0 }
-            app.tab = newValue
-            Haptics.tick()
-        })) {
-            page(.home).tabItem { Label("首页", systemImage: "moon.stars") }.tag(AppTab.home)
-            page(.discover).tabItem { Label("发现", systemImage: "magnifyingglass") }.tag(AppTab.discover)
-            page(.capture).tabItem { Label("拍摄", systemImage: "circle.fill") }.tag(AppTab.capture)
-            page(.moments).tabItem { Label("朋友圈", systemImage: "person.2") }.tag(AppTab.moments)
-            page(.me).tabItem { Label("我", systemImage: "person") }.tag(AppTab.me)
-        }
-        .tint(app.tab == .home ? MoonColors.media.accent : colors.accent)
-        .moonTabBarVisible(!feedChromeHidden)
-        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
-        .toolbarBackground(feedChromeHidden ? .hidden : .visible, for: .tabBar)
-        .toolbarColorScheme(app.tab == .home ? ColorScheme.dark : nil, for: .tabBar)
-        .background(TabBarHider(hidden: feedChromeHidden))
-        .animation(.easeInOut(duration: 0.28), value: app.feedChrome)
-    }
-
     @ViewBuilder private func page(_ tab: AppTab) -> some View {
         switch tab {
-        case .home: FeedView()
+        case .home, .capture: FeedView()
         case .discover: DiscoverView()
-        case .capture: CaptureView()
         case .moments: MomentsView()
         case .me: MeView()
         }
@@ -263,25 +255,41 @@ struct MoonTabBar: View {
         let ink = app.tab == .home ? MoonColors.media : colors
         HStack(spacing: 0) {
             ForEach(AppTab.allCases) { tab in
-                Button {
-                    guard !PressGate.suppressTap, !suppressed else { return }
-                    app.nudgeChrome()
-                    if tab == .home && app.tab == .home { app.feedIndex = 0 }
-                    app.tab = tab
-                    Haptics.tick()
-                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: tab == .capture ? 22 : 17, weight: .semibold))
-                        Text(tab.title).font(.system(size: 10, weight: .medium))
+                if tab == .capture {
+                    captureButton(ink)
+                } else {
+                    Button {
+                        guard !PressGate.suppressTap, !suppressed else { return }
+                        app.nudgeChrome()
+                        if tab == .home && app.tab == .home { app.feedIndex = 0 }
+                        app.tab = tab
+                        Haptics.tick()
+                    } label: {
+                        VStack(spacing: 2) {
+                            Image(systemName: tab.symbol)
+                                .font(.system(size: 17, weight: .semibold))
+                            Text(tab.title).font(.system(size: 10, weight: .medium))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 48)
+                        .foregroundColor(app.tab == tab ? ink.accent : ink.textDim)
+                        .contentShape(Rectangle())
                     }
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 48)
-                    .foregroundColor(app.tab == tab ? ink.accent : ink.textDim)
-                    .contentShape(Rectangle())
+                    .accessibilityLabel(tab.title)
+                    .accessibilityAddTraits(app.tab == tab ? .isSelected : [])
                 }
-                .accessibilityLabel(tab.title)
-                .accessibilityAddTraits(app.tab == tab ? .isSelected : [])
+            }
+        }
+        .background {
+            TabDragSurface(enabled: app.settings.tabLens && app.fan == nil && !suppressed) { x, width in
+                guard width > 1 else { return }
+                let tabs = AppTab.allCases
+                let index = min(tabs.count - 1, max(0, Int(x / (width / CGFloat(tabs.count)))))
+                let next = tabs[index]
+                guard next != .capture, next != app.tab else { return }
+                app.nudgeChrome()
+                app.tab = next
+                Haptics.tick()
             }
         }
         .padding(.horizontal, 8)
@@ -296,6 +304,130 @@ struct MoonTabBar: View {
         .allowsHitTesting(!suppressed)
         .opacity(suppressed ? 0.45 : 1)
         .background(TabBarFrameMark(active: true))
+    }
+
+    private func captureButton(_ ink: MoonColors) -> some View {
+        Button {
+            guard !PressGate.suppressTap, app.fan == nil else { return }
+            app.nudgeChrome()
+            app.openCamera(false)
+        } label: {
+            VStack(spacing: 2) {
+                ZStack {
+                    Circle().fill(Color.white.opacity(0.2)).frame(width: 46, height: 46)
+                    Circle().stroke(Color.white.opacity(0.55), lineWidth: 1).frame(width: 46, height: 46)
+                    Image(systemName: "camera.fill").font(.system(size: 18, weight: .semibold))
+                }
+                .offset(y: -8)
+                Text("拍摄").font(.system(size: 10, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 52)
+            .foregroundColor(ink.text)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("拍摄")
+        .accessibilityIdentifier("tab.capture")
+        .holdTrack(onBegan: { point in
+            app.fan = FanGesture(origin: point, finger: point, down: true)
+            TabChrome.setSuspended(true)
+        }, onChanged: { point in
+            app.fan?.finger = point
+            app.fan?.down = true
+        }, onEnded: { point in
+            let release = FanAim.firesOnRelease(select: app.settings.menuSelect, drop: app.settings.dropSelect)
+            if release, let fan = app.fan, let hit = CaptureFanLayout.hitIndex(finger: point, origin: fan.origin, size: UIScreen.main.bounds.size) {
+                app.fireCapture(hit)
+            } else {
+                app.fan?.finger = point
+                app.fan?.down = false
+            }
+            TabChrome.setSuspended(false)
+        }, cancelsTap: true)
+    }
+}
+
+/// Drag along the glass bar switches tabs. A drag that starts on 拍摄 does not.
+private struct TabDragSurface: UIViewRepresentable {
+    var enabled: Bool
+    var onMove: (CGFloat, CGFloat) -> Void
+
+    func makeUIView(context: Context) -> TabDragView {
+        let view = TabDragView()
+        view.isAccessibilityElement = false
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .vertical)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        view.onMove = onMove
+        view.dragEnabled = enabled
+        return view
+    }
+
+    func updateUIView(_ uiView: TabDragView, context: Context) {
+        uiView.onMove = onMove
+        uiView.dragEnabled = enabled
+    }
+}
+
+private final class TabDragView: UIView, UIGestureRecognizerDelegate {
+    var onMove: ((CGFloat, CGFloat) -> Void)?
+    var dragEnabled = true
+    private var pan: UIPanGestureRecognizer?
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            if let pan { pan.view?.removeGestureRecognizer(pan) }
+            pan = nil
+            return
+        }
+        DispatchQueue.main.async { [weak self] in self?.install() }
+    }
+
+    private func install() {
+        guard pan == nil, let window else { return }
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(drag(_:)))
+        pan.cancelsTouchesInView = false
+        pan.delegate = self
+        window.addGestureRecognizer(pan)
+        self.pan = pan
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+
+    /// Only a drag that starts on the bar, and not on 拍摄, can change pages.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard dragEnabled, let window = touch.window else { return false }
+        let bar = convert(bounds, to: window)
+        guard bar.width > 1, bar.height > 1, bar.contains(touch.location(in: window)) else { return false }
+        return slot(at: touch.location(in: window), bar: bar) != .capture
+    }
+
+    @objc private func drag(_ gesture: UIPanGestureRecognizer) {
+        guard dragEnabled, let window else { return }
+        let moved = gesture.translation(in: window)
+        guard abs(moved.x) > 18 || abs(moved.y) > 18 else { return }
+        let bar = convert(bounds, to: window)
+        guard bar.width > 1 else { return }
+        let point = gesture.location(in: window)
+        if gesture.state == .changed || gesture.state == .ended {
+            onMove?(point.x - bar.minX, bar.width)
+        }
+    }
+
+    private func slot(at point: CGPoint, bar: CGRect) -> AppTab? {
+        let local = point.x - bar.minX
+        let width = bar.width / CGFloat(AppTab.allCases.count)
+        guard width > 1 else { return nil }
+        let index = Int(local / width)
+        guard AppTab.allCases.indices.contains(index) else { return nil }
+        return AppTab.allCases[index]
     }
 }
 

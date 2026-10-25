@@ -80,8 +80,21 @@ struct FeedView: View {
         }
         .onReceive(app.feedPlayer.$generation) { _ in syncChrome() }
         .onReceive(NotificationCenter.default.publisher(for: .moonResumeFeed)) { _ in
-            guard app.tab == .home, FeedAutoplay.allowedNow(app.settings) else { return }
+            guard app.settings.resumeOnReturn, app.tab == .home, FeedAutoplay.allowedNow(app.settings) else { return }
             app.feedPlayer.resumeAfterForeground()
+        }
+        .onReceive(app.feedPlayer.$currentSeconds) { seconds in
+            guard app.tab == .home else { return }
+            app.rememberPlace(seconds: seconds)
+        }
+        .moonOnChange(of: app.settings.feedLoop) { on in
+            app.feedPlayer.loop = on || app.feedItems.indices.contains(app.feedIndex) && app.feedItems[app.feedIndex].id == AppModel.immersiveDemoID
+        }
+        .moonOnChange(of: app.settings.feedShuffle) { _ in
+            app.applyFeedOrder()
+        }
+        .moonOnChange(of: app.settings.imageHold) { _ in
+            if app.feedItems.indices.contains(app.feedIndex) { app.armDwell(for: app.feedItems[app.feedIndex]) }
         }
         .task(id: hideToken) {
             guard userChrome, app.settings.chromeAutoHide, nativeVideoPlaying else { return }
@@ -153,8 +166,11 @@ struct FeedView: View {
             let rate = app.feedPlayer.speed
             let demo = entry.id == AppModel.immersiveDemoID
             let play = demo || FeedAutoplay.allowedNow(app.settings)
-            app.feedPlayer.loop = demo
+            app.feedPlayer.loop = demo || app.settings.feedLoop
             app.feedPlayer.load(url: url, autoplay: play, muted: app.settings.feedMuted, rate: rate)
+            if app.settings.rememberPlace, entry.id == app.settings.feedMemoryID {
+                app.feedPlayer.cue(app.settings.feedMemorySeconds)
+            }
         } else {
             app.feedPlayer.loop = false
             app.feedPlayer.load(url: nil, autoplay: false, muted: true)
@@ -418,12 +434,15 @@ struct FeedPage: View {
     var onLongBegan: (CGPoint) -> Void
     var onLongChanged: (CGPoint) -> Void
     var onLongEnded: (CGPoint) -> Void
+    @State private var reveal: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
                 backdrop
                 media(in: geo.size)
+                    .blur(radius: reveal * 22)
+                    .opacity(Double(1 - reveal * 0.25))
                 MediaTouchLayer(
                     identifier: active && entry.kind == .video && entry.embedURL == nil ? "home.playing" : "home.page",
                     onSingle: onSingle,
@@ -454,13 +473,41 @@ struct FeedPage: View {
                 if active && entry.kind == .video && app.feedPlayer.playbackState == PlayToggle.buffering && app.feedPlayer.playWhenReady {
                     ProgressView().tint(.white).allowsHitTesting(false)
                 }
+                if !chrome && app.settings.progressLine && entry.kind == .video && active {
+                    VStack {
+                        Spacer()
+                        GeometryReader { bar in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.25))
+                                Capsule().fill(Color.white.opacity(0.92))
+                                    .frame(width: max(2, bar.size.width * app.feedPlayer.progress))
+                            }
+                        }
+                        .frame(height: 2)
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, app.settings.edgeToEdge ? max(10, ScreenInsets.bottom) : 10)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("home.progress")
+                }
             }
+            .ignoresSafeArea(edges: app.settings.edgeToEdge ? .all : [])
         }
         .background(Color.black.allowsHitTesting(false))
+        .onAppear { playReveal() }
+        .moonOnChange(of: entry.id) { _ in playReveal() }
+    }
+
+    private func playReveal() {
+        guard app.settings.revealBlur else { reveal = 0; return }
+        reveal = 1
+        withAnimation(.easeOut(duration: app.settings.reveal.seconds)) { reveal = 0 }
     }
 
     @ViewBuilder private var backdrop: some View {
-        if let path = app.settings.homeBackdropPath {
+        if app.settings.showsBackdrop(.home) {
+            BackdropFill(settings: app.settings).allowsHitTesting(false)
+        } else if let path = app.settings.homeBackdropPath {
             if app.settings.homeBackdropVideo {
                 LoopFilm(ref: path).allowsHitTesting(false)
             } else if path.hasPrefix("http"), let url = URL(string: path) {

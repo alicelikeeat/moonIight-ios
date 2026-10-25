@@ -625,15 +625,23 @@ struct HoldTrack: ViewModifier {
     var onBegan: (CGPoint) -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
+    var ownsLarge = false
+    var cancelsTap = false
 
     func body(content: Content) -> some View {
-        content.background(HoldProbe(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded))
+        content.background(HoldProbe(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded, ownsLarge: ownsLarge, cancelsTap: cancelsTap))
     }
 }
 
 extension View {
-    func holdTrack(onBegan: @escaping (CGPoint) -> Void, onChanged: @escaping (CGPoint) -> Void, onEnded: @escaping (CGPoint) -> Void) -> some View {
-        modifier(HoldTrack(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded))
+    func holdTrack(
+        onBegan: @escaping (CGPoint) -> Void,
+        onChanged: @escaping (CGPoint) -> Void,
+        onEnded: @escaping (CGPoint) -> Void,
+        ownsLarge: Bool = false,
+        cancelsTap: Bool = false
+    ) -> some View {
+        modifier(HoldTrack(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded, ownsLarge: ownsLarge, cancelsTap: cancelsTap))
     }
 }
 
@@ -665,8 +673,22 @@ private final class ProbeRegions {
         for case let probe as HoldProbeView in probes.allObjects {
             guard probe.window === window else { continue }
             let rect = probe.convert(probe.bounds, to: window)
-            if rect.width > window.bounds.width * 0.9 && rect.height > window.bounds.height * 0.4 { continue }
+            if !probe.ownsLarge, rect.width > window.bounds.width * 0.9, rect.height > window.bounds.height * 0.4 { continue }
             if rect.width > 1, rect.height > 1, rect.contains(point) { return true }
+        }
+        return false
+    }
+
+    /// A smaller control inside a large card keeps the press. The card does not steal it.
+    func smallerClaim(_ point: CGPoint, than probe: HoldProbeView, window: UIWindow) -> Bool {
+        let mine = probe.convert(probe.bounds, to: window)
+        let mineArea = mine.width * mine.height
+        guard mineArea > 1 else { return false }
+        for case let other as HoldProbeView in probes.allObjects {
+            if other === probe || other.window !== window { continue }
+            let rect = other.convert(other.bounds, to: window)
+            let area = rect.width * rect.height
+            if area > 1, area < mineArea * 0.85, rect.contains(point) { return true }
         }
         return false
     }
@@ -764,12 +786,16 @@ private struct HoldProbe: UIViewRepresentable {
     var onBegan: (CGPoint) -> Void
     var onChanged: (CGPoint) -> Void
     var onEnded: (CGPoint) -> Void
+    var ownsLarge: Bool
+    var cancelsTap: Bool
 
     func makeUIView(context: Context) -> HoldProbeView {
         let view = HoldProbeView()
         view.isUserInteractionEnabled = false
         view.backgroundColor = .clear
         view.isAccessibilityElement = false
+        view.ownsLarge = ownsLarge
+        view.cancelsTap = cancelsTap
         view.coordinator = context.coordinator
         return view
     }
@@ -777,6 +803,9 @@ private struct HoldProbe: UIViewRepresentable {
     func updateUIView(_ uiView: HoldProbeView, context: Context) {
         context.coordinator.parent = self
         uiView.coordinator = context.coordinator
+        uiView.ownsLarge = ownsLarge
+        uiView.cancelsTap = cancelsTap
+        uiView.recognizer?.cancelsTouchesInView = cancelsTap
         uiView.isUserInteractionEnabled = false
     }
 
@@ -806,7 +835,9 @@ private struct HoldProbe: UIViewRepresentable {
 
 private final class HoldProbeView: UIView {
     weak var coordinator: HoldProbe.Coordinator?
-    private var recognizer: FriendlyLongPress?
+    var recognizer: FriendlyLongPress?
+    var ownsLarge = false
+    var cancelsTap = false
     private var gate: ProbeGate?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
@@ -829,6 +860,7 @@ private final class HoldProbeView: UIView {
         self.gate = gate
         let hold = FriendlyLongPress(target: coordinator, action: #selector(HoldProbe.Coordinator.hold(_:)))
         LongPressInstall.configure(hold)
+        hold.cancelsTouchesInView = cancelsTap
         hold.delegate = gate
         window.addGestureRecognizer(hold)
         recognizer = hold
@@ -850,8 +882,10 @@ private final class ProbeGate: NSObject, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard let probe, let window = probe.window else { return false }
         let rect = probe.convert(probe.bounds, to: window)
-        if rect.width > window.bounds.width * 0.9 && rect.height > window.bounds.height * 0.4 { return false }
+        if !probe.ownsLarge, rect.width > window.bounds.width * 0.9, rect.height > window.bounds.height * 0.4 { return false }
         guard rect.width > 1, rect.height > 1 else { return false }
-        return rect.contains(touch.location(in: window))
+        let point = touch.location(in: window)
+        guard rect.contains(point) else { return false }
+        return !ProbeRegions.shared.smallerClaim(point, than: probe, window: window)
     }
 }

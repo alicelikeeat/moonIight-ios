@@ -11,11 +11,12 @@ struct SkinBadge: View {
 
     var body: some View {
         let resolved = ButtonSkins.resolve(key: key, title: title, skins: skins)
+        let file = resolved.flatMap { SkinFiles.path($0.skin.path) }
         ZStack {
-            if let resolved, FileManager.default.fileExists(atPath: resolved.skin.path) {
+            if let resolved, let file {
                 if resolved.skin.video {
-                    SkinLoop(path: resolved.skin.path, slot: resolved.id.rawValue)
-                } else if let image = UIImage(contentsOfFile: resolved.skin.path) {
+                    SkinLoop(path: file, slot: resolved.id.rawValue)
+                } else if let image = UIImage(contentsOfFile: file) {
                     Image(uiImage: image).resizable().scaledToFill()
                 } else {
                     Image(systemName: systemImage).font(.system(size: 18, weight: .medium)).foregroundColor(ink)
@@ -210,33 +211,15 @@ struct ButtonSkinsView: View {
     @State private var pendingSkin: ButtonSkin?
 
     private func importSkin(_ item: PhotosPickerItem) async {
-        let video = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
-        var saved: ButtonSkin?
-        if video, let movie = try? await item.loadTransferable(type: MovieFile.self) {
-            saved = copySkin(from: movie.url, video: true)
-        } else if let data = try? await item.loadTransferable(type: Data.self) {
-            Paths.ensureDirs()
-            let dest = Paths.skins.appendingPathComponent("\(IDs.new()).jpg")
-            if (try? data.write(to: dest)) != nil {
-                saved = ButtonSkin(path: dest.path, video: false)
-            }
-        }
+        let saved = await PickedMedia.load(item, folder: MediaStore.skins).map { ButtonSkin(path: $0.name, video: $0.video) }
         await MainActor.run {
-            if let saved { pendingSkin = saved; app.showToast(saved.video ? "已选一段视频" : "已选一张图片") }
-            else { app.showToast("没能保存这个背景") }
+            if let saved {
+                pendingSkin = saved
+                app.showToast(saved.video ? "已选一段视频" : "已选一张图片")
+            } else {
+                app.showToast("没能保存这个背景")
+            }
             self.item = nil
-        }
-    }
-
-    private func copySkin(from file: URL, video: Bool) -> ButtonSkin? {
-        Paths.ensureDirs()
-        let ext = file.pathExtension.isEmpty ? (video ? "mov" : "jpg") : file.pathExtension
-        let dest = Paths.skins.appendingPathComponent("\(IDs.new()).\(ext)")
-        do {
-            try FileManager.default.copyItem(at: file, to: dest)
-            return ButtonSkin(path: dest.path, video: video)
-        } catch {
-            return nil
         }
     }
 }

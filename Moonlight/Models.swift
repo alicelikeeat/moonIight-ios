@@ -251,10 +251,44 @@ struct AppSettings: Codable, Equatable, Sendable {
     var iconPreset: String = IconPreset.primary.rawValue
     var bgRefreshOn: Bool = true
     var lastRefreshAt: Int64 = 0
+    var backdropMode: BackdropMode = .theme
+    var backdropPhoto: String?
+    var backdropVideo: String?
+    var backdropPhotoFocus: MediaFocus = MediaFocus()
+    var backdropVideoFocus: MediaFocus = MediaFocus()
+    var backdropPhotoBlur: Bool = true
+    var backdropVideoBlur: Bool = true
+    /// Page ids that show the custom background. 首页 only unless the person adds more.
+    var backdropPages: [String] = ["home"]
+    /// Home video and page backgrounds may draw under the status bar and Dynamic Island.
+    var edgeToEdge: Bool = false
+    var sourceFlags: [String: Bool] = [:]
+    var webSources: [WebSource] = []
+    var biliHotCategory: String = ""
+    /// Replay the home-feed video when it ends.
+    var feedLoop: Bool = false
+    /// Shuffle the home feed instead of newest-first.
+    var feedShuffle: Bool = false
+    /// How long a photo stays before the next card. 0 is 永久.
+    var imageHold: Int = 0
+    var rememberPlace: Bool = false
+    var feedMemoryID: String = ""
+    var feedMemoryIndex: Int = 0
+    var feedMemorySeconds: Double = 0
+    /// Leave the app pauses everything. Coming back continues only what was playing.
+    var resumeOnReturn: Bool = true
+    var revealBlur: Bool = true
+    var revealSpeed: String = RevealPace.standard.rawValue
+    /// Thin progress line while the home feed is immersive.
+    var progressLine: Bool = false
 
     /// Missing keys from older builds keep their defaults instead of wiping the file.
     static func load(_ data: Data) -> AppSettings? {
         guard var obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if obj["backdropPages"] == nil, let legacy = obj["backdropAllPages"] as? Bool {
+            obj["backdropPages"] = BackdropPages.migrate(stored: nil, allPages: legacy)
+        }
+        let focus: [String: Any] = ["x": 0.5, "y": 0.3, "scale": 1.0]
         let defaults: [String: Any] = [
             "theme": "system",
             "videoDisplay": "SMART",
@@ -291,6 +325,27 @@ struct AppSettings: Codable, Equatable, Sendable {
             "iconPreset": "primary",
             "bgRefreshOn": true,
             "lastRefreshAt": 0,
+            "backdropMode": "theme",
+            "backdropPhotoBlur": true,
+            "backdropVideoBlur": true,
+            "backdropPages": ["home"],
+            "backdropPhotoFocus": focus,
+            "backdropVideoFocus": focus,
+            "edgeToEdge": false,
+            "sourceFlags": [String: Bool](),
+            "webSources": [Any](),
+            "biliHotCategory": "",
+            "feedLoop": false,
+            "feedShuffle": false,
+            "imageHold": 0,
+            "rememberPlace": false,
+            "feedMemoryID": "",
+            "feedMemoryIndex": 0,
+            "feedMemorySeconds": 0.0,
+            "resumeOnReturn": true,
+            "revealBlur": true,
+            "revealSpeed": "standard",
+            "progressLine": false,
         ]
         for (key, value) in defaults where obj[key] == nil { obj[key] = value }
         guard JSONSerialization.isValidJSONObject(obj),
@@ -305,6 +360,9 @@ struct AppSettings: Codable, Equatable, Sendable {
         if decoded.menuSelect == .drag { decoded.menuSelect = .slider }
         decoded.timedSeconds = HoldConfig.clampSeconds(decoded.timedSeconds)
         decoded.timedAssign = TimedActions.sanitize(decoded.timedAssign)
+        decoded.backdropPages = BackdropPages.normalize(decoded.backdropPages)
+        decoded.imageHold = ImageHold.seconds(decoded.imageHold)
+        if RevealPace(rawValue: decoded.revealSpeed) == nil { decoded.revealSpeed = RevealPace.standard.rawValue }
         return decoded
     }
 }

@@ -24,6 +24,7 @@ enum Paths {
         for url in [media, avatars, skins, cache, resume] {
             try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
+        MediaStore.ensure()
     }
 }
 

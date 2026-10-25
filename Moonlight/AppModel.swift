@@ -2,6 +2,7 @@ import Foundation
 import Photos
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 enum AppTab: String, CaseIterable, Identifiable {
@@ -70,8 +71,13 @@ final class AppModel: ObservableObject {
     @Published var chromeGeneration = 0
     /// In-memory clip for the immersive UI test. Never written into the library.
     @Published var demoEntry: MediaEntry?
+    @Published var camera: CameraLaunch?
+    @Published var fan: FanGesture?
+    @Published var hotError: String?
+    @Published var hotItems: [MediaEntry] = []
 
     static let immersiveDemoID = "immersive-demo"
+    private var pickerSink: LibraryPickerSink?
 
     let feedPlayer = PlayerSession()
     let recorder = RecorderModel()
@@ -120,6 +126,17 @@ final class AppModel: ObservableObject {
             refreshCache = items
         }
         feedOrder = loadedLibrary.entries.sorted { $0.createdAt > $1.createdAt }.map(\.id)
+        if settings.feedShuffle { feedOrder.shuffle() }
+        feedIndex = FeedPlace.index(
+            enabled: settings.rememberPlace,
+            savedID: settings.feedMemoryID,
+            savedIndex: settings.feedMemoryIndex,
+            ids: feedItems.map(\.id)
+        )
+        if social.me.name == "我", social.me.bio.isEmpty, let i = social.contacts.firstIndex(where: { $0.id == social.selfId }) {
+            social.contacts[i].name = "我的朋友圈"
+            social.contacts[i].bio = "测试中"
+        }
         clampFeed()
         AppHooks.model = self
         BGRefresh.install()
@@ -213,6 +230,15 @@ final class AppModel: ObservableObject {
         tab = .home
     }
 
+    func applyFeedOrder() {
+        if settings.feedShuffle {
+            feedOrder.shuffle()
+        } else {
+            feedOrder = library.entries.sorted { $0.createdAt > $1.createdAt }.map(\.id)
+        }
+        clampFeed()
+    }
+
     func shuffleFeed() {
         feedOrder.shuffle()
         feedIndex = 0
@@ -274,6 +300,10 @@ final class AppModel: ObservableObject {
     }
 
     func addRemote(_ entry: MediaEntry) {
+        if entry.source != "bili-hot", let flag = SourceCatalog.flag(for: entry.resolvedPlatform), !settings.sourceOn(flag) {
+            showToast("这个来源已关闭")
+            return
+        }
         var copy = entry
         if library.entries.contains(where: { $0.remoteURL == copy.remoteURL && copy.remoteURL != nil && $0.platform == copy.platform }) {
             if let existing = library.entries.first(where: { $0.remoteURL == copy.remoteURL }) { focus(id: existing.id) }
@@ -288,6 +318,23 @@ final class AppModel: ObservableObject {
         scheduleSave()
         focus(id: copy.id)
         showToast("已加入首页")
+    }
+
+    /// Puts a public card in the library without leaving the current page.
+    func addQuiet(_ entry: MediaEntry) {
+        if entry.source == "bili-hot" {
+            if !settings.sourceOn("biliHot") { return }
+        } else if let flag = SourceCatalog.flag(for: entry.resolvedPlatform), !settings.sourceOn(flag) { return }
+        var copy = entry
+        if library.entries.contains(where: { $0.id == copy.id || ($0.remoteURL == copy.remoteURL && copy.remoteURL != nil && $0.platform == copy.platform) }) {
+            return
+        }
+        if !copy.id.hasPrefix("yt-") && !copy.id.hasPrefix("bv-") && !copy.id.hasPrefix("av-") && !copy.id.hasPrefix("pt-") && !copy.id.hasPrefix("web-") {
+            copy.id = IDs.new()
+        }
+        library.entries.append(copy)
+        feedOrder.append(copy.id)
+        scheduleSave()
     }
 
     func addPasted(_ raw: String) async {
@@ -445,25 +492,32 @@ final class AppModel: ObservableObject {
         discoverBusy = true
         discoverError = nil
         var all: [MediaEntry] = []
-        let commons = await CommonsAPI.search(keyword: term, limit: 12)
-        all += commons
+        if settings.sourceOn("commons") {
+            all += await CommonsAPI.search(keyword: term, limit: 12)
+        }
         discoverResults = all
-        let nasa = await NASAAPI.search(query: term, limit: 4)
-        all += nasa
+        if settings.sourceOn("nasa") {
+            all += await NASAAPI.search(query: term, limit: 4)
+        }
         discoverResults = all
-        let archive = await ArchiveAPI.search(query: term, limit: 3)
-        all += archive
+        if settings.sourceOn("archive") {
+            all += await ArchiveAPI.search(query: term, limit: 3)
+        }
         if !settings.pexelsKey.isEmpty {
             all += await PexelsAPI.search(key: settings.pexelsKey, query: term)
         }
         if !settings.pixabayKey.isEmpty {
             all += await PixabayAPI.search(key: settings.pixabayKey, query: term)
         }
-        if !settings.youtubeKey.isEmpty {
+        if settings.sourceOn("youtube"), !settings.youtubeKey.isEmpty {
             all += await YouTubeAPI.search(key: settings.youtubeKey, query: term)
         }
-        if PublicLink.normalizedHost(settings.peertubeInstance) != nil {
+        if settings.sourceOn("peertube"), PublicLink.normalizedHost(settings.peertubeInstance) != nil {
             all += await PeerTubeAPI.search(instance: settings.peertubeInstance, query: term)
+        }
+        if settings.sourceOn("biliHot") {
+            await loadHot()
+            all += hotItems
         }
         if case .peertube(let host, let id) = PublicLink.parse(term) {
             if let one = await PeerTubeAPI.fetch(host: host, id: id) { all.insert(one, at: 0) }
@@ -997,10 +1051,135 @@ final class AppModel: ObservableObject {
         scheduleSave()
     }
 
+    func rememberPlace(seconds: Double) {
+        guard settings.rememberPlace, feedItems.indices.contains(feedIndex) else { return }
+        let entry = feedItems[feedIndex]
+        let moved = settings.feedMemoryID != entry.id || settings.feedMemoryIndex != feedIndex || abs(settings.feedMemorySeconds - seconds) >= 2
+        guard moved else { return }
+        settings.feedMemoryID = entry.id
+        settings.feedMemoryIndex = feedIndex
+        settings.feedMemorySeconds = seconds
+        scheduleSave()
+    }
+
+    func deleteBackdrop(video: Bool) {
+        if video {
+            MediaStore.remove(stored: settings.backdropVideo, folder: MediaStore.backdrop)
+            settings.backdropVideo = nil
+            if settings.backdropMode == .video { settings.backdropMode = .theme }
+        } else {
+            MediaStore.remove(stored: settings.backdropPhoto, folder: MediaStore.backdrop)
+            settings.backdropPhoto = nil
+            if settings.backdropMode == .photo { settings.backdropMode = .theme }
+        }
+        saveSettings()
+        showToast(video ? "已删除视频背景" : "已删除照片背景")
+    }
+
+    func openCamera(_ video: Bool) {
+        fan = nil
+        camera = video ? .video : .photo
+    }
+
+    func fireCapture(_ index: Int) {
+        fan = nil
+        switch index {
+        case 0: camera = .photo
+        case 1: camera = .video
+        case 2: presentImporter()
+        case 3: composer = ComposerDraft(authorId: social.selfId)
+        default: break
+        }
+    }
+
+    func presentImporter() {
+        var config = PHPickerConfiguration(photoLibrary: .shared())
+        config.filter = .any(of: [.images, .videos])
+        config.selectionLimit = 1
+        let picker = PHPickerViewController(configuration: config)
+        let sink = LibraryPickerSink { [weak self] results in
+            guard let result = results.first else { return }
+            Task { await self?.importProvider(result.itemProvider) }
+        }
+        picker.delegate = sink
+        pickerSink = sink
+        presentOnTop(picker)
+    }
+
+    func addWebSource(_ raw: String) async {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard settings.sourceOn("web") else { showToast("网址源已关闭"); return }
+        guard let url = URL(string: trimmed), let host = url.host, url.scheme == "http" || url.scheme == "https" else {
+            showToast("这不是一个网址")
+            return
+        }
+        if let robots = URL(string: "\(url.scheme ?? "https")://\(host)/robots.txt"),
+           let text = await HTTP.text(robots, accept: "text/plain,*/*") {
+            let path = url.path.isEmpty ? "/" : url.path
+            if !RobotsRule.allowed(robots: text, path: path) {
+                showToast("robots.txt 不允许抓取这个地址")
+                return
+            }
+        }
+        guard let html = await HTTP.text(url, accept: "text/html,*/*") else {
+            showToast("打不开这个网页")
+            return
+        }
+        let found = PageMedia.entries(html: html, page: url)
+        guard !found.isEmpty else { showToast("没有找到公开的图片或视频"); return }
+        if !settings.webSources.contains(where: { $0.url == trimmed }) {
+            settings.webSources.append(WebSource(url: trimmed, title: host))
+            saveSettings()
+        }
+        for item in found.prefix(8) { addQuiet(item) }
+        showToast("已加入 \(min(found.count, 8)) 条公开媒体")
+    }
+
+    func loadHot() async {
+        guard settings.sourceOn("biliHot") else { hotItems = []; hotError = nil; return }
+        switch await BiliHot.load() {
+        case .success(let items):
+            hotItems = items
+            hotError = nil
+            for item in items.prefix(12) { addQuiet(item) }
+        case .failure(let message):
+            hotItems = []
+            hotError = message
+        }
+    }
+
+    private func presentOnTop(_ controller: UIViewController) {
+        let root = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }?
+            .rootViewController
+        var top = root
+        while let next = top?.presentedViewController { top = next }
+        top?.present(controller, animated: true)
+    }
+
+    private func importProvider(_ provider: NSItemProvider) async {
+        let video = provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) || provider.hasItemConformingToTypeIdentifier(UTType.video.identifier)
+        let type = video
+            ? (provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) ? UTType.movie.identifier : UTType.video.identifier)
+            : (provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) ? UTType.image.identifier : UTType.heic.identifier)
+        let url: URL? = await withCheckedContinuation { continuation in
+            provider.loadFileRepresentation(forTypeIdentifier: type) { file, _ in
+                guard let file else { continuation.resume(returning: nil); return }
+                let ext = file.pathExtension.isEmpty ? (video ? "mov" : MediaStore.sniffExt((try? Data(contentsOf: file)) ?? Data())) : file.pathExtension
+                let copied = MediaStore.copy(from: file, folder: Paths.media, ext: ext)
+                continuation.resume(returning: copied)
+            }
+        }
+        guard let url else { showToast("无法读取这个文件"); return }
+        importFile(at: url, kind: video ? .video : .image, title: video ? "视频" : "图片", source: "import")
+    }
+
     func armDwell(for entry: MediaEntry?) {
         dwellTask?.cancel()
-        guard let entry, entry.kind == .image, entry.dwellSeconds > 0 else { return }
-        let seconds = entry.dwellSeconds
+        let seconds = ImageHold.seconds(settings.imageHold)
+        guard let entry, entry.kind == .image, seconds > 0 else { return }
         let id = entry.id
         dwellTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
@@ -1008,6 +1187,27 @@ final class AppModel: ObservableObject {
             guard self.feedItems.indices.contains(self.feedIndex), self.feedItems[self.feedIndex].id == id else { return }
             if self.feedIndex + 1 < self.feedItems.count { self.feedIndex += 1 }
         }
+    }
+}
+
+enum CameraLaunch: String, Identifiable {
+    case photo, video
+    var id: String { rawValue }
+    var video: Bool { self == .video }
+}
+
+struct FanGesture: Equatable {
+    var origin: CGPoint
+    var finger: CGPoint
+    var down: Bool
+}
+
+final class LibraryPickerSink: NSObject, PHPickerViewControllerDelegate {
+    var onPick: ([PHPickerResult]) -> Void
+    init(onPick: @escaping ([PHPickerResult]) -> Void) { self.onPick = onPick }
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true)
+        onPick(results)
     }
 }
 

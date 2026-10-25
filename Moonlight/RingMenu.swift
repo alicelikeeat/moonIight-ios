@@ -76,7 +76,7 @@ final class RingController: ObservableObject {
         bubbles.onNearest = { _ in Haptics.tick() }
         session = RingSession(
             origin: origin,
-            items: Array(items.prefix(4)),
+            items: Array(items.prefix(5)),
             groups: groups,
             style: style,
             backdrop: settings.menuBackdrop,
@@ -658,15 +658,16 @@ struct MoreSheet: View {
                                         onClose()
                                     } label: {
                                         HStack(spacing: 12) {
-                                            Image(systemName: item.systemImage)
-                                                .frame(width: 24)
-                                                .accessibilityHidden(true)
+                                            GlassIcon(symbol: item.systemImage, tint: (item.destructive || group.danger) ? colors.danger : GlassTint.blue)
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(item.title).font(.system(size: 16, weight: .medium))
+                                                if !item.enabled {
+                                                    Text("现在不能用").font(.system(size: 11))
+                                                }
                                             }
                                             Spacer()
                                         }
-                                        .foregroundColor(item.enabled ? (group.danger ? colors.danger : colors.text) : colors.textDim)
+                                        .foregroundColor(item.enabled ? ((item.destructive || group.danger) ? colors.danger : colors.text) : colors.textDim)
                                         .padding(.horizontal, 14)
                                         .padding(.vertical, 12)
                                     }

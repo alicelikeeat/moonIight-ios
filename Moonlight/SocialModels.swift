@@ -162,7 +162,7 @@ struct SocialState: Codable, Equatable, Sendable {
     var totalUnread: Int { conversations.reduce(0) { $0 + unread($1.id) } }
 
     static func fresh() -> SocialState {
-        let me = Contact(name: "我", bio: "", avatarColor: 0, isVirtual: false, isSelf: true)
+        let me = Contact(name: "我的朋友圈", bio: "测试中", avatarColor: 0, isVirtual: false, isSelf: true)
         return SocialState(selfId: me.id, contacts: [me])
     }
 }

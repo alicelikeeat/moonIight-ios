@@ -18,9 +18,13 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
     @Published var naturalSize: CGSize = .zero
     @Published var errorText: String?
     @Published private(set) var generation = 0
+    @Published private(set) var progress: Double = 0
+    @Published private(set) var currentSeconds: Double = 0
 
     private var endedFlag = false
     private var resumeAfterBackground = false
+    private var cueSeconds: Double?
+    private var tick: Any?
     private var statusObs: NSKeyValueObservation?
     private var itemObs: NSKeyValueObservation?
     private var sizeObs: NSKeyValueObservation?
@@ -35,9 +39,20 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
         NotificationCenter.default.addObserver(self, selector: #selector(itemEnded(_:)), name: .AVPlayerItemDidPlayToEndTime, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(interrupted(_:)), name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance())
         NotificationCenter.default.addObserver(self, selector: #selector(pauseFromBackground), name: .moonPauseAll, object: nil)
+        tick = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
+            guard let self else { return }
+            let seconds = time.seconds
+            self.currentSeconds = seconds.isFinite ? seconds : 0
+            let duration = self.player.currentItem?.duration.seconds ?? 0
+            let total = duration.isFinite ? duration : 0
+            self.progress = total > 0 ? min(1, max(0, self.currentSeconds / total)) : 0
+        }
     }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit {
+        if let tick { player.removeTimeObserver(tick) }
+        NotificationCenter.default.removeObserver(self)
+    }
 
     var showsPlaying: Bool { PlayToggle.showsPlaying(self) }
     var hasError: Bool { errorText != nil }
@@ -45,6 +60,7 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
     func load(url: URL?, autoplay: Bool, muted: Bool, rate: Float = 1) {
         errorText = nil
         endedFlag = false
+        cueSeconds = nil
         naturalSize = .zero
         isMuted = muted
         speed = rate
@@ -67,9 +83,13 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
             let failed = item.status == .failed
             let message = item.error?.localizedDescription
             DispatchQueue.main.async {
-                guard let self, failed, item === self.player.currentItem else { return }
-                self.errorText = message ?? "无法播放"
-                self.generation += 1
+                guard let self, item === self.player.currentItem else { return }
+                if failed {
+                    self.errorText = message ?? "无法播放"
+                    self.generation += 1
+                    return
+                }
+                if item.status == .readyToPlay { self.applyCue() }
             }
         }
         sizeObs = item.observe(\.presentationSize, options: [.new]) { [weak self] item, _ in
@@ -101,6 +121,20 @@ final class PlayerSession: NSObject, ObservableObject, Playable {
         if hasMedia && playbackState == PlayToggle.idle {
             playbackState = PlayToggle.buffering
         }
+    }
+
+    /// Restores a remembered playback time once the item is ready.
+    func cue(_ seconds: Double) {
+        guard seconds > 0.25 else { return }
+        cueSeconds = seconds
+        applyCue()
+    }
+
+    private func applyCue() {
+        guard let cueSeconds, player.currentItem?.status == .readyToPlay else { return }
+        let target = cueSeconds
+        self.cueSeconds = nil
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     func seekToStart() {

@@ -5,7 +5,10 @@ import UIKit
 struct MomentsView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
-    @Environment(\.moon) private var colors
+    @Environment(\.moon) private var theme
+    @Environment(\.colorScheme) private var scheme
+
+    private var colors: MoonColors { app.settings.showsBackdrop(.moments) ? .media : theme }
     @State private var showFriends = false
     @State private var showChats = false
 
@@ -32,8 +35,14 @@ struct MomentsView: View {
                 .padding(16)
                 .padding(.bottom, 100)
             }
-            .background { SystemGlassFill(dark: colors.dark) }
+            .background {
+                ZStack {
+                    SystemGlassFill(dark: colors.dark)
+                    PageBackdrop(page: .moments)
+                }
+            }
             .navigationTitle("朋友圈")
+            .environment(\.colorScheme, app.settings.showsBackdrop(.moments) ? .dark : scheme)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { showFriends = true } label: { Image(systemName: "person.2") }
@@ -64,7 +73,9 @@ struct MomentsView: View {
 struct MomentCard: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
-    @Environment(\.moon) private var colors
+    @EnvironmentObject private var hold: HoldController
+    @Environment(\.moon) private var theme
+    private var colors: MoonColors { app.settings.showsBackdrop(.moments) ? .media : theme }
     var moment: Moment
     @State private var showComment = false
 
@@ -79,10 +90,8 @@ struct MomentCard: View {
                 }
                 Spacer()
             }
-            .onLongPressGesture(minimumDuration: 0.5) { openRing() }
             if !moment.text.isEmpty {
                 Text(moment.text).font(.system(size: 16))
-                    .onLongPressGesture(minimumDuration: 0.5) { openRing() }
             }
             media
             HStack(spacing: 18) {
@@ -107,6 +116,24 @@ struct MomentCard: View {
         }
         .padding(14)
         .moonGlass(colors, radius: 20)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .holdTrack(onBegan: { point in
+            TabChrome.setSuspended(true)
+            openRing(at: point)
+        }, onChanged: { point in
+            ring.finger = point
+            ring.fingerDown = true
+            hold.move(point)
+        }, onEnded: { point in
+            let outcome = hold.lift()
+            ring.fingerDown = false
+            ring.finger = point
+            if outcome != .timed && outcome != .center {
+                if ring.session?.drop == true { ring.releaseFinger(at: point) }
+                else if ring.session?.select == .drag || ring.session?.select == .slider { ring.selectDrag(at: point) }
+            }
+            TabChrome.setSuspended(false)
+        }, ownsLarge: true)
         .onTapGesture(count: 2) { app.likeOnly(moment: moment.id, who: app.social.selfId); Haptics.soft() }
         .sheet(isPresented: $showComment) {
             CommentThread(momentID: moment.id)
@@ -121,14 +148,12 @@ struct MomentCard: View {
                 RemoteOrLocalImage(url: first.displayURL, art: first.coverURL, mode: .fill)
                     .frame(height: 220)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .onLongPressGesture(minimumDuration: 0.5) { openRing() }
             } else {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
                     ForEach(moment.attachments.prefix(4)) { att in
                         RemoteOrLocalImage(url: att.displayURL, art: att.coverURL, mode: .fill)
                             .frame(height: 110)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .onLongPressGesture(minimumDuration: 0.5) { openRing() }
                     }
                 }
             }
@@ -143,20 +168,26 @@ struct MomentCard: View {
         }
     }
 
-    private func openRing() {
-        let origin = CGPoint(x: UIScreen.main.bounds.midX, y: UIScreen.main.bounds.midY)
+    private func openRing(at origin: CGPoint) {
         let friends = app.social.friends
-        ring.present(origin: origin, items: [
-            RingItem(title: "赞", systemImage: "hand.thumbsup") { app.toggleLike(moment: moment.id, who: app.social.selfId) },
+        let mine = moment.authorId == app.social.selfId
+        ring.finger = origin
+        ring.fingerDown = true
+        var bubbles = [
+            RingItem(title: "赞", systemImage: "heart") { app.toggleLike(moment: moment.id, who: app.social.selfId) },
             RingItem(title: "踩", systemImage: "hand.thumbsdown") { app.toggleDislike(moment: moment.id, who: app.social.selfId) },
-            RingItem(title: "评论", systemImage: "text.bubble") { showComment = true },
-            RingItem(title: "转发到聊天", systemImage: "bubble.left", children: friends.prefix(6).map { friend in
+            RingItem(title: "评论", systemImage: "bubble.left") { showComment = true },
+            RingItem(title: "转发到聊天", systemImage: "paperplane", children: friends.prefix(6).map { friend in
                 RingItem(title: friend.name, systemImage: "person") {
                     let conv = app.openChat(with: [app.social.selfId, friend.id])
                     app.send(convId: conv.id, senderId: app.social.selfId, text: moment.text)
                 }
             }) {},
-        ], groups: [
+        ]
+        if mine {
+            bubbles.append(RingItem(title: "删除", systemImage: "trash", key: "delete", destructive: true) { app.deleteMoment(moment.id) })
+        }
+        ring.present(origin: origin, items: bubbles, groups: [
             MenuGroup(title: "编辑", items: [
                 RingItem(title: "复制文字", systemImage: "doc.on.doc") { UIPasteboard.general.string = moment.text; app.showToast("已复制") },
                 RingItem(title: "改发布者", systemImage: "person.crop.circle", children: ([app.social.me] + app.social.friends).map { c in
@@ -173,7 +204,7 @@ struct MomentCard: View {
                 }) {},
             ]),
             MenuGroup(title: "危险", danger: true, items: [
-                RingItem(title: "删除", systemImage: "trash") { app.deleteMoment(moment.id) },
+                RingItem(title: "删除", systemImage: "trash", key: "delete", destructive: true) { app.deleteMoment(moment.id) },
             ]),
         ], settings: app.settings)
     }
@@ -427,7 +458,10 @@ struct FriendEditor: View {
 
 struct ChatListView: View {
     @EnvironmentObject private var app: AppModel
+    @Environment(\.colorScheme) private var scheme
     @State private var open: Conversation?
+
+    private var onBackdrop: Bool { app.settings.showsBackdrop(.chat) }
 
     var body: some View {
         List {
@@ -452,6 +486,14 @@ struct ChatListView: View {
                 }
             }
         }
+        .scrollContentBackground(.hidden)
+        .background {
+            ZStack {
+                if !onBackdrop { SystemGlassFill(dark: scheme == .dark) }
+                PageBackdrop(page: .chat)
+            }
+        }
+        .environment(\.colorScheme, onBackdrop ? .dark : scheme)
         .navigationTitle("消息")
         .navigationDestination(isPresented: Binding(get: { open != nil }, set: { if !$0 { open = nil } })) {
             if let open { ChatThreadView(conversationID: open.id) }
@@ -521,6 +563,7 @@ struct CommentThread: View {
 struct ChatThreadView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
+    @Environment(\.colorScheme) private var scheme
     var conversationID: String
     @State private var text = ""
     @State private var senderId: String = ""
@@ -617,6 +660,13 @@ struct ChatThreadView: View {
                 photoItem = nil
             }
         }
+        .background {
+            ZStack {
+                if !app.settings.showsBackdrop(.chat) { SystemGlassFill(dark: scheme == .dark) }
+                PageBackdrop(page: .chat)
+            }
+        }
+        .environment(\.colorScheme, app.settings.showsBackdrop(.chat) ? .dark : scheme)
         .navigationTitle(conv?.title ?? "聊天")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {

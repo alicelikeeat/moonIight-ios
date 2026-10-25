@@ -710,6 +710,88 @@ final class LogicTests: XCTestCase {
         XCTAssertNil(extra[0].downloadURL)
         XCTAssertFalse(DownloadPolicy.canDownload(extra[0]).ok)
     }
+
+    func testSmartFillUnderEightPercent() {
+        let viewW: Float = 1000
+        let viewH: Float = 2000
+        let just = viewW / Float(0.92)
+        XCTAssertEqual(VideoFit.cropFraction(videoW: just, videoH: viewH, viewW: viewW, viewH: viewH), 0.08, accuracy: 0.002)
+        XCTAssertTrue(VideoFit.fill(mode: .smart, videoW: just, videoH: viewH, viewW: viewW, viewH: viewH))
+        let over = viewW / Float(0.91)
+        XCTAssertGreaterThan(VideoFit.cropFraction(videoW: over, videoH: viewH, viewW: viewW, viewH: viewH), VideoFit.smartMaxCrop)
+        XCTAssertFalse(VideoFit.fill(mode: .smart, videoW: over, videoH: viewH, viewW: viewW, viewH: viewH))
+        XCTAssertEqual(VideoFit.smartMaxCrop, 0.08, accuracy: 0.0001)
+    }
+
+    func testRememberPlaceAndBackdropPages() {
+        XCTAssertEqual(FeedPlace.index(enabled: false, savedID: "a", savedIndex: 3, ids: ["a", "b"]), 0)
+        XCTAssertEqual(FeedPlace.index(enabled: true, savedID: "b", savedIndex: 0, ids: ["a", "b", "c"]), 1)
+        XCTAssertEqual(FeedPlace.index(enabled: true, savedID: "gone", savedIndex: 4, ids: ["a", "b"]), 0)
+        XCTAssertEqual(FeedPlace.index(enabled: true, savedID: "", savedIndex: 1, ids: ["a", "b", "c"]), 1)
+        var settings = AppSettings()
+        settings.rememberPlace = true
+        settings.feedMemoryID = "clip"
+        settings.feedMemoryIndex = 2
+        settings.feedMemorySeconds = 12.5
+        let data = try! JSONEncoder().encode(settings)
+        let back = try! XCTUnwrap(AppSettings.load(data))
+        XCTAssertTrue(back.rememberPlace)
+        XCTAssertEqual(back.feedMemoryID, "clip")
+        XCTAssertEqual(back.feedMemoryIndex, 2)
+        XCTAssertEqual(back.feedMemorySeconds, 12.5, accuracy: 0.01)
+        XCTAssertTrue(back.resumeOnReturn)
+        XCTAssertTrue(back.revealBlur)
+        XCTAssertEqual(ImageHold.label(0), "永久")
+        XCTAssertEqual(ImageHold.seconds(0), 0)
+
+        let all = try! XCTUnwrap(AppSettings.load(Data(#"{"backdropAllPages":true}"#.utf8)))
+        XCTAssertEqual(all.backdropPages, BackdropPage.allCases.map(\.rawValue))
+        let home = try! XCTUnwrap(AppSettings.load(Data(#"{"backdropAllPages":false}"#.utf8)))
+        XCTAssertEqual(home.backdropPages, ["home"])
+        let kept = try! XCTUnwrap(AppSettings.load(Data(#"{"backdropAllPages":true,"backdropPages":["moments","home"]}"#.utf8)))
+        XCTAssertEqual(kept.backdropPages, ["home", "moments"])
+        XCTAssertEqual(BackdropPages.summary(["home", "moments"]), "首页、朋友圈")
+        XCTAssertEqual(BackdropPages.summary(BackdropPage.allCases.map(\.rawValue)), "全部页面")
+        XCTAssertEqual(BackdropPages.summary(["home"]), "仅首页")
+        XCTAssertFalse(BackdropPages.shows(.settings, mode: .video, pages: ["home"]))
+        XCTAssertTrue(BackdropPages.shows(.home, mode: .video, pages: ["home"]))
+        XCTAssertFalse(BackdropPages.shows(.home, mode: .theme, pages: BackdropPages.selectAll()))
+        XCTAssertFalse(FanAim.firesOnRelease(select: .tap, drop: false))
+        XCTAssertTrue(FanAim.firesOnRelease(select: .tap, drop: true))
+        XCTAssertTrue(FanAim.firesOnRelease(select: .slider, drop: false))
+    }
+
+    func testBiliHotStubAndSkinPath() throws {
+        let json = """
+        {"code":0,"data":{"list":[{"bvid":"BV1xx411c7mD","title":"月亮","pic":"https://i0.hdslb.com/a.jpg","owner":{"name":"阿月"},"stat":{"view":1200}}]}}
+        """.data(using: .utf8)!
+        let parsed = BiliHot.parse(json)
+        guard case .success(let items) = parsed else { return XCTFail("热榜没有解析出来") }
+        XCTAssertEqual(items.first?.biliBvid, "BV1xx411c7mD")
+        XCTAssertEqual(items.first?.title, "月亮")
+        XCTAssertEqual(items.first?.embedURL, BiliLinks.player(bvid: "BV1xx411c7mD"))
+        XCTAssertFalse(items.first?.embedURL?.contains("playurl") == true)
+        XCTAssertTrue(items.first?.author.contains("阿月") == true)
+        let denied = BiliHot.parse(Data(#"{"code":-400,"message":"request error"}"#.utf8))
+        guard case .failure(let message) = denied else { return XCTFail("错误码应该失败") }
+        XCTAssertEqual(message, "热榜暂时无法获取")
+        let robots = "User-agent: *\nDisallow: /private\nAllow: /private/ok\n"
+        XCTAssertFalse(RobotsRule.allowed(robots: robots, path: "/private/no"))
+        XCTAssertTrue(RobotsRule.allowed(robots: robots, path: "/private/ok"))
+        XCTAssertTrue(RobotsRule.allowed(robots: robots, path: "/video/1"))
+
+        let folder = MediaStore.skins
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("skin-\(UUID().uuidString).heic")
+        try Data([0, 1, 2, 3, 4]).write(to: source)
+        let copied = try XCTUnwrap(MediaStore.copy(from: source, folder: folder, ext: "heic"))
+        let resolved = try XCTUnwrap(MediaStore.resolve(copied.lastPathComponent, folder: folder))
+        XCTAssertEqual(resolved, copied.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resolved))
+        XCTAssertFalse(resolved.hasPrefix(FileManager.default.temporaryDirectory.path))
+        XCTAssertTrue(resolved.contains("Application Support") || resolved.contains("Application%20Support"))
+        try? FileManager.default.removeItem(at: copied)
+        try? FileManager.default.removeItem(at: source)
+    }
 }
 
 final class FakePlay: Playable {

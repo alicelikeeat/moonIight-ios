@@ -25,6 +25,10 @@ final class TabTapTests: XCTestCase {
         let discoverTab = tab("发现")
         XCTAssertTrue(discoverTab.isHittable)
         discoverTab.tap()
+        let tools = app.buttons["discover.tools"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 5))
+        XCTAssertTrue(tools.isHittable, "发现页的工具按钮点不到")
+        tools.tap()
         let search = app.buttons["discover.search"]
         XCTAssertTrue(search.waitForExistence(timeout: 5))
         XCTAssertTrue(search.isHittable, "发现页的搜索点不到")
@@ -35,15 +39,19 @@ final class TabTapTests: XCTestCase {
 
         let capture = tab("拍摄")
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
-        XCTAssertTrue(capture.isHittable, "拍摄标签点不到")
+        XCTAssertTrue(capture.isHittable, "拍摄按钮点不到")
         capture.tap()
-        XCTAssertTrue(app.staticTexts["把此刻留下来"].waitForExistence(timeout: 5))
-        let compose = app.buttons["capture.compose"]
-        XCTAssertTrue(compose.waitForExistence(timeout: 5))
-        XCTAssertTrue(compose.isHittable, "发朋友圈点不到")
-        compose.tap()
-        XCTAssertTrue(app.staticTexts["发动态"].waitForExistence(timeout: 5), "发朋友圈没有打开发动态")
-        app.buttons["取消"].tap()
+        let camera = app.descendants(matching: .any)["camera.root"]
+        let missing = app.staticTexts["这台设备没有相机"]
+        XCTAssertTrue(
+            camera.waitForExistence(timeout: 5) || missing.waitForExistence(timeout: 3),
+            "点拍摄没有打开相机\n\(app.debugDescription)"
+        )
+        XCTAssertFalse(app.staticTexts["把此刻留下来"].exists, "拍摄变成了一页")
+        XCTAssertTrue(discoverTab.isSelected, "点拍摄把页面换成了拍摄")
+        let close = app.buttons["camera.close"]
+        if close.waitForExistence(timeout: 2) { close.tap() } else if app.buttons["关闭"].exists { app.buttons["关闭"].tap() }
+        XCTAssertTrue(discoverTab.isSelected)
 
         let moments = tab("朋友圈")
         XCTAssertTrue(moments.waitForExistence(timeout: 5))
@@ -68,7 +76,7 @@ final class TabTapTests: XCTestCase {
             settingsPage.waitForExistence(timeout: 5)
                 || app.staticTexts["外观"].waitForExistence(timeout: 2)
                 || app.staticTexts["主题"].waitForExistence(timeout: 2)
-                || app.staticTexts["月光 1.0 · iOS"].waitForExistence(timeout: 2),
+                || app.staticTexts["月光 1.1 · iOS"].waitForExistence(timeout: 2),
             "设置页没有出现\n\(app.debugDescription)"
         )
         let done = app.buttons["settings.done"]
@@ -190,12 +198,13 @@ final class TabTapTests: XCTestCase {
     }
 
     func testCameraSheetStaysUsable() {
+        let home = tab("首页")
+        XCTAssertTrue(home.waitForExistence(timeout: 12))
         let capture = tab("拍摄")
-        XCTAssertTrue(capture.waitForExistence(timeout: 12))
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
         capture.tap()
-        let photo = app.buttons["capture.photo"]
-        XCTAssertTrue(photo.waitForExistence(timeout: 5))
-        photo.tap()
+        XCTAssertFalse(app.staticTexts["把此刻留下来"].exists, "拍摄不该打开单独的页面")
+        XCTAssertTrue(home.isSelected, "点拍摄不应该换页")
         let root = app.descendants(matching: .any)["camera.root"]
         XCTAssertTrue(root.waitForExistence(timeout: 5), "拍照没有打开相机\n\(app.debugDescription)")
         let shutter = app.descendants(matching: .any)["camera.shutter"]
@@ -220,6 +229,55 @@ final class TabTapTests: XCTestCase {
             "相机没有关闭按钮\n\(app.debugDescription)"
         )
         if close.exists { close.tap() } else { closeLabel.tap() }
+        XCTAssertTrue(home.isSelected, "关掉相机之后不在原来的页面")
+        XCTAssertFalse(capture.isSelected)
+    }
+
+    func testCaptureFanOpensCompose() {
+        let home = tab("首页")
+        XCTAssertTrue(home.waitForExistence(timeout: 12))
+        let capture = tab("拍摄")
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        capture.press(forDuration: 1.1)
+        let fan = app.descendants(matching: .any)["capture.fan"]
+        let compose = app.buttons["capture.compose"]
+        XCTAssertTrue(fan.waitForExistence(timeout: 4) || compose.waitForExistence(timeout: 2), "长按拍摄没有打开气泡\n\(app.debugDescription)")
+        XCTAssertTrue(home.isSelected, "长按拍摄把页面换了")
+        if compose.waitForExistence(timeout: 2) { compose.tap() }
+        XCTAssertTrue(app.staticTexts["发动态"].waitForExistence(timeout: 5), "发朋友圈没有打开发动态\n\(app.debugDescription)")
+        app.buttons["取消"].tap()
+    }
+
+    func testMomentDeleteLandsInTrash() {
+        let moments = tab("朋友圈")
+        XCTAssertTrue(moments.waitForExistence(timeout: 12))
+        moments.tap()
+        let demo = app.buttons["moments.demo"]
+        if demo.waitForExistence(timeout: 3) { demo.tap() }
+        let line = app.staticTexts["今天的月亮像一颗糖。"]
+        XCTAssertTrue(line.waitForExistence(timeout: 6), "没有找到要删除的动态\n\(app.debugDescription)")
+        line.press(forDuration: 1.2)
+        let more = app.buttons["ring.more"]
+        let direct = app.buttons["ring.删除"]
+        XCTAssertTrue(more.waitForExistence(timeout: 4) || direct.waitForExistence(timeout: 2), "长按动态没有打开菜单\n\(app.debugDescription)")
+        if direct.exists { direct.tap() }
+        else {
+            more.tap()
+            let del = app.buttons["删除"]
+            let delId = app.descendants(matching: .any)["more.delete"]
+            XCTAssertTrue(del.waitForExistence(timeout: 4) || delId.waitForExistence(timeout: 2), "菜单里没有删除\n\(app.debugDescription)")
+            if del.exists { del.tap() } else { delId.tap() }
+        }
+        let me = tab("我")
+        XCTAssertTrue(me.waitForExistence(timeout: 5))
+        me.tap()
+        let settings = app.buttons["me.settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        let trash = app.descendants(matching: .any)["settings.trash"]
+        XCTAssertTrue(trash.waitForExistence(timeout: 5))
+        if trash.isHittable { trash.tap() } else { trash.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.staticTexts["今天的月亮像一颗糖。"].waitForExistence(timeout: 5), "删除的动态没有进最近删除\n\(app.debugDescription)")
     }
 
     /// Dragging on the system tab bar changes tabs and never opens the ring, even if the press is slow.
@@ -353,9 +411,9 @@ final class TabTapTests: XCTestCase {
     }
 
     private func discoverVisible() -> Bool {
-        let search = app.buttons["discover.search"]
-        if search.waitForExistence(timeout: 6), search.isHittable { return true }
+        let tools = app.buttons["discover.tools"]
+        if tools.waitForExistence(timeout: 6), tools.isHittable { return true }
         let root = app.descendants(matching: .any)["discover.root"]
-        return root.waitForExistence(timeout: 2) && root.isHittable
+        return root.waitForExistence(timeout: 2)
     }
 }
