@@ -75,7 +75,10 @@ struct MeView: View {
             .sheet(isPresented: $editing) { editSheet }
         }
         .environment(\.colorScheme, app.settings.showsBackdrop(.me) ? .dark : scheme)
-        .onAppear { if app.requestSettings { route = .settings } }
+        .onAppear {
+            app.visibleBackdrop = .me
+            if app.requestSettings { route = .settings }
+        }
         .moonOnChange(of: app.requestSettings) { on in if on { route = .settings } }
         .moonOnChange(of: route == .settings) { on in if !on { app.requestSettings = false } }
         .moonOnChange(of: avatarItem) { item in

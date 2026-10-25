@@ -705,10 +705,26 @@ final class LogicTests: XCTestCase {
         ]}
         """
         let extra = PeerTubeAPI.entries(json: streams, host: "tube.example.com")
-        XCTAssertEqual(extra.count, 1)
+        XCTAssertEqual(extra.count, 3)
+        XCTAssertEqual(extra[0].kind, .video)
         XCTAssertEqual(extra[0].remoteURL, "https://tube.example.com/a.m3u8")
         XCTAssertNil(extra[0].downloadURL)
         XCTAssertFalse(DownloadPolicy.canDownload(extra[0]).ok)
+        XCTAssertEqual(extra[1].kind, .embed)
+        XCTAssertEqual(extra[1].embedURL, "https://tube.example.com/videos/embed/empty-1")
+        XCTAssertEqual(extra[2].kind, .embed)
+        XCTAssertEqual(extra[2].embedURL, "https://tube.example.com/videos/embed/dash-1")
+        XCTAssertNil(extra[2].downloadURL)
+
+        let listed = """
+        {"data":[{"uuid":"list-1","shortUUID":"abc","name":"列表","url":"https://tube.tchncs.de/videos/watch/list-1","thumbnailPath":"/lazy-static/thumbnails/a.jpg","nsfw":false}]}
+        """
+        let listedRows = PeerTubeAPI.entries(json: listed, host: "framatube.org")
+        XCTAssertEqual(listedRows.count, 1)
+        XCTAssertEqual(listedRows[0].kind, .embed)
+        XCTAssertEqual(listedRows[0].embedURL, "https://tube.tchncs.de/videos/embed/abc")
+        XCTAssertEqual(listedRows[0].coverURL, "https://framatube.org/lazy-static/thumbnails/a.jpg")
+        XCTAssertFalse(listedRows[0].embedURL?.contains("playurl") == true)
     }
 
     func testSmartFillUnderEightPercent() {

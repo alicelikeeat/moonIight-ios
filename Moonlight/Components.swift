@@ -36,11 +36,26 @@ struct WebEmbedView: UIViewRepresentable {
         web.isOpaque = false
         web.backgroundColor = .black
         web.scrollView.isScrollEnabled = false
-        web.load(URLRequest(url: url))
+        web.customUserAgent = Self.safari
+        web.load(Self.request(url))
         return web
     }
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        if uiView.url != url { uiView.load(URLRequest(url: url)) }
+        uiView.customUserAgent = Self.safari
+        if uiView.url != url { uiView.load(Self.request(url)) }
+    }
+
+    private static let safari = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+    /// Official embed only. Bilibili's player refuses to start without its own site as Referer.
+    private static func request(_ url: URL) -> URLRequest {
+        var req = URLRequest(url: url)
+        if url.host?.contains("bilibili.com") == true {
+            req.setValue("https://www.bilibili.com/", forHTTPHeaderField: "Referer")
+        } else if let host = url.host {
+            req.setValue("https://\(host)/", forHTTPHeaderField: "Referer")
+        }
+        return req
     }
 }
 

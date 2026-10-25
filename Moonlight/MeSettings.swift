@@ -103,17 +103,33 @@ struct FullPlayerView: View {
                 }
             }
             VStack {
-                HStack {
+                HStack(spacing: 10) {
                     Button { dismiss() } label: {
-                        Image(systemName: "chevron.down").foregroundColor(.white).padding(12).background(.ultraThinMaterial, in: Circle())
+                        Image(systemName: "xmark")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 36, height: 36)
+                            .moonDisc(overMedia: true)
                     }
                     .accessibilityIdentifier("player.close")
+                    .accessibilityLabel("关闭")
                     Spacer()
                     Text(entry.title).foregroundColor(.white).lineLimit(1).allowsHitTesting(false)
                     Spacer()
-                    Color.clear.frame(width: 44, height: 44).allowsHitTesting(false)
+                    if let bvid = entry.biliBvid, !bvid.isEmpty {
+                        Button("在哔哩哔哩中打开") { BiliLinks.open(bvid: bvid) }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .moonCapsule(overMedia: true)
+                            .accessibilityIdentifier("player.bili")
+                    } else {
+                        Color.clear.frame(width: 44, height: 44).allowsHitTesting(false)
+                    }
                 }
                 .padding(.top, ScreenInsets.top)
+                .padding(.horizontal, 12)
                 Spacer().allowsHitTesting(false)
             }
         }

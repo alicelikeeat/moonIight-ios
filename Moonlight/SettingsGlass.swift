@@ -40,36 +40,49 @@ struct SettingsView: View {
                 backdropGroup
                 playbackGroup
                 gestureGroup
-                Text("月光 1.1 · iOS\n不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
+                Text("月光 1.2 · iOS\n不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
                     .font(.system(size: 12))
                     .foregroundColor(ink.textDim)
                     .padding(.horizontal, 8)
             }
             .padding(16)
-            .padding(.bottom, 40)
+            .padding(.bottom, 128 + ScreenInsets.bottom)
         }
-        .foregroundColor(ink.text)
         .background {
-            if onBackdrop { PageBackdrop(page: .settings) } else { SystemGlassFill(dark: colors.dark) }
+            ZStack {
+                LinearGradient(colors: [ink.bgTop, ink.bgBottom], startPoint: .top, endPoint: .bottom)
+                if onBackdrop {
+                    PageBackdrop(page: .settings)
+                } else {
+                    SystemGlassFill(dark: ink.dark)
+                }
+            }
+            .ignoresSafeArea()
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("settings.root")
         .environment(\.colorScheme, onBackdrop ? .dark : (colors.dark ? .dark : .light))
+        .onAppear { app.visibleBackdrop = .settings }
+        .onDisappear { if app.tab == .me { app.visibleBackdrop = .me } }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("完成") { dismiss() }.accessibilityIdentifier("settings.done")
             }
         }
         .sheet(item: $page) { page in
-            switch page {
-            case .skins: ButtonSkinsView()
-            case .icons: IconPickerView()
-            case .autoplay: AutoplaySheet()
-            case .focus: avatarFocus
-            case .trash: TrashView()
-            case .backdropFocus: backdropFocus
+            Group {
+                switch page {
+                case .skins: ButtonSkinsView()
+                case .icons: IconPickerView()
+                case .autoplay: AutoplaySheet()
+                case .focus: avatarFocus
+                case .trash: TrashView()
+                case .backdropFocus: backdropFocus
+                }
             }
+            .environment(\.colorScheme, page == .skins ? .dark : .light)
+            .foregroundColor(page == .skins ? Color.white : Color.primary)
         }
         .sheet(isPresented: $pagesOpen) { BackdropPagesSheet() }
         .sheet(isPresented: Binding(get: { exportURL != nil }, set: { if !$0 { exportURL = nil } })) {
@@ -149,6 +162,8 @@ struct SettingsView: View {
             Button(app.recorder.recording ? "停止并保存" : "开始录屏") { app.toggleRecording() }
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(ink.text)
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
                 .accessibilityIdentifier("settings.record")

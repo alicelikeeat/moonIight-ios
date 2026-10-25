@@ -343,21 +343,66 @@ enum PeerTubeAPI {
         if (o["nsfw"] as? Bool) == true { return nil }
         let uuid = (o["uuid"] as? String) ?? (o["shortUUID"] as? String) ?? ""
         guard !uuid.isEmpty else { return nil }
+        let short = (o["shortUUID"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? uuid
+        let origin = hostOf(o, fallback: host)
         let name = (o["name"] as? String) ?? "PeerTube"
-        let thumb = o["thumbnailUrl"] as? String ?? o["previewUrl"] as? String
+        let thumb = thumbnail(o, apiHost: host)
         let author = ((o["account"] as? [String: Any])?["displayName"] as? String)
-            ?? ((o["channel"] as? [String: Any])?["displayName"] as? String) ?? host
+            ?? ((o["channel"] as? [String: Any])?["displayName"] as? String) ?? origin
         let downloadEnabled = (o["downloadEnabled"] as? Bool) ?? false
         let mp4 = fileURL(o["files"] as? [[String: Any]])
         let hls = playlistURL(o["streamingPlaylists"] as? [[String: Any]])
-        guard let playback = mp4 ?? hls else { return nil }
+        let watch = absolute(o["url"] as? String, host: origin) ?? "https://\(origin)/videos/watch/\(uuid)"
+        let embed = absolute(o["embedPath"] as? String, host: origin) ?? "https://\(origin)/videos/embed/\(short)"
+        if let playback = mp4 ?? hls {
+            return MediaEntry(
+                id: "pt-\(origin)-\(uuid)", kind: .video, title: name,
+                remoteURL: playback, coverURL: thumb,
+                platform: PlatformID.peertube, embedURL: nil,
+                downloadURL: downloadEnabled ? mp4 : nil,
+                author: author, source: "peertube"
+            )
+        }
         return MediaEntry(
-            id: "pt-\(host)-\(uuid)", kind: .video, title: name,
-            remoteURL: playback, coverURL: thumb,
-            platform: PlatformID.peertube, embedURL: nil,
-            downloadURL: (downloadEnabled ? mp4 : nil),
+            id: "pt-\(origin)-\(uuid)", kind: .embed, title: name,
+            remoteURL: watch, coverURL: thumb,
+            platform: PlatformID.peertube, embedURL: embed,
             author: author, source: "peertube"
         )
+    }
+
+    /// Latest videos when the query is empty, search otherwise.
+    /// A blank instance uses framatube.org. List rows omit `files`; those play from the official embed.
+    static func browse(instance: String, query: String, count: Int = 20) async -> Result<[MediaEntry], SourceError> {
+        let host = PublicLink.normalizedHost(instance) ?? defaultHost
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let url: URL?
+        if q.isEmpty {
+            url = endpoint(host, "/api/v1/videos", [
+                URLQueryItem(name: "sort", value: "-publishedAt"),
+                URLQueryItem(name: "count", value: String(count)),
+                URLQueryItem(name: "nsfw", value: "false"),
+            ])
+        } else {
+            url = endpoint(host, "/api/v1/search/videos", [
+                URLQueryItem(name: "search", value: q),
+                URLQueryItem(name: "count", value: String(count)),
+                URLQueryItem(name: "nsfw", value: "false"),
+            ])
+        }
+        guard let url else { return .failure(SourceError(message: "PeerTube 地址无效（\(host)）")) }
+        switch await HTTP.fetch(url, headers: ["User-Agent": browserUA]) {
+        case .success(let data):
+            let rows = entries(json: String(decoding: data, as: UTF8.self), host: host)
+            if !rows.isEmpty || q.isEmpty { return .success(rows) }
+            if case .success(let found) = await sepia(query: q, count: count), !found.isEmpty { return .success(found) }
+            return .success(rows)
+        case .failure:
+            if !q.isEmpty, case .success(let found) = await sepia(query: q, count: count), !found.isEmpty {
+                return .success(found)
+            }
+            return .failure(SourceError(message: "PeerTube 暂时连不上（\(host)）"))
+        }
     }
 
     /// Loads `/api/v1/videos/{id}` and keeps the entry only when a file or playlist exists.
@@ -419,6 +464,47 @@ enum PeerTubeAPI {
             let bili = FeedXML.bili(xml)
             return bili.isEmpty ? FeedXML.youtube(xml) : bili
         }
+    }
+
+    static let defaultHost = "framatube.org"
+    private static let browserUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+
+    private static func sepia(query: String, count: Int) async -> Result<[MediaEntry], SourceError> {
+        guard let url = endpoint("sepiasearch.org", "/api/v1/search/videos", [
+            URLQueryItem(name: "search", value: query),
+            URLQueryItem(name: "count", value: String(count)),
+            URLQueryItem(name: "nsfw", value: "false"),
+        ]) else { return .failure(SourceError(message: "PeerTube 暂时连不上（sepiasearch.org）")) }
+        switch await HTTP.fetch(url, headers: ["User-Agent": browserUA]) {
+        case .success(let data):
+            return .success(entries(json: String(decoding: data, as: UTF8.self), host: "sepiasearch.org"))
+        case .failure:
+            return .failure(SourceError(message: "PeerTube 暂时连不上（sepiasearch.org）"))
+        }
+    }
+
+    private static func hostOf(_ o: [String: Any], fallback: String) -> String {
+        if let url = o["url"] as? String, let host = URL(string: url)?.host, !host.isEmpty { return host }
+        if let host = (o["account"] as? [String: Any])?["host"] as? String, !host.isEmpty { return host }
+        return fallback
+    }
+
+    private static func thumbnail(_ o: [String: Any], apiHost: String) -> String? {
+        if let thumbs = o["thumbnails"] as? [[String: Any]] {
+            let urls = thumbs.compactMap { $0["fileUrl"] as? String }.filter { !$0.isEmpty }
+            if let best = urls.first { return best }
+        }
+        if let raw = o["thumbnailUrl"] as? String ?? o["previewUrl"] as? String { return absolute(raw, host: apiHost) }
+        if let raw = o["thumbnailPath"] as? String ?? o["previewPath"] as? String { return absolute(raw, host: apiHost) }
+        return nil
+    }
+
+    private static func absolute(_ raw: String?, host: String) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("https://") || raw.hasPrefix("http://") { return raw }
+        if raw.hasPrefix("//") { return "https:" + raw }
+        if raw.hasPrefix("/") { return "https://\(host)\(raw)" }
+        return "https://\(host)/\(raw)"
     }
 
     private static func fileURL(_ files: [[String: Any]]?) -> String? {

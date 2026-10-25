@@ -15,7 +15,7 @@ struct DiscoverView: View {
         ZStack(alignment: .topLeading) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Color.clear.frame(height: 36)
+                    Color.clear.frame(height: ScreenInsets.top + 44)
                         .accessibilityIdentifier("discover.root")
                     Text("公开影像。哔哩哔哩只用官方嵌入页。")
                         .font(.system(size: 13))
@@ -63,13 +63,14 @@ struct DiscoverView: View {
             }
             .buttonStyle(.plain)
             .padding(.leading, 16)
-            .padding(.top, 8)
+            .padding(.top, ScreenInsets.top + 4)
             .accessibilityIdentifier("discover.tools")
         }
         .overlay(alignment: .leading) {
             if tools { toolsPanel }
         }
         .modifier(BackdropScheme(page: .discover))
+        .onAppear { app.visibleBackdrop = .discover }
         .task {
             if app.discoverResults.isEmpty { await app.discover(query: "") }
         }
@@ -77,56 +78,82 @@ struct DiscoverView: View {
 
     private var toolsPanel: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("发现").font(.system(size: 18, weight: .bold)).foregroundColor(colors.text)
+                    .padding(.top, ScreenInsets.top)
                 TextField("搜索月亮、海洋、城市…", text: $query)
                     .textFieldStyle(.plain)
+                    .foregroundColor(colors.text)
                     .padding(12)
                     .moonGlass(colors, radius: 14)
-                Button("搜索") { Task { await app.discover(query: query) } }
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 8)
-                    .accessibilityIdentifier("discover.search")
+                toolButton("搜索", "magnifyingglass", GlassTint.blue, "discover.search") {
+                    tools = false
+                    Task { await app.discover(query: query) }
+                }
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 14) {
                         TextField("粘贴直链或官方页面", text: $link)
                             .textFieldStyle(.plain)
+                            .foregroundColor(colors.text)
                             .padding(12)
                             .moonGlass(colors, radius: 14)
-                        HStack {
-                            Button("加入") { addLink() }.accessibilityIdentifier("discover.add")
-                            Button("订阅") { app.subscribe(link); link = "" }.accessibilityIdentifier("discover.follow")
-                            Button("导入") { app.presentImporter() }.accessibilityIdentifier("discover.import")
-                        }
-                        .font(.system(size: 15, weight: .semibold))
-                        Button("刷新") { Task { await app.discover(query: query); await app.refreshFollows() } }
-                            .accessibilityIdentifier("discover.refreshFollows")
-                        Text("分类").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
-                        ForEach(SourceCatalog.rows, id: \.key) { row in
-                            Toggle(row.title, isOn: Binding(
-                                get: { app.settings.sourceOn(row.key) },
-                                set: { app.settings.setSource(row.key, $0); app.saveSettings() }
-                            ))
-                            .font(.system(size: 14))
-                        }
-                        if !app.settings.follows.isEmpty {
-                            ForEach(app.settings.follows) { source in
-                                HStack {
-                                    Text(source.title).lineLimit(1)
-                                    Spacer()
-                                    Button("移除") { app.removeFollow(source.id) }
-                                }
-                                .font(.system(size: 13))
+                        VStack(spacing: 0) {
+                            toolRow("加入", "plus.circle", GlassTint.green, "discover.add") { addLink() }
+                            toolRow("订阅", "dot.radiowaves.up.forward", GlassTint.purple, "discover.follow") { app.subscribe(link); link = "" }
+                            toolRow("导入", "square.and.arrow.down", GlassTint.orange, "discover.import") { app.presentImporter() }
+                            toolRow("刷新", "arrow.clockwise", GlassTint.gray, "discover.refreshFollows") {
+                                Task { await app.discover(query: query); await app.refreshFollows() }
                             }
+                        }
+                        .moonGlass(colors, radius: 18)
+                        Text("分类").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
+                        VStack(spacing: 0) {
+                            ForEach(SourceCatalog.rows, id: \.key) { row in
+                                HStack(spacing: 12) {
+                                    GlassIcon(symbol: sourceSymbol(row.key), tint: sourceTint(row.key))
+                                    Text(row.title).font(.system(size: 15, weight: .medium)).foregroundColor(colors.text)
+                                    Spacer()
+                                    Toggle("", isOn: Binding(
+                                        get: { app.settings.sourceOn(row.key) },
+                                        set: { app.settings.setSource(row.key, $0); app.saveSettings() }
+                                    ))
+                                    .labelsHidden()
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                            }
+                        }
+                        .moonGlass(colors, radius: 18)
+                        if !app.settings.follows.isEmpty {
+                            VStack(spacing: 0) {
+                                ForEach(app.settings.follows) { source in
+                                    HStack {
+                                        Text(source.title).lineLimit(1).foregroundColor(colors.text)
+                                        Spacer()
+                                        Button("移除") { app.removeFollow(source.id) }
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundColor(colors.danger)
+                                            .buttonStyle(.plain)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                }
+                            }
+                            .moonGlass(colors, radius: 18)
                         }
                     }
                 }
             }
             .padding(16)
-            .frame(width: min(320, UIScreen.main.bounds.width * 0.82))
+            .frame(width: min(340, UIScreen.main.bounds.width * 0.86))
             .frame(maxHeight: .infinity, alignment: .top)
-            .background { SystemGlassFill(dark: colors.dark) }
+            .background {
+                ZStack {
+                    LinearGradient(colors: [colors.bgTop, colors.bgBottom], startPoint: .top, endPoint: .bottom)
+                    SystemGlassFill(dark: colors.dark)
+                }
+                .ignoresSafeArea()
+            }
             Color.black.opacity(0.28)
                 .contentShape(Rectangle())
                 .onTapGesture { tools = false }
@@ -135,26 +162,106 @@ struct DiscoverView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
+    private func toolButton(_ title: String, _ symbol: String, _ tint: Color, _ id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                GlassIcon(symbol: symbol, tint: tint)
+                Text(title).font(.system(size: 16, weight: .semibold)).foregroundColor(colors.text)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .moonGlass(colors, radius: 16)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+    }
+
+    private func toolRow(_ title: String, _ symbol: String, _ tint: Color, _ id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                GlassIcon(symbol: symbol, tint: tint)
+                Text(title).font(.system(size: 16, weight: .medium)).foregroundColor(colors.text)
+                Spacer()
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+    }
+
+    private func sourceSymbol(_ key: String) -> String {
+        switch key {
+        case "bili": return "play.rectangle"
+        case "biliHot": return "flame"
+        case "youtube": return "play.rectangle.fill"
+        case "vimeo": return "play.circle"
+        case "dailymotion": return "play.square"
+        case "archive": return "building.columns"
+        case "nasa": return "sparkles"
+        case "peertube": return "person.3"
+        case "commons": return "photo.on.rectangle"
+        case "podcast": return "antenna.radiowaves.left.and.right"
+        case "web": return "globe"
+        default: return "circle"
+        }
+    }
+
+    private func sourceTint(_ key: String) -> Color {
+        switch key {
+        case "bili", "biliHot": return GlassTint.pink
+        case "youtube", "vimeo", "dailymotion": return GlassTint.red
+        case "nasa": return GlassTint.blue
+        case "peertube": return GlassTint.orange
+        case "commons": return GlassTint.green
+        default: return GlassTint.gray
+        }
+    }
+
     private func resultGrid(_ entries: [MediaEntry]) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible(minimum: 0), spacing: 10), GridItem(.flexible(minimum: 0), spacing: 10)], spacing: 10) {
             ForEach(entries) { entry in
-                Button { app.addRemote(entry) } label: {
-                    ZStack(alignment: .bottomLeading) {
-                        RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill)
-                            .frame(height: 180)
-                            .clipped()
-                        LinearGradient(colors: [.clear, .black.opacity(0.65)], startPoint: .center, endPoint: .bottom)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.platformLabel()).font(.system(size: 10, weight: .bold))
-                            Text(entry.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                Button { openCard(entry) } label: {
+                    Color.clear
+                        .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                        .overlay {
+                            GeometryReader { geo in
+                                ZStack(alignment: .bottomLeading) {
+                                    RemoteOrLocalImage(url: entry.imageURL, art: entry.coverURL, mode: .fill)
+                                        .frame(width: geo.size.width, height: geo.size.height)
+                                        .clipped()
+                                    LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .center, endPoint: .bottom)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.platformLabel()).font(.system(size: 10, weight: .bold))
+                                        Text(entry.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                                    }
+                                    .foregroundColor(.white)
+                                    .padding(8)
+                                    .frame(width: geo.size.width, alignment: .leading)
+                                }
+                            }
                         }
-                        .foregroundColor(.white)
-                        .padding(8)
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .clipped()
                 }
+                .buttonStyle(.plain)
+                .frame(minWidth: 0, maxWidth: .infinity)
                 .accessibilityIdentifier("discover.card.\(entry.id)")
             }
+        }
+        .frame(maxWidth: .infinity)
+        .clipped()
+    }
+
+    private func openCard(_ entry: MediaEntry) {
+        if entry.kind == .embed, let raw = entry.embedURL, !raw.isEmpty {
+            app.addQuiet(entry)
+            app.fullPlayer = entry
+        } else {
+            app.addRemote(entry)
         }
     }
 

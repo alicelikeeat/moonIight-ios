@@ -583,18 +583,17 @@ struct RingOverlay: View {
             ring.openSheet()
         } label: {
             ZStack {
-                Circle().fill(.ultraThinMaterial)
-                Circle().fill(Color.white.opacity(0.12))
                 if has {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(session.overMedia ? .white : Color.primary)
                 } else {
                     Circle().fill(Color.white.opacity(0.85)).frame(width: 6, height: 6)
                 }
             }
             .frame(width: 36, height: 36)
-            .overlay(Circle().stroke(Color.white.opacity(0.45), lineWidth: 0.7))
+            .moonDisc(overMedia: session.overMedia)
+            .overlay(Circle().stroke(Color.white.opacity(session.overMedia ? 0.45 : 0.28), lineWidth: 0.7))
             .scaleEffect(max(0.2, CGFloat(pose.scale)))
             .opacity(Double(pose.alpha))
         }

@@ -10,23 +10,28 @@ struct BackdropFill: View {
         let focus = video ? settings.backdropVideoFocus : settings.backdropPhotoFocus
         let blurOn = video ? settings.backdropVideoBlur : settings.backdropPhotoBlur
         let file = BackdropFiles.path(stored)
-        ZStack {
-            Color.black
-            if settings.backdropMode != .black, let file {
-                Group {
-                    if video {
-                        LoopFilm(ref: file)
-                    } else if let image = UIImage(contentsOfFile: file) {
-                        Image(uiImage: image).resizable().scaledToFill()
+        GeometryReader { geo in
+            ZStack {
+                Color.black
+                if settings.backdropMode != .black, let file {
+                    Group {
+                        if video {
+                            LoopFilm(ref: file)
+                        } else if let image = UIImage(contentsOfFile: file) {
+                            Image(uiImage: image).resizable().scaledToFill()
+                        }
                     }
+                    .frame(width: geo.size.width * 1.35, height: geo.size.height * 1.35)
+                    .scaleEffect(CGFloat(max(1, focus.scale)))
+                    .offset(x: CGFloat(focus.x - 0.5) * geo.size.width, y: CGFloat(focus.y - 0.5) * geo.size.height)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .blur(radius: blurOn ? 28 : 0)
+                    Color.black.opacity(blurOn ? 0.5 : 0.18)
                 }
-                .scaleEffect(CGFloat(max(1, focus.scale)))
-                .offset(x: CGFloat(focus.x - 0.5) * 180, y: CGFloat(focus.y - 0.5) * 240)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
-                .blur(radius: blurOn ? 28 : 0)
-                Color.black.opacity(blurOn ? 0.5 : 0.18)
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
         .allowsHitTesting(false)
     }
@@ -39,10 +44,42 @@ struct PageBackdrop: View {
     var body: some View {
         Group {
             if app.settings.showsBackdrop(page) {
-                BackdropFill(settings: app.settings)
+                ScreenPinnedFill { BackdropFill(settings: app.settings) }
             }
         }
-        .ignoresSafeArea(edges: app.settings.edgeToEdge ? .all : .bottom)
+        .ignoresSafeArea(.all)
+        .allowsHitTesting(false)
+    }
+}
+
+/// Pins a fill to the physical screen, including the Dynamic Island and the home indicator.
+/// The background layer is the only thing that ignores the safe area.
+struct ScreenPinnedFill<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        GeometryReader { proxy in
+            let global = proxy.frame(in: .global)
+            let screen = UIScreen.main.bounds
+            content()
+                .frame(width: screen.width, height: screen.height)
+                .position(x: screen.midX - global.minX, y: screen.midY - global.minY)
+        }
+        .ignoresSafeArea(.all)
+        .allowsHitTesting(false)
+    }
+}
+
+struct ScreenBackdrop: View {
+    @EnvironmentObject private var app: AppModel
+
+    var body: some View {
+        Group {
+            if app.settings.showsBackdrop(app.visibleBackdrop) {
+                ScreenPinnedFill { BackdropFill(settings: app.settings) }
+            }
+        }
+        .ignoresSafeArea(.all)
         .allowsHitTesting(false)
     }
 }

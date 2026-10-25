@@ -76,6 +76,7 @@ struct RootView: View {
                     .padding(.bottom, 4)
             }
         }
+        .background { ScreenBackdrop() }
         .background {
             GlobalLongPress(
                 onBegan: { point in beganPress(point) },
@@ -244,12 +245,14 @@ struct RootView: View {
     }
 }
 
-/// Glass tab bar with no drag-to-switch lens. Used when 底栏滑块 is off.
+/// Glass tab bar. The selection pill slides to the current tab and follows a finger drag when 底栏滑块 is on.
 struct MoonTabBar: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.moon) private var colors
     @Environment(\.colorScheme) private var scheme
     var suppressed: Bool
+    /// Fractional slot while a finger is dragging along the bar. Nil snaps to the selected tab.
+    @State private var dragSlot: CGFloat?
 
     var body: some View {
         let ink = app.tab == .home ? MoonColors.media : colors
@@ -283,15 +286,16 @@ struct MoonTabBar: View {
             }
         }
         .background {
-            TabDragSurface(enabled: app.settings.tabLens && app.fan == nil && !suppressed) { x, width in
-                guard width > 1 else { return }
-                let tabs = AppTab.allCases
-                let index = min(tabs.count - 1, max(0, Int(x / (width / CGFloat(tabs.count)))))
-                let next = tabs[index]
-                guard next != .capture, next != app.tab else { return }
-                app.nudgeChrome()
-                app.tab = next
-                Haptics.tick()
+            ZStack {
+                selectionPill(ink)
+                TabDragSurface(enabled: app.settings.tabLens && app.fan == nil && !suppressed) { fraction, commit in
+                    if commit {
+                        if let fraction { snap(to: fraction) }
+                        dragSlot = nil
+                    } else if let fraction {
+                        dragSlot = fraction
+                    }
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -306,6 +310,41 @@ struct MoonTabBar: View {
         .allowsHitTesting(!suppressed)
         .opacity(suppressed ? 0.45 : 1)
         .background(TabBarFrameMark(active: true))
+    }
+
+    private func selectionPill(_ ink: MoonColors) -> some View {
+        let tabs = AppTab.allCases
+        let index = CGFloat(tabs.firstIndex(of: app.tab) ?? 0)
+        let slot = dragSlot ?? index
+        return GeometryReader { geo in
+            let width = geo.size.width / CGFloat(tabs.count)
+            Capsule()
+                .fill(Color.clear)
+                .frame(width: max(44, width - 8), height: max(40, geo.size.height - 6))
+                .moonCapsule(overMedia: app.tab == .home)
+                .overlay(Capsule().stroke(ink.glassStroke.opacity(0.7), lineWidth: 0.6))
+                .offset(x: slot * width + 4, y: 3)
+                .animation(dragSlot == nil ? .spring(response: 0.34, dampingFraction: 0.78) : nil, value: slot)
+        }
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("tab.pill")
+    }
+
+    private func snap(to fraction: CGFloat) {
+        let tabs = AppTab.allCases
+        var index = Int(round(fraction))
+        index = min(tabs.count - 1, max(0, index))
+        var next = tabs[index]
+        if next == .capture {
+            let lower = max(0, index - 1)
+            let upper = min(tabs.count - 1, index + 1)
+            next = abs(fraction - CGFloat(lower)) <= abs(fraction - CGFloat(upper)) ? tabs[lower] : tabs[upper]
+            if next == .capture { next = fraction < CGFloat(index) ? .home : .moments }
+        }
+        guard next != app.tab else { return }
+        app.nudgeChrome()
+        app.tab = next
+        Haptics.tick()
     }
 
     private func captureButton(_ ink: MoonColors) -> some View {
@@ -355,7 +394,8 @@ struct MoonTabBar: View {
 /// Drag along the glass bar switches tabs. A drag that starts on 拍摄 does not.
 private struct TabDragSurface: UIViewRepresentable {
     var enabled: Bool
-    var onMove: (CGFloat, CGFloat) -> Void
+    /// fraction is nil when the drag should snap back. commit is true on release.
+    var onDrag: (CGFloat?, Bool) -> Void
 
     func makeUIView(context: Context) -> TabDragView {
         let view = TabDragView()
@@ -366,21 +406,22 @@ private struct TabDragSurface: UIViewRepresentable {
         view.setContentHuggingPriority(.defaultLow, for: .vertical)
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        view.onMove = onMove
+        view.onDrag = onDrag
         view.dragEnabled = enabled
         return view
     }
 
     func updateUIView(_ uiView: TabDragView, context: Context) {
-        uiView.onMove = onMove
+        uiView.onDrag = onDrag
         uiView.dragEnabled = enabled
     }
 }
 
 private final class TabDragView: UIView, UIGestureRecognizerDelegate {
-    var onMove: ((CGFloat, CGFloat) -> Void)?
+    var onDrag: ((CGFloat?, Bool) -> Void)?
     var dragEnabled = true
     private var pan: UIPanGestureRecognizer?
+    private var tracking = false
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? { nil }
 
@@ -416,12 +457,24 @@ private final class TabDragView: UIView, UIGestureRecognizerDelegate {
     @objc private func drag(_ gesture: UIPanGestureRecognizer) {
         guard dragEnabled, let window else { return }
         let moved = gesture.translation(in: window)
-        guard abs(moved.x) > 18 || abs(moved.y) > 18 else { return }
         let bar = convert(bounds, to: window)
         guard bar.width > 1 else { return }
-        let point = gesture.location(in: window)
-        if gesture.state == .changed || gesture.state == .ended {
-            onMove?(point.x - bar.minX, bar.width)
+        let slotWidth = bar.width / CGFloat(AppTab.allCases.count)
+        let fraction = (gesture.location(in: window).x - bar.minX) / slotWidth
+        switch gesture.state {
+        case .began:
+            tracking = false
+        case .changed:
+            if abs(moved.x) > 18 || abs(moved.y) > 18 { tracking = true }
+            if tracking { onDrag?(fraction, false) }
+        case .ended:
+            onDrag?(tracking ? fraction : nil, true)
+            tracking = false
+        case .cancelled, .failed:
+            onDrag?(nil, true)
+            tracking = false
+        default:
+            break
         }
     }
 

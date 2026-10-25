@@ -74,11 +74,18 @@ extension ThemeMode {
 extension View {
     /// System glass. iOS 26 uses Liquid Glass; earlier systems use a system material.
     /// The effect stays on this control and does not add a full-screen hit target.
+    /// Glass sits in the background so iOS 26 does not collapse this view's layout height.
+    /// A glassEffect applied to the view itself can report a short height inside a ScrollView
+    /// while still drawing the content, which stacks the next card on top of this one.
     @ViewBuilder
     func moonGlass(_ colors: MoonColors, radius: CGFloat = 22) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         if #available(iOS 26.0, *) {
-            self.glassEffect(colors.dark ? .regular.tint(Color.black.opacity(0.28)) : .regular, in: shape)
+            self.background {
+                shape.fill(Color.clear)
+                    .glassEffect(colors.dark ? .regular.tint(Color.black.opacity(0.28)) : .regular.tint(Color.white.opacity(0.42)), in: shape)
+            }
+            .overlay(shape.stroke(colors.glassStroke, lineWidth: 0.7))
         } else {
             self.background(.ultraThinMaterial, in: shape)
                 .background(colors.glassTint, in: shape)
@@ -89,7 +96,10 @@ extension View {
     @ViewBuilder
     func moonDisc(overMedia: Bool) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(overMedia ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Circle())
+            self.background {
+                Circle().fill(Color.clear)
+                    .glassEffect(overMedia ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Circle())
+            }
         } else {
             self.background(.ultraThinMaterial, in: Circle())
         }
@@ -98,7 +108,10 @@ extension View {
     @ViewBuilder
     func moonCapsule(overMedia: Bool) -> some View {
         if #available(iOS 26.0, *) {
-            self.glassEffect(overMedia ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Capsule())
+            self.background {
+                Capsule().fill(Color.clear)
+                    .glassEffect(overMedia ? .regular.tint(Color.black.opacity(0.35)) : .regular, in: Capsule())
+            }
         } else {
             self.background(.ultraThinMaterial, in: Capsule())
         }

@@ -66,6 +66,7 @@ struct MomentsView: View {
             }
             .navigationDestination(isPresented: $showFriends) { FriendsView() }
             .navigationDestination(isPresented: $showChats) { ChatListView() }
+            .onAppear { app.visibleBackdrop = .moments }
         }
     }
 }
@@ -495,6 +496,8 @@ struct ChatListView: View {
         }
         .environment(\.colorScheme, onBackdrop ? .dark : scheme)
         .navigationTitle("消息")
+        .onAppear { app.visibleBackdrop = .chat }
+        .onDisappear { if app.tab == .me { app.visibleBackdrop = .me } }
         .navigationDestination(isPresented: Binding(get: { open != nil }, set: { if !$0 { open = nil } })) {
             if let open { ChatThreadView(conversationID: open.id) }
         }

@@ -133,67 +133,115 @@ struct ButtonSkinsView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
                     Text("29 个按键")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.72))
                         .accessibilityIdentifier("skins.count")
                     Text("一张图或一段视频可以套在一个、几个或全部按键上。同时播放的视频最多 4 个，其余停在画面上。")
                         .font(.system(size: 13))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.72))
                     PhotosPicker(selection: $item, matching: .any(of: [.images, .videos])) {
                         Label("选图片或视频", systemImage: "photo.on.rectangle")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(12)
+                            .moonGlass(MoonColors.media, radius: 16)
                     }
+                    .buttonStyle(.plain)
                     .accessibilityIdentifier("skins.pick")
-                    HStack {
-                        Button("用在选中的") { assign(ButtonSkinID.allCases.filter { picked.contains($0.rawValue) }) }
-                        Button("用在全部 29 个") { assign(ButtonSkinID.allCases) }
-                            .accessibilityIdentifier("skins.all")
-                        Button("清除选中") {
+                    HStack(spacing: 8) {
+                        skinAction("用在选中的", "skins.picked") { assign(ButtonSkinID.allCases.filter { picked.contains($0.rawValue) }) }
+                        skinAction("用在全部 29 个", "skins.all") { assign(ButtonSkinID.allCases) }
+                        skinAction("清除选中", "skins.clear") {
                             var skins = app.settings.buttonSkins
                             ButtonSkins.clear(ButtonSkinID.allCases.filter { picked.contains($0.rawValue) }, skins: &skins)
                             app.settings.buttonSkins = skins
                             app.saveSettings()
                         }
                     }
-                    .font(.system(size: 14, weight: .semibold))
-                    ForEach(ButtonSkinID.allCases) { id in
-                        Button {
-                            if picked.contains(id.rawValue) { picked.remove(id.rawValue) } else { picked.insert(id.rawValue) }
-                        } label: {
-                            HStack {
-                                Image(systemName: picked.contains(id.rawValue) ? "checkmark.circle.fill" : "circle")
-                                Image(systemName: id.symbol).frame(width: 24)
-                                Text(id.title)
-                                Spacer()
-                                if app.settings.buttonSkins[id.rawValue] != nil {
-                                    Text(app.settings.buttonSkins[id.rawValue]?.video == true ? "视频" : "图片")
-                                        .font(.caption).foregroundColor(.secondary)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 14) {
+                        ForEach(ButtonSkinID.allCases) { id in
+                            Button {
+                                if picked.contains(id.rawValue) { picked.remove(id.rawValue) } else { picked.insert(id.rawValue) }
+                            } label: {
+                                VStack(spacing: 6) {
+                                    ZStack(alignment: .topTrailing) {
+                                        SkinBadge(systemImage: id.symbol, key: id.rawValue, title: id.title, skins: app.settings.buttonSkins, ink: .white)
+                                            .frame(width: 72, height: 72)
+                                            .moonDisc(overMedia: true)
+                                        if picked.contains(id.rawValue) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .font(.system(size: 16))
+                                                .foregroundColor(.white)
+                                                .background(Circle().fill(Color.black.opacity(0.45)))
+                                                .offset(x: 4, y: -4)
+                                        }
+                                    }
+                                    Text(id.title)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.white)
+                                        .lineLimit(2)
+                                        .multilineTextAlignment(.center)
+                                        .frame(maxWidth: .infinity)
+                                    if app.settings.buttonSkins[id.rawValue] != nil {
+                                        Text(app.settings.buttonSkins[id.rawValue]?.video == true ? "视频" : "图片")
+                                            .font(.system(size: 10))
+                                            .foregroundColor(.white.opacity(0.6))
+                                    }
                                 }
                             }
-                            .padding(.vertical, 8)
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("skin.\(id.rawValue)")
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("skin.\(id.rawValue)")
                     }
                 }
                 .padding(16)
+                .padding(.bottom, 24)
+            }
+            .background {
+                ZStack {
+                    Color.black
+                    SystemGlassFill(dark: true)
+                }
+                .ignoresSafeArea()
             }
             .navigationTitle("按键背景")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+            .environment(\.colorScheme, .dark)
+            .foregroundColor(.white)
             .accessibilityIdentifier("skins.root")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }.accessibilityIdentifier("skins.done")
+                    Button("完成") { dismiss() }
+                        .foregroundColor(.white)
+                        .accessibilityIdentifier("skins.done")
                 }
             }
             .moonOnChange(of: item) { newItem in
                 guard let newItem else { return }
                 Task { await importSkin(newItem) }
             }
+            .modifier(DarkSheet())
         }
+    }
+
+    private func skinAction(_ title: String, _ id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 6)
+                .moonGlass(MoonColors.media, radius: 14)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
     }
 
     private func assign(_ ids: [ButtonSkinID]) {
@@ -220,6 +268,21 @@ struct ButtonSkinsView: View {
                 app.showToast("没能保存这个背景")
             }
             self.item = nil
+        }
+    }
+}
+
+private struct DarkSheet: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.4, *) {
+            content.presentationBackground {
+                ZStack {
+                    Color.black
+                    SystemGlassFill(dark: true)
+                }
+            }
+        } else {
+            content
         }
     }
 }

@@ -78,6 +78,7 @@ struct FeedView: View {
         .moonOnChange(of: app.chromeGeneration) { _ in
             if userChrome { scheduleHide() }
         }
+        .onAppear { app.visibleBackdrop = .home }
         .onReceive(app.feedPlayer.$generation) { _ in syncChrome() }
         .onReceive(NotificationCenter.default.publisher(for: .moonResumeFeed)) { _ in
             guard app.settings.resumeOnReturn, app.tab == .home, FeedAutoplay.allowedNow(app.settings) else { return }
@@ -211,6 +212,10 @@ struct FeedView: View {
     }
 
     private func handleSingle(_ entry: MediaEntry) {
+        if entry.kind == .embed || !(entry.embedURL ?? "").isEmpty {
+            app.fullPlayer = entry
+            return
+        }
         let video = entry.kind == .video && entry.embedURL == nil
         if video, entry.playbackURL == nil {
             Task { await app.rehydrate(entry) }

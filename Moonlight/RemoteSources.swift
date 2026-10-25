@@ -21,6 +21,26 @@ enum HTTP {
         guard let data = await get(url, accept: accept, headers: headers) else { return nil }
         return String(data: data, encoding: .utf8)
     }
+
+    /// Like `get`, but keeps the status so a caller can show a real failure instead of an empty page.
+    static func fetch(_ url: URL, accept: String = "application/json,*/*", headers: [String: String] = [:]) async -> Result<Data, SourceError> {
+        var req = URLRequest(url: url, timeoutInterval: 12)
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(accept, forHTTPHeaderField: "Accept")
+        headers.forEach { req.setValue($1, forHTTPHeaderField: $0) }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse else { return .failure(SourceError(message: "没有收到回应")) }
+            guard (200..<300).contains(http.statusCode) else { return .failure(SourceError(message: "HTTP \(http.statusCode)")) }
+            return .success(data)
+        } catch {
+            return .failure(SourceError(message: "网络失败"))
+        }
+    }
+}
+
+struct SourceError: Error {
+    var message: String
 }
 
 enum JSONBox {

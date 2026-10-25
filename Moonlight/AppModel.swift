@@ -33,9 +33,9 @@ struct MovieFile: Transferable {
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(contentType: .movie) { SentTransferredFile($0.url) } importing: { received in
             let ext = received.file.pathExtension.isEmpty ? "mov" : received.file.pathExtension
-            let dest = FileManager.default.temporaryDirectory.appendingPathComponent("\(IDs.new()).\(ext)")
-            if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-            try FileManager.default.copyItem(at: received.file, to: dest)
+            guard let dest = MediaStore.copy(from: received.file, folder: MediaStore.inbox, ext: ext) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
             return MovieFile(url: dest)
         }
     }
@@ -73,11 +73,14 @@ final class AppModel: ObservableObject {
     @Published var demoEntry: MediaEntry?
     @Published var camera: CameraLaunch?
     @Published var fan: FanGesture?
+    /// Which page's photo should fill the window, including the area under the tab bar.
+    @Published var visibleBackdrop: BackdropPage = .home
     @Published var hotError: String?
     @Published var hotItems: [MediaEntry] = []
 
     static let immersiveDemoID = "immersive-demo"
     private var pickerSink: LibraryPickerSink?
+    private var cameraSink: SystemCameraSink?
 
     let feedPlayer = PlayerSession()
     let recorder = RecorderModel()
@@ -410,17 +413,12 @@ final class AppModel: ObservableObject {
     }
 
     func importPicker(_ item: PhotosPickerItem, focusAfter: Bool = true) async {
-        let types = item.supportedContentTypes
-        let video = types.contains { $0.conforms(to: .movie) || $0.conforms(to: .video) }
-        if video {
-            if let movie = try? await item.loadTransferable(type: MovieFile.self) {
-                importFile(at: movie.url, kind: .video, title: "视频", source: "import", focusAfter: focusAfter)
-            } else { showToast("无法读取这段视频") }
-        } else if let data = try? await item.loadTransferable(type: Data.self) {
-            importImageData(data, title: "图片", source: "import", focusAfter: focusAfter)
-        } else {
+        guard let saved = await PickedMedia.load(item, folder: MediaStore.inbox),
+              let path = MediaStore.resolve(saved.name, folder: MediaStore.inbox) else {
             showToast("无法读取这个文件")
+            return
         }
+        importFile(at: URL(fileURLWithPath: path), kind: saved.video ? .video : .image, title: saved.video ? "视频" : "图片", source: "import", focusAfter: focusAfter)
     }
 
     func saveToPhotos(_ entry: MediaEntry) {
@@ -515,8 +513,12 @@ final class AppModel: ObservableObject {
         if settings.sourceOn("youtube"), !settings.youtubeKey.isEmpty {
             all += await YouTubeAPI.search(key: settings.youtubeKey, query: term)
         }
-        if settings.sourceOn("peertube"), PublicLink.normalizedHost(settings.peertubeInstance) != nil {
-            all += await PeerTubeAPI.search(instance: settings.peertubeInstance, query: term)
+        var sourceFailure: String?
+        if settings.sourceOn("peertube") {
+            switch await PeerTubeAPI.browse(instance: settings.peertubeInstance, query: q) {
+            case .success(let rows): all += rows
+            case .failure(let error): sourceFailure = error.message
+            }
         }
         if settings.sourceOn("biliHot") {
             await loadHot()
@@ -538,7 +540,11 @@ final class AppModel: ObservableObject {
             return true
         }
         discoverBusy = false
-        if discoverResults.isEmpty { discoverError = "没有找到内容。换个词，或稍后再试。" }
+        if discoverResults.isEmpty {
+            discoverError = sourceFailure ?? "没有找到内容。换个词，或稍后再试。"
+        } else if let sourceFailure {
+            discoverError = sourceFailure
+        }
     }
 
     func subscribe(_ raw: String) {
@@ -972,12 +978,12 @@ final class AppModel: ObservableObject {
     }
 
     func importProfile(item: PhotosPickerItem, contactId: String, cover: Bool) async {
-        let video = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
-        if video, let movie = try? await item.loadTransferable(type: MovieFile.self) {
-            copyProfile(contactId: contactId, file: movie.url, video: true, cover: cover)
-        } else if let data = try? await item.loadTransferable(type: Data.self) {
-            copyProfileData(contactId: contactId, data: data, cover: cover)
+        guard let saved = await PickedMedia.load(item, folder: MediaStore.inbox),
+              let path = MediaStore.resolve(saved.name, folder: MediaStore.inbox) else {
+            showToast("没能保存这张图")
+            return
         }
+        copyProfile(contactId: contactId, file: URL(fileURLWithPath: path), video: saved.video, cover: cover)
     }
 
     private func restoreEntry(_ id: String) {
@@ -1081,18 +1087,51 @@ final class AppModel: ObservableObject {
 
     func openCamera(_ video: Bool) {
         fan = nil
-        camera = video ? .video : .photo
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            camera = nil
+            presentSystemCamera(video: video)
+        } else {
+            camera = video ? .video : .photo
+        }
     }
 
     func fireCapture(_ index: Int) {
         fan = nil
         switch index {
-        case 0: camera = .photo
-        case 1: camera = .video
+        case 0: openCamera(false)
+        case 1: openCamera(true)
         case 2: presentImporter()
         case 3: composer = ComposerDraft(authorId: social.selfId)
         default: break
         }
+    }
+
+    /// System camera, full screen. Photo and video modes are the picker's own controls.
+    /// The movie file is copied before the delegate returns, because the picker deletes it.
+    func presentSystemCamera(video: Bool) {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        let available = UIImagePickerController.availableMediaTypes(for: .camera) ?? []
+        let types = [UTType.image.identifier, UTType.movie.identifier].filter { available.contains($0) }
+        picker.mediaTypes = types.isEmpty ? [UTType.image.identifier] : types
+        if video, picker.mediaTypes.contains(UTType.movie.identifier) {
+            picker.cameraCaptureMode = .video
+        } else {
+            picker.cameraCaptureMode = .photo
+        }
+        picker.videoQuality = .typeHigh
+        picker.modalPresentationStyle = .fullScreen
+        let sink = SystemCameraSink(
+            onImage: { [weak self] data in
+                self?.importImageData(data, title: "拍摄", source: "camera")
+            },
+            onVideo: { [weak self] url in
+                self?.importFile(at: url, kind: .video, title: "录像", source: "camera")
+            }
+        )
+        picker.delegate = sink
+        cameraSink = sink
+        presentOnTop(picker)
     }
 
     func presentImporter() {
@@ -1203,6 +1242,38 @@ struct FanGesture: Equatable {
     var origin: CGPoint
     var finger: CGPoint
     var down: Bool
+}
+
+final class SystemCameraSink: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    var onImage: (Data) -> Void
+    var onVideo: (URL) -> Void
+    init(onImage: @escaping (Data) -> Void, onVideo: @escaping (URL) -> Void) {
+        self.onImage = onImage
+        self.onVideo = onVideo
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
+    }
+
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        if let url = info[.mediaURL] as? URL {
+            let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+            let copied = MediaStore.copy(from: url, folder: MediaStore.inbox, ext: ext)
+            let deliver = onVideo
+            picker.dismiss(animated: true) {
+                if let copied { deliver(copied) }
+            }
+            return
+        }
+        let image = (info[.originalImage] as? UIImage) ?? (info[.editedImage] as? UIImage)
+        if let image, let data = image.jpegData(compressionQuality: 0.92) {
+            let deliver = onImage
+            picker.dismiss(animated: true) { deliver(data) }
+            return
+        }
+        picker.dismiss(animated: true)
+    }
 }
 
 final class LibraryPickerSink: NSObject, PHPickerViewControllerDelegate {
