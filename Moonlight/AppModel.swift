@@ -59,6 +59,8 @@ final class AppModel: ObservableObject {
     @Published var discoverResults: [MediaEntry] = []
     @Published var discoverBusy = false
     @Published var discoverError: String?
+    /// Latest discover() call. An older call must not clear the spinner the newer one is showing.
+    private var discoverToken = UUID()
     @Published var requestSettings = false
     @Published var trash: [TrashItem] = []
     @Published var showTrash = false
@@ -487,7 +489,10 @@ final class AppModel: ObservableObject {
         scheduleSave()
     }
 
-    func discover(query: String) async {
+    func discover(query: String, linger: Bool = false) async {
+        let token = UUID()
+        discoverToken = token
+        let started = Date()
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let term = q.isEmpty ? ["moonlight", "aurora", "ocean", "galaxy", "night city", "forest"].randomElement()! : q
         discoverBusy = true
@@ -539,6 +544,13 @@ final class AppModel: ObservableObject {
             seen.insert(key)
             return true
         }
+        if linger {
+            let remain = 1.5 - Date().timeIntervalSince(started)
+            if remain > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(remain * 1_000_000_000))
+            }
+        }
+        guard discoverToken == token else { return }
         discoverBusy = false
         if discoverResults.isEmpty {
             discoverError = sourceFailure ?? "没有找到内容。换个词，或稍后再试。"

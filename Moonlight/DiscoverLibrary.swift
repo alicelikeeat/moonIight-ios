@@ -93,10 +93,8 @@ struct DiscoverView: View {
                     .moonGlass(colors, radius: 14)
                 toolButton("搜索", "magnifyingglass", GlassTint.blue, "discover.search") {
                     tools = false
-                    app.discoverBusy = true
-                    app.discoverError = nil
                     let typed = query
-                    Task { await app.discover(query: typed) }
+                    Task { await app.discover(query: typed, linger: true) }
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
