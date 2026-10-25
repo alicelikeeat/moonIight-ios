@@ -74,7 +74,6 @@ final class AppModel: ObservableObject {
     /// In-memory clip for the immersive UI test. Never written into the library.
     @Published var demoEntry: MediaEntry?
     @Published var camera: CameraLaunch?
-    @Published var fan: FanGesture?
     /// Which page's photo should fill the window, including the area under the tab bar.
     @Published var visibleBackdrop: BackdropPage = .home
     @Published var hotError: String?
@@ -86,7 +85,6 @@ final class AppModel: ObservableObject {
     /// True from the moment a system picker is handed to UIKit until every dismiss path clears it.
     private var presentingPicker = false
     private weak var presentedPicker: UIViewController?
-    private var fanCloseTask: Task<Void, Never>?
 
     let feedPlayer = PlayerSession()
     let recorder = RecorderModel()
@@ -1101,50 +1099,11 @@ final class AppModel: ObservableObject {
         showToast(video ? "已删除视频背景" : "已删除照片背景")
     }
 
-    /// Drops the fan, the press gate, and any suspended tab-bar gestures.
+    /// Drops the press gate and any suspended tab-bar gestures.
     /// A camera that closed without this left the next tap doing nothing.
     func releaseGestureChrome() {
-        fanCloseTask?.cancel()
-        fanCloseTask = nil
-        fan = nil
         PressGate.cancel()
         TabChrome.setSuspended(false)
-    }
-
-    /// Opens the capture fan once. A second call while it is up only moves the finger.
-    func beginFan(origin: CGPoint, finger: CGPoint) {
-        fanCloseTask?.cancel()
-        fanCloseTask = nil
-        if fan == nil || fan?.closing == true {
-            fan = FanGesture(origin: origin, finger: finger, down: true, started: Date(), closing: false)
-            Haptics.light()
-            TabChrome.setSuspended(true)
-            PressGate.begin()
-        } else {
-            fan?.finger = finger
-            fan?.down = true
-        }
-    }
-
-    func closeFan(animated: Bool) {
-        fanCloseTask?.cancel()
-        fanCloseTask = nil
-        guard var current = fan else { return }
-        if !animated {
-            fan = nil
-            return
-        }
-        if current.closing { return }
-        current.closing = true
-        current.down = false
-        current.started = Date()
-        fan = current
-        let reduce = UIAccessibility.isReduceMotionEnabled
-        let delay: UInt64 = reduce ? 180_000_000 : 280_000_000
-        fanCloseTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: delay)
-            if self.fan?.closing == true { self.fan = nil }
-        }
     }
 
     /// Cancel, swipe-down, a finished shot, a failed shot, and leaving the app all come through here.
@@ -1176,24 +1135,12 @@ final class AppModel: ObservableObject {
     }
 
     func openCamera(_ video: Bool) {
-        closeFan(animated: false)
         if UIImagePickerController.isSourceTypeAvailable(.camera) {
             camera = nil
             presentSystemCamera(video: video)
         } else {
             guard camera == nil else { return }
             camera = video ? .video : .photo
-        }
-    }
-
-    func fireCapture(_ index: Int) {
-        closeFan(animated: false)
-        switch index {
-        case 0: openCamera(false)
-        case 1: openCamera(true)
-        case 2: presentImporter()
-        case 3: composer = ComposerDraft(authorId: social.selfId)
-        default: break
         }
     }
 
@@ -1340,14 +1287,6 @@ enum CameraLaunch: String, Identifiable {
     case photo, video
     var id: String { rawValue }
     var video: Bool { self == .video }
-}
-
-struct FanGesture: Equatable {
-    var origin: CGPoint
-    var finger: CGPoint
-    var down: Bool
-    var started: Date
-    var closing: Bool
 }
 
 final class SystemCameraSink: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIAdaptivePresentationControllerDelegate {

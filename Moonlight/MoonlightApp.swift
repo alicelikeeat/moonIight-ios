@@ -73,7 +73,7 @@ struct RootView: View {
             page(app.tab == .capture ? .home : app.tab)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             if !feedChromeHidden {
-                MoonTabBar(suppressed: ring.session != nil || app.fan != nil)
+                MoonTabBar(suppressed: ring.session != nil)
                     .padding(.bottom, 4)
             }
         }
@@ -148,9 +148,6 @@ struct RootView: View {
                 onCancel: { app.camera = nil }
             )
             .ignoresSafeArea()
-        }
-        .overlay {
-            if app.fan != nil { CaptureFanOverlay() }
         }
         .sheet(isPresented: $app.showTrash) { TrashView() }
         .sheet(item: $ring.menu) { menu in
@@ -256,15 +253,15 @@ struct RootView: View {
 /// Glass tab bar. The selection pill slides to the current tab and follows a finger drag when 底栏滑块 is on.
 struct MoonTabBar: View {
     @EnvironmentObject private var app: AppModel
+    @EnvironmentObject private var ring: RingController
+    @EnvironmentObject private var hold: HoldController
     @Environment(\.moon) private var colors
     @Environment(\.colorScheme) private var scheme
     var suppressed: Bool
     /// Fractional slot while a finger is dragging along the bar. Nil snaps to the selected tab.
     @State private var dragSlot: CGFloat?
-    /// Center of 拍摄 in window coordinates, so a long-press still anchors the fan if the window probe misses.
+    /// Center of 拍摄 in window coordinates, so a long-press still anchors the ring if the window probe misses.
     @State private var captureCenter = CGPoint.zero
-    /// 0…1 while the finger is down on 拍摄, before and as the fan opens.
-    @State private var holdProgress: CGFloat = 0
 
     var body: some View {
         let ink = app.tab == .home ? MoonColors.media : colors
@@ -300,7 +297,7 @@ struct MoonTabBar: View {
         .background {
             ZStack {
                 selectionPill(ink)
-                TabDragSurface(enabled: app.settings.tabLens && app.fan == nil && !suppressed) { fraction, commit in
+                TabDragSurface(enabled: app.settings.tabLens && !suppressed) { fraction, commit in
                     if commit {
                         if let fraction { snap(to: fraction) }
                         dragSlot = nil
@@ -361,7 +358,7 @@ struct MoonTabBar: View {
 
     private func captureButton(_ ink: MoonColors) -> some View {
         Button {
-            guard !PressGate.suppressTap, app.fan == nil else { return }
+            guard !PressGate.suppressTap, ring.session?.marker != "capture.fan" else { return }
             app.nudgeChrome()
             app.openCamera(false)
         } label: {
@@ -369,15 +366,8 @@ struct MoonTabBar: View {
                 ZStack {
                     Circle().fill(Color.white.opacity(0.2)).frame(width: 46, height: 46)
                     Circle().stroke(Color.white.opacity(0.55), lineWidth: 1).frame(width: 46, height: 46)
-                    Circle()
-                        .trim(from: 0, to: holdProgress)
-                        .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 52, height: 52)
-                        .opacity(holdProgress > 0.02 ? 1 : 0)
                     Image(systemName: "camera.fill").font(.system(size: 18, weight: .semibold))
                 }
-                .scaleEffect(UIAccessibility.isReduceMotionEnabled ? 1 : 1 + 0.08 * holdProgress)
                 .offset(y: -8)
                 Text("拍摄").font(.system(size: 10, weight: .medium))
             }
@@ -388,28 +378,68 @@ struct MoonTabBar: View {
         }
         .buttonStyle(.plain)
         .background {
-            ZStack {
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { captureCenter = Self.mid(geo) }
-                        .moonOnChange(of: geo.frame(in: .global).midY) { _ in captureCenter = Self.mid(geo) }
-                }
-                CaptureHoldMeter { holdProgress = $0 }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { captureCenter = Self.mid(geo) }
+                    .moonOnChange(of: geo.frame(in: .global).midY) { _ in captureCenter = Self.mid(geo) }
             }
         }
         .simultaneousGesture(captureHold)
-        .holdTrack(onBegan: { point in
-            app.beginFan(origin: point, finger: point)
-        }, onChanged: { point in
-            app.beginFan(origin: point, finger: point)
-        }, onEnded: { point in
-            finishCaptureHold(at: point)
-        }, cancelsTap: true)
+        .holdTrack(onBegan: { openCaptureRing(at: $0) }, onChanged: { moveCapture(to: $0) }, onEnded: { finishCapture(at: $0) }, cancelsTap: true)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("拍摄")
         .accessibilityIdentifier("tab.capture")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// Same long-press as every other button: the ring, the chosen 长按动画, and the same release rules.
+    /// The marker sits beside the bubbles so `capture.fan` does not replace their ids.
+    private func openCaptureRing(at point: CGPoint) {
+        if ring.session?.marker == "capture.fan" {
+            moveCapture(to: point)
+            return
+        }
+        PressGate.begin()
+        TabChrome.setSuspended(true)
+        app.nudgeChrome()
+        let origin = captureCenter == .zero ? point : captureCenter
+        let items = [
+            RingItem(title: "拍照", systemImage: "camera.fill", key: "photo", accessID: "capture.photo") { app.openCamera(false) },
+            RingItem(title: "录像", systemImage: "video.fill", key: "video", accessID: "capture.video") { app.openCamera(true) },
+            RingItem(title: "导入", systemImage: "photo.on.rectangle", key: "import", accessID: "capture.import") { app.presentImporter() },
+            RingItem(title: "发朋友圈", systemImage: "square.and.pencil", key: "compose", accessID: "capture.compose") {
+                app.composer = ComposerDraft(authorId: app.social.selfId)
+            },
+        ]
+        let groups = [MenuGroup(title: "拍摄", items: items)]
+        let overMedia = app.tab == .home && !app.feedItems.isEmpty
+        ring.fingerDown = true
+        ring.finger = point
+        ring.present(origin: origin, items: items, groups: groups, settings: app.settings, overMedia: overMedia, marker: "capture.fan")
+        hold.arm(origin: origin, settings: app.settings, catalog: RingCatalog(items: items, groups: groups, context: .tab, title: "拍摄", overMedia: overMedia))
+    }
+
+    private func moveCapture(to point: CGPoint) {
+        guard ring.session?.marker == "capture.fan" else { return }
+        ring.finger = point
+        ring.fingerDown = true
+        hold.move(point)
+    }
+
+    private func finishCapture(at point: CGPoint) {
+        guard hold.engaged else { return }
+        let outcome = hold.lift()
+        ring.fingerDown = false
+        ring.finger = point
+        if outcome != .timed && outcome != .center {
+            if ring.session?.drop == true {
+                ring.releaseFinger(at: point)
+            } else if ring.session?.select == .drag || ring.session?.select == .slider {
+                ring.selectDrag(at: point)
+            }
+        }
+        TabChrome.setSuspended(false)
+        PressGate.end()
     }
 
     /// Lives on the button itself. A window-level probe can miss the press, and the button's tap would then open the camera.
@@ -418,9 +448,7 @@ struct MoonTabBar: View {
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .onChanged { value in
                 guard case .second(true, let drag) = value else { return }
-                let point = drag?.location ?? captureCenter
-                let origin = captureCenter == .zero ? point : captureCenter
-                app.beginFan(origin: origin, finger: point)
+                openCaptureRing(at: drag?.location ?? captureCenter)
             }
             .onEnded { value in
                 let point: CGPoint
@@ -429,20 +457,8 @@ struct MoonTabBar: View {
                 } else {
                     point = captureCenter
                 }
-                finishCaptureHold(at: point)
+                finishCapture(at: point)
             }
-    }
-
-    private func finishCaptureHold(at point: CGPoint) {
-        let release = FanAim.firesOnRelease(select: app.settings.menuSelect, drop: app.settings.dropSelect)
-        if release, let fan = app.fan, let hit = CaptureFanLayout.hitIndex(finger: point, origin: fan.origin, size: UIScreen.main.bounds.size) {
-            app.fireCapture(hit)
-        } else if app.fan != nil {
-            app.fan?.finger = point
-            app.fan?.down = false
-        }
-        TabChrome.setSuspended(false)
-        PressGate.end()
     }
 
     private static func mid(_ geo: GeometryProxy) -> CGPoint {

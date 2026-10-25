@@ -9,6 +9,8 @@ struct RingItem: Identifiable {
     var children: [RingItem] = []
     var enabled: Bool = true
     var key: String?
+    /// Accessibility id when this bubble is not addressed as `ring.标题`.
+    var accessID: String? = nil
     var destructive: Bool = false
     var action: () -> Void = {}
 }
@@ -41,6 +43,8 @@ struct RingSession: Identifiable {
     var overMedia: Bool
     var starSpeed: Float
     var started = Date()
+    /// Extra test id, drawn beside the ring so it does not replace the bubbles' ids.
+    var marker: String? = nil
 }
 
 /// The ring that opened 更多, so 按键背景 can bring the same buttons back into edit mode.
@@ -50,6 +54,7 @@ struct RingSnap {
     var groups: [MenuGroup]
     var overMedia: Bool
     var settings: AppSettings
+    var marker: String? = nil
 }
 
 @MainActor
@@ -75,7 +80,7 @@ final class RingController: ObservableObject {
     private var landed: Set<Int> = []
     private var lastSnap: RingSnap?
 
-    func present(origin: CGPoint, items: [RingItem], groups: [MenuGroup], settings: AppSettings, overMedia: Bool = false, styleOverride: RingAnim? = nil, editing: Bool = false) {
+    func present(origin: CGPoint, items: [RingItem], groups: [MenuGroup], settings: AppSettings, overMedia: Bool = false, styleOverride: RingAnim? = nil, marker: String? = nil, editing: Bool = false) {
         // A second long-press must not replace the ring while button skins are being chosen.
         if skinEdit && !editing { return }
         closeTask?.cancel()
@@ -104,7 +109,7 @@ final class RingController: ObservableObject {
             self?.beginSkinEdit()
         }, current: settings.ringAnim)
         let shown = Array(items.prefix(5))
-        lastSnap = RingSnap(origin: origin, items: shown, groups: storedGroups, overMedia: overMedia, settings: settings)
+        lastSnap = RingSnap(origin: origin, items: shown, groups: storedGroups, overMedia: overMedia, settings: settings, marker: marker)
         session = RingSession(
             origin: origin,
             items: shown,
@@ -114,7 +119,8 @@ final class RingController: ObservableObject {
             select: settings.menuSelect == .drop ? .tap : settings.menuSelect,
             drop: settings.dropSelect || settings.menuSelect == .drop,
             overMedia: overMedia,
-            starSpeed: RingMotion.clampSpeed(settings.starSpeed)
+            starSpeed: RingMotion.clampSpeed(settings.starSpeed),
+            marker: marker
         )
         Haptics.light()
     }
@@ -148,7 +154,7 @@ final class RingController: ObservableObject {
         guard let snap = lastSnap else { return }
         skinPicked = []
         pendingSkin = nil
-        present(origin: snap.origin, items: snap.items, groups: snap.groups, settings: snap.settings, overMedia: snap.overMedia, editing: true)
+        present(origin: snap.origin, items: snap.items, groups: snap.groups, settings: snap.settings, overMedia: snap.overMedia, marker: snap.marker, editing: true)
     }
 
     func endSkinEdit() {
@@ -319,6 +325,13 @@ struct RingOverlay: View {
                     .frame(width: 48, height: 24)
                     .allowsHitTesting(false)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                if let marker = ring.session?.marker {
+                    Color.clear
+                        .frame(width: 4, height: 4)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityIdentifier(marker)
+                        .allowsHitTesting(false)
+                }
             }
         }
         .ignoresSafeArea()
@@ -581,7 +594,8 @@ struct RingOverlay: View {
             .offset(shift)
             .accessibilityElement(children: .combine)
             .accessibilityLabel(item.title)
-            .accessibilityIdentifier("ring.\(item.title)")
+            .accessibilityIdentifier(item.accessID ?? "ring.\(item.title)")
+            .accessibilityAddTraits(.isButton)
             .accessibilityAddTraits(selected ? .isSelected : AccessibilityTraits())
             .onTapGesture {
                 if ring.skinEdit {
