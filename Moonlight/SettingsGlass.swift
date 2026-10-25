@@ -34,6 +34,7 @@ struct SettingsView: View {
                     .foregroundColor(ink.textDim)
                     .padding(.horizontal, 6)
                 entries
+                structureGroup
                 recordGroup
                 sourcesGroup
                 socialGroup
@@ -243,6 +244,42 @@ struct SettingsView: View {
         }
     }
 
+    /// Page structure. More options (how a screen is put together) belong in this group.
+    private var structureGroup: some View {
+        GlassGroup(title: "应用结构", colors: ink) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("朋友圈布局")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(ink.textDim)
+                    .padding(.horizontal, 14)
+                Picker("朋友圈布局", selection: binding(\.momentsLayout)) {
+                    ForEach(MomentsLayout.allCases) { layout in
+                        Text(layout.label).tag(layout)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 14)
+                .accessibilityIdentifier("settings.momentsLayout")
+            }
+            .padding(.top, 8)
+            Toggle("底栏滑块", isOn: binding(\.tabLens))
+                .padding(.horizontal, 14)
+                .accessibilityIdentifier("settings.tabLens")
+            Text("打开时，按住底栏拖动可以换页。拍摄只是中间的按钮，不会变成一页。")
+                .font(.system(size: 12)).foregroundColor(ink.textDim).padding(.horizontal, 14)
+            Button { pagesOpen = true } label: {
+                GlassLine(title: "应用到页面", subtitle: BackdropPages.summary(app.settings.backdropPages), symbol: "square.on.square", tint: GlassTint.orange, colors: ink)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("backdrop.pages")
+            Text("这一组决定页面怎么拼起来。以后的结构选项也加在这里。")
+                .font(.system(size: 12))
+                .foregroundColor(ink.textDim)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+        }
+    }
+
     private var backdropGroup: some View {
         GlassGroup(title: "首页背景", colors: ink) {
             Picker("背景", selection: binding(\.backdropMode)) {
@@ -291,11 +328,6 @@ struct SettingsView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .accessibilityIdentifier("backdrop.blur")
-            Button { pagesOpen = true } label: {
-                GlassLine(title: "应用到页面", subtitle: BackdropPages.summary(app.settings.backdropPages), symbol: "square.on.square", tint: GlassTint.orange, colors: ink)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("backdrop.pages")
             Toggle(isOn: binding(\.edgeToEdge)) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("延伸到灵动岛").foregroundColor(ink.text)
@@ -467,11 +499,6 @@ struct SettingsView: View {
                 .padding(.horizontal, 14)
                 .accessibilityIdentifier("settings.drop")
             Text("默认关闭。长按只弹出圆环，点按键才会执行。打开后玻璃水滴跟着手指，松手落到的按键会执行。")
-                .font(.system(size: 12)).foregroundColor(ink.textDim).padding(.horizontal, 14)
-            Toggle("底栏滑块", isOn: binding(\.tabLens))
-                .padding(.horizontal, 14)
-                .accessibilityIdentifier("settings.tabLens")
-            Text("打开时，按住底栏拖动可以换页。拍摄只是中间的按钮，不会变成一页。")
                 .font(.system(size: 12)).foregroundColor(ink.textDim).padding(.horizontal, 14)
             Picker("主题", selection: binding(\.theme)) {
                 ForEach(ThemeMode.allCases, id: \.self) { Text($0.label).tag($0) }

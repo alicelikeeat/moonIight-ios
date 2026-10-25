@@ -128,6 +128,9 @@ final class TabTapTests: XCTestCase {
         let lens = app.switches["底栏滑块"]
         let lensId = app.descendants(matching: .any)["settings.tabLens"]
         if !(lens.waitForExistence(timeout: 2) || lensId.waitForExistence(timeout: 1)) {
+            app.swipeDown()
+        }
+        if !(lens.waitForExistence(timeout: 1) || lensId.waitForExistence(timeout: 1)) {
             app.swipeUp()
         }
         XCTAssertTrue(lens.waitForExistence(timeout: 3) || lensId.waitForExistence(timeout: 2), "没有底栏滑块开关\n\(app.debugDescription)")
@@ -168,6 +171,64 @@ final class TabTapTests: XCTestCase {
             "录屏没有开始，也没有说明这台设备不能录\n\(app.debugDescription)"
         )
         if pill.exists, app.buttons["停止"].exists { app.buttons["停止"].tap() }
+    }
+
+    func testRingSkinEditFromTheMorePanel() {
+        let jump = app.buttons["home.discover"]
+        XCTAssertTrue(jump.waitForExistence(timeout: 12))
+        jump.press(forDuration: 1.1)
+        let more = app.buttons["ring.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5), "长按没有打开圆环上的更多\n\(app.debugDescription)")
+        more.tap()
+        let skins = app.buttons["按键背景"]
+        let skinsId = app.descendants(matching: .any)["more.skins"]
+        XCTAssertTrue(
+            skins.waitForExistence(timeout: 5) || skinsId.waitForExistence(timeout: 2),
+            "更多里没有按键背景\n\(app.debugDescription)"
+        )
+        let opener = skins.exists ? skins : skinsId
+        if !opener.isHittable { app.swipeUp() }
+        if opener.isHittable {
+            opener.tap()
+        } else {
+            opener.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        let edit = app.descendants(matching: .any)["skins.edit"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "按键背景编辑没有出现\n\(app.debugDescription)")
+        let sheet = app.descendants(matching: .any)["more.sheet"]
+        let gone = NSPredicate(format: "exists == NO")
+        wait(for: [XCTNSPredicateExpectation(predicate: gone, object: sheet)], timeout: 5)
+        let button = app.descendants(matching: .any)["ring.随机一条"]
+        XCTAssertTrue(button.waitForExistence(timeout: 4), "编辑时圆环按键不在了\n\(app.debugDescription)")
+        if button.isHittable {
+            button.tap()
+        } else {
+            button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["skins.edit"].exists, "点按键退出了编辑")
+        XCTAssertTrue(button.isSelected, "选中的圆环按键没有高亮\n\(app.debugDescription)")
+    }
+
+    func testUnifiedMomentsHeader() {
+        openSettings()
+        let unified = app.buttons["统一"]
+        let picker = app.descendants(matching: .any)["settings.momentsLayout"]
+        if !(unified.waitForExistence(timeout: 3) || picker.waitForExistence(timeout: 2)) {
+            app.swipeUp()
+        }
+        XCTAssertTrue(unified.waitForExistence(timeout: 4) || picker.waitForExistence(timeout: 2), "没有朋友圈布局\n\(app.debugDescription)")
+        if unified.exists {
+            unified.tap()
+        } else {
+            picker.buttons["统一"].tap()
+        }
+        app.buttons["settings.done"].tap()
+        let moments = tab("朋友圈")
+        XCTAssertTrue(moments.waitForExistence(timeout: 5))
+        moments.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["moments.unified"].waitForExistence(timeout: 5), "统一布局没有出现\n\(app.debugDescription)")
+        XCTAssertTrue(app.descendants(matching: .any)["moments.avatar"].waitForExistence(timeout: 3), "居中头像不在\n\(app.debugDescription)")
+        XCTAssertFalse(app.descendants(matching: .any)["moments.classic"].exists, "统一布局还留着经典封面")
     }
 
     private func openSettings() {

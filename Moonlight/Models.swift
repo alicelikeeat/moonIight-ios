@@ -262,6 +262,8 @@ struct AppSettings: Codable, Equatable, Sendable {
     var backdropPages: [String] = ["home"]
     /// Home video and page backgrounds may draw under the status bar and Dynamic Island.
     var edgeToEdge: Bool = false
+    /// 朋友圈. Classic is a cover plus a separate list. Unified is one background and a centered avatar.
+    var momentsLayout: MomentsLayout = .classic
     var sourceFlags: [String: Bool] = [:]
     var webSources: [WebSource] = []
     var biliHotCategory: String = ""
@@ -332,6 +334,7 @@ struct AppSettings: Codable, Equatable, Sendable {
             "backdropPhotoFocus": focus,
             "backdropVideoFocus": focus,
             "edgeToEdge": false,
+            "momentsLayout": "classic",
             "sourceFlags": [String: Bool](),
             "webSources": [Any](),
             "biliHotCategory": "",

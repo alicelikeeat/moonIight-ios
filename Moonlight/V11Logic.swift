@@ -1,5 +1,17 @@
 import Foundation
 
+/// How 朋友圈 is arranged. Classic keeps a cover band and a separate list. Unified is one background.
+enum MomentsLayout: String, Codable, CaseIterable, Identifiable, Sendable {
+    case classic, unified
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .classic: return "经典"
+        case .unified: return "统一"
+        }
+    }
+}
+
 enum BackdropMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case theme, black, photo, video
     var id: String { rawValue }

@@ -13,36 +13,48 @@ struct MomentsView: View {
     @State private var showChats = false
 
     var body: some View {
+        let me = app.social.me
+        let unified = app.settings.momentsLayout == .unified
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 14) {
-                    if app.social.moments.isEmpty {
-                        VStack(spacing: 10) {
-                            Text("朋友圈还是空的").font(.system(size: 18, weight: .semibold))
-                            Text("写一条，或者载入几个示例好友。").font(.system(size: 13)).foregroundColor(colors.textDim)
-                            Button("载入示例") { app.loadDemo() }
-                                .font(.system(size: 15, weight: .semibold))
-                                .padding(.horizontal, 16).padding(.vertical, 8)
-                                .moonGlass(colors, radius: 16)
-                                .accessibilityIdentifier("moments.demo")
-                        }
-                        .padding(.top, 48)
-                    }
-                    ForEach(app.social.timeline) { moment in
-                        MomentCard(moment: moment)
-                    }
+            ZStack {
+                if unified {
+                    unifiedBackdrop(me)
+                } else {
+                    LinearGradient(colors: [colors.bgTop, colors.bgBottom], startPoint: .top, endPoint: .bottom)
+                        .ignoresSafeArea()
                 }
-                .padding(16)
-                .padding(.bottom, 100)
-            }
-            .background {
-                ZStack {
-                    SystemGlassFill(dark: colors.dark)
-                    PageBackdrop(page: .moments)
+                ScrollView {
+                    VStack(spacing: 14) {
+                        if unified {
+                            unifiedHeader(me)
+                        } else {
+                            classicHeader(me)
+                        }
+                        VStack(spacing: 14) {
+                            if app.social.moments.isEmpty {
+                                VStack(spacing: 10) {
+                                    Text("朋友圈还是空的").font(.system(size: 18, weight: .semibold))
+                                    Text("写一条，或者载入几个示例好友。").font(.system(size: 13)).foregroundColor(colors.textDim)
+                                    Button("载入示例") { app.loadDemo() }
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .padding(.horizontal, 16).padding(.vertical, 8)
+                                        .moonGlass(colors, radius: 16)
+                                        .accessibilityIdentifier("moments.demo")
+                                }
+                                .padding(.top, 28)
+                            }
+                            ForEach(app.social.timeline) { moment in
+                                MomentCard(moment: moment)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                    .padding(.bottom, 120)
                 }
             }
             .navigationTitle("朋友圈")
-            .environment(\.colorScheme, app.settings.showsBackdrop(.moments) ? .dark : scheme)
+            .navigationBarTitleDisplayMode(.inline)
+            .environment(\.colorScheme, unified && overMedia(me) ? .dark : scheme)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { showFriends = true } label: { Image(systemName: "person.2") }
@@ -68,6 +80,130 @@ struct MomentsView: View {
             .navigationDestination(isPresented: $showChats) { ChatListView() }
             .onAppear { app.visibleBackdrop = .moments }
         }
+    }
+
+    /// Cover band on top, avatar overlapping the edge, list on its own opaque surface.
+    private func classicHeader(_ me: Contact) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            coverMedia(me)
+                .frame(height: 210)
+                .frame(maxWidth: .infinity)
+                .clipped()
+            HStack(alignment: .bottom, spacing: 12) {
+                portrait(me, size: 76, radius: 38)
+                    .overlay(Circle().stroke(Color.white, lineWidth: 3))
+                    .offset(y: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(me.name)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
+                    if !me.bio.isEmpty {
+                        Text(me.bio)
+                            .font(.system(size: 13))
+                            .foregroundColor(.white.opacity(0.92))
+                            .lineLimit(2)
+                    }
+                }
+                .padding(.bottom, 8)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+        }
+        .padding(.bottom, 36)
+        .accessibilityIdentifier("moments.classic")
+    }
+
+    /// Avatar, name, and signature centered. The marker is not an ancestor of the avatar.
+    private func unifiedHeader(_ me: Contact) -> some View {
+        let ink: Color = overMedia(me) ? .white : colors.text
+        return VStack(spacing: 10) {
+            portrait(me, size: 112, radius: 32)
+                .accessibilityIdentifier("moments.avatar")
+            Text(me.name)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(ink)
+                .multilineTextAlignment(.center)
+            if !me.bio.isEmpty {
+                Text(me.bio)
+                    .font(.system(size: 14))
+                    .foregroundColor(overMedia(me) ? Color.white.opacity(0.84) : colors.textDim)
+                    .multilineTextAlignment(.center)
+            }
+            Color.clear
+                .frame(width: 4, height: 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("moments.unified")
+                .accessibilityLabel("统一")
+                .allowsHitTesting(false)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 12)
+        .padding(.horizontal, 24)
+    }
+
+    private func overMedia(_ me: Contact) -> Bool {
+        if let path = me.coverPath, FileManager.default.fileExists(atPath: path) { return true }
+        return app.settings.showsBackdrop(.moments)
+    }
+
+    @ViewBuilder private func unifiedBackdrop(_ me: Contact) -> some View {
+        ZStack {
+            if let path = me.coverPath, FileManager.default.fileExists(atPath: path) {
+                ScreenPinnedFill {
+                    ZStack {
+                        Color.black
+                        if me.coverVideo {
+                            LoopFilm(ref: path)
+                        } else if let image = UIImage(contentsOfFile: path) {
+                            Image(uiImage: image).resizable().scaledToFill()
+                        }
+                        Color.black.opacity(0.28)
+                    }
+                }
+            } else if app.settings.showsBackdrop(.moments) {
+                PageBackdrop(page: .moments)
+            } else {
+                LinearGradient(colors: [colors.bgTop, colors.bgBottom], startPoint: .top, endPoint: .bottom)
+                SystemGlassFill(dark: colors.dark)
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private func coverMedia(_ me: Contact) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(red: 0.16, green: 0.20, blue: 0.34), Color(red: 0.42, green: 0.34, blue: 0.52)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            if let path = me.coverPath, FileManager.default.fileExists(atPath: path) {
+                if me.coverVideo {
+                    LoopFilm(ref: path)
+                } else if let image = UIImage(contentsOfFile: path) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                }
+            }
+            LinearGradient(colors: [.clear, .black.opacity(0.38)], startPoint: .center, endPoint: .bottom)
+        }
+    }
+
+    private func portrait(_ me: Contact, size: CGFloat, radius: CGFloat) -> some View {
+        ZStack {
+            if let path = me.avatarPath, me.avatarVideo, FileManager.default.fileExists(atPath: path) {
+                LoopFilm(ref: path)
+            } else if let path = me.avatarPath, FileManager.default.fileExists(atPath: path), let image = UIImage(contentsOfFile: path) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Rectangle().fill(Monogram.color(me.avatarColor))
+                Text(Monogram.letter(me.name))
+                    .font(.system(size: size * 0.36, weight: .semibold))
+                    .foregroundColor(.black.opacity(0.75))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
 

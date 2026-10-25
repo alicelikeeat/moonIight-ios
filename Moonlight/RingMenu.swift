@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -42,6 +43,15 @@ struct RingSession: Identifiable {
     var started = Date()
 }
 
+/// The ring that opened 更多, so 按键背景 can bring the same buttons back into edit mode.
+struct RingSnap {
+    var origin: CGPoint
+    var items: [RingItem]
+    var groups: [MenuGroup]
+    var overMedia: Bool
+    var settings: AppSettings
+}
+
 @MainActor
 final class RingController: ObservableObject {
     @Published var session: RingSession?
@@ -53,12 +63,19 @@ final class RingController: ObservableObject {
     @Published var settled = false
     @Published var closeStarted: Date?
     @Published var bubbleLive = false
+    /// Quick edit: taps select ring buttons instead of running them. 水滴 and drag-release do not fire.
+    @Published var skinEdit = false
+    @Published var skinPicked = Set<String>()
+    @Published var pendingSkin: ButtonSkin?
     var overlayOrigin = CGPoint.zero
     let bubbles = BubbleField()
     private var closeTask: Task<Void, Never>?
     private var landed: Set<Int> = []
+    private var lastSnap: RingSnap?
 
-    func present(origin: CGPoint, items: [RingItem], groups: [MenuGroup], settings: AppSettings, overMedia: Bool = false, styleOverride: RingAnim? = nil) {
+    func present(origin: CGPoint, items: [RingItem], groups: [MenuGroup], settings: AppSettings, overMedia: Bool = false, styleOverride: RingAnim? = nil, editing: Bool = false) {
+        // A second long-press must not replace the ring while button skins are being chosen.
+        if skinEdit && !editing { return }
         closeTask?.cancel()
         let reduce = UIAccessibility.isReduceMotionEnabled
         let picked = styleOverride ?? RingAnimPick.pick(
@@ -72,12 +89,24 @@ final class RingController: ObservableObject {
         closing = false
         settled = false
         bubbleLive = false
+        if editing {
+            skinEdit = true
+        } else {
+            skinEdit = false
+            skinPicked = []
+            pendingSkin = nil
+        }
         bubbles.reset()
         bubbles.onNearest = { _ in Haptics.tick() }
+        let storedGroups = Self.withSkinAction(groups) { [weak self] in
+            self?.beginSkinEdit()
+        }
+        let shown = Array(items.prefix(5))
+        lastSnap = RingSnap(origin: origin, items: shown, groups: storedGroups, overMedia: overMedia, settings: settings)
         session = RingSession(
             origin: origin,
-            items: Array(items.prefix(5)),
-            groups: groups,
+            items: shown,
+            groups: storedGroups,
             style: style,
             backdrop: settings.menuBackdrop,
             select: settings.menuSelect == .drop ? .tap : settings.menuSelect,
@@ -100,17 +129,51 @@ final class RingController: ObservableObject {
         closeTask?.cancel()
         closeTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 320_000_000)
-            self?.session = nil
-            self?.closing = false
-            self?.expanded = nil
-            self?.settled = false
-            self?.closeStarted = nil
+            guard let self, !Task.isCancelled else { return }
+            self.session = nil
+            self.closing = false
+            self.expanded = nil
+            self.settled = false
+            self.closeStarted = nil
+            self.skinEdit = false
+            self.skinPicked = []
             then?()
         }
     }
 
+    /// Reopens the ring that was just closed into the more sheet, in button-skin edit mode.
+    func beginSkinEdit() {
+        guard let snap = lastSnap else { return }
+        skinPicked = []
+        pendingSkin = nil
+        present(origin: snap.origin, items: snap.items, groups: snap.groups, settings: snap.settings, overMedia: snap.overMedia, editing: true)
+    }
+
+    func endSkinEdit() {
+        skinEdit = false
+        skinPicked = []
+        pendingSkin = nil
+        dismiss()
+    }
+
+    func toggleSkin(_ id: ButtonSkinID) {
+        if skinPicked.contains(id.rawValue) { skinPicked.remove(id.rawValue) }
+        else { skinPicked.insert(id.rawValue) }
+        Haptics.tick()
+    }
+
+    private static func withSkinAction(_ groups: [MenuGroup], action: @escaping () -> Void) -> [MenuGroup] {
+        if groups.contains(where: { $0.items.contains { $0.key == "skins" } }) { return groups }
+        var copy = groups
+        copy.append(MenuGroup(title: "按键", items: [
+            RingItem(title: "按键背景", systemImage: "circle.grid.2x2.fill", key: "skins", action: action),
+        ]))
+        return copy
+    }
+
     /// Drag-mode release. Recomputes the same full-screen layout the overlay uses.
     func selectDrag(at global: CGPoint) {
+        guard !skinEdit else { return }
         guard let session, session.select == .drag || session.select == .slider, !session.drop else { return }
         let size = UIScreen.main.bounds.size
         let n = session.items.count
@@ -151,6 +214,7 @@ final class RingController: ObservableObject {
 
     /// Lift while 水滴选择 is on. The button under the droplet fires; empty space cancels; a still finger leaves the ring up.
     func releaseFinger(at global: CGPoint) {
+        guard !skinEdit else { return }
         guard let session, session.drop else { return }
         let local = CGPoint(x: global.x - overlayOrigin.x, y: global.y - overlayOrigin.y)
         if !bubbles.lastCenters.isEmpty {
@@ -208,7 +272,10 @@ struct RingOverlay: View {
             ZStack {
                 ZStack { backdrop }
                     .contentShape(Rectangle())
-                    .onTapGesture { ring.dismiss() }
+                    .onTapGesture {
+                        guard !ring.skinEdit else { return }
+                        ring.dismiss()
+                    }
                 if let session = ring.session {
                     ringBody(session, localOrigin: CGPoint(x: session.origin.x - frame.minX, y: session.origin.y - frame.minY), size: geo.size)
                 }
@@ -222,7 +289,14 @@ struct RingOverlay: View {
             }
         }
         .ignoresSafeArea()
-        .allowsHitTesting(!(ring.fingerDown && ring.session?.drop == true))
+        .overlay(alignment: .bottom) {
+            if ring.skinEdit {
+                SkinEditBar(ring: ring)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, ScreenInsets.bottom + 16)
+            }
+        }
+        .allowsHitTesting(!(ring.fingerDown && ring.session?.drop == true && !ring.skinEdit))
     }
 
     @ViewBuilder private var backdrop: some View {
@@ -414,6 +488,8 @@ struct RingOverlay: View {
 
     private func ringButton(_ item: RingItem, pose: RingMotion.Pose, center: CGPoint, session: RingSession, parentAngle: Double, radius: Double, influence: Float = 0, finger: CGPoint = .zero, time: Float = 0, index: Int = 0) -> some View {
         let highlighted = ring.fingerDown && ring.bubbles.nearest == index
+        let skinID = ButtonSkins.identify(key: item.key, title: item.title)
+        let selected = ring.skinEdit && skinID.map { ring.skinPicked.contains($0.rawValue) } == true
         let lift = influence
         let ink: Color = session.overMedia ? .white : Color.primary
         let plate = session.overMedia ? MoonColors.media.glassTint : Color.primary.opacity(0.08)
@@ -447,6 +523,15 @@ struct RingOverlay: View {
                         }
                     }
                     .shadow(color: .black.opacity(0.18 + 0.32 * Double(lift)), radius: 8 + 14 * CGFloat(lift), y: 4 + 6 * CGFloat(lift))
+                    .overlay {
+                        if selected {
+                            Circle()
+                                .stroke(Color.white, lineWidth: 3)
+                                .background(Circle().fill(Color.white.opacity(0.22)))
+                                .frame(width: 56, height: 56)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .rotationEffect(.degrees(Double(pose.rot)))
                 Text(item.title)
                     .font(.system(size: 11, weight: .medium))
@@ -464,7 +549,12 @@ struct RingOverlay: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(item.title)
             .accessibilityIdentifier("ring.\(item.title)")
+            .accessibilityAddTraits(selected ? .isSelected : AccessibilityTraits())
             .onTapGesture {
+                if ring.skinEdit {
+                    if let skinID { ring.toggleSkin(skinID) }
+                    return
+                }
                 guard item.enabled else { return }
                 app.nudgeChrome()
                 Haptics.tick()
@@ -491,7 +581,7 @@ struct RingOverlay: View {
             ForEach(Array(item.children.enumerated()), id: \.element.id) { i, child in
                 let rad = angles[i] * .pi / 180
                 Button {
-                    guard child.enabled else { return }
+                    guard !ring.skinEdit, child.enabled else { return }
                     Haptics.confirm()
                     child.action()
                     ring.dismiss()
@@ -579,6 +669,7 @@ struct RingOverlay: View {
         let pose = buttonPose(session, index: 0, elapsed: elapsed, closing: closing)
         let has = !session.groups.isEmpty
         return Button {
+            guard !ring.skinEdit else { return }
             Haptics.tick()
             ring.openSheet()
         } label: {
@@ -630,6 +721,108 @@ struct FingerLens: View {
         .shadow(color: .black.opacity(0.22), radius: 12, y: 4)
         .accessibilityIdentifier("ring.drop")
         .allowsHitTesting(false)
+    }
+}
+
+/// Shown on the open ring while choosing which buttons receive a photo or video.
+private struct SkinEditBar: View {
+    @ObservedObject var ring: RingController
+    @EnvironmentObject private var app: AppModel
+    @State private var item: PhotosPickerItem?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Color.clear
+                .frame(width: 4, height: 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("skins.edit")
+                .accessibilityLabel("按键背景")
+                .allowsHitTesting(false)
+            Text(ring.skinPicked.isEmpty ? "点圆环上的按键，再选图片或视频" : "已选 \(ring.skinPicked.count) 个按键")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.white)
+            PhotosPicker(selection: $item, matching: .any(of: [.images, .videos])) {
+                Text("选图片或视频")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .moonGlass(MoonColors.media, radius: 14)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("skins.edit.pick")
+            HStack(spacing: 8) {
+                editAction("用在全部", "skins.edit.all") { applyAll() }
+                editAction("清除", "skins.edit.clear") { clearSelected() }
+                editAction("完成", "skins.edit.done") { ring.endSkinEdit() }
+            }
+        }
+        .padding(14)
+        .moonGlass(MoonColors.media, radius: 22)
+        .moonOnChange(of: item) { picked in
+            guard let picked else { return }
+            Task { await importAndApply(picked) }
+        }
+    }
+
+    private func editAction(_ title: String, _ id: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .moonGlass(MoonColors.media, radius: 14)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(id)
+    }
+
+    private func importAndApply(_ picked: PhotosPickerItem) async {
+        let saved = await PickedMedia.load(picked, folder: MediaStore.skins).map { ButtonSkin(path: $0.name, video: $0.video) }
+        await MainActor.run {
+            item = nil
+            guard let saved else {
+                app.showToast("没能保存这个背景")
+                return
+            }
+            ring.pendingSkin = saved
+            let ids = ButtonSkinID.allCases.filter { ring.skinPicked.contains($0.rawValue) }
+            guard !ids.isEmpty else {
+                app.showToast(saved.video ? "已选一段视频，再点要套上的按键" : "已选一张图片，再点要套上的按键")
+                return
+            }
+            var skins = app.settings.buttonSkins
+            ButtonSkins.assign(ids, skin: saved, into: &skins)
+            app.settings.buttonSkins = skins
+            app.saveSettings()
+            app.showToast("已套到 \(ids.count) 个按键")
+        }
+    }
+
+    private func applyAll() {
+        guard let skin = ring.pendingSkin ?? app.settings.buttonSkins.values.first else {
+            app.showToast("先选一张图片或一段视频")
+            return
+        }
+        var skins = app.settings.buttonSkins
+        ButtonSkins.assignAll(skin, into: &skins)
+        app.settings.buttonSkins = skins
+        app.saveSettings()
+        app.showToast("已套到全部 29 个按键")
+    }
+
+    private func clearSelected() {
+        var ids = ButtonSkinID.allCases.filter { ring.skinPicked.contains($0.rawValue) }
+        if ids.isEmpty, let session = ring.session {
+            ids = session.items.compactMap { ButtonSkins.identify(key: $0.key, title: $0.title) }
+        }
+        var skins = app.settings.buttonSkins
+        ButtonSkins.clear(ids, skins: &skins)
+        app.settings.buttonSkins = skins
+        app.saveSettings()
+        ring.skinPicked = []
+        app.showToast(ids.isEmpty ? "没有可清除的按键" : "已清除")
     }
 }
 

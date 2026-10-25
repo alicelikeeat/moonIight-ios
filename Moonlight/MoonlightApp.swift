@@ -184,6 +184,7 @@ struct RootView: View {
     /// Long-press anywhere that does not already own a press (feed media, a video).
     /// A short tap still reaches the button; this recognizer does not cancel it.
     private func beganPress(_ point: CGPoint) {
+        if ring.skinEdit { return }
         TabChrome.setSuspended(true)
         PressGate.begin()
         app.nudgeChrome()
