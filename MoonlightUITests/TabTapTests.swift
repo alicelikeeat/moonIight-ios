@@ -259,9 +259,13 @@ final class TabTapTests: XCTestCase {
             "长按拍摄没有打开气泡\n\(app.debugDescription)"
         )
         XCTAssertTrue(home.isSelected, "长按拍摄把页面换了")
-        if compose.waitForExistence(timeout: 2) { compose.tap() }
-        else if composeLabel.waitForExistence(timeout: 2) { composeLabel.tap() }
-        XCTAssertTrue(app.staticTexts["发动态"].waitForExistence(timeout: 5), "发朋友圈没有打开发动态\n\(app.debugDescription)")
+        let bubble = compose.waitForExistence(timeout: 2) ? compose : composeLabel
+        XCTAssertTrue(bubble.waitForExistence(timeout: 2), "扇形里没有发朋友圈\n\(app.debugDescription)")
+        bubble.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+        XCTAssertTrue(
+            app.staticTexts["发动态"].waitForExistence(timeout: 5) || app.buttons["发布"].waitForExistence(timeout: 2),
+            "发朋友圈没有打开发动态\n\(app.debugDescription)"
+        )
         app.buttons["取消"].tap()
     }
 

@@ -232,65 +232,72 @@ struct CaptureFanOverlay: View {
     @Environment(\.moon) private var colors
 
     var body: some View {
-        let size = UIScreen.main.bounds.size
-        let origin = app.fan?.origin ?? CGPoint(x: size.width / 2, y: size.height - 80)
-        let finger = app.fan?.finger ?? origin
-        let geo = CaptureFanLayout.geometry(origin: origin, size: size)
-        ZStack {
-            Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
-            Color.black.opacity(0.18).ignoresSafeArea()
-                .onTapGesture { app.fan = nil }
-            // A parent identifier on iOS 26 replaces every child's identifier.
-            // This marker is not an ancestor of the bubbles.
-            Color.clear
-                .frame(width: 4, height: 4)
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("capture.fan")
-                .accessibilityLabel("拍摄")
-                .allowsHitTesting(false)
-            Text("拍摄")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .moonCapsule(overMedia: true)
-                .position(x: size.width / 2, y: ScreenInsets.top + 28)
-                .accessibilityIdentifier("capture.pill")
-            Circle()
-                .fill(Color.white.opacity(0.85))
-                .frame(width: 8, height: 8)
-                .position(x: geo.centerX, y: geo.centerY)
-                .allowsHitTesting(false)
-            ForEach(Array(CaptureSlots.items.enumerated()), id: \.offset) { index, item in
-                let spot = geo.pos(index)
-                let center = CGPoint(x: spot.0, y: spot.1)
-                let near = hypot(finger.x - center.x, finger.y - center.y) < 54 && (app.fan?.down == true)
-                Button {
-                    app.fireCapture(index)
-                } label: {
-                    VStack(spacing: 6) {
-                        Image(systemName: item.symbol)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(width: 58, height: 58)
-                            .moonDisc(overMedia: true)
-                            .overlay(Circle().stroke(Color.white.opacity(near ? 0.9 : 0.35), lineWidth: near ? 1.6 : 0.7))
-                            .scaleEffect(near ? 1.12 : 1)
-                        Text(item.title)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .moonCapsule(overMedia: true)
+        GeometryReader { proxy in
+            let size = proxy.size
+            let origin = app.fan?.origin ?? CGPoint(x: size.width / 2, y: size.height - 80)
+            let finger = app.fan?.finger ?? origin
+            let geo = CaptureFanLayout.geometry(origin: origin, size: size)
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                Color.black.opacity(0.18)
+                    .contentShape(Rectangle())
+                    .onTapGesture { app.fan = nil }
+                // Not an ancestor of the bubbles: a parent identifier replaces theirs on iOS 26.
+                Color.clear
+                    .frame(width: 4, height: 4)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("capture.fan")
+                    .accessibilityLabel("拍摄")
+                    .allowsHitTesting(false)
+                Text("拍摄")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .moonCapsule(overMedia: true)
+                    .accessibilityIdentifier("capture.pill")
+                    .offset(y: ScreenInsets.top + 28 - size.height / 2)
+                Circle()
+                    .fill(Color.white.opacity(0.85))
+                    .frame(width: 8, height: 8)
+                    .offset(x: geo.centerX - size.width / 2, y: geo.centerY - size.height / 2)
+                    .allowsHitTesting(false)
+                ForEach(Array(CaptureSlots.items.enumerated()), id: \.offset) { index, item in
+                    let spot = geo.pos(index)
+                    let center = CGPoint(x: spot.0, y: spot.1)
+                    let near = hypot(finger.x - center.x, finger.y - center.y) < 54 && (app.fan?.down == true)
+                    Button {
+                        app.fireCapture(index)
+                    } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: item.symbol)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 58, height: 58)
+                                .moonDisc(overMedia: true)
+                                .overlay(Circle().stroke(Color.white.opacity(near ? 0.9 : 0.35), lineWidth: near ? 1.6 : 0.7))
+                                .scaleEffect(near ? 1.12 : 1)
+                            Text(item.title)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .moonCapsule(overMedia: true)
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(item.title)
+                    .accessibilityIdentifier(item.id)
+                    // Padding participates in layout, so the hit target matches the drawn bubble.
+                    // offset and position leave the control's hit target somewhere else.
+                    .padding(.leading, max(0, center.x - 40))
+                    .padding(.top, max(0, center.y - 46))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .zIndex(2)
                 }
-                .buttonStyle(.plain)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(item.title)
-                .accessibilityIdentifier(item.id)
-                .accessibilityAddTraits(.isButton)
-                .position(center)
             }
         }
+        .ignoresSafeArea()
     }
 }
