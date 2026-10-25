@@ -491,8 +491,8 @@ struct FeedPage: View {
                     .accessibilityIdentifier("home.progress")
                 }
             }
-            .ignoresSafeArea(edges: app.settings.edgeToEdge ? .all : [])
         }
+        .ignoresSafeArea(edges: app.settings.edgeToEdge ? .all : [])
         .background(Color.black.allowsHitTesting(false))
         .onAppear { playReveal() }
         .moonOnChange(of: entry.id) { _ in playReveal() }
@@ -560,7 +560,7 @@ struct FeedPage: View {
                 }
                 Spacer()
             }
-            .padding(.top, ScreenInsets.top + 8)
+            .padding(.top, (app.settings.edgeToEdge ? ScreenInsets.top : 0) + 8)
             .padding(.horizontal, 16)
             .allowsHitTesting(false)
             Spacer().allowsHitTesting(false)
@@ -610,7 +610,7 @@ struct FeedPage: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            .padding(.bottom, 96 + (app.settings.edgeToEdge ? ScreenInsets.bottom : 0))
         }
         .foregroundColor(.white)
     }
