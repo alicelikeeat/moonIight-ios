@@ -77,7 +77,12 @@ struct DiscoverView: View {
     }
 
     private var toolsPanel: some View {
-        HStack(spacing: 0) {
+        ZStack(alignment: .leading) {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { tools = false }
+                .accessibilityIdentifier("discover.tools.dim")
             VStack(alignment: .leading, spacing: 14) {
                 Text("发现").font(.system(size: 18, weight: .bold)).foregroundColor(colors.text)
                     .padding(.top, ScreenInsets.top)
@@ -88,7 +93,10 @@ struct DiscoverView: View {
                     .moonGlass(colors, radius: 14)
                 toolButton("搜索", "magnifyingglass", GlassTint.blue, "discover.search") {
                     tools = false
-                    Task { await app.discover(query: query) }
+                    app.discoverBusy = true
+                    app.discoverError = nil
+                    let typed = query
+                    Task { await app.discover(query: typed) }
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
@@ -154,10 +162,7 @@ struct DiscoverView: View {
                 }
                 .ignoresSafeArea()
             }
-            Color.black.opacity(0.28)
-                .contentShape(Rectangle())
-                .onTapGesture { tools = false }
-                .accessibilityIdentifier("discover.tools.dim")
+            .contentShape(Rectangle())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
@@ -171,6 +176,8 @@ struct DiscoverView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .moonGlass(colors, radius: 16)
         }
         .buttonStyle(.plain)

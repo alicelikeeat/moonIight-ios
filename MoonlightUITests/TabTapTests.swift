@@ -39,7 +39,7 @@ final class TabTapTests: XCTestCase {
         search.tap()
         let busy = app.descendants(matching: .any)["discover.busy"]
         let failed = app.descendants(matching: .any)["discover.error"]
-        XCTAssertTrue(busy.waitForExistence(timeout: 6) || failed.waitForExistence(timeout: 3), "点了搜索没有开始查找")
+        XCTAssertTrue(busy.waitForExistence(timeout: 6) || failed.waitForExistence(timeout: 3), "点了搜索没有开始查找\n\(app.debugDescription)")
 
         let capture = tab("拍摄")
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
