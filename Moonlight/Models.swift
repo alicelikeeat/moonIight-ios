@@ -439,6 +439,21 @@ enum RingAnimPick {
         RingAnim.choices.filter { set.contains($0) }.map(\.rawValue).joined(separator: ",")
     }
 
+    /// Turns a pool member on or off. The last remaining animation stays on.
+    static func setIncluded(_ style: RingAnim, on: Bool, in set: Set<RingAnim>) -> Set<RingAnim> {
+        var next = set.intersection(Set(RingAnim.choices))
+        if on {
+            next.insert(style)
+        } else if next.contains(style), next.count > 1 {
+            next.remove(style)
+        }
+        if next.isEmpty { return Set(RingAnim.choices) }
+        return next
+    }
+
+    static let randomLabel = "随机"
+    static let randomHint = "每次长按从下面勾选的动画里抽一个"
+
     static func pick(setting: String?, enabled: Set<RingAnim>, animatorScale: Float, rnd: () -> Int = { Int.random(in: 0...0x7fffffff) }) -> RingAnim {
         if animatorScale <= 0 { return .fade }
         if setting != RingAnim.random { return RingAnim.of(setting) }

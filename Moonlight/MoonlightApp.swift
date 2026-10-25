@@ -164,6 +164,12 @@ struct RootView: View {
         .onAppear {
             hold.app = app
             hold.ring = ring
+            ring.onPickAnim = { raw in
+                app.settings.ringAnim = RingAnimPick.normalize(raw)
+                app.saveSettings()
+                let name = raw == RingAnim.random ? RingAnimPick.randomLabel : RingAnim.of(raw).label
+                app.showToast("长按动画：\(name)")
+            }
             paintWindow()
         }
         .onDisappear { TabChrome.setSuspended(false) }

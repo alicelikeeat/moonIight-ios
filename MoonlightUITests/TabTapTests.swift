@@ -83,7 +83,7 @@ final class TabTapTests: XCTestCase {
             settingsPage.waitForExistence(timeout: 5)
                 || app.staticTexts["外观"].waitForExistence(timeout: 2)
                 || app.staticTexts["主题"].waitForExistence(timeout: 2)
-                || app.staticTexts["月光 1.2 · iOS"].waitForExistence(timeout: 2),
+                || app.staticTexts["月光 1.2.1 · iOS"].waitForExistence(timeout: 2),
             "设置页没有出现\n\(app.debugDescription)"
         )
         let done = app.buttons["settings.done"]
@@ -210,6 +210,41 @@ final class TabTapTests: XCTestCase {
         }
         XCTAssertTrue(app.descendants(matching: .any)["skins.edit"].exists, "点按键退出了编辑")
         XCTAssertTrue(button.isSelected, "选中的圆环按键没有高亮\n\(app.debugDescription)")
+    }
+
+    func testLotusRingAnimPersists() {
+        openSettings()
+        let lotus = app.descendants(matching: .any)["settings.ringAnim.lotus"]
+        let star = app.descendants(matching: .any)["settings.ringAnim.star"]
+        for _ in 0..<8 where !lotus.exists || !lotus.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(lotus.waitForExistence(timeout: 4), "没有荷花\n\(app.debugDescription)")
+        if !lotus.isHittable { app.swipeUp() }
+        XCTAssertTrue(lotus.isHittable, "荷花点不到\n\(app.debugDescription)")
+        XCTAssertTrue(
+            app.staticTexts["每个按钮从花苞中绽放，收起时合拢下沉"].exists,
+            "荷花没有说明\n\(app.debugDescription)"
+        )
+        lotus.tap()
+        XCTAssertTrue(lotus.isSelected, "荷花没有选中\n\(app.debugDescription)")
+        XCTAssertFalse(star.isSelected, "选了荷花之后星轨还亮着")
+        app.buttons["settings.done"].tap()
+        let saved = expectation(description: "settings saved")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { saved.fulfill() }
+        wait(for: [saved], timeout: 3)
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans"]
+        app.launch()
+        openSettings()
+        let again = app.descendants(matching: .any)["settings.ringAnim.lotus"]
+        let starAgain = app.descendants(matching: .any)["settings.ringAnim.star"]
+        for _ in 0..<8 where !again.exists || !again.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(again.waitForExistence(timeout: 4), "重新打开后没有荷花\n\(app.debugDescription)")
+        XCTAssertTrue(again.isSelected, "重新打开后荷花没有保住\n\(app.debugDescription)")
+        XCTAssertFalse(starAgain.isSelected, "重新打开后回到了星轨")
     }
 
     func testUnifiedMomentsHeader() {

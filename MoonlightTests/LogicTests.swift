@@ -97,6 +97,59 @@ final class LogicTests: XCTestCase {
         }
     }
 
+    func testRingAnimPick() {
+        let all = Set(RingAnim.choices)
+        XCTAssertEqual(RingAnimPick.pick(setting: "SPIN", enabled: all, animatorScale: 1), .spin)
+        XCTAssertEqual(RingAnimPick.pick(setting: "LOTUS", enabled: all, animatorScale: 1), .lotus)
+        XCTAssertEqual(RingAnimPick.pick(setting: "STAR", enabled: all, animatorScale: 1), .star)
+        XCTAssertEqual(RingAnimPick.pick(setting: "MOON", enabled: all, animatorScale: 1), .moon)
+        XCTAssertEqual(RingAnimPick.pick(setting: "NOPE", enabled: all, animatorScale: 1), .spin)
+        XCTAssertEqual(RingAnimPick.pick(setting: "STAR", enabled: [], animatorScale: 0), .fade)
+        XCTAssertEqual(RingAnimPick.pick(setting: "RANDOM", enabled: all, animatorScale: 0) { 3 }, .fade)
+        XCTAssertEqual(RingAnimPick.pick(setting: "RANDOM", enabled: [.lotus], animatorScale: 1) { 99 }, .lotus)
+        XCTAssertEqual(RingAnimPick.pick(setting: "RANDOM", enabled: [], animatorScale: 1) { 0 }, .spin)
+        XCTAssertEqual(RingAnimPick.pick(setting: "RANDOM", enabled: [.star, .moon], animatorScale: 1) { 1 }, .moon)
+        XCTAssertEqual(RingAnimPick.pick(setting: "RANDOM", enabled: all, animatorScale: 1) { 0 }, .spin)
+        XCTAssertEqual(RingAnimPick.pick(setting: "RANDOM", enabled: all, animatorScale: 1) { -2 }, .star)
+        XCTAssertEqual(RingAnimPick.setIncluded(.lotus, on: false, in: [.lotus]), Set([RingAnim.lotus]))
+        XCTAssertEqual(RingAnimPick.setIncluded(.star, on: false, in: [.star, .lotus]), Set([RingAnim.lotus]))
+        XCTAssertEqual(RingAnimPick.setIncluded(.moon, on: true, in: [.lotus]), Set([RingAnim.lotus, .moon]))
+    }
+
+    /// Each style drives a different pose, which is what RingMenu draws:
+    /// spin sinks and twists, lotus blooms (fx) and sinks only while closing,
+    /// star is still in the air, moon stays nearly full size, fade only changes alpha.
+    func testRingStylesDivergeMidway() {
+        let t: Float = 0.2
+        let spin = RingMotion.pose(.spin, t, 1, false)
+        let lotus = RingMotion.pose(.lotus, t, 1, false)
+        let star = RingMotion.pose(.star, t, 1, false, depth: 1)
+        let moon = RingMotion.pose(.moon, t, 1, false)
+        let fade = RingMotion.pose(.fade, t, 1, false)
+        XCTAssertEqual(spin.lift, 0, accuracy: 0.001)
+        XCTAssertGreaterThan(spin.sink, 0.05)
+        XCTAssertLessThan(spin.ang, 0)
+        XCTAssertEqual(spin.fx, 0, accuracy: 0.001)
+        XCTAssertEqual(lotus.lift, 0, accuracy: 0.001)
+        XCTAssertEqual(lotus.sink, 0, accuracy: 0.001)
+        XCTAssertGreaterThan(lotus.fx, 0.1)
+        XCTAssertLessThan(lotus.scale, 0.6)
+        XCTAssertGreaterThan(RingMotion.pose(.lotus, 1, 0.4, true).sink, 0.1)
+        XCTAssertGreaterThan(star.lift, 0.4)
+        XCTAssertGreaterThan(star.ang, 40)
+        XCTAssertLessThan(star.scale, 0.5)
+        XCTAssertGreaterThan(moon.scale, 0.94)
+        XCTAssertEqual(moon.lift, 0, accuracy: 0.001)
+        XCTAssertEqual(moon.ang, 0, accuracy: 0.001)
+        XCTAssertGreaterThan(moon.fx, 0.1)
+        XCTAssertEqual(fade.scale, 1, accuracy: 0.001)
+        XCTAssertEqual(fade.lift, 0, accuracy: 0.001)
+        XCTAssertEqual(fade.alpha, t, accuracy: 0.001)
+        XCTAssertNotEqual(spin, lotus)
+        XCTAssertNotEqual(star, moon)
+        XCTAssertNotEqual(moon, fade)
+    }
+
     func testLegacyRingNames() {
         XCTAssertEqual(RingAnimPick.normalize("FALL"), "STAR")
         XCTAssertEqual(RingAnimPick.normalize("BLUR"), "STAR")

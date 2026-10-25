@@ -68,6 +68,8 @@ final class RingController: ObservableObject {
     @Published var skinPicked = Set<String>()
     @Published var pendingSkin: ButtonSkin?
     var overlayOrigin = CGPoint.zero
+    /// 更多 › 长按动画. The ring stores the choice; the app saves it.
+    var onPickAnim: ((String) -> Void)?
     let bubbles = BubbleField()
     private var closeTask: Task<Void, Never>?
     private var landed: Set<Int> = []
@@ -98,9 +100,9 @@ final class RingController: ObservableObject {
         }
         bubbles.reset()
         bubbles.onNearest = { _ in Haptics.tick() }
-        let storedGroups = Self.withSkinAction(groups) { [weak self] in
+        let storedGroups = withAnimAction(Self.withSkinAction(groups) { [weak self] in
             self?.beginSkinEdit()
-        }
+        }, current: settings.ringAnim)
         let shown = Array(items.prefix(5))
         lastSnap = RingSnap(origin: origin, items: shown, groups: storedGroups, overMedia: overMedia, settings: settings)
         session = RingSession(
@@ -160,6 +162,37 @@ final class RingController: ObservableObject {
         if skinPicked.contains(id.rawValue) { skinPicked.remove(id.rawValue) }
         else { skinPicked.insert(id.rawValue) }
         Haptics.tick()
+    }
+
+    /// One glass group in 更多. Each row is a style; the current one wears a check.
+    private func withAnimAction(_ groups: [MenuGroup], current: String) -> [MenuGroup] {
+        guard onPickAnim != nil else { return groups }
+        if groups.contains(where: { $0.items.contains { ($0.key ?? "").hasPrefix("anim.") } }) { return groups }
+        let currentNorm = RingAnimPick.normalize(current)
+        let rows: [(String, String, String)] = RingAnim.choices.map { ($0.rawValue, $0.label, Self.animSymbol($0)) }
+            + [(RingAnim.random, RingAnimPick.randomLabel, "dice")]
+        let items = rows.map { raw, title, symbol in
+            RingItem(
+                title: title,
+                systemImage: currentNorm == raw ? "checkmark.circle.fill" : symbol,
+                key: "anim.\(raw.lowercased())"
+            ) { [weak self] in
+                self?.onPickAnim?(raw)
+            }
+        }
+        var copy = groups
+        copy.append(MenuGroup(title: "长按动画", items: items))
+        return copy
+    }
+
+    private static func animSymbol(_ style: RingAnim) -> String {
+        switch style {
+        case .spin: return "arrow.triangle.2.circlepath"
+        case .lotus: return "camera.macro"
+        case .star: return "sparkles"
+        case .moon: return "moon.stars"
+        case .fade: return "circle.dotted"
+        }
     }
 
     private static func withSkinAction(_ groups: [MenuGroup], action: @escaping () -> Void) -> [MenuGroup] {

@@ -7,6 +7,13 @@ enum SettingsPage: String, Identifiable {
     var id: String { rawValue }
 }
 
+private struct RingAnimOption: Identifiable {
+    var id: String
+    var raw: String
+    var label: String
+    var hint: String
+}
+
 struct SettingsView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var ring: RingController
@@ -41,7 +48,7 @@ struct SettingsView: View {
                 backdropGroup
                 playbackGroup
                 gestureGroup
-                Text("月光 1.2 · iOS\n不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
+                Text("月光 1.2.1 · iOS\n不解析哔哩哔哩 playurl / WBI，不下载流媒体，不绕过 DRM。网页播放只用官方嵌入页。")
                     .font(.system(size: 12))
                     .foregroundColor(ink.textDim)
                     .padding(.horizontal, 8)
@@ -495,6 +502,7 @@ struct SettingsView: View {
             .pickerStyle(.segmented)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            ringAnimBlock
             Toggle("水滴选择", isOn: binding(\.dropSelect))
                 .padding(.horizontal, 14)
                 .accessibilityIdentifier("settings.drop")
@@ -690,6 +698,114 @@ struct SettingsView: View {
         .padding(.vertical, 8)
         .accessibilityLabel(title)
         .accessibilityIdentifier(id)
+    }
+
+    /// 旋转展开, 荷花, 星轨, 月光, and 随机. Hints stay visible. 随机 opens the pool.
+    private var ringAnimBlock: some View {
+        let current = RingAnimPick.normalize(app.settings.ringAnim)
+        let options = RingAnim.choices.map {
+            RingAnimOption(id: $0.rawValue.lowercased(), raw: $0.rawValue, label: $0.label, hint: $0.hint)
+        } + [RingAnimOption(id: "random", raw: RingAnim.random, label: RingAnimPick.randomLabel, hint: RingAnimPick.randomHint)]
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("长按动画")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(ink.textDim)
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
+            Color.clear
+                .frame(width: 4, height: 4)
+                .accessibilityIdentifier("settings.ringAnim")
+                .allowsHitTesting(false)
+            ForEach(options) { option in
+                animChoice(option, selected: current == option.raw)
+            }
+            if current == RingAnim.random {
+                ForEach(RingAnim.choices, id: \.rawValue) { style in
+                    Toggle(style.label, isOn: poolBinding(style))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 2)
+                        .accessibilityIdentifier("settings.ringPool.\(style.rawValue.lowercased())")
+                }
+                Text("随机时至少留一个。关掉最后一个不会生效。")
+                    .font(.system(size: 12))
+                    .foregroundColor(ink.textDim)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 2)
+            }
+            Text("系统打开「减弱动态效果」时，圆环改为淡入淡出，不再播放星轨、旋转、荷花或月光。")
+                .font(.system(size: 12))
+                .foregroundColor(ink.textDim)
+                .padding(.horizontal, 14)
+                .padding(.top, 6)
+                .accessibilityIdentifier("settings.ringAnim.reduce")
+            Button("试一下") { previewRing() }
+                .font(.system(size: 15, weight: .semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("settings.ringPreview")
+        }
+    }
+
+    private func animChoice(_ option: RingAnimOption, selected: Bool) -> some View {
+        Button {
+            app.settings.ringAnim = RingAnimPick.normalize(option.raw)
+            app.saveSettings()
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(option.label)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(ink.text)
+                    Text(option.hint)
+                        .font(.system(size: 12))
+                        .foregroundColor(ink.textDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(ink.accent)
+                        .padding(.top, 2)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("settings.ringAnim.\(option.id)")
+        .accessibilityLabel(option.label)
+        .accessibilityAddTraits(selected ? .isSelected : AccessibilityTraits())
+    }
+
+    private func poolBinding(_ style: RingAnim) -> Binding<Bool> {
+        Binding(
+            get: { RingAnimPick.parseSet(app.settings.ringAnimSet).contains(style) },
+            set: { on in
+                let current = RingAnimPick.parseSet(app.settings.ringAnimSet)
+                app.settings.ringAnimSet = RingAnimPick.encodeSet(RingAnimPick.setIncluded(style, on: on, in: current))
+                app.saveSettings()
+            }
+        )
+    }
+
+    /// A short ring in the chosen style. 减弱动态效果 still forces a fade, same as a real long-press.
+    private func previewRing() {
+        let bounds = UIScreen.main.bounds
+        let samples = [
+            RingItem(title: "筛选", systemImage: "line.3.horizontal.decrease"),
+            RingItem(title: "静音", systemImage: "speaker.slash"),
+            RingItem(title: "洗牌", systemImage: "shuffle"),
+            RingItem(title: "置顶", systemImage: "arrow.up"),
+        ]
+        ring.present(
+            origin: CGPoint(x: bounds.midX, y: bounds.midY * 0.72),
+            items: samples,
+            groups: [],
+            settings: app.settings
+        )
     }
 
     private var hideChoice: Binding<Int> {
