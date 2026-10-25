@@ -1142,9 +1142,9 @@ final class AppModel: ObservableObject {
             hotItems = items
             hotError = nil
             for item in items.prefix(12) { addQuiet(item) }
-        case .failure(let message):
+        case .failure(let error):
             hotItems = []
-            hotError = message
+            hotError = error.message
         }
     }
 

@@ -243,16 +243,20 @@ enum PageMedia {
 }
 
 enum BiliHot {
+    struct Failure: Error, Equatable {
+        var message: String
+    }
+
     static let unavailable = "热榜暂时无法获取"
 
-    static func parse(_ data: Data) -> Result<[MediaEntry], String> {
-        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .failure(unavailable) }
+    static func parse(_ data: Data) -> Result<[MediaEntry], Failure> {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .failure(Failure(message: unavailable)) }
         let code = (obj["code"] as? NSNumber)?.intValue ?? (obj["code"] as? Int ?? -1)
-        guard code == 0 else { return .failure(unavailable) }
+        guard code == 0 else { return .failure(Failure(message: unavailable)) }
         let dataObj = obj["data"] as? [String: Any]
         let list = (dataObj?["list"] as? [[String: Any]]) ?? (obj["data"] as? [[String: Any]]) ?? []
         let items = list.compactMap(entry)
-        if items.isEmpty { return .failure(unavailable) }
+        if items.isEmpty { return .failure(Failure(message: unavailable)) }
         return .success(items)
     }
 
@@ -285,7 +289,7 @@ enum BiliHot {
         return "\(views)播放"
     }
 
-    static func load() async -> Result<[MediaEntry], String> {
+    static func load() async -> Result<[MediaEntry], Failure> {
         let urls = [
             "https://api.bilibili.com/x/web-interface/popular?ps=20&pn=1",
             "https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all",
@@ -300,6 +304,6 @@ enum BiliHot {
                 sawError = true
             }
         }
-        return .failure(sawError ? unavailable : unavailable)
+        return .failure(Failure(message: unavailable))
     }
 }

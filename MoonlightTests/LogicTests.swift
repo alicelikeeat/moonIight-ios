@@ -773,8 +773,8 @@ final class LogicTests: XCTestCase {
         XCTAssertFalse(items.first?.embedURL?.contains("playurl") == true)
         XCTAssertTrue(items.first?.author.contains("阿月") == true)
         let denied = BiliHot.parse(Data(#"{"code":-400,"message":"request error"}"#.utf8))
-        guard case .failure(let message) = denied else { return XCTFail("错误码应该失败") }
-        XCTAssertEqual(message, "热榜暂时无法获取")
+        guard case .failure(let error) = denied else { return XCTFail("错误码应该失败") }
+        XCTAssertEqual(error.message, "热榜暂时无法获取")
         let robots = "User-agent: *\nDisallow: /private\nAllow: /private/ok\n"
         XCTAssertFalse(RobotsRule.allowed(robots: robots, path: "/private/no"))
         XCTAssertTrue(RobotsRule.allowed(robots: robots, path: "/private/ok"))
