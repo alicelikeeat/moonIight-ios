@@ -5,7 +5,6 @@ import UIKit
 struct DiscoverView: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.moon) private var theme
-    @Environment(\.colorScheme) private var scheme
     @State private var query = ""
     @State private var link = ""
     @State private var tools = false
@@ -59,15 +58,18 @@ struct DiscoverView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(colors.text)
                     .frame(width: 40, height: 40)
+                    .contentShape(Circle())
                     .moonDisc(overMedia: false)
             }
             .buttonStyle(.plain)
             .padding(.leading, 16)
             .padding(.top, 8)
             .accessibilityIdentifier("discover.tools")
+        }
+        .overlay(alignment: .leading) {
             if tools { toolsPanel }
         }
-        .environment(\.colorScheme, app.settings.showsBackdrop(.discover) ? .dark : scheme)
+        .modifier(BackdropScheme(page: .discover))
         .task {
             if app.discoverResults.isEmpty { await app.discover(query: "") }
         }
@@ -75,56 +77,62 @@ struct DiscoverView: View {
 
     private var toolsPanel: some View {
         HStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("发现").font(.system(size: 18, weight: .bold)).foregroundColor(colors.text)
-                    TextField("搜索月亮、海洋、城市…", text: $query)
-                        .textFieldStyle(.plain)
-                        .padding(12)
-                        .moonGlass(colors, radius: 14)
-                    Button("搜索") { Task { await app.discover(query: query) } }
-                        .accessibilityIdentifier("discover.search")
-                    TextField("粘贴直链或官方页面", text: $link)
-                        .textFieldStyle(.plain)
-                        .padding(12)
-                        .moonGlass(colors, radius: 14)
-                    HStack {
-                        Button("加入") { addLink() }.accessibilityIdentifier("discover.add")
-                        Button("订阅") { app.subscribe(link); link = "" }.accessibilityIdentifier("discover.follow")
-                        Button("导入") { app.presentImporter() }.accessibilityIdentifier("discover.import")
-                    }
-                    .font(.system(size: 15, weight: .semibold))
-                    Button("刷新") { Task { await app.discover(query: query); await app.refreshFollows() } }
-                        .accessibilityIdentifier("discover.refreshFollows")
-                    Text("分类").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
-                    ForEach(SourceCatalog.rows, id: \.key) { row in
-                        Toggle(row.title, isOn: Binding(
-                            get: { app.settings.sourceOn(row.key) },
-                            set: { app.settings.setSource(row.key, $0); app.saveSettings() }
-                        ))
-                        .font(.system(size: 14))
-                    }
-                    if !app.settings.follows.isEmpty {
-                        ForEach(app.settings.follows) { source in
-                            HStack {
-                                Text(source.title).lineLimit(1)
-                                Spacer()
-                                Button("移除") { app.removeFollow(source.id) }
+            VStack(alignment: .leading, spacing: 12) {
+                Text("发现").font(.system(size: 18, weight: .bold)).foregroundColor(colors.text)
+                TextField("搜索月亮、海洋、城市…", text: $query)
+                    .textFieldStyle(.plain)
+                    .padding(12)
+                    .moonGlass(colors, radius: 14)
+                Button("搜索") { Task { await app.discover(query: query) } }
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+                    .accessibilityIdentifier("discover.search")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("粘贴直链或官方页面", text: $link)
+                            .textFieldStyle(.plain)
+                            .padding(12)
+                            .moonGlass(colors, radius: 14)
+                        HStack {
+                            Button("加入") { addLink() }.accessibilityIdentifier("discover.add")
+                            Button("订阅") { app.subscribe(link); link = "" }.accessibilityIdentifier("discover.follow")
+                            Button("导入") { app.presentImporter() }.accessibilityIdentifier("discover.import")
+                        }
+                        .font(.system(size: 15, weight: .semibold))
+                        Button("刷新") { Task { await app.discover(query: query); await app.refreshFollows() } }
+                            .accessibilityIdentifier("discover.refreshFollows")
+                        Text("分类").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
+                        ForEach(SourceCatalog.rows, id: \.key) { row in
+                            Toggle(row.title, isOn: Binding(
+                                get: { app.settings.sourceOn(row.key) },
+                                set: { app.settings.setSource(row.key, $0); app.saveSettings() }
+                            ))
+                            .font(.system(size: 14))
+                        }
+                        if !app.settings.follows.isEmpty {
+                            ForEach(app.settings.follows) { source in
+                                HStack {
+                                    Text(source.title).lineLimit(1)
+                                    Spacer()
+                                    Button("移除") { app.removeFollow(source.id) }
+                                }
+                                .font(.system(size: 13))
                             }
-                            .font(.system(size: 13))
                         }
                     }
                 }
-                .padding(16)
             }
+            .padding(16)
             .frame(width: min(320, UIScreen.main.bounds.width * 0.82))
-            .frame(maxHeight: .infinity)
+            .frame(maxHeight: .infinity, alignment: .top)
             .background { SystemGlassFill(dark: colors.dark) }
             Color.black.opacity(0.28)
+                .contentShape(Rectangle())
                 .onTapGesture { tools = false }
                 .accessibilityIdentifier("discover.tools.dim")
         }
-        .ignoresSafeArea()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
     private func resultGrid(_ entries: [MediaEntry]) -> some View {

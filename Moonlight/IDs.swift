@@ -26,6 +26,13 @@ enum Paths {
         }
         MediaStore.ensure()
     }
+
+    /// UI tests share one simulator container. Wipe saved state before launch.
+    static func resetStoredState() {
+        for url in [libraryFile, socialFile, settingsFile, trashFile, transfersFile, refreshFile] {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
 }
 
 extension Notification.Name {

@@ -95,6 +95,9 @@ final class AppModel: ObservableObject {
     private var shredTask: Task<Void, Never>?
 
     init() {
+        if ProcessInfo.processInfo.arguments.contains("-MoonlightReset") {
+            Paths.resetStoredState()
+        }
         Paths.ensureDirs()
         var loadedSettings = AppSettings()
         if let data = AtomicFile.read(Paths.settingsFile), let s = AppSettings.load(data) {

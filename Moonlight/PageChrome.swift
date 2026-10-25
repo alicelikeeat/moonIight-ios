@@ -183,6 +183,21 @@ struct BackdropPagesSheet: View {
     }
 }
 
+/// Forces a dark scheme when a page backdrop is showing, without reading
+/// `colorScheme` in the same view that writes it. That cycle drops later updates.
+struct BackdropScheme: ViewModifier {
+    @EnvironmentObject private var app: AppModel
+    var page: BackdropPage
+
+    func body(content: Content) -> some View {
+        if app.settings.showsBackdrop(page) {
+            content.environment(\.colorScheme, .dark)
+        } else {
+            content
+        }
+    }
+}
+
 enum CaptureSlots {
     static let items: [(title: String, symbol: String, id: String)] = [
         ("拍照", "camera.fill", "capture.photo"),
@@ -225,6 +240,14 @@ struct CaptureFanOverlay: View {
             Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
             Color.black.opacity(0.18).ignoresSafeArea()
                 .onTapGesture { app.fan = nil }
+            // A parent identifier on iOS 26 replaces every child's identifier.
+            // This marker is not an ancestor of the bubbles.
+            Color.clear
+                .frame(width: 4, height: 4)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("capture.fan")
+                .accessibilityLabel("拍摄")
+                .allowsHitTesting(false)
             Text("拍摄")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.white)
@@ -262,11 +285,12 @@ struct CaptureFanOverlay: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .position(center)
-                .accessibilityIdentifier(item.id)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(item.title)
+                .accessibilityIdentifier(item.id)
+                .accessibilityAddTraits(.isButton)
+                .position(center)
             }
         }
-        .accessibilityIdentifier("capture.fan")
     }
 }

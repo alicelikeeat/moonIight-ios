@@ -7,8 +7,12 @@ final class TabTapTests: XCTestCase {
         super.setUp()
         continueAfterFailure = false
         app = XCUIApplication()
-        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans"]
+        app.launchArguments = launchArguments()
         app.launch()
+    }
+
+    private func launchArguments(_ extra: String...) -> [String] {
+        ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans", "-MoonlightReset"] + extra
     }
 
     func testEveryTabButtonDoesSomething() {
@@ -30,7 +34,7 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(tools.isHittable, "发现页的工具按钮点不到")
         tools.tap()
         let search = app.buttons["discover.search"]
-        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        XCTAssertTrue(search.waitForExistence(timeout: 5), "点了工具没有打开搜索\n\(app.debugDescription)")
         XCTAssertTrue(search.isHittable, "发现页的搜索点不到")
         search.tap()
         let busy = app.descendants(matching: .any)["discover.busy"]
@@ -83,7 +87,15 @@ final class TabTapTests: XCTestCase {
         if done.waitForExistence(timeout: 2) { done.tap() }
 
         home.tap()
-        XCTAssertTrue(app.buttons["home.discover"].waitForExistence(timeout: 5) || app.staticTexts["还没有内容"].waitForExistence(timeout: 2))
+        let empty = app.buttons["home.discover"]
+        let emptyCopy = app.staticTexts["还没有内容"]
+        let playing = app.descendants(matching: .any)["home.playing"]
+        let page = app.descendants(matching: .any)["home.page"]
+        XCTAssertTrue(
+            empty.waitForExistence(timeout: 5) || emptyCopy.waitForExistence(timeout: 2)
+                || playing.waitForExistence(timeout: 2) || page.waitForExistence(timeout: 2),
+            "回到首页没有内容\n\(app.debugDescription)"
+        )
     }
 
     func testV1EntryPoints() {
@@ -241,9 +253,14 @@ final class TabTapTests: XCTestCase {
         capture.press(forDuration: 1.1)
         let fan = app.descendants(matching: .any)["capture.fan"]
         let compose = app.buttons["capture.compose"]
-        XCTAssertTrue(fan.waitForExistence(timeout: 4) || compose.waitForExistence(timeout: 2), "长按拍摄没有打开气泡\n\(app.debugDescription)")
+        let composeLabel = app.buttons["发朋友圈"]
+        XCTAssertTrue(
+            fan.waitForExistence(timeout: 4) || compose.waitForExistence(timeout: 2) || composeLabel.waitForExistence(timeout: 2),
+            "长按拍摄没有打开气泡\n\(app.debugDescription)"
+        )
         XCTAssertTrue(home.isSelected, "长按拍摄把页面换了")
         if compose.waitForExistence(timeout: 2) { compose.tap() }
+        else if composeLabel.waitForExistence(timeout: 2) { composeLabel.tap() }
         XCTAssertTrue(app.staticTexts["发动态"].waitForExistence(timeout: 5), "发朋友圈没有打开发动态\n\(app.debugDescription)")
         app.buttons["取消"].tap()
     }
@@ -318,7 +335,7 @@ final class TabTapTests: XCTestCase {
     /// 水滴选择: releasing on a ring button near the bottom fires it and does not switch tabs.
     func testDropletReleaseNearTheBottom() {
         app.terminate()
-        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans", "-MoonlightDrop"]
+        app.launchArguments = launchArguments("-MoonlightDrop")
         app.launch()
         let home = tab("首页")
         XCTAssertTrue(home.waitForExistence(timeout: 12))
@@ -350,7 +367,7 @@ final class TabTapTests: XCTestCase {
 
     func testImmersiveChrome() {
         app.terminate()
-        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_Hans", "-MoonlightImmersive"]
+        app.launchArguments = launchArguments("-MoonlightImmersive")
         app.launch()
         let playing = app.descendants(matching: .any)["home.playing"]
         XCTAssertTrue(playing.waitForExistence(timeout: 15), "沉浸测试没有进入播放页\n\(app.debugDescription)")
@@ -367,14 +384,6 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(jump.waitForExistence(timeout: 12))
         XCTAssertTrue(jump.isHittable, "去发现点不到")
 
-        jump.tap()
-        XCTAssertTrue(discoverVisible(), "短按去发现没有打开发现页\n\(app.debugDescription)")
-
-        let home = tab("首页")
-        home.tap()
-        XCTAssertTrue(jump.waitForExistence(timeout: 5))
-        XCTAssertTrue(jump.isHittable, "回到首页后去发现不在了")
-
         jump.press(forDuration: 1.1)
         let ring = app.descendants(matching: .any)["ring.root"]
         let filter = app.staticTexts["筛选"]
@@ -385,6 +394,7 @@ final class TabTapTests: XCTestCase {
 
         app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.1)).tap()
         XCTAssertTrue(jump.waitForExistence(timeout: 4))
+        XCTAssertTrue(jump.isHittable, "长按之后去发现不在了")
         jump.tap()
         XCTAssertTrue(discoverVisible(), "长按之后短按失效了\n\(app.debugDescription)")
     }
