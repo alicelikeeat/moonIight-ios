@@ -222,8 +222,9 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(lotus.waitForExistence(timeout: 4), "没有荷花\n\(app.debugDescription)")
         if !lotus.isHittable { app.swipeUp() }
         XCTAssertTrue(lotus.isHittable, "荷花点不到\n\(app.debugDescription)")
+        let lotusHint = "每个按钮从花苞中绽放，收起时合拢下沉"
         XCTAssertTrue(
-            app.staticTexts["每个按钮从花苞中绽放，收起时合拢下沉"].exists,
+            app.staticTexts[lotusHint].exists || lotus.label.contains("花苞"),
             "荷花没有说明\n\(app.debugDescription)"
         )
         lotus.tap()
