@@ -390,11 +390,22 @@ final class TabTapTests: XCTestCase {
     }
 
     private func tab(_ title: String) -> XCUIElement {
+        let id: String
+        switch title {
+        case "首页": id = "tab.home"
+        case "发现": id = "tab.discover"
+        case "拍摄": id = "tab.capture"
+        case "朋友圈": id = "tab.moments"
+        case "我": id = "tab.me"
+        default: id = ""
+        }
+        let marked = app.descendants(matching: .any)[id]
+        if marked.exists { return marked }
         let bar = app.tabBars.buttons[title]
-        if bar.exists { return bar }
+        if bar.exists { return bar.firstMatch }
         let button = app.buttons[title]
-        if button.exists { return button }
-        return bar
+        if button.exists { return button.firstMatch }
+        return marked
     }
 
     private func waitUntil(timeout: TimeInterval, _ check: @escaping () -> Bool) -> Bool {

@@ -275,8 +275,10 @@ struct MoonTabBar: View {
                         .foregroundColor(app.tab == tab ? ink.accent : ink.textDim)
                         .contentShape(Rectangle())
                     }
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(tab.title)
-                    .accessibilityAddTraits(app.tab == tab ? .isSelected : [])
+                    .accessibilityIdentifier("tab.\(tab.rawValue)")
+                    .accessibilityAddTraits(app.tab == tab ? [.isButton, .isSelected] : [.isButton])
                 }
             }
         }
@@ -327,8 +329,6 @@ struct MoonTabBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("拍摄")
-        .accessibilityIdentifier("tab.capture")
         .holdTrack(onBegan: { point in
             app.fan = FanGesture(origin: point, finger: point, down: true)
             TabChrome.setSuspended(true)
@@ -345,6 +345,10 @@ struct MoonTabBar: View {
             }
             TabChrome.setSuspended(false)
         }, cancelsTap: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("拍摄")
+        .accessibilityIdentifier("tab.capture")
+        .accessibilityAddTraits(.isButton)
     }
 }
 
