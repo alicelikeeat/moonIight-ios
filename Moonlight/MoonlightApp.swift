@@ -254,6 +254,8 @@ struct MoonTabBar: View {
     var suppressed: Bool
     /// Fractional slot while a finger is dragging along the bar. Nil snaps to the selected tab.
     @State private var dragSlot: CGFloat?
+    /// Center of 拍摄 in window coordinates, so a long-press still anchors the fan if the window probe misses.
+    @State private var captureCenter = CGPoint.zero
 
     var body: some View {
         let ink = app.tab == .home ? MoonColors.media : colors
@@ -369,26 +371,73 @@ struct MoonTabBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { captureCenter = Self.mid(geo) }
+                    .moonOnChange(of: geo.frame(in: .global).midY) { _ in captureCenter = Self.mid(geo) }
+            }
+        }
+        .simultaneousGesture(captureHold)
         .holdTrack(onBegan: { point in
+            guard app.fan == nil else { return }
             app.fan = FanGesture(origin: point, finger: point, down: true)
             TabChrome.setSuspended(true)
         }, onChanged: { point in
             app.fan?.finger = point
             app.fan?.down = true
         }, onEnded: { point in
-            let release = FanAim.firesOnRelease(select: app.settings.menuSelect, drop: app.settings.dropSelect)
-            if release, let fan = app.fan, let hit = CaptureFanLayout.hitIndex(finger: point, origin: fan.origin, size: UIScreen.main.bounds.size) {
-                app.fireCapture(hit)
-            } else {
-                app.fan?.finger = point
-                app.fan?.down = false
-            }
-            TabChrome.setSuspended(false)
+            finishCaptureHold(at: point)
         }, cancelsTap: true)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("拍摄")
         .accessibilityIdentifier("tab.capture")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// Lives on the button itself. A window-level probe can miss the press, and the button's tap would then open the camera.
+    private var captureHold: some Gesture {
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 48)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .onChanged { value in
+                guard case .second(true, let drag) = value else { return }
+                let point = drag?.location ?? captureCenter
+                if app.fan == nil {
+                    let origin = captureCenter == .zero ? point : captureCenter
+                    app.fan = FanGesture(origin: origin, finger: point, down: true)
+                    TabChrome.setSuspended(true)
+                    PressGate.begin()
+                } else {
+                    app.fan?.finger = point
+                    app.fan?.down = true
+                }
+            }
+            .onEnded { value in
+                let point: CGPoint
+                if case .second(true, let drag) = value {
+                    point = drag?.location ?? captureCenter
+                } else {
+                    point = captureCenter
+                }
+                finishCaptureHold(at: point)
+            }
+    }
+
+    private func finishCaptureHold(at point: CGPoint) {
+        let release = FanAim.firesOnRelease(select: app.settings.menuSelect, drop: app.settings.dropSelect)
+        if release, let fan = app.fan, let hit = CaptureFanLayout.hitIndex(finger: point, origin: fan.origin, size: UIScreen.main.bounds.size) {
+            app.fireCapture(hit)
+        } else if app.fan != nil {
+            app.fan?.finger = point
+            app.fan?.down = false
+        }
+        TabChrome.setSuspended(false)
+        PressGate.end()
+    }
+
+    private static func mid(_ geo: GeometryProxy) -> CGPoint {
+        let frame = geo.frame(in: .global)
+        return CGPoint(x: frame.midX, y: frame.midY)
     }
 }
 

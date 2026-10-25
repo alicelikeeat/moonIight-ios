@@ -45,8 +45,8 @@ struct DiscoverView: View {
                     resultGrid(app.discoverResults)
                 }
                 .padding(16)
-                .padding(.bottom, 110)
             }
+            .clearsTabBar()
             .background {
                 ZStack {
                     SystemGlassFill(dark: colors.dark)

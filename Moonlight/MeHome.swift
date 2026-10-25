@@ -59,8 +59,8 @@ struct MeView: View {
                     }
                 }
                 .padding(16)
-                .padding(.bottom, 110)
             }
+            .clearsTabBar()
             .background {
                 ZStack {
                     SystemGlassFill(dark: colors.dark)

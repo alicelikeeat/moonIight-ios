@@ -228,6 +228,21 @@ enum ScreenInsets {
             .first { $0.isKeyWindow }
         return window?.safeAreaInsets.bottom ?? 20
     }
+
+    /// Space the floating glass tab bar occupies above the physical bottom, plus a small gap.
+    static var tabClearance: CGFloat { 96 + bottom }
+}
+
+extension View {
+    /// Keeps scrolling rows above the floating tab bar instead of drawing them underneath it.
+    func clearsTabBar() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: ScreenInsets.tabClearance)
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+        }
+    }
 }
 
 func artSeed(_ url: String?) -> Int? {

@@ -73,9 +73,10 @@ final class TabTapTests: XCTestCase {
         me.tap()
         let settings = app.buttons["me.settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        if !canHit(settings) { app.swipeUp() }
-        if !canHit(settings) { app.swipeUp() }
-        XCTAssertTrue(canHit(settings), "设置点不到\n\(app.debugDescription)")
+        // Profile and groups are taller than the space above the tab bar. Scroll the row into that
+        // clear area, then require a real hit. A row left under the bar stays not hittable.
+        if !settings.isHittable { app.swipeUp() }
+        XCTAssertTrue(settings.isHittable, "设置点不到\n\(app.debugDescription)")
         settings.tap()
         let settingsPage = app.descendants(matching: .any)["settings.root"]
         XCTAssertTrue(
@@ -317,9 +318,6 @@ final class TabTapTests: XCTestCase {
         let fan = app.descendants(matching: .any)["capture.fan"]
         let compose = app.buttons["capture.compose"]
         let composeLabel = app.buttons["发朋友圈"]
-        if !(fan.waitForExistence(timeout: 2) || compose.waitForExistence(timeout: 1)) {
-            capture.press(forDuration: 1.2)
-        }
         XCTAssertTrue(
             fan.waitForExistence(timeout: 4) || compose.waitForExistence(timeout: 2) || composeLabel.waitForExistence(timeout: 2),
             "长按拍摄没有打开气泡\n\(app.debugDescription)"
@@ -469,14 +467,16 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(discoverVisible(), "长按之后短按失效了\n\(app.debugDescription)")
     }
 
-    /// A hidden or still-animating tab can exist with an invalid hit point. Treat that as not hittable.
+    /// XCTest raises "Activation point invalid" from `isHittable` when a tab was just inserted or
+    /// removed and has no hit point yet. That raise aborts the wait. The bar is not left on screen:
+    /// it leaves the hierarchy while the video is clean and comes back on tap. A real frame on screen
+    /// is the visible bar; a missing or empty frame is the hidden one.
     private func canHit(_ element: XCUIElement) -> Bool {
         guard element.exists else { return false }
         let frame = element.frame
         guard frame.width > 8, frame.height > 8 else { return false }
-        let window = app.windows.firstMatch.frame
-        guard window.intersects(frame) else { return false }
-        return element.isHittable
+        let window = app.windows.firstMatch.frame.insetBy(dx: 1, dy: 1)
+        return window.contains(CGPoint(x: frame.midX, y: frame.midY))
     }
 
     private func tab(_ title: String) -> XCUIElement {

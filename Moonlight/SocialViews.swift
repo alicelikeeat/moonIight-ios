@@ -49,8 +49,9 @@ struct MomentsView: View {
                         }
                         .padding(.horizontal, 16)
                     }
-                    .padding(.bottom, 120)
+                    .padding(.bottom, 24)
                 }
+                .clearsTabBar()
             }
             .navigationTitle("朋友圈")
             .navigationBarTitleDisplayMode(.inline)
