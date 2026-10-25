@@ -1,0 +1,41 @@
+name: iOS
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    name: Test and unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unit tests and unsigned device IPA
+        run: bash scripts/ci-ios.sh
+
+      - name: Upload Moonlight-unsigned.ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: Moonlight-unsigned.ipa
+          path: Moonlight-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Attach IPA to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Moonlight-unsigned.ipa
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

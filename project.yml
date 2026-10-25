@@ -1,0 +1,82 @@
+name: Moonlight
+options:
+  bundleIdPrefix: com.moonlight
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: zh-Hans
+  createIntermediateGroups: true
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MARKETING_VERSION: "1.2.1"
+    CURRENT_PROJECT_VERSION: "8"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
+targets:
+  Moonlight:
+    type: application
+    platform: iOS
+    sources:
+      - path: Moonlight
+        excludes:
+          - Info.plist
+          - Resources/AppIconSource.jpg
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.moonlight.feed
+        PRODUCT_NAME: Moonlight
+        PRODUCT_MODULE_NAME: Moonlight
+        INFOPLIST_FILE: Moonlight/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        ENABLE_PREVIEWS: NO
+  MoonlightTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MoonlightTests
+    dependencies:
+      - target: Moonlight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.moonlight.feed.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Moonlight.app/Moonlight"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+  MoonlightUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: MoonlightUITests
+    dependencies:
+      - target: Moonlight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.moonlight.feed.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Moonlight
+schemes:
+  Moonlight:
+    build:
+      targets:
+        Moonlight: all
+        MoonlightTests: [test]
+        MoonlightUITests: [test]
+    test:
+      targets:
+        - MoonlightTests
+        - MoonlightUITests
+      gatherCoverageData: false
+    run:
+      config: Debug
+    archive:
+      config: Release
