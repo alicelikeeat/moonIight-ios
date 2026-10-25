@@ -154,11 +154,7 @@ struct MomentsView: View {
                 ScreenPinnedFill {
                     ZStack {
                         Color.black
-                        if me.coverVideo {
-                            LoopFilm(ref: path)
-                        } else if let image = UIImage(contentsOfFile: path) {
-                            Image(uiImage: image).resizable().scaledToFill()
-                        }
+                        FilledMedia(file: path, video: me.coverVideo, focus: me.coverFocus ?? MediaFocus(), playing: true)
                         Color.black.opacity(0.28)
                     }
                 }
@@ -180,11 +176,7 @@ struct MomentsView: View {
                 endPoint: .bottomTrailing
             )
             if let path = me.coverPath, FileManager.default.fileExists(atPath: path) {
-                if me.coverVideo {
-                    LoopFilm(ref: path)
-                } else if let image = UIImage(contentsOfFile: path) {
-                    Image(uiImage: image).resizable().scaledToFill()
-                }
+                FilledMedia(file: path, video: me.coverVideo, focus: me.coverFocus ?? MediaFocus(), playing: true)
             }
             LinearGradient(colors: [.clear, .black.opacity(0.38)], startPoint: .center, endPoint: .bottom)
         }

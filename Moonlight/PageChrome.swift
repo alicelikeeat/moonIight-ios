@@ -152,6 +152,101 @@ struct GlassLine: View {
     }
 }
 
+/// Photo or video drawn so it covers the frame. Focus pans inside the spare margin.
+struct FilledMedia: View {
+    var file: String?
+    var video: Bool
+    var focus: MediaFocus = MediaFocus()
+    var blur: Bool = false
+    var playing: Bool = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let rect = BackdropCover.frame(focus: focus, view: geo.size, outset: blur ? 18 : 0)
+            ZStack {
+                Color.black
+                if let file, FileManager.default.fileExists(atPath: file) {
+                    if video, playing {
+                        LoopFilm(ref: file)
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
+                    } else if video {
+                        VideoPoster(path: file)
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
+                    } else if let image = UIImage(contentsOfFile: file) {
+                        Image(uiImage: image).resizable().scaledToFill()
+                            .frame(width: rect.width, height: rect.height)
+                            .position(x: rect.midX, y: rect.midY)
+                    }
+                }
+                Color.black.opacity(blur ? 0.42 : 0)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .blur(radius: blur ? 10 : 0)
+            .clipped()
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Phone-shaped preview. It does not pick or replace media.
+struct MediaPreviewFrame: View {
+    var file: String?
+    var video: Bool
+    var focus: MediaFocus = MediaFocus()
+    var blur: Bool = false
+    var active: Bool = false
+    var symbol: String
+    var empty: String
+    var caption: String
+    var colors: MoonColors
+    var badge: Color
+    var accessibilityID: String
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        let hasFile = file.map { FileManager.default.fileExists(atPath: $0) } ?? false
+        ZStack {
+            shape.fill(colors.dark ? Color.white.opacity(0.07) : colors.glassTint)
+            if hasFile {
+                FilledMedia(file: file, video: video, focus: focus, blur: blur)
+            } else {
+                VStack(spacing: 10) {
+                    GlassIcon(symbol: symbol, tint: badge).opacity(0.72)
+                    Text(empty)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(colors.textDim)
+                }
+            }
+            if active {
+                VStack {
+                    Spacer(minLength: 0)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                        Text(caption)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(colors.dark ? colors.onAccent : .white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(colors.accent, in: Capsule())
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .aspectRatio(3.0 / 4.0, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .clipShape(shape)
+        .overlay(shape.stroke(active ? colors.accent : colors.glassStroke, lineWidth: active ? 1.6 : 0.7))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier(accessibilityID)
+        .accessibilityLabel(hasFile ? (active ? caption : (video ? "视频" : "照片")) : empty)
+    }
+}
+
 struct BackdropPagesSheet: View {
     @EnvironmentObject private var app: AppModel
     @Environment(\.dismiss) private var dismiss

@@ -242,6 +242,51 @@ struct PlayerLayerView: UIViewRepresentable {
 final class PlayerHost: UIView {
     override class var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        playerLayer.frame = bounds
+    }
+}
+
+/// One still from a video, for previews. It does not keep a player running.
+struct VideoPoster: View {
+    var path: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Color.black
+            }
+        }
+        .task(id: path) {
+            image = await Self.frame(path: path)
+        }
+    }
+
+    static func frame(path: String) async -> UIImage? {
+        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 640, height: 640)
+        let time = NSValue(time: CMTime(seconds: 0.05, preferredTimescale: 600))
+        return await withCheckedContinuation { continuation in
+            var resumed = false
+            gen.generateCGImagesAsynchronously(forTimes: [time]) { _, cg, _, result, _ in
+                guard !resumed else { return }
+                switch result {
+                case .succeeded, .failed, .cancelled:
+                    resumed = true
+                    continuation.resume(returning: cg.map { UIImage(cgImage: $0) })
+                default:
+                    break
+                }
+            }
+        }
+    }
 }
 
 enum Gravity {

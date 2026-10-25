@@ -69,6 +69,8 @@ struct SettingsView: View {
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .accessibilityIdentifier("settings.root")
         .environment(\.colorScheme, onBackdrop ? .dark : (colors.dark ? .dark : .light))
         .onAppear { app.visibleBackdrop = .settings }
@@ -236,15 +238,35 @@ struct SettingsView: View {
 
     private var socialGroup: some View {
         GlassGroup(title: "朋友圈与消息", colors: ink) {
-            TextField("聊天服务器 https://", text: binding(\.chatServerURL))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .padding(.horizontal, 14)
-                .accessibilityIdentifier("settings.chatURL")
-            Button(app.chatConnected ? "已连接" : "连接") { Task { await app.connectChat() } }
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("聊天服务器 https://", text: binding(\.chatServerURL))
+                    .textFieldStyle(.plain)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .padding(12)
+                    .moonGlass(ink, radius: 14)
+                    .accessibilityIdentifier("settings.chatURL")
+                Button { Task { await app.connectChat() } } label: {
+                    HStack(spacing: 10) {
+                        GlassIcon(symbol: "link", tint: GlassTint.green)
+                        Text(app.chatConnected ? "已连接" : "连接")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(ink.text)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .moonGlass(ink, radius: 16)
+                }
+                .buttonStyle(.plain)
                 .disabled(app.settings.chatServerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .padding(.horizontal, 14)
                 .accessibilityIdentifier("settings.chatConnect")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
             nav("载入示例好友", "几个虚拟好友和一条月亮", "person.2", GlassTint.green, "settings.demo") { app.loadDemo() }
             nav("导出 social.json", "备份朋友圈", "square.and.arrow.up", GlassTint.blue, "settings.export") { exportURL = app.exportSocial() }
             nav("导入备份", "从 JSON 恢复", "square.and.arrow.down", GlassTint.orange, "settings.import") { importing = true }
@@ -545,34 +567,23 @@ struct SettingsView: View {
     private func backdropTile(video: Bool) -> some View {
         let stored = video ? app.settings.backdropVideo : app.settings.backdropPhoto
         let file = BackdropFiles.path(stored)
+        let focus = video ? app.settings.backdropVideoFocus : app.settings.backdropPhotoFocus
+        let blur = video ? app.settings.backdropVideoBlur : app.settings.backdropPhotoBlur
         let active = app.settings.backdropMode == (video ? .video : .photo)
         return ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.08))
-            if let file, video {
-                LoopFilm(ref: file).clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else if let file, let image = UIImage(contentsOfFile: file) {
-                Image(uiImage: image).resizable().scaledToFill()
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                VStack(spacing: 6) {
-                    Image(systemName: video ? "video" : "photo").font(.system(size: 22)).foregroundColor(ink.textDim)
-                    Text(video ? "视频 · 未选择" : "照片 · 未选择").font(.system(size: 12)).foregroundColor(ink.textDim)
-                }
-            }
-            if active, file != nil {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark")
-                    Text(video ? "视频 · 使用中" : "照片 · 使用中")
-                }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.black.opacity(0.45), in: Capsule())
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .padding(8)
-            }
+            MediaPreviewFrame(
+                file: file,
+                video: video,
+                focus: focus,
+                blur: blur && file != nil,
+                active: active,
+                symbol: video ? "video" : "photo",
+                empty: "未选择",
+                caption: video ? "视频 · 使用中" : "照片 · 使用中",
+                colors: ink,
+                badge: video ? GlassTint.purple : GlassTint.blue,
+                accessibilityID: video ? "backdrop.video" : "backdrop.photo"
+            )
             if file != nil {
                 Button { app.deleteBackdrop(video: video) } label: {
                     Image(systemName: "trash.fill")
@@ -581,19 +592,10 @@ struct SettingsView: View {
                         .padding(7)
                         .background(.black.opacity(0.45), in: Circle())
                 }
-                .padding(6)
+                .padding(8)
                 .accessibilityIdentifier(video ? "backdrop.video.trash" : "backdrop.photo.trash")
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 108)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onTapGesture {
-            guard file != nil else { return }
-            app.settings.backdropMode = video ? .video : .photo
-            app.saveSettings()
-        }
-        .accessibilityIdentifier(video ? "backdrop.video" : "backdrop.photo")
     }
 
     private var blurBinding: Binding<Bool> {

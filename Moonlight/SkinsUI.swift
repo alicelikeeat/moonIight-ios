@@ -141,6 +141,19 @@ struct ButtonSkinsView: View {
                     Text("一张图或一段视频可以套在一个、几个或全部按键上。同时播放的视频最多 4 个，其余停在画面上。")
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.72))
+                    MediaPreviewFrame(
+                        file: pendingSkin.flatMap { SkinFiles.path($0.path) },
+                        video: pendingSkin?.video == true,
+                        active: pendingSkin != nil,
+                        symbol: "photo",
+                        empty: "未选择",
+                        caption: pendingSkin?.video == true ? "视频" : "图片",
+                        colors: .media,
+                        badge: GlassTint.orange,
+                        accessibilityID: "skins.preview"
+                    )
+                    .frame(maxWidth: 160)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     PhotosPicker(selection: $item, matching: .any(of: [.images, .videos])) {
                         Label("选图片或视频", systemImage: "photo.on.rectangle")
                             .font(.system(size: 16, weight: .semibold))

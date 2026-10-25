@@ -73,6 +73,32 @@ enum BackdropPages {
     static func selectHome() -> [String] { homeOnly }
 }
 
+/// Aspect-fill placement. The rect always covers `view`, including after 调整位置.
+enum BackdropCover {
+    static func frame(focus: MediaFocus, view: CGSize, outset: CGFloat = 0) -> CGRect {
+        let width = max(view.width, 1)
+        let height = max(view.height, 1)
+        let scale = CGFloat(max(1, min(MediaFocus.maxScale, focus.scale)))
+        let w = width * scale + outset * 2
+        let h = height * scale + outset * 2
+        let maxX = max(0, (w - width) / 2)
+        let maxY = max(0, (h - height) / 2)
+        let nx = CGFloat(min(1, max(0, focus.x)))
+        let ny = CGFloat(min(1, max(0, focus.y)))
+        var x = (width - w) / 2 + (nx - 0.5) * 2 * maxX
+        var y = (height - h) / 2 + (ny - 0.5) * 2 * maxY
+        if x > 0 { x = 0 }
+        if y > 0 { y = 0 }
+        if x + w < width { x = width - w }
+        if y + h < height { y = height - h }
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    static func covers(_ rect: CGRect, view: CGSize, slack: CGFloat = 0.5) -> Bool {
+        rect.minX <= slack && rect.minY <= slack && rect.maxX >= view.width - slack && rect.maxY >= view.height - slack
+    }
+}
+
 enum FeedPlace {
     /// Saved id wins. A stale index is clamped. Remembering off always starts at the top.
     static func index(enabled: Bool, savedID: String, savedIndex: Int, ids: [String]) -> Int {
