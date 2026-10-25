@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Shown only when this device has no camera (the simulator). A real device presents
 /// `UIImagePickerController` full screen from `AppModel` and never builds this view.
@@ -60,6 +61,80 @@ struct MoonCamera: View {
                 }
                 library = nil
             }
+        }
+    }
+}
+
+/// System camera hosted by SwiftUI's full-screen cover. The delegate never calls dismiss;
+/// clearing the cover binding is the only way the camera goes away.
+struct SystemCameraPicker: UIViewControllerRepresentable {
+    var video: Bool
+    var onImage: (Data) -> Void
+    var onVideo: (URL) -> Void
+    var onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        let available = UIImagePickerController.availableMediaTypes(for: .camera) ?? []
+        let types = [UTType.image.identifier, UTType.movie.identifier].filter { available.contains($0) }
+        picker.mediaTypes = types.isEmpty ? [UTType.image.identifier] : types
+        if video, picker.mediaTypes.contains(UTType.movie.identifier) {
+            picker.cameraCaptureMode = .video
+        } else {
+            picker.cameraCaptureMode = .photo
+        }
+        picker.videoQuality = .typeHigh
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+        context.coordinator.onImage = onImage
+        context.coordinator.onVideo = onVideo
+        context.coordinator.onCancel = onCancel
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImage: onImage, onVideo: onVideo, onCancel: onCancel)
+    }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        var onImage: (Data) -> Void
+        var onVideo: (URL) -> Void
+        var onCancel: () -> Void
+        private var finished = false
+
+        init(onImage: @escaping (Data) -> Void, onVideo: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+            self.onImage = onImage
+            self.onVideo = onVideo
+            self.onCancel = onCancel
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            guard !finished else { return }
+            finished = true
+            onCancel()
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            guard !finished else { return }
+            finished = true
+            if let url = info[.mediaURL] as? URL {
+                let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+                if let copied = MediaStore.copy(from: url, folder: MediaStore.inbox, ext: ext) {
+                    onVideo(copied)
+                } else {
+                    onCancel()
+                }
+                return
+            }
+            let image = (info[.originalImage] as? UIImage) ?? (info[.editedImage] as? UIImage)
+            if let image, let data = image.jpegData(compressionQuality: 0.92) {
+                onImage(data)
+                return
+            }
+            onCancel()
         }
     }
 }

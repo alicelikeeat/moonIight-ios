@@ -133,21 +133,7 @@ struct RootView: View {
             }
         }
         .fullScreenCover(item: $app.camera, onDismiss: { app.releaseGestureChrome() }) { mode in
-            MoonCamera(
-                video: mode.video,
-                onImage: { image in
-                    app.camera = nil
-                    if let data = image.jpegData(compressionQuality: 0.9) {
-                        app.importImageData(data, title: "拍摄", source: "camera")
-                    }
-                },
-                onVideo: { url in
-                    app.camera = nil
-                    app.importFile(at: url, kind: .video, title: "录像", source: "camera")
-                },
-                onCancel: { app.camera = nil }
-            )
-            .ignoresSafeArea()
+            cameraCover(mode)
         }
         .sheet(isPresented: $app.showTrash) { TrashView() }
         .sheet(item: $ring.menu) { menu in
@@ -175,6 +161,41 @@ struct RootView: View {
 
     /// Home feed is full screen while a video is playing and the buttons are tucked away.
     private var feedChromeHidden: Bool { app.tab == .home && !app.feedChrome }
+
+    /// The system camera lives inside this cover. Nothing else dismisses it, so closing cannot leave a blank page behind.
+    @ViewBuilder private func cameraCover(_ mode: CameraLaunch) -> some View {
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            SystemCameraPicker(
+                video: mode.video,
+                onImage: { data in
+                    app.importImageData(data, title: "拍摄", source: "camera")
+                    app.camera = nil
+                },
+                onVideo: { url in
+                    app.importFile(at: url, kind: .video, title: "录像", source: "camera")
+                    app.camera = nil
+                },
+                onCancel: { app.camera = nil }
+            )
+            .ignoresSafeArea()
+        } else {
+            MoonCamera(
+                video: mode.video,
+                onImage: { image in
+                    if let data = image.jpegData(compressionQuality: 0.9) {
+                        app.importImageData(data, title: "拍摄", source: "camera")
+                    }
+                    app.camera = nil
+                },
+                onVideo: { url in
+                    app.importFile(at: url, kind: .video, title: "录像", source: "camera")
+                    app.camera = nil
+                },
+                onCancel: { app.camera = nil }
+            )
+            .ignoresSafeArea()
+        }
+    }
 
     @ViewBuilder private func page(_ tab: AppTab) -> some View {
         switch tab {

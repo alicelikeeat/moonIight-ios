@@ -81,7 +81,6 @@ final class AppModel: ObservableObject {
 
     static let immersiveDemoID = "immersive-demo"
     private var pickerSink: LibraryPickerSink?
-    private var cameraSink: SystemCameraSink?
     /// True from the moment a system picker is handed to UIKit until every dismiss path clears it.
     private var presentingPicker = false
     private weak var presentedPicker: UIViewController?
@@ -1114,12 +1113,10 @@ final class AppModel: ObservableObject {
         presentingPicker = false
         if let picker, picker.presentingViewController != nil, !picker.isBeingDismissed {
             picker.dismiss(animated: false) { [weak self] in
-                self?.cameraSink = nil
                 self?.pickerSink = nil
                 self?.releaseGestureChrome()
             }
         } else {
-            cameraSink = nil
             pickerSink = nil
             releaseGestureChrome()
         }
@@ -1128,50 +1125,15 @@ final class AppModel: ObservableObject {
     func notePickerDismissed() {
         presentedPicker = nil
         presentingPicker = false
-        cameraSink = nil
         pickerSink = nil
         camera = nil
         releaseGestureChrome()
     }
 
+    /// One SwiftUI cover owns the camera. The picker is not presented a second time from UIKit.
     func openCamera(_ video: Bool) {
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-            camera = nil
-            presentSystemCamera(video: video)
-        } else {
-            guard camera == nil else { return }
-            camera = video ? .video : .photo
-        }
-    }
-
-    /// System camera, full screen. Photo and video modes are the picker's own controls.
-    /// The movie file is copied before the delegate returns, because the picker deletes it.
-    func presentSystemCamera(video: Bool) {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        let available = UIImagePickerController.availableMediaTypes(for: .camera) ?? []
-        let types = [UTType.image.identifier, UTType.movie.identifier].filter { available.contains($0) }
-        picker.mediaTypes = types.isEmpty ? [UTType.image.identifier] : types
-        if video, picker.mediaTypes.contains(UTType.movie.identifier) {
-            picker.cameraCaptureMode = .video
-        } else {
-            picker.cameraCaptureMode = .photo
-        }
-        picker.videoQuality = .typeHigh
-        picker.modalPresentationStyle = .fullScreen
-        let sink = SystemCameraSink(
-            onImage: { [weak self] data in
-                self?.importImageData(data, title: "拍摄", source: "camera")
-            },
-            onVideo: { [weak self] url in
-                self?.importFile(at: url, kind: .video, title: "录像", source: "camera")
-            },
-            onDismiss: { [weak self] in self?.notePickerDismissed() }
-        )
-        picker.delegate = sink
-        picker.presentationController?.delegate = sink
-        guard presentOnTop(picker) else { return }
-        cameraSink = sink
+        guard camera == nil else { return }
+        camera = video ? .video : .photo
     }
 
     func presentImporter() {
@@ -1287,61 +1249,6 @@ enum CameraLaunch: String, Identifiable {
     case photo, video
     var id: String { rawValue }
     var video: Bool { self == .video }
-}
-
-final class SystemCameraSink: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIAdaptivePresentationControllerDelegate {
-    var onImage: (Data) -> Void
-    var onVideo: (URL) -> Void
-    var onDismiss: () -> Void
-    private var finished = false
-    init(onImage: @escaping (Data) -> Void, onVideo: @escaping (URL) -> Void, onDismiss: @escaping () -> Void) {
-        self.onImage = onImage
-        self.onVideo = onVideo
-        self.onDismiss = onDismiss
-    }
-
-    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        finish(picker)
-    }
-
-    /// Swipe-down does not call the cancel delegate. This does.
-    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
-        guard !finished else { return }
-        finished = true
-        onDismiss()
-    }
-
-    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        if let url = info[.mediaURL] as? URL {
-            let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
-            let copied = MediaStore.copy(from: url, folder: MediaStore.inbox, ext: ext)
-            let deliver = onVideo
-            finish(picker) { if let copied { deliver(copied) } }
-            return
-        }
-        let image = (info[.originalImage] as? UIImage) ?? (info[.editedImage] as? UIImage)
-        if let image, let data = image.jpegData(compressionQuality: 0.92) {
-            let deliver = onImage
-            finish(picker) { deliver(data) }
-            return
-        }
-        finish(picker)
-    }
-
-    private func finish(_ picker: UIImagePickerController, then: (() -> Void)? = nil) {
-        guard !finished else { return }
-        finished = true
-        let done = onDismiss
-        if picker.presentingViewController != nil, !picker.isBeingDismissed {
-            picker.dismiss(animated: true) {
-                then?()
-                done()
-            }
-        } else {
-            then?()
-            done()
-        }
-    }
 }
 
 final class LibraryPickerSink: NSObject, PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate {
