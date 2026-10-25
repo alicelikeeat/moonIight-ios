@@ -351,7 +351,9 @@ struct HoldChrome: View {
                     }
                 }
                 .padding(18)
+                .padding(.bottom, 8)
             }
+            .clearsTabBar()
             .foregroundColor(ink.text)
             .moonGlass(ink, radius: 30)
             .padding(.horizontal, 16)
@@ -363,9 +365,22 @@ struct HoldChrome: View {
 /// Set while a long-press is active so the button's touch-up does not also run.
 enum PressGate {
     static var suppressTap = false
-    static func begin() { suppressTap = true }
+    /// Bumped on begin and cancel so a dismiss can drop the gate without a later `end` raising it again.
+    private static var generation = 0
+    static func begin() {
+        generation += 1
+        suppressTap = true
+    }
     static func end() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { suppressTap = false }
+        let mine = generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            if generation == mine { suppressTap = false }
+        }
+    }
+    /// Immediate clear. Used when a camera or sheet goes away and must not keep swallowing taps.
+    static func cancel() {
+        generation += 1
+        suppressTap = false
     }
 }
 

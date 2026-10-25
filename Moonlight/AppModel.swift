@@ -83,6 +83,10 @@ final class AppModel: ObservableObject {
     static let immersiveDemoID = "immersive-demo"
     private var pickerSink: LibraryPickerSink?
     private var cameraSink: SystemCameraSink?
+    /// True from the moment a system picker is handed to UIKit until every dismiss path clears it.
+    private var presentingPicker = false
+    private weak var presentedPicker: UIViewController?
+    private var fanCloseTask: Task<Void, Never>?
 
     let feedPlayer = PlayerSession()
     let recorder = RecorderModel()
@@ -1097,18 +1101,93 @@ final class AppModel: ObservableObject {
         showToast(video ? "已删除视频背景" : "已删除照片背景")
     }
 
-    func openCamera(_ video: Bool) {
+    /// Drops the fan, the press gate, and any suspended tab-bar gestures.
+    /// A camera that closed without this left the next tap doing nothing.
+    func releaseGestureChrome() {
+        fanCloseTask?.cancel()
+        fanCloseTask = nil
         fan = nil
+        PressGate.cancel()
+        TabChrome.setSuspended(false)
+    }
+
+    /// Opens the capture fan once. A second call while it is up only moves the finger.
+    func beginFan(origin: CGPoint, finger: CGPoint) {
+        fanCloseTask?.cancel()
+        fanCloseTask = nil
+        if fan == nil || fan?.closing == true {
+            fan = FanGesture(origin: origin, finger: finger, down: true, started: Date(), closing: false)
+            Haptics.light()
+            TabChrome.setSuspended(true)
+            PressGate.begin()
+        } else {
+            fan?.finger = finger
+            fan?.down = true
+        }
+    }
+
+    func closeFan(animated: Bool) {
+        fanCloseTask?.cancel()
+        fanCloseTask = nil
+        guard var current = fan else { return }
+        if !animated {
+            fan = nil
+            return
+        }
+        if current.closing { return }
+        current.closing = true
+        current.down = false
+        current.started = Date()
+        fan = current
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let delay: UInt64 = reduce ? 180_000_000 : 280_000_000
+        fanCloseTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delay)
+            if self.fan?.closing == true { self.fan = nil }
+        }
+    }
+
+    /// Cancel, swipe-down, a finished shot, a failed shot, and leaving the app all come through here.
+    func dismissCaptureSession() {
+        camera = nil
+        let picker = presentedPicker
+        presentedPicker = nil
+        presentingPicker = false
+        if let picker, picker.presentingViewController != nil, !picker.isBeingDismissed {
+            picker.dismiss(animated: false) { [weak self] in
+                self?.cameraSink = nil
+                self?.pickerSink = nil
+                self?.releaseGestureChrome()
+            }
+        } else {
+            cameraSink = nil
+            pickerSink = nil
+            releaseGestureChrome()
+        }
+    }
+
+    func notePickerDismissed() {
+        presentedPicker = nil
+        presentingPicker = false
+        cameraSink = nil
+        pickerSink = nil
+        camera = nil
+        releaseGestureChrome()
+    }
+
+    func openCamera(_ video: Bool) {
+        closeFan(animated: false)
         if UIImagePickerController.isSourceTypeAvailable(.camera) {
             camera = nil
             presentSystemCamera(video: video)
         } else {
+            guard camera == nil else { return }
             camera = video ? .video : .photo
         }
     }
 
     func fireCapture(_ index: Int) {
-        fan = nil
+        closeFan(animated: false)
         switch index {
         case 0: openCamera(false)
         case 1: openCamera(true)
@@ -1139,11 +1218,13 @@ final class AppModel: ObservableObject {
             },
             onVideo: { [weak self] url in
                 self?.importFile(at: url, kind: .video, title: "录像", source: "camera")
-            }
+            },
+            onDismiss: { [weak self] in self?.notePickerDismissed() }
         )
         picker.delegate = sink
+        picker.presentationController?.delegate = sink
+        guard presentOnTop(picker) else { return }
         cameraSink = sink
-        presentOnTop(picker)
     }
 
     func presentImporter() {
@@ -1151,13 +1232,17 @@ final class AppModel: ObservableObject {
         config.filter = .any(of: [.images, .videos])
         config.selectionLimit = 1
         let picker = PHPickerViewController(configuration: config)
-        let sink = LibraryPickerSink { [weak self] results in
-            guard let result = results.first else { return }
-            Task { await self?.importProvider(result.itemProvider) }
-        }
+        let sink = LibraryPickerSink(
+            onPick: { [weak self] results in
+                guard let result = results.first else { return }
+                Task { await self?.importProvider(result.itemProvider) }
+            },
+            onDismiss: { [weak self] in self?.notePickerDismissed() }
+        )
         picker.delegate = sink
+        picker.presentationController?.delegate = sink
+        guard presentOnTop(picker) else { return }
         pickerSink = sink
-        presentOnTop(picker)
     }
 
     func addWebSource(_ raw: String) async {
@@ -1202,7 +1287,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func presentOnTop(_ controller: UIViewController) {
+    /// One picker at a time. A second present while the first is still dismissing is what froze the window.
+    @discardableResult
+    private func presentOnTop(_ controller: UIViewController) -> Bool {
+        guard !presentingPicker else { return false }
         let root = UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
@@ -1210,7 +1298,11 @@ final class AppModel: ObservableObject {
             .rootViewController
         var top = root
         while let next = top?.presentedViewController { top = next }
-        top?.present(controller, animated: true)
+        guard let top, top.presentedViewController == nil, !top.isBeingPresented, !top.isBeingDismissed else { return false }
+        presentingPicker = true
+        presentedPicker = controller
+        top.present(controller, animated: true)
+        return true
     }
 
     private func importProvider(_ provider: NSItemProvider) async {
@@ -1254,18 +1346,30 @@ struct FanGesture: Equatable {
     var origin: CGPoint
     var finger: CGPoint
     var down: Bool
+    var started: Date
+    var closing: Bool
 }
 
-final class SystemCameraSink: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+final class SystemCameraSink: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIAdaptivePresentationControllerDelegate {
     var onImage: (Data) -> Void
     var onVideo: (URL) -> Void
-    init(onImage: @escaping (Data) -> Void, onVideo: @escaping (URL) -> Void) {
+    var onDismiss: () -> Void
+    private var finished = false
+    init(onImage: @escaping (Data) -> Void, onVideo: @escaping (URL) -> Void, onDismiss: @escaping () -> Void) {
         self.onImage = onImage
         self.onVideo = onVideo
+        self.onDismiss = onDismiss
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        picker.dismiss(animated: true)
+        finish(picker)
+    }
+
+    /// Swipe-down does not call the cancel delegate. This does.
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard !finished else { return }
+        finished = true
+        onDismiss()
     }
 
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
@@ -1273,27 +1377,56 @@ final class SystemCameraSink: NSObject, UIImagePickerControllerDelegate, UINavig
             let ext = url.pathExtension.isEmpty ? "mov" : url.pathExtension
             let copied = MediaStore.copy(from: url, folder: MediaStore.inbox, ext: ext)
             let deliver = onVideo
-            picker.dismiss(animated: true) {
-                if let copied { deliver(copied) }
-            }
+            finish(picker) { if let copied { deliver(copied) } }
             return
         }
         let image = (info[.originalImage] as? UIImage) ?? (info[.editedImage] as? UIImage)
         if let image, let data = image.jpegData(compressionQuality: 0.92) {
             let deliver = onImage
-            picker.dismiss(animated: true) { deliver(data) }
+            finish(picker) { deliver(data) }
             return
         }
-        picker.dismiss(animated: true)
+        finish(picker)
+    }
+
+    private func finish(_ picker: UIImagePickerController, then: (() -> Void)? = nil) {
+        guard !finished else { return }
+        finished = true
+        let done = onDismiss
+        if picker.presentingViewController != nil, !picker.isBeingDismissed {
+            picker.dismiss(animated: true) {
+                then?()
+                done()
+            }
+        } else {
+            then?()
+            done()
+        }
     }
 }
 
-final class LibraryPickerSink: NSObject, PHPickerViewControllerDelegate {
+final class LibraryPickerSink: NSObject, PHPickerViewControllerDelegate, UIAdaptivePresentationControllerDelegate {
     var onPick: ([PHPickerResult]) -> Void
-    init(onPick: @escaping ([PHPickerResult]) -> Void) { self.onPick = onPick }
+    var onDismiss: () -> Void
+    private var finished = false
+    init(onPick: @escaping ([PHPickerResult]) -> Void, onDismiss: @escaping () -> Void) {
+        self.onPick = onPick
+        self.onDismiss = onDismiss
+    }
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true)
-        onPick(results)
+        guard !finished else { return }
+        finished = true
+        let deliver = onPick
+        let done = onDismiss
+        picker.dismiss(animated: true) {
+            deliver(results)
+            done()
+        }
+    }
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        guard !finished else { return }
+        finished = true
+        onDismiss()
     }
 }
 

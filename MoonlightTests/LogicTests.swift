@@ -150,6 +150,23 @@ final class LogicTests: XCTestCase {
         XCTAssertNotEqual(moon, fade)
     }
 
+    func testPressGateCancelDropsAStaleEnd() {
+        PressGate.begin()
+        XCTAssertTrue(PressGate.suppressTap)
+        PressGate.end()
+        PressGate.cancel()
+        XCTAssertFalse(PressGate.suppressTap)
+        PressGate.begin()
+        let exp = expectation(description: "stale end")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            XCTAssertTrue(PressGate.suppressTap)
+            PressGate.cancel()
+            XCTAssertFalse(PressGate.suppressTap)
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 2)
+    }
+
     func testLegacyRingNames() {
         XCTAssertEqual(RingAnimPick.normalize("FALL"), "STAR")
         XCTAssertEqual(RingAnimPick.normalize("BLUR"), "STAR")

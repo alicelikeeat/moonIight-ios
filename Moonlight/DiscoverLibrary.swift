@@ -83,73 +83,76 @@ struct DiscoverView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { tools = false }
                 .accessibilityIdentifier("discover.tools.dim")
-            VStack(alignment: .leading, spacing: 14) {
-                Text("发现").font(.system(size: 18, weight: .bold)).foregroundColor(colors.text)
-                    .padding(.top, ScreenInsets.top)
-                TextField("搜索月亮、海洋、城市…", text: $query)
-                    .textFieldStyle(.plain)
-                    .foregroundColor(colors.text)
-                    .padding(12)
-                    .moonGlass(colors, radius: 14)
-                toolButton("搜索", "magnifyingglass", GlassTint.blue, "discover.search") {
-                    tools = false
-                    let typed = query
-                    Task { await app.discover(query: typed, linger: true) }
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        TextField("粘贴直链或官方页面", text: $link)
-                            .textFieldStyle(.plain)
-                            .foregroundColor(colors.text)
-                            .padding(12)
-                            .moonGlass(colors, radius: 14)
-                        VStack(spacing: 0) {
-                            toolRow("加入", "plus.circle", GlassTint.green, "discover.add") { addLink() }
-                            toolRow("订阅", "dot.radiowaves.up.forward", GlassTint.purple, "discover.follow") { app.subscribe(link); link = "" }
-                            toolRow("导入", "square.and.arrow.down", GlassTint.orange, "discover.import") { app.presentImporter() }
-                            toolRow("刷新", "arrow.clockwise", GlassTint.gray, "discover.refreshFollows") {
-                                Task { await app.discover(query: query); await app.refreshFollows() }
-                            }
-                        }
-                        .moonGlass(colors, radius: 18)
-                        Text("分类").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
-                        VStack(spacing: 0) {
-                            ForEach(SourceCatalog.rows, id: \.key) { row in
-                                HStack(spacing: 12) {
-                                    GlassIcon(symbol: sourceSymbol(row.key), tint: sourceTint(row.key))
-                                    Text(row.title).font(.system(size: 15, weight: .medium)).foregroundColor(colors.text)
-                                    Spacer()
-                                    Toggle("", isOn: Binding(
-                                        get: { app.settings.sourceOn(row.key) },
-                                        set: { app.settings.setSource(row.key, $0); app.saveSettings() }
-                                    ))
-                                    .labelsHidden()
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                            }
-                        }
-                        .moonGlass(colors, radius: 18)
-                        if !app.settings.follows.isEmpty {
-                            VStack(spacing: 0) {
-                                ForEach(app.settings.follows) { source in
-                                    HStack {
-                                        Text(source.title).lineLimit(1).foregroundColor(colors.text)
-                                        Spacer()
-                                        Button("移除") { app.removeFollow(source.id) }
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundColor(colors.danger)
-                                            .buttonStyle(.plain)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
-                                }
-                            }
-                            .moonGlass(colors, radius: 18)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("发现").font(.system(size: 18, weight: .bold)).foregroundColor(colors.text)
+                        .padding(.top, ScreenInsets.top)
+                    TextField("搜索月亮、海洋、城市…", text: $query)
+                        .textFieldStyle(.plain)
+                        .foregroundColor(colors.text)
+                        .padding(12)
+                        .moonGlass(colors, radius: 14)
+                    toolButton("搜索", "magnifyingglass", GlassTint.blue, "discover.search") {
+                        tools = false
+                        let typed = query
+                        Task { await app.discover(query: typed, linger: true) }
+                    }
+                    TextField("粘贴直链或官方页面", text: $link)
+                        .textFieldStyle(.plain)
+                        .foregroundColor(colors.text)
+                        .padding(12)
+                        .moonGlass(colors, radius: 14)
+                    VStack(spacing: 0) {
+                        toolRow("加入", "plus.circle", GlassTint.green, "discover.add") { addLink() }
+                        toolRow("订阅", "dot.radiowaves.up.forward", GlassTint.purple, "discover.follow") { app.subscribe(link); link = "" }
+                        toolRow("导入", "square.and.arrow.down", GlassTint.orange, "discover.import") { app.presentImporter() }
+                        toolRow("刷新", "arrow.clockwise", GlassTint.gray, "discover.refreshFollows") {
+                            Task { await app.discover(query: query); await app.refreshFollows() }
                         }
                     }
+                    .moonGlass(colors, radius: 18)
+                    Text("分类").font(.system(size: 13, weight: .semibold)).foregroundColor(colors.textDim)
+                    VStack(spacing: 0) {
+                        ForEach(SourceCatalog.rows, id: \.key) { row in
+                            HStack(spacing: 12) {
+                                GlassIcon(symbol: sourceSymbol(row.key), tint: sourceTint(row.key))
+                                Text(row.title)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(colors.text)
+                                    .accessibilityIdentifier("discover.source.\(row.key)")
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { app.settings.sourceOn(row.key) },
+                                    set: { app.settings.setSource(row.key, $0); app.saveSettings() }
+                                ))
+                                .labelsHidden()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                        }
+                    }
+                    .moonGlass(colors, radius: 18)
+                    if !app.settings.follows.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(app.settings.follows) { source in
+                                HStack {
+                                    Text(source.title).lineLimit(1).foregroundColor(colors.text)
+                                    Spacer()
+                                    Button("移除") { app.removeFollow(source.id) }
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundColor(colors.danger)
+                                        .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                            }
+                        }
+                        .moonGlass(colors, radius: 18)
+                    }
                 }
+                .padding(.bottom, 12)
             }
+            .clearsTabBar()
             .padding(16)
             .frame(width: min(340, UIScreen.main.bounds.width * 0.86))
             .frame(maxHeight: .infinity, alignment: .top)
@@ -370,6 +373,7 @@ struct LibraryView: View {
             .padding(16)
             .padding(.bottom, 24)
         }
+        .clearsTabBar()
         .background { SystemGlassFill(dark: colors.dark) }
         .onAppear { filter = startFilter }
         .navigationTitle("库")

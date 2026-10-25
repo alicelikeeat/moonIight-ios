@@ -248,6 +248,58 @@ final class TabTapTests: XCTestCase {
         XCTAssertFalse(starAgain.isSelected, "重新打开后回到了星轨")
     }
 
+    func testCameraCloseLeavesTheAppResponsive() {
+        let capture = tab("拍摄")
+        XCTAssertTrue(capture.waitForExistence(timeout: 12))
+        for round in 1...3 {
+            capture.tap()
+            let root = app.descendants(matching: .any)["camera.root"]
+            let message = app.staticTexts["这台设备没有相机"]
+            XCTAssertTrue(
+                root.waitForExistence(timeout: 5) || message.waitForExistence(timeout: 2),
+                "第 \(round) 次没有打开相机\n\(app.debugDescription)"
+            )
+            let close = app.buttons["camera.close"]
+            let closeLabel = app.buttons["关闭"]
+            XCTAssertTrue(close.waitForExistence(timeout: 3) || closeLabel.waitForExistence(timeout: 2), "第 \(round) 次没有关闭\n\(app.debugDescription)")
+            if close.exists { close.tap() } else { closeLabel.tap() }
+            let gone = NSPredicate(format: "exists == NO")
+            wait(for: [XCTNSPredicateExpectation(predicate: gone, object: root)], timeout: 4)
+        }
+        let home = tab("首页")
+        XCTAssertTrue(home.isHittable, "关掉相机之后首页点不到\n\(app.debugDescription)")
+        home.tap()
+        let jump = app.buttons["home.discover"]
+        XCTAssertTrue(jump.waitForExistence(timeout: 5))
+        XCTAssertTrue(jump.isHittable, "关掉相机之后去发现点不到")
+        jump.press(forDuration: 1.1)
+        let ring = app.descendants(matching: .any)["ring.root"]
+        let filter = app.staticTexts["筛选"]
+        XCTAssertTrue(
+            ring.waitForExistence(timeout: 4) || filter.waitForExistence(timeout: 2),
+            "关掉相机之后长按没有反应\n\(app.debugDescription)"
+        )
+    }
+
+    func testDiscoverToolsScrollsToTheLastSource() {
+        let discover = tab("发现")
+        XCTAssertTrue(discover.waitForExistence(timeout: 12))
+        discover.tap()
+        let tools = app.descendants(matching: .any)["discover.tools"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 6))
+        tools.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["discover.search"].waitForExistence(timeout: 4), "发现面板没有打开")
+        let last = app.descendants(matching: .any)["discover.source.web"]
+        let window = app.windows.firstMatch
+        for _ in 0..<8 where !last.exists || !last.isHittable {
+            let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.72))
+            let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.16, dy: 0.28))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        XCTAssertTrue(last.waitForExistence(timeout: 3), "发现面板没有网址源\n\(app.debugDescription)")
+        XCTAssertTrue(last.isHittable, "网址源被底栏挡住，拉不到底部\n\(app.debugDescription)")
+    }
+
     func testUnifiedMomentsHeader() {
         openSettings()
         let unified = app.buttons["统一"]

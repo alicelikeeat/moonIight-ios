@@ -43,6 +43,7 @@ struct AppRoot: View {
             .moonOnChange(of: scenePhase) { phase in
                 if phase != .active {
                     NotificationCenter.default.post(name: .moonPauseAll, object: nil)
+                    app.dismissCaptureSession()
                     Task { await app.flush() }
                 } else {
                     NotificationCenter.default.post(name: .moonResumeFeed, object: nil)
@@ -131,7 +132,7 @@ struct RootView: View {
                     .allowsHitTesting(!feedChromeHidden)
             }
         }
-        .fullScreenCover(item: $app.camera) { mode in
+        .fullScreenCover(item: $app.camera, onDismiss: { app.releaseGestureChrome() }) { mode in
             MoonCamera(
                 video: mode.video,
                 onImage: { image in
@@ -262,6 +263,8 @@ struct MoonTabBar: View {
     @State private var dragSlot: CGFloat?
     /// Center of 拍摄 in window coordinates, so a long-press still anchors the fan if the window probe misses.
     @State private var captureCenter = CGPoint.zero
+    /// 0…1 while the finger is down on 拍摄, before and as the fan opens.
+    @State private var holdProgress: CGFloat = 0
 
     var body: some View {
         let ink = app.tab == .home ? MoonColors.media : colors
@@ -366,8 +369,15 @@ struct MoonTabBar: View {
                 ZStack {
                     Circle().fill(Color.white.opacity(0.2)).frame(width: 46, height: 46)
                     Circle().stroke(Color.white.opacity(0.55), lineWidth: 1).frame(width: 46, height: 46)
+                    Circle()
+                        .trim(from: 0, to: holdProgress)
+                        .stroke(Color.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 52, height: 52)
+                        .opacity(holdProgress > 0.02 ? 1 : 0)
                     Image(systemName: "camera.fill").font(.system(size: 18, weight: .semibold))
                 }
+                .scaleEffect(UIAccessibility.isReduceMotionEnabled ? 1 : 1 + 0.08 * holdProgress)
                 .offset(y: -8)
                 Text("拍摄").font(.system(size: 10, weight: .medium))
             }
@@ -378,20 +388,21 @@ struct MoonTabBar: View {
         }
         .buttonStyle(.plain)
         .background {
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { captureCenter = Self.mid(geo) }
-                    .moonOnChange(of: geo.frame(in: .global).midY) { _ in captureCenter = Self.mid(geo) }
+            ZStack {
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { captureCenter = Self.mid(geo) }
+                        .moonOnChange(of: geo.frame(in: .global).midY) { _ in captureCenter = Self.mid(geo) }
+                }
+                CaptureHoldMeter { holdProgress = $0 }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .simultaneousGesture(captureHold)
         .holdTrack(onBegan: { point in
-            guard app.fan == nil else { return }
-            app.fan = FanGesture(origin: point, finger: point, down: true)
-            TabChrome.setSuspended(true)
+            app.beginFan(origin: point, finger: point)
         }, onChanged: { point in
-            app.fan?.finger = point
-            app.fan?.down = true
+            app.beginFan(origin: point, finger: point)
         }, onEnded: { point in
             finishCaptureHold(at: point)
         }, cancelsTap: true)
@@ -408,15 +419,8 @@ struct MoonTabBar: View {
             .onChanged { value in
                 guard case .second(true, let drag) = value else { return }
                 let point = drag?.location ?? captureCenter
-                if app.fan == nil {
-                    let origin = captureCenter == .zero ? point : captureCenter
-                    app.fan = FanGesture(origin: origin, finger: point, down: true)
-                    TabChrome.setSuspended(true)
-                    PressGate.begin()
-                } else {
-                    app.fan?.finger = point
-                    app.fan?.down = true
-                }
+                let origin = captureCenter == .zero ? point : captureCenter
+                app.beginFan(origin: origin, finger: point)
             }
             .onEnded { value in
                 let point: CGPoint
