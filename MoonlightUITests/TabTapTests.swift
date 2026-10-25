@@ -440,10 +440,10 @@ final class TabTapTests: XCTestCase {
         let playing = app.descendants(matching: .any)["home.playing"]
         XCTAssertTrue(playing.waitForExistence(timeout: 15), "沉浸测试没有进入播放页\n\(app.debugDescription)")
         let home = tab("首页")
-        XCTAssertTrue(waitUntil(timeout: 8) { !canHit(home) }, "播放时底栏还在\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 8) { !self.canHit(home) }, "播放时底栏还在\n\(app.debugDescription)")
         playing.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        XCTAssertTrue(waitUntil(timeout: 4) { canHit(home) }, "点一下没有把底栏请回来\n\(app.debugDescription)")
-        XCTAssertTrue(waitUntil(timeout: 5) { !canHit(home) }, "安静之后底栏没有再消失\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 4) { self.canHit(home) }, "点一下没有把底栏请回来\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 5) { !self.canHit(home) }, "安静之后底栏没有再消失\n\(app.debugDescription)")
     }
 
     /// The same control must both accept a short tap and a long-press that opens the ring.
