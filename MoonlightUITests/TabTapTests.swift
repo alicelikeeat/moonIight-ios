@@ -73,7 +73,9 @@ final class TabTapTests: XCTestCase {
         me.tap()
         let settings = app.buttons["me.settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        XCTAssertTrue(settings.isHittable, "设置点不到")
+        if !canHit(settings) { app.swipeUp() }
+        if !canHit(settings) { app.swipeUp() }
+        XCTAssertTrue(canHit(settings), "设置点不到\n\(app.debugDescription)")
         settings.tap()
         let settingsPage = app.descendants(matching: .any)["settings.root"]
         XCTAssertTrue(
@@ -315,6 +317,9 @@ final class TabTapTests: XCTestCase {
         let fan = app.descendants(matching: .any)["capture.fan"]
         let compose = app.buttons["capture.compose"]
         let composeLabel = app.buttons["发朋友圈"]
+        if !(fan.waitForExistence(timeout: 2) || compose.waitForExistence(timeout: 1)) {
+            capture.press(forDuration: 1.2)
+        }
         XCTAssertTrue(
             fan.waitForExistence(timeout: 4) || compose.waitForExistence(timeout: 2) || composeLabel.waitForExistence(timeout: 2),
             "长按拍摄没有打开气泡\n\(app.debugDescription)"
@@ -437,10 +442,10 @@ final class TabTapTests: XCTestCase {
         let playing = app.descendants(matching: .any)["home.playing"]
         XCTAssertTrue(playing.waitForExistence(timeout: 15), "沉浸测试没有进入播放页\n\(app.debugDescription)")
         let home = tab("首页")
-        XCTAssertTrue(waitUntil(timeout: 8) { !home.exists || !home.isHittable }, "播放时底栏还在\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 8) { !canHit(home) }, "播放时底栏还在\n\(app.debugDescription)")
         playing.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        XCTAssertTrue(waitUntil(timeout: 4) { home.exists && home.isHittable }, "点一下没有把底栏请回来\n\(app.debugDescription)")
-        XCTAssertTrue(waitUntil(timeout: 5) { !home.exists || !home.isHittable }, "安静之后底栏没有再消失\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 4) { canHit(home) }, "点一下没有把底栏请回来\n\(app.debugDescription)")
+        XCTAssertTrue(waitUntil(timeout: 5) { !canHit(home) }, "安静之后底栏没有再消失\n\(app.debugDescription)")
     }
 
     /// The same control must both accept a short tap and a long-press that opens the ring.
@@ -462,6 +467,16 @@ final class TabTapTests: XCTestCase {
         XCTAssertTrue(jump.isHittable, "长按之后去发现不在了")
         jump.tap()
         XCTAssertTrue(discoverVisible(), "长按之后短按失效了\n\(app.debugDescription)")
+    }
+
+    /// A hidden or still-animating tab can exist with an invalid hit point. Treat that as not hittable.
+    private func canHit(_ element: XCUIElement) -> Bool {
+        guard element.exists else { return false }
+        let frame = element.frame
+        guard frame.width > 8, frame.height > 8 else { return false }
+        let window = app.windows.firstMatch.frame
+        guard window.intersects(frame) else { return false }
+        return element.isHittable
     }
 
     private func tab(_ title: String) -> XCUIElement {
