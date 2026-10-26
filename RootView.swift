@@ -349,8 +349,8 @@ private struct MomentsView: View {
                         .accessibilityLabel("发布动态")
                 }.padding(.vertical, 6)
                 HStack {
-                    sectionHeading("最近动态", action: "")
-                    Spacer()
+                    Text("最近动态").font(.title3.bold())
+                    Spacer(minLength: 4)
                     Button("发布") { showingComposer = true }.foregroundStyle(MoonStyle.accent)
                 }
                 if moments.isEmpty {
@@ -408,6 +408,8 @@ private struct LocalMoment: Codable, Identifiable {
 }
 
 private struct MeView: View {
+    @AppStorage("moonlight.profile.avatarPath") private var avatarPath = ""
+    @AppStorage("moonlight.profile.coverPath") private var coverPath = ""
     let selectedImage: Image?
     @Binding var selection: PhotosPickerItem?
     let onSelect: (MediaEntry) -> Void
@@ -420,9 +422,22 @@ private struct MeView: View {
                             Image(systemName: "gearshape").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
                         }
                     }
+                    if !coverPath.isEmpty, let cover = UIImage(contentsOfFile: coverPath) {
+                        Image(uiImage: cover).resizable().scaledToFill()
+                            .frame(height: 150).frame(maxWidth: .infinity).clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 24))
+                    } else if isMoviePath(coverPath), !coverPath.isEmpty {
+                        let url = URL(fileURLWithPath: coverPath)
+                        VideoPlayer(player: AVPlayer(url: url)).frame(height: 150)
+                            .clipShape(RoundedRectangle(cornerRadius: 24))
+                    }
                     NavigationLink { ProfileEditView() } label: {
                         HStack(spacing: 14) {
-                            if let selectedImage {
+                            if !avatarPath.isEmpty, let avatar = UIImage(contentsOfFile: avatarPath) {
+                                Image(uiImage: avatar).resizable().scaledToFill().frame(width: 58, height: 58).clipShape(Circle())
+                            } else if isMoviePath(avatarPath) {
+                                Image(systemName: "play.circle.fill").font(.system(size: 54)).foregroundStyle(MoonStyle.accent)
+                            } else if let selectedImage {
                                 selectedImage.resizable().scaledToFill().frame(width: 58, height: 58).clipShape(Circle())
                             } else {
                                 Image(systemName: "person.crop.circle.fill").font(.system(size: 58)).foregroundStyle(MoonStyle.accent)
@@ -461,20 +476,54 @@ private struct MeView: View {
 private struct ProfileEditView: View {
     @State private var avatar: PhotosPickerItem?
     @State private var cover: PhotosPickerItem?
+    @AppStorage("moonlight.profile.avatarPath") private var avatarPath = ""
+    @AppStorage("moonlight.profile.coverPath") private var coverPath = ""
+
     var body: some View {
         Form {
-            Section("头像与封面") {
+            Section("个人头像") {
+                if !avatarPath.isEmpty, let image = UIImage(contentsOfFile: avatarPath) {
+                    Image(uiImage: image).resizable().scaledToFill().frame(width: 88, height: 88).clipShape(Circle())
+                }
                 PhotosPicker(selection: $avatar, matching: .any(of: [.images, .videos])) {
                     Label("选择头像照片或视频", systemImage: "person.crop.circle")
+                }
+            }
+            Section("顶部封面") {
+                if !coverPath.isEmpty, let image = UIImage(contentsOfFile: coverPath) {
+                    Image(uiImage: image).resizable().scaledToFill().frame(height: 130).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 16))
+                } else if isMoviePath(coverPath), !coverPath.isEmpty {
+                    let url = URL(fileURLWithPath: coverPath)
+                    VideoPlayer(player: AVPlayer(url: url)).frame(height: 130).clipShape(RoundedRectangle(cornerRadius: 16))
                 }
                 PhotosPicker(selection: $cover, matching: .any(of: [.images, .videos])) {
                     Label("选择顶部封面照片或视频", systemImage: "rectangle.fill")
                 }
-                Text("媒体预览与资料保存将在社交功能移植阶段接入。")
-                    .font(.footnote).foregroundStyle(.secondary)
             }
         }.navigationTitle("编辑资料")
+            .task(id: avatar) { await save(avatar, key: "avatar") }
+            .task(id: cover) { await save(cover, key: "cover") }
     }
+
+    @MainActor
+    private func save(_ item: PhotosPickerItem?, key: String) async {
+        guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
+        let type = item.supportedContentTypes.first
+        let isVideo = type?.conforms(to: .movie) == true
+        let ext = type?.preferredFilenameExtension ?? (isVideo ? "mov" : "jpg")
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("profile", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent("\(key)-\(UUID().uuidString).\(ext)")
+            try data.write(to: url, options: .atomic)
+            if key == "avatar" { avatarPath = url.path } else { coverPath = url.path }
+        } catch { }
+    }
+}
+
+private func isMoviePath(_ path: String) -> Bool {
+    ["mov", "mp4", "m4v", "mpeg", "mpg"].contains(URL(fileURLWithPath: path).pathExtension.lowercased())
 }
 
 private struct CameraView: View {
