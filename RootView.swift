@@ -3,6 +3,7 @@ import PhotosUI
 import WebKit
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 private enum MoonStyle {
     static let background = Color(uiColor: .systemGroupedBackground)
@@ -41,8 +42,12 @@ struct RootView: View {
         .task(id: selectedMedia) {
             guard let selectedMedia,
                   let data = try? await selectedMedia.loadTransferable(type: Data.self) else { return }
-            if let image = UIImage(data: data) { selectedImage = Image(uiImage: image) }
-            model.mediaStore.importImage(data, title: "导入的照片")
+            if let image = UIImage(data: data) {
+                selectedImage = Image(uiImage: image)
+                model.mediaStore.importImage(data, title: "导入的照片")
+            } else if let type = selectedMedia.supportedContentTypes.first, type.conforms(to: .movie) {
+                model.mediaStore.importMedia(data, title: "导入的视频", kind: .video, fileExtension: type.preferredFilenameExtension ?? "mov")
+            }
         }
     }
 
@@ -520,12 +525,14 @@ private struct CameraView: View {
                 CameraCaptureView { image in capturedImage = image }
                     .ignoresSafeArea()
             }
-            .photosPicker(isPresented: $showPicker, selection: $selectedPhoto, matching: .images)
+            .photosPicker(isPresented: $showPicker, selection: $selectedPhoto, matching: .any(of: [.images, .videos]))
             .task(id: selectedPhoto) {
                 guard let selectedPhoto,
-                      let data = try? await selectedPhoto.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data) else { return }
-                capturedImage = image
+                      let data = try? await selectedPhoto.loadTransferable(type: Data.self) else { return }
+                if let image = UIImage(data: data) { capturedImage = image }
+                else if let type = selectedPhoto.supportedContentTypes.first, type.conforms(to: .movie) {
+                    model.mediaStore.importMedia(data, title: "导入的视频", kind: .video, fileExtension: type.preferredFilenameExtension ?? "mov")
+                }
             }
         }
     }
