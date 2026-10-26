@@ -613,7 +613,16 @@ final class MediaStore: ObservableObject {
     }
 
     func delete(_ entry: MediaEntry) {
+        let deleted = items.filter { $0.id == entry.id }
         items.removeAll { $0.id == entry.id }
+        let mediaDirectory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true).standardizedFileURL
+        let prefix = mediaDirectory.path + "/"
+        for item in deleted {
+            guard let url = item.remoteURL, url.isFileURL else { continue }
+            let path = url.standardizedFileURL.path
+            guard path.hasPrefix(prefix) else { continue }
+            try? FileManager.default.removeItem(at: url)
+        }
         persist()
     }
 
