@@ -18,7 +18,7 @@ This project includes a GitHub Actions workflow that runs Xcode on a hosted macO
    - IOS_TEAM_ID: Apple Developer Team ID.
 6. Open Actions > iOS build > Run workflow. Download the Moonlight-iOS-IPA artifact after it finishes.
 
-Without signing secrets, the workflow still performs an iOS Simulator build, but a simulator app cannot be installed on a physical iPhone. The Ad Hoc profile must include the device receiving the IPA.
+Without signing secrets, the workflow still builds the iOS Simulator app and packages a device archive as an unsigned IPA. The unsigned IPA is not directly installable: import it into an iPhone signing tool and sign it with a certificate and provisioning profile before installation. For an Ad Hoc IPA built in CI, the profile must include the device receiving the app.
 
 Do not upload certificates or passwords into this chat or commit them to the repository. Use only GitHub Actions secrets.
 
