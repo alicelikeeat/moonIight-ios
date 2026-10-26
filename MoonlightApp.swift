@@ -85,6 +85,23 @@ final class AppModel: ObservableObject {
         moments = updated
     }
 
+    func addMomentComment(_ id: String, text: String) {
+        let comment = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !comment.isEmpty, let index = moments.firstIndex(where: { $0.id == id }) else { return }
+        var updated = moments
+        updated[index].comments.append(comment)
+        moments = updated
+    }
+
+    func repostMoment(_ id: String) {
+        guard let index = moments.firstIndex(where: { $0.id == id }) else { return }
+        var updated = moments
+        let original = updated[index]
+        updated[index].reposts += 1
+        updated.insert(MomentPost(text: "转发了 \(original.authorName) 的动态：\(original.text)", attachment: original.attachment), at: 0)
+        moments = Array(updated.prefix(500))
+    }
+
     func runVirtualActivityLoop() async {
         while !Task.isCancelled {
             guard virtualActivityEnabled else {
