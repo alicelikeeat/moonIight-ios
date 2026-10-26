@@ -330,20 +330,23 @@ private struct MediaEntryCard: View {
                 if showGlassMenu {
                     let x = min(max(fingerPoint.x, 104), max(104, geometry.size.width - 104))
                     let y = min(max(fingerPoint.y, 38), max(38, geometry.size.height - 38))
-                    glassTabContainer {
-                        HStack(spacing: 4) {
-                            quickAction("play.fill", title: "打开") { onSelect() }
-                            quickAction(entry.isFavorite ? "heart.slash" : "heart", title: entry.isFavorite ? "取消收藏" : "收藏") {
-                                model.mediaStore.toggleFavorite(entry)
-                            }
-                            quickAction("plus", title: "加入库") { model.mediaStore.appendToLibrary([entry]) }
-                            Button { showGlassMenu = false } label: {
-                                Image(systemName: "xmark").font(.caption.bold()).frame(width: 38, height: 38).moonGlassCircle()
-                            }.buttonStyle(.plain).accessibilityLabel("关闭快捷菜单")
-                        }.padding(7)
+                    ZStack {
+                        Color.clear.contentShape(Rectangle()).onTapGesture { showGlassMenu = false }
+                        glassTabContainer {
+                            HStack(spacing: 4) {
+                                quickAction("play.fill", title: "打开") { onSelect() }
+                                quickAction(entry.isFavorite ? "heart.slash" : "heart", title: entry.isFavorite ? "取消收藏" : "收藏") {
+                                    model.mediaStore.toggleFavorite(entry)
+                                }
+                                quickAction("plus", title: "加入库") { model.mediaStore.appendToLibrary([entry]) }
+                                Button { showGlassMenu = false } label: {
+                                    Image(systemName: "xmark").font(.caption.bold()).frame(width: 38, height: 38).moonGlassCircle()
+                                }.buttonStyle(.plain).accessibilityLabel("关闭快捷菜单")
+                            }.padding(7)
+                        }
+                        .scaleEffect(model.longPressStyle == .droplet ? dropletScale : 1)
+                        .position(x: x, y: y)
                     }
-                    .scaleEffect(model.longPressStyle == .droplet ? dropletScale : 1)
-                    .position(x: x, y: y)
                     .transition(.scale(scale: 0.82).combined(with: .opacity))
                     .zIndex(10)
                 }
@@ -466,6 +469,12 @@ private struct MediaPlayerView: View {
                     Button("关闭") { dismiss() }
                 }
             }
+        }
+        .onAppear {
+            MoonlightOrientationDelegate.playerAllowsLandscape = !model.portraitPlaybackOnly
+        }
+        .onDisappear {
+            MoonlightOrientationDelegate.playerAllowsLandscape = false
         }
     }
 }
@@ -1146,7 +1155,11 @@ private struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("播放") { Toggle("视频保持竖屏", isOn: $model.portraitPlaybackOnly) }
+                Section("播放") {
+                    Toggle("视频保持竖屏", isOn: $model.portraitPlaybackOnly)
+                    Text(model.portraitPlaybackOnly ? "关闭后，视频播放页可跟随设备方向横屏。" : "横屏仅在视频播放页启用，其他页面保持竖屏。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("内容源") {
                     ForEach(model.mediaStore.enabledSources) { source in
                         Toggle(source.name, isOn: Binding(
