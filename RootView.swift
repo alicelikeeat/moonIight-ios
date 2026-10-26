@@ -253,6 +253,8 @@ private struct MediaEntryCard: View {
     @State private var showGlassMenu = false
     @State private var fingerPoint: CGPoint = .zero
     @State private var dropletScale: CGFloat = 1
+    @State private var lastFingerPoint: CGPoint?
+    @State private var lastFingerTime: TimeInterval?
 
     var body: some View {
         Button {
@@ -304,13 +306,23 @@ private struct MediaEntryCard: View {
         )
         .simultaneousGesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                .onChanged { value in fingerPoint = value.location }
-                .onEnded { value in
-                    let projected = value.predictedEndTranslation
-                    let speed = hypot(projected.width - value.translation.width, projected.height - value.translation.height)
-                    withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.62)) {
-                        dropletScale = model.longPressStyle == .droplet ? min(1.32, max(0.78, 1 + speed / 700)) : 1
+                .onChanged { value in
+                    let now = Date.timeIntervalSinceReferenceDate
+                    fingerPoint = value.location
+                    if model.longPressStyle == .droplet, let previous = lastFingerPoint, let previousTime = lastFingerTime {
+                        let elapsed = max(0.01, now - previousTime)
+                        let speed = hypot(value.location.x - previous.x, value.location.y - previous.y) / elapsed
+                        withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.58)) {
+                            dropletScale = min(1.32, max(0.78, 1 + speed / 1500))
+                        }
                     }
+                    lastFingerPoint = value.location
+                    lastFingerTime = now
+                }
+                .onEnded { _ in
+                    lastFingerPoint = nil
+                    lastFingerTime = nil
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { dropletScale = 1 }
                 }
         )
         .overlay {
@@ -513,7 +525,9 @@ private struct MomentsView: View {
                 ZStack(alignment: .bottomLeading) {
                     PhotosPicker(selection: $coverSelection, matching: .any(of: [.images, .videos])) {
                         Group {
-                            if !coverPath.isEmpty, let image = UIImage(contentsOfFile: coverPath) {
+                            if isMoviePath(coverPath), !coverPath.isEmpty {
+                                LocalVideoPoster(url: URL(fileURLWithPath: coverPath))
+                            } else if !coverPath.isEmpty, let image = UIImage(contentsOfFile: coverPath) {
                                 Image(uiImage: image).resizable().scaledToFill()
                             } else {
                                 LinearGradient(colors: [Color.indigo.opacity(0.72), MoonStyle.accent.opacity(0.68)], startPoint: .topLeading, endPoint: .bottomTrailing)
