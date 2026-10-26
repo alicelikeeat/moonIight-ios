@@ -80,26 +80,27 @@ struct RootView: View {
     }
 
     private var tabBar: some View {
-        glassTabContainer {
-            HStack(spacing: 4) {
+        GeometryReader { geometry in
+            let diameter = min(62, max(48, (geometry.size.width - 24) / 5))
+            HStack(spacing: 6) {
                 ForEach(AppTab.allCases) { tab in
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { model.selectedTab = tab }
                     } label: {
-                        VStack(spacing: 5) {
+                        VStack(spacing: 4) {
                             Image(systemName: tab.symbol).font(.system(size: 18, weight: .semibold))
                             Text(tab.title).font(.system(size: 10, weight: .medium))
                         }
                         .foregroundStyle(model.selectedTab == tab ? MoonStyle.accent : .secondary)
-                        .frame(maxWidth: .infinity).frame(height: 56)
+                        .frame(width: diameter, height: diameter)
                         .moonGlassCircle()
                     }
                     .buttonStyle(.plain).accessibilityLabel(tab.title)
                 }
             }
-            .padding(.horizontal, 6).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(.horizontal, 14).padding(.bottom, 6)
+        .frame(height: 66).padding(.horizontal, 14).padding(.bottom, 6)
     }
 }
 
@@ -142,7 +143,7 @@ private struct HomeView: View {
                 }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
             }
             .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: MoonStyle.cardRadius))
-            sectionHeading("最近内容", action: "筛选")
+            Text("最近内容").font(.title3.bold())
             if model.mediaStore.items.isEmpty {
                 EmptyPanel(title: "内容会出现在这里", detail: "下拉刷新，或从内容源随机添加内容。", symbol: "play.rectangle")
             } else {
@@ -186,7 +187,14 @@ private struct DiscoverView: View {
             }
             .padding(.horizontal, 15).frame(height: 50)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17))
-            Slider(value: $bannerScale, in: 0.75...1.35) { Text("横幅大小") }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("横幅大小").font(.subheadline.weight(.medium))
+                    Spacer()
+                    Text("\(Int(bannerScale * 100))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Slider(value: $bannerScale, in: 0.75...1.35)
+            }
             HStack {
                 Text(query.isEmpty ? "推荐内容" : "搜索结果").font(.title3.bold())
                 Spacer()
@@ -1264,14 +1272,6 @@ private struct EmptyPanel: View {
         }
         .frame(maxWidth: .infinity).padding(.vertical, 34).padding(.horizontal, 18)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
-    }
-}
-
-private func sectionHeading(_ title: String, action: String) -> some View {
-    HStack {
-        Text(title).font(.title3.bold())
-        Spacer()
-        Button(action) {}.font(.subheadline.weight(.medium)).foregroundStyle(MoonStyle.accent)
     }
 }
 
