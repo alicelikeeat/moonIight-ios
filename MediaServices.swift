@@ -213,6 +213,36 @@ enum MediaAPI {
         return YouTubeSearchPage(entries: entries, nextPageToken: token)
     }
 
+    static func generateVirtualFriendText(title: String, author: String, provider: VirtualAIProvider, apiKey: String) async -> (caption: String, comment: String)? {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        let endpoint = provider == .openAI ? "https://api.openai.com/v1/responses" : "https://api.x.ai/v1/responses"
+        guard let url = URL(string: endpoint) else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let model = provider == .openAI ? "gpt-4.1-mini" : "grok-4"
+        let prompt = "为本地虚拟好友写一条自然、简短的中文朋友圈动态和一条评论。只根据标题和作者，不要编造视频事实或假装真人。返回纯 JSON：{\"caption\":\"...\",\"comment\":\"...\"}。标题：\(title.prefix(160))；作者：\(author.prefix(80))。"
+        let body: [String: Any] = ["model": model, "input": prompt, "max_output_tokens": 160]
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: body) else { return nil }
+        request.httpBody = bodyData
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let output = root["output"] as? [[String: Any]] else { return nil }
+            let raw = output.compactMap { $0["content"] as? [[String: Any]] }
+                .flatMap { $0 }
+                .compactMap { $0["text"] as? String }
+                .joined(separator: "\n")
+            guard let jsonStart = raw.firstIndex(of: "{"), let jsonEnd = raw.lastIndex(of: "}"), jsonStart <= jsonEnd,
+                  let parsed = try? JSONSerialization.jsonObject(with: Data(raw[jsonStart...jsonEnd].utf8)) as? [String: String],
+                  let caption = parsed["caption"], let comment = parsed["comment"] else { return nil }
+            return (String(caption.prefix(120)), String(comment.prefix(100)))
+        } catch { return nil }
+    }
+
     static func bilibiliPopular(limit: Int = 20) async throws -> [MediaEntry] {
         var components = URLComponents(string: "https://api.bilibili.com/x/web-interface/popular")!
         components.queryItems = [
@@ -369,6 +399,7 @@ final class MediaStore: ObservableObject {
     @Published private(set) var searchResults: [MediaEntry] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var isSearching = false
+    @Published private(set) var downloadingIDs = Set<String>()
     @Published var notice: String?
     @Published private(set) var hasMoreYouTubeResults = false
     @Published private(set) var enabledSources: [MediaSource] = MediaSource.defaults
@@ -503,7 +534,8 @@ final class MediaStore: ObservableObject {
         importMedia(data, title: title, kind: .image, fileExtension: "jpg")
     }
 
-    func importMedia(_ data: Data, title: String, kind: MediaKind, fileExtension: String) {
+    @discardableResult
+    func importMedia(_ data: Data, title: String, kind: MediaKind, fileExtension: String) -> MediaEntry? {
         let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -514,8 +546,10 @@ final class MediaStore: ObservableObject {
             items.insert(entry, at: 0)
             persist()
             notice = "已保存到库。"
+            return entry
         } catch {
             notice = "保存失败：\(error.localizedDescription)"
+            return nil
         }
     }
 
@@ -531,6 +565,45 @@ final class MediaStore: ObservableObject {
             persist()
             notice = "视频已保存到库。"
         } catch { notice = "视频保存失败：\(error.localizedDescription)" }
+    }
+
+    func downloadDirectFile(_ entry: MediaEntry) async {
+        guard entry.kind != .embed,
+              let remoteURL = entry.remoteURL,
+              ["https", "http"].contains(remoteURL.scheme?.lowercased() ?? ""),
+              !downloadingIDs.contains(entry.id) else {
+            notice = "仅支持下载提供文件直链的图片或视频。"
+            return
+        }
+        downloadingIDs.insert(entry.id)
+        defer { downloadingIDs.remove(entry.id) }
+        do {
+            let (temporaryURL, response) = try await URLSession.shared.download(from: remoteURL)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                notice = "下载失败：服务器未返回媒体文件。"
+                return
+            }
+            let mime = http.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+            let ext = remoteURL.pathExtension.lowercased()
+            let imageExtensions = ["jpg", "jpeg", "png", "webp", "gif", "heic"]
+            let videoExtensions = ["mp4", "mov", "m4v", "webm", "avi"]
+            let isImage = mime.hasPrefix("image/") || (mime == "application/octet-stream" && imageExtensions.contains(ext))
+            let isVideo = mime.hasPrefix("video/") || (mime == "application/octet-stream" && videoExtensions.contains(ext))
+            guard isImage || isVideo else {
+                notice = "此链接没有返回可下载的图片或视频文件。"
+                return
+            }
+            let kind: MediaKind = isImage ? .image : .video
+            let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let safeExt = ext.isEmpty ? (kind == .image ? "jpg" : "mp4") : ext
+            let destination = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(safeExt)
+            try FileManager.default.moveItem(at: temporaryURL, to: destination)
+            let downloaded = MediaEntry(kind: kind, title: entry.title, remoteURL: destination, coverURL: entry.coverURL, author: entry.author, platform: entry.platform, source: "download")
+            items.insert(downloaded, at: 0)
+            persist()
+            notice = "已下载到库。"
+        } catch { notice = "下载失败：\(error.localizedDescription)" }
     }
 
     func toggleFavorite(_ entry: MediaEntry) {
