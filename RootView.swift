@@ -14,9 +14,10 @@ private enum MoonStyle {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selectedMedia: PhotosPickerItem?
     @State private var selectedImage: Image?
-    @State private var selectedPlayer: MediaEntry?
+    @State private var activeSheet: RootSheet?
 
     var body: some View {
         ZStack {
@@ -25,11 +26,11 @@ struct RootView: View {
             VStack(spacing: 0) {
                 Group {
                     switch model.selectedTab {
-                    case .home: refreshable(.home) { HomeView(onSelect: { selectedPlayer = $0 }) }
-                    case .discover: refreshable(.discover) { DiscoverView(onSelect: { selectedPlayer = $0 }) }
+                    case .home: refreshable(.home) { HomeView(onSelect: { activeSheet = .player($0) }) }
+                    case .discover: refreshable(.discover) { DiscoverView(onSelect: { activeSheet = .player($0) }) }
                     case .camera: CameraView()
-                    case .moments: MomentsView()
-                    case .me: MeView(selectedImage: selectedImage, selection: $selectedMedia, onSelect: { selectedPlayer = $0 })
+                    case .moments: MomentsView(onSelect: { activeSheet = .player($0) }, onCompose: { activeSheet = .composer(nil) })
+                    case .me: MeView(selectedImage: selectedImage, selection: $selectedMedia, onSelect: { activeSheet = .player($0) })
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -37,8 +38,29 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(item: $selectedPlayer) { MediaPlayerView(entry: $0) }
+        .sheet(item: $activeSheet) { destination in
+            switch destination {
+            case .player(let entry):
+                MediaPlayerView(entry: entry) {
+                    activeSheet = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        activeSheet = .composer(entry)
+                    }
+                }
+            case .composer(let entry):
+                MomentComposerView(initialAttachment: entry) { text, attachment in
+                    model.publishMoment(text: text, attachment: attachment)
+                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+        }
         .task { await model.mediaStore.refreshDiscover() }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            await model.runVirtualActivityLoop()
+        }
         .task(id: selectedMedia) {
             guard let selectedMedia,
                   let data = try? await selectedMedia.loadTransferable(type: Data.self) else { return }
@@ -59,7 +81,7 @@ struct RootView: View {
 
     private var tabBar: some View {
         glassTabContainer {
-            HStack(spacing: 10) {
+            HStack(spacing: 4) {
                 ForEach(AppTab.allCases) { tab in
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { model.selectedTab = tab }
@@ -69,15 +91,26 @@ struct RootView: View {
                             Text(tab.title).font(.system(size: 10, weight: .medium))
                         }
                         .foregroundStyle(model.selectedTab == tab ? MoonStyle.accent : .secondary)
-                        .frame(width: 56, height: 56)
+                        .frame(maxWidth: .infinity).frame(height: 56)
                         .moonGlassCircle()
                     }
                     .buttonStyle(.plain).accessibilityLabel(tab.title)
                 }
             }
-            .padding(.horizontal, 10).padding(.vertical, 8)
+            .padding(.horizontal, 6).padding(.vertical, 8)
         }
         .padding(.horizontal, 14).padding(.bottom, 6)
+    }
+}
+
+private enum RootSheet: Identifiable {
+    case player(MediaEntry)
+    case composer(MediaEntry?)
+    var id: String {
+        switch self {
+        case .player(let entry): "player-\(entry.id)"
+        case .composer(let entry): "composer-\(entry?.id ?? "new")"
+        }
     }
 }
 
@@ -163,7 +196,11 @@ private struct DiscoverView: View {
             }
             let results = query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults
             if results.isEmpty {
-                EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "下拉刷新内容源，或在设置中配置 YouTube API Key。", symbol: "safari")
+                if !query.isEmpty && !model.mediaStore.youtubeKeyConfigured {
+                    YouTubeSearchFallback(query: query)
+                } else {
+                    EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "下拉刷新内容源，或在设置中配置 YouTube API Key。", symbol: "safari")
+                }
             } else {
                 LazyVGrid(columns: columns == 1 ? [GridItem(.flexible())] : grid, spacing: 14) {
                     ForEach(results) { entry in MediaEntryCard(entry: entry, height: CGFloat(columns == 1 ? 220 : 155) * bannerScale, onSelect: { onSelect(entry) }) }
@@ -206,13 +243,22 @@ private struct DiscoverTile: View {
 }
 
 private struct MediaEntryCard: View {
+    @EnvironmentObject private var model: AppModel
     let entry: MediaEntry
     let height: CGFloat
     var isSelected = false
     let onSelect: () -> Void
+    @State private var suppressNextTap = false
+    @State private var showPopover = false
+    @State private var showGlassMenu = false
+    @State private var fingerPoint: CGPoint = .zero
+    @State private var dropletScale: CGFloat = 1
 
     var body: some View {
-        Button(action: onSelect) {
+        Button {
+            if suppressNextTap { suppressNextTap = false }
+            else { onSelect() }
+        } label: {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
                     thumbnail
@@ -245,6 +291,71 @@ private struct MediaEntryCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
             .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.48).onEnded { _ in
+                suppressNextTap = true
+                switch model.longPressStyle {
+                case .popover: showPopover = true
+                case .trackingGlass, .droplet: showGlassMenu = true
+                }
+            }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                .onChanged { value in fingerPoint = value.location }
+                .onEnded { value in
+                    let projected = value.predictedEndTranslation
+                    let speed = hypot(projected.width - value.translation.width, projected.height - value.translation.height)
+                    withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.62)) {
+                        dropletScale = model.longPressStyle == .droplet ? min(1.32, max(0.78, 1 + speed / 700)) : 1
+                    }
+                }
+        )
+        .overlay {
+            GeometryReader { geometry in
+                if showGlassMenu {
+                    let x = min(max(fingerPoint.x, 104), max(104, geometry.size.width - 104))
+                    let y = min(max(fingerPoint.y, 38), max(38, geometry.size.height - 38))
+                    glassTabContainer {
+                        HStack(spacing: 4) {
+                            quickAction("play.fill", title: "打开") { onSelect() }
+                            quickAction(entry.isFavorite ? "heart.slash" : "heart", title: entry.isFavorite ? "取消收藏" : "收藏") {
+                                model.mediaStore.toggleFavorite(entry)
+                            }
+                            quickAction("plus", title: "加入库") { model.mediaStore.appendToLibrary([entry]) }
+                            Button { showGlassMenu = false } label: {
+                                Image(systemName: "xmark").font(.caption.bold()).frame(width: 38, height: 38).moonGlassCircle()
+                            }.buttonStyle(.plain).accessibilityLabel("关闭快捷菜单")
+                        }.padding(7)
+                    }
+                    .scaleEffect(model.longPressStyle == .droplet ? dropletScale : 1)
+                    .position(x: x, y: y)
+                    .transition(.scale(scale: 0.82).combined(with: .opacity))
+                    .zIndex(10)
+                }
+            }
+            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: showGlassMenu)
+        }
+        .confirmationDialog("快捷操作", isPresented: $showPopover, titleVisibility: .visible) {
+            Button("打开") { onSelect() }
+            Button(entry.isFavorite ? "取消收藏" : "收藏") { model.mediaStore.toggleFavorite(entry) }
+            Button("加入库") { model.mediaStore.appendToLibrary([entry]) }
+            Button("删除", role: .destructive) { model.mediaStore.delete(entry) }
+            Button("取消", role: .cancel) { }
+        }
+    }
+
+    private func quickAction(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            action()
+            showGlassMenu = false
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.system(size: 14, weight: .semibold))
+                Text(title).font(.system(size: 9, weight: .medium)).lineLimit(1)
+            }.frame(width: 48, height: 38).moonGlassCircle()
         }.buttonStyle(.plain)
     }
 
@@ -275,6 +386,8 @@ private struct MediaEntryCard: View {
 
 private struct MediaPlayerView: View {
     let entry: MediaEntry
+    let onShareToMoments: () -> Void
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
 
@@ -301,6 +414,19 @@ private struct MediaPlayerView: View {
             .navigationTitle(entry.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if entry.kind != .embed, let url = entry.remoteURL, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Task { await model.mediaStore.downloadDirectFile(entry) }
+                        } label: {
+                            if model.mediaStore.downloadingIDs.contains(entry.id) { ProgressView() }
+                            else { Image(systemName: "arrow.down.to.line") }
+                        }.accessibilityLabel("下载")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { onShareToMoments(); dismiss() } label: { Label("朋友圈", systemImage: "square.and.arrow.up") }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("关闭") { dismiss() }
                 }
@@ -327,51 +453,127 @@ private struct WebEmbedView: UIViewRepresentable {
     }
 }
 
-private struct MomentsView: View {
-    @AppStorage("moonlight.moments.v1") private var storedMoments = Data()
-    @State private var draft = ""
-    @State private var showingComposer = false
-    @State private var likedIDs = Set<String>()
-
-    private var moments: [LocalMoment] {
-        (try? JSONDecoder().decode([LocalMoment].self, from: storedMoments)) ?? []
+private struct YouTubeSearchFallback: View {
+    let query: String
+    private var searchURL: URL? {
+        var components = URLComponents(string: "https://www.youtube.com/results")
+        components?.queryItems = [URLQueryItem(name: "search_query", value: query)]
+        return components?.url
     }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("YouTube 网页搜索", systemImage: "globe")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            if let searchURL {
+                WebEmbedView(url: searchURL).frame(height: 520)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+            } else {
+                EmptyPanel(title: "搜索链接无效", detail: "请检查搜索词后重试。", symbol: "exclamationmark.triangle")
+            }
+        }
+    }
+}
+
+private struct MomentsView: View {
+    @EnvironmentObject private var model: AppModel
+    let onSelect: (MediaEntry) -> Void
+    let onCompose: () -> Void
+    @AppStorage("moonlight.profile.avatarPath") private var avatarPath = ""
+    @AppStorage("moonlight.profile.coverPath") private var coverPath = ""
+    @State private var avatarSelection: PhotosPickerItem?
+    @State private var coverSelection: PhotosPickerItem?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 12) {
-                    Image(systemName: "person.crop.circle.fill").font(.system(size: 38)).foregroundStyle(MoonStyle.accent)
-                    Spacer()
-                    Text("朋友圈").font(.title2.bold())
-                    Spacer()
-                    Button { showingComposer = true } label: { Image(systemName: "square.and.pencil").font(.title3).frame(width: 42, height: 42).moonGlassCircle() }
-                        .accessibilityLabel("发布动态")
-                }.padding(.vertical, 6)
+                ZStack(alignment: .bottomLeading) {
+                    PhotosPicker(selection: $coverSelection, matching: .any(of: [.images, .videos])) {
+                        Group {
+                            if !coverPath.isEmpty, let image = UIImage(contentsOfFile: coverPath) {
+                                Image(uiImage: image).resizable().scaledToFill()
+                            } else {
+                                LinearGradient(colors: [Color.indigo.opacity(0.72), MoonStyle.accent.opacity(0.68)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                            }
+                        }
+                        .frame(height: 190).frame(maxWidth: .infinity).clipped()
+                        .overlay(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom))
+                        .overlay(alignment: .topLeading) {
+                            HStack {
+                                Text("朋友圈").font(.title2.bold())
+                                Spacer()
+                                Image(systemName: "photo").font(.headline).padding(10).background(.ultraThinMaterial, in: Circle())
+                            }.foregroundStyle(.white).padding(14)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    HStack(spacing: 12) {
+                        PhotosPicker(selection: $avatarSelection, matching: .any(of: [.images, .videos])) {
+                            Group {
+                                if !avatarPath.isEmpty, let image = UIImage(contentsOfFile: avatarPath) {
+                                    Image(uiImage: image).resizable().scaledToFill()
+                                } else {
+                                    Image(systemName: isMoviePath(avatarPath) ? "play.fill" : "person.crop.circle.fill")
+                                        .font(.system(size: 36)).foregroundStyle(.white).frame(width: 60, height: 60)
+                                        .background(MoonStyle.accent.gradient, in: Circle())
+                                }
+                            }
+                            .frame(width: 60, height: 60).clipShape(Circle())
+                            .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                        }.buttonStyle(.plain).accessibilityLabel("更换朋友圈头像")
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("我的朋友圈").font(.headline).foregroundStyle(.white)
+                            Text("点击头像或横幅更换媒体").font(.caption).foregroundStyle(.white.opacity(0.82))
+                        }
+                        Spacer()
+                        Button(action: onCompose) {
+                            Image(systemName: "square.and.pencil").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
+                        }.accessibilityLabel("发布动态")
+                    }.padding(14)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                 HStack {
                     Text("最近动态").font(.title3.bold())
                     Spacer(minLength: 4)
-                    Button("发布") { showingComposer = true }.foregroundStyle(MoonStyle.accent)
+                    Button("发布", action: onCompose).foregroundStyle(MoonStyle.accent)
                 }
-                if moments.isEmpty {
+                if model.moments.isEmpty {
                     EmptyPanel(title: "还没有动态", detail: "写下近况，发布后会保存在本机朋友圈。", symbol: "person.2")
                 } else {
-                    ForEach(moments) { moment in
+                    ForEach(model.moments) { moment in
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 10) {
                                 Image(systemName: "person.crop.circle.fill").font(.system(size: 36)).foregroundStyle(MoonStyle.accent)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("我").font(.subheadline.weight(.semibold))
+                                    Text(moment.authorName).font(.subheadline.weight(.semibold))
                                     Text(moment.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
                                 }
                             }
-                            Text(moment.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
+                            if !moment.text.isEmpty {
+                                Text(moment.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if let attachment = moment.attachment {
+                                Button { onSelect(attachment) } label: { MomentAttachmentPreview(entry: attachment) }
+                                    .buttonStyle(.plain)
+                            }
                             HStack(spacing: 8) {
-                                Button { toggleLike(moment.id) } label: {
-                                    Label(likedIDs.contains(moment.id) ? "已赞" : "赞", systemImage: likedIDs.contains(moment.id) ? "heart.fill" : "heart")
+                                Button { model.toggleMomentLike(moment.id) } label: {
+                                    Label("\(moment.likes)", systemImage: moment.likedByMe ? "heart.fill" : "heart")
                                 }
-                                .foregroundStyle(likedIDs.contains(moment.id) ? .pink : MoonStyle.accent)
+                                .foregroundStyle(moment.likedByMe ? .pink : MoonStyle.accent)
+                                if !moment.comments.isEmpty {
+                                    Label("\(moment.comments.count)", systemImage: "bubble.right")
+                                        .foregroundStyle(.secondary)
+                                }
+                                if moment.reposts > 0 {
+                                    Label("\(moment.reposts)", systemImage: "arrow.2.squarepath")
+                                        .foregroundStyle(.secondary)
+                                }
                             }.font(.subheadline)
+                            if let comment = moment.comments.last {
+                                Text("\(moment.isVirtual ? "好友评论" : "评论")：\(comment)")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         .padding(16)
                         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
@@ -380,31 +582,111 @@ private struct MomentsView: View {
                 }
             }.padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 24)
         }.scrollIndicators(.hidden)
-            .alert("发布动态", isPresented: $showingComposer) {
-                TextField("分享此刻…", text: $draft, axis: .vertical)
-                Button("取消", role: .cancel) { draft = "" }
-                Button("发布") { publish() }.disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            } message: { Text("动态保存在本机。") }
-    }
-
-    private func publish() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        var updated = moments
-        updated.insert(LocalMoment(text: text), at: 0)
-        if let encoded = try? JSONEncoder().encode(updated) { storedMoments = encoded }
-        draft = ""
-    }
-
-    private func toggleLike(_ id: String) {
-        if likedIDs.contains(id) { likedIDs.remove(id) } else { likedIDs.insert(id) }
+            .task(id: avatarSelection) {
+                if let path = await saveProfileMedia(avatarSelection, name: "avatar") { avatarPath = path }
+            }
+            .task(id: coverSelection) {
+                if let path = await saveProfileMedia(coverSelection, name: "cover") { coverPath = path }
+            }
     }
 }
 
-private struct LocalMoment: Codable, Identifiable {
-    var id = UUID().uuidString
-    var text: String
-    var date = Date.now
+@MainActor
+private func saveProfileMedia(_ item: PhotosPickerItem?, name: String) async -> String? {
+    guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return nil }
+    let type = item.supportedContentTypes.first
+    let ext = type?.preferredFilenameExtension ?? (type?.conforms(to: .movie) == true ? "mov" : "jpg")
+    let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("profile", isDirectory: true)
+    do {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("\(name)-\(UUID().uuidString).\(ext)")
+        try data.write(to: url, options: .atomic)
+        return url.path
+    } catch { return nil }
+}
+
+private struct MomentAttachmentPreview: View {
+    let entry: MediaEntry
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if entry.kind == .image, let url = entry.remoteURL, url.isFileURL,
+               let image = UIImage(contentsOfFile: url.path) {
+                Image(uiImage: image).resizable().scaledToFill().frame(height: 210).frame(maxWidth: .infinity).clipped()
+            } else if let cover = entry.coverURL {
+                AsyncImage(url: cover) { image in image.resizable().scaledToFill() } placeholder: { attachmentFallback }
+                    .frame(height: 210).frame(maxWidth: .infinity).clipped()
+            } else { attachmentFallback.frame(height: 210) }
+            LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(entry.platform == "bili" ? "哔哩哔哩" : entry.platform == "youtube" ? "YouTube" : "月光库")
+                    .font(.caption.weight(.semibold))
+                Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+            }.foregroundStyle(.white).padding(12)
+            Image(systemName: entry.kind == .image ? "photo" : "play.fill")
+                .font(.title3.weight(.bold)).foregroundStyle(.white)
+                .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+    private var attachmentFallback: some View {
+        LinearGradient(colors: [MoonStyle.accent.opacity(0.72), .indigo.opacity(0.34)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .overlay(Image(systemName: "play.rectangle.fill").font(.largeTitle).foregroundStyle(.white.opacity(0.82)))
+    }
+}
+
+private struct MomentComposerView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var attachment: MediaEntry?
+    let initialAttachment: MediaEntry?
+    let onPublish: (String, MediaEntry?) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("此刻") { TextField("分享此刻…", text: $text, axis: .vertical).lineLimit(3...7) }
+                Section("照片或视频") {
+                    if let attachment {
+                        MomentAttachmentPreview(entry: attachment).frame(height: 180)
+                        Button("移除附件", role: .destructive) { self.attachment = nil }
+                    }
+                    PhotosPicker(selection: $photoPickerItem, matching: .any(of: [.images, .videos])) {
+                        Label("选择照片或视频", systemImage: "photo.badge.plus")
+                    }
+                }
+                if initialAttachment != nil {
+                    Section { Text("来自内容流的条目会以可打开的链接预览显示在动态中。").font(.footnote).foregroundStyle(.secondary) }
+                }
+            }
+            .navigationTitle("发布动态")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("发布") {
+                        onPublish(text.trimmingCharacters(in: .whitespacesAndNewlines), attachment)
+                        dismiss()
+                    }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachment == nil)
+                }
+            }
+            .task { if attachment == nil { attachment = initialAttachment } }
+            .task(id: photoPickerItem) { await loadAttachment() }
+        }
+    }
+
+    @MainActor private func loadAttachment() async {
+        guard let photoPickerItem, let data = try? await photoPickerItem.loadTransferable(type: Data.self) else { return }
+        if let image = UIImage(data: data) {
+            attachment = model.mediaStore.importMedia(data, title: "朋友圈照片", kind: .image, fileExtension: photoPickerItem.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg")
+            _ = image
+        } else if let type = photoPickerItem.supportedContentTypes.first, type.conforms(to: .movie) {
+            attachment = model.mediaStore.importMedia(data, title: "朋友圈视频", kind: .video, fileExtension: type.preferredFilenameExtension ?? "mov")
+        }
+    }
 }
 
 private struct MeView: View {
@@ -648,7 +930,7 @@ private struct LibraryView: View {
     private var visibleItems: [MediaEntry] {
         switch filter {
         case "收藏": model.mediaStore.items.filter(\.isFavorite)
-        case "下载": []
+        case "下载": model.mediaStore.items.filter { $0.source == "download" }
         default: model.mediaStore.items
         }
     }
@@ -747,6 +1029,24 @@ private struct SettingsView: View {
                     Picker("交互方式", selection: $model.longPressStyle) {
                         ForEach(LongPressStyle.allCases) { style in Text(style.title).tag(style) }
                     }
+                }
+                Section("虚拟好友") {
+                    Toggle("自动生成朋友圈动态", isOn: $model.virtualActivityEnabled)
+                    Picker("发布间隔", selection: $model.virtualIntervalMinutes) {
+                        ForEach([15, 30, 60, 240], id: \.self) { minutes in
+                            Text(minutes < 60 ? "每 \(minutes) 分钟" : "每 \(minutes / 60) 小时").tag(minutes)
+                        }
+                    }.disabled(!model.virtualActivityEnabled)
+                    Text("开启后会从已启用的内容源读取推荐条目，在应用前台按间隔生成本机动态，并模拟点赞、评论和转发。不会发布到外部社交平台。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Picker("AI 文案服务", selection: $model.virtualAIProvider) {
+                        ForEach(VirtualAIProvider.allCases) { provider in Text(provider.title).tag(provider) }
+                    }
+                    SecureField("\(model.virtualAIProvider.title) API Key（可选）", text: $model.virtualAIKeyDraft)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("安全保存 API Key") { model.saveVirtualAIKey() }
+                    Text("密钥保存在本机钥匙串。启用后，仅把内容标题和作者发送给所选服务生成文案；未配置时使用本地模板。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("手势说明") {
                     Label("点按：播放或打开", systemImage: "hand.tap")
