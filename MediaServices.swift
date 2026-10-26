@@ -421,6 +421,10 @@ final class MediaStore: ObservableObject {
            let decoded = try? JSONDecoder().decode([MediaEntry].self, from: data) {
             items = decoded
         }
+        if let data = defaults.data(forKey: "moonlight-discover-cache"),
+           let decoded = try? JSONDecoder().decode([MediaEntry].self, from: data) {
+            discoverItems = decoded
+        }
         if let data = defaults.data(forKey: "moonlight-enabled-sources"),
            let saved = try? JSONDecoder().decode([MediaSource].self, from: data) {
             enabledSources = saved
@@ -480,8 +484,15 @@ final class MediaStore: ObservableObject {
                 }
             }
         }
-        discoverItems = unique(incoming.shuffled())
-        notice = discoverItems.isEmpty ? "暂时没有取到发现内容。" : nil
+        if !incoming.isEmpty {
+            discoverItems = unique(incoming.shuffled())
+            if let data = try? JSONEncoder().encode(discoverItems) {
+                defaults.set(data, forKey: "moonlight-discover-cache")
+            }
+            notice = nil
+        } else {
+            notice = discoverItems.isEmpty ? "暂时没有取到发现内容。" : "网络暂时不可用，已保留上次加载的内容。"
+        }
     }
 
     func searchYouTube(_ query: String, nextPage: Bool = false) async {
@@ -628,6 +639,9 @@ final class MediaStore: ObservableObject {
 
     private func merge(_ incoming: [MediaEntry]) {
         discoverItems = unique(incoming.shuffled())
+        if let data = try? JSONEncoder().encode(discoverItems) {
+            defaults.set(data, forKey: "moonlight-discover-cache")
+        }
     }
 
     private func unique(_ entries: [MediaEntry]) -> [MediaEntry] {
