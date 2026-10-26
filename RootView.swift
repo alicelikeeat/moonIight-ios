@@ -18,6 +18,7 @@ struct RootView: View {
     @State private var selectedMedia: PhotosPickerItem?
     @State private var selectedImage: Image?
     @State private var activeSheet: RootSheet?
+    @State private var activePlayer: MediaEntry?
 
     var body: some View {
         ZStack {
@@ -26,11 +27,11 @@ struct RootView: View {
             VStack(spacing: 0) {
                 Group {
                     switch model.selectedTab {
-                    case .home: refreshable(.home) { HomeView(onSelect: { activeSheet = .player($0) }) }
-                    case .discover: refreshable(.discover) { DiscoverView(onSelect: { activeSheet = .player($0) }) }
+                    case .home: refreshable(.home) { HomeView(onSelect: { activePlayer = $0 }) }
+                    case .discover: refreshable(.discover) { DiscoverView(onSelect: { activePlayer = $0 }) }
                     case .camera: CameraView()
-                    case .moments: MomentsView(onSelect: { activeSheet = .player($0) }, onCompose: { activeSheet = .composer(nil) })
-                    case .me: MeView(selectedImage: selectedImage, selection: $selectedMedia, onSelect: { activeSheet = .player($0) })
+                    case .moments: MomentsView(onSelect: { activePlayer = $0 }, onCompose: { activeSheet = .composer(nil) })
+                    case .me: MeView(selectedImage: selectedImage, selection: $selectedMedia, onSelect: { activePlayer = $0 })
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -38,16 +39,17 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .fullScreenCover(item: $activePlayer) { entry in
+            MediaPlayerView(entry: entry) {
+                activePlayer = nil
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    activeSheet = .composer(entry)
+                }
+            }
+        }
         .sheet(item: $activeSheet) { destination in
             switch destination {
-            case .player(let entry):
-                MediaPlayerView(entry: entry) {
-                    activeSheet = nil
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 350_000_000)
-                        activeSheet = .composer(entry)
-                    }
-                }
             case .composer(let entry):
                 MomentComposerView(initialAttachment: entry) { text, attachment in
                     model.publishMoment(text: text, attachment: attachment)
@@ -105,11 +107,9 @@ struct RootView: View {
 }
 
 private enum RootSheet: Identifiable {
-    case player(MediaEntry)
     case composer(MediaEntry?)
     var id: String {
         switch self {
-        case .player(let entry): "player-\(entry.id)"
         case .composer(let entry): "composer-\(entry?.id ?? "new")"
         }
     }
