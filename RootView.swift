@@ -518,6 +518,9 @@ private struct MomentsView: View {
     @AppStorage("moonlight.profile.coverPath") private var coverPath = ""
     @State private var avatarSelection: PhotosPickerItem?
     @State private var coverSelection: PhotosPickerItem?
+    @State private var commentTargetID: String?
+    @State private var commentDraft = ""
+    @State private var showingCommentPrompt = false
 
     var body: some View {
         ScrollView {
@@ -601,13 +604,26 @@ private struct MomentsView: View {
                                 }
                                 .foregroundStyle(moment.likedByMe ? .pink : MoonStyle.accent)
                                 if !moment.comments.isEmpty {
-                                    Label("\(moment.comments.count)", systemImage: "bubble.right")
+                                    Button {
+                                        commentTargetID = moment.id
+                                        showingCommentPrompt = true
+                                    } label: {
+                                        Label("\(moment.comments.count)", systemImage: "bubble.right")
+                                    }.foregroundStyle(.secondary)
+                                } else {
+                                    Button {
+                                        commentTargetID = moment.id
+                                        showingCommentPrompt = true
+                                    } label: { Label("评论", systemImage: "bubble.right") }
                                         .foregroundStyle(.secondary)
                                 }
                                 if moment.reposts > 0 {
                                     Label("\(moment.reposts)", systemImage: "arrow.2.squarepath")
                                         .foregroundStyle(.secondary)
                                 }
+                                Button { model.repostMoment(moment.id) } label: {
+                                    Image(systemName: "arrow.2.squarepath")
+                                }.foregroundStyle(.secondary).accessibilityLabel("转发动态")
                             }.font(.subheadline)
                             if let comment = moment.comments.last {
                                 Text("\(moment.isVirtual ? "好友评论" : "评论")：\(comment)")
@@ -627,6 +643,14 @@ private struct MomentsView: View {
             }
             .task(id: coverSelection) {
                 if let path = await saveProfileMedia(coverSelection, name: "cover") { coverPath = path }
+            }
+            .alert("评论动态", isPresented: $showingCommentPrompt) {
+                TextField("写下评论…", text: $commentDraft)
+                Button("取消", role: .cancel) { commentDraft = "" }
+                Button("发送") {
+                    if let commentTargetID { model.addMomentComment(commentTargetID, text: commentDraft) }
+                    commentDraft = ""
+                }.disabled(commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
     }
 }
