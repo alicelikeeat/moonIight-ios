@@ -500,12 +500,17 @@ final class MediaStore: ObservableObject {
     }
 
     func importImage(_ data: Data, title: String) {
+        importMedia(data, title: title, kind: .image, fileExtension: "jpg")
+    }
+
+    func importMedia(_ data: Data, title: String, kind: MediaKind, fileExtension: String) {
         let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let fileURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            let safeExtension = fileExtension.isEmpty ? (kind == .video ? "mov" : "jpg") : fileExtension
+            let fileURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(safeExtension)
             try data.write(to: fileURL, options: .atomic)
-            let entry = MediaEntry(kind: .image, title: title, remoteURL: fileURL, platform: "local", source: "local-import")
+            let entry = MediaEntry(kind: kind, title: title, remoteURL: fileURL, platform: "local", source: "local-import")
             items.insert(entry, at: 0)
             persist()
             notice = "已保存到库。"
