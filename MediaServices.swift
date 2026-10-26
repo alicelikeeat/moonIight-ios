@@ -499,6 +499,21 @@ final class MediaStore: ObservableObject {
         notice = "已加入库。"
     }
 
+    func importImage(_ data: Data, title: String) {
+        let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            try data.write(to: fileURL, options: .atomic)
+            let entry = MediaEntry(kind: .image, title: title, remoteURL: fileURL, platform: "local", source: "local-import")
+            items.insert(entry, at: 0)
+            persist()
+            notice = "已保存到库。"
+        } catch {
+            notice = "保存失败：\(error.localizedDescription)"
+        }
+    }
+
     func toggleFavorite(_ entry: MediaEntry) {
         guard let index = items.firstIndex(where: { $0.id == entry.id }) else { return }
         items[index].isFavorite.toggle()
@@ -524,6 +539,7 @@ final class MediaStore: ObservableObject {
         try? data.write(to: itemURL, options: .atomic)
     }
 }
+
 
 
 
