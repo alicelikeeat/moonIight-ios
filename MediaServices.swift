@@ -519,6 +519,20 @@ final class MediaStore: ObservableObject {
         }
     }
 
+    func importVideoFile(_ sourceURL: URL, title: String) {
+        let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let ext = sourceURL.pathExtension.isEmpty ? "mov" : sourceURL.pathExtension
+            let destination = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            let entry = MediaEntry(kind: .video, title: title, remoteURL: destination, platform: "local", source: "camera")
+            items.insert(entry, at: 0)
+            persist()
+            notice = "视频已保存到库。"
+        } catch { notice = "视频保存失败：\(error.localizedDescription)" }
+    }
+
     func toggleFavorite(_ entry: MediaEntry) {
         guard let index = items.firstIndex(where: { $0.id == entry.id }) else { return }
         items[index].isFavorite.toggle()
