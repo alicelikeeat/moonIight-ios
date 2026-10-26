@@ -35,13 +35,14 @@ struct RootView: View {
                 tabBar
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(item: $selectedPlayer) { MediaPlayerView(entry: $0) }
         .task { await model.mediaStore.refreshDiscover() }
         .task(id: selectedMedia) {
             guard let selectedMedia,
-                  let data = try? await selectedMedia.loadTransferable(type: Data.self),
-                  let image = UIImage(data: data) else { return }
-            selectedImage = Image(uiImage: image)
+                  let data = try? await selectedMedia.loadTransferable(type: Data.self) else { return }
+            if let image = UIImage(data: data) { selectedImage = Image(uiImage: image) }
+            model.mediaStore.importImage(data, title: "导入的照片")
         }
     }
 
@@ -244,7 +245,10 @@ private struct MediaEntryCard: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let url = entry.coverURL {
+        if entry.kind == .image, let url = entry.remoteURL, url.isFileURL,
+           let image = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else if let url = entry.coverURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image): image.resizable().scaledToFill()
@@ -278,6 +282,9 @@ private struct MediaPlayerView: View {
                     VideoPlayer(player: player ?? AVPlayer(url: url))
                         .onAppear { player = AVPlayer(url: url); player?.play() }
                         .onDisappear { player?.pause() }
+                } else if entry.kind == .image, let url = entry.remoteURL, url.isFileURL,
+                          let image = UIImage(contentsOfFile: url.path) {
+                    Image(uiImage: image).resizable().scaledToFit()
                 } else if let url = entry.remoteURL ?? entry.coverURL {
                     AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
                 } else {
@@ -316,6 +323,15 @@ private struct WebEmbedView: UIViewRepresentable {
 }
 
 private struct MomentsView: View {
+    @AppStorage("moonlight.moments.v1") private var storedMoments = Data()
+    @State private var draft = ""
+    @State private var showingComposer = false
+    @State private var likedIDs = Set<String>()
+
+    private var moments: [LocalMoment] {
+        (try? JSONDecoder().decode([LocalMoment].self, from: storedMoments)) ?? []
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -324,14 +340,66 @@ private struct MomentsView: View {
                     Spacer()
                     Text("朋友圈").font(.title2.bold())
                     Spacer()
-                    Button {} label: { Image(systemName: "bubble.left.and.bubble.right").font(.title3).frame(width: 42, height: 42).moonGlassCircle() }
-                    Button {} label: { Image(systemName: "square.and.pencil").font(.title3).frame(width: 42, height: 42).moonGlassCircle() }
+                    Button { showingComposer = true } label: { Image(systemName: "square.and.pencil").font(.title3).frame(width: 42, height: 42).moonGlassCircle() }
+                        .accessibilityLabel("发布动态")
                 }.padding(.vertical, 6)
-                sectionHeading("最近动态", action: "全部")
-                EmptyPanel(title: "动态加载后会显示在这里", detail: "这里可以浏览好友分享的文字、图片和视频。", symbol: "person.2")
+                HStack {
+                    sectionHeading("最近动态", action: "")
+                    Spacer()
+                    Button("发布") { showingComposer = true }.foregroundStyle(MoonStyle.accent)
+                }
+                if moments.isEmpty {
+                    EmptyPanel(title: "还没有动态", detail: "写下近况，发布后会保存在本机朋友圈。", symbol: "person.2")
+                } else {
+                    ForEach(moments) { moment in
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "person.crop.circle.fill").font(.system(size: 36)).foregroundStyle(MoonStyle.accent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("我").font(.subheadline.weight(.semibold))
+                                    Text(moment.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            Text(moment.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
+                            HStack(spacing: 8) {
+                                Button { toggleLike(moment.id) } label: {
+                                    Label(likedIDs.contains(moment.id) ? "已赞" : "赞", systemImage: likedIDs.contains(moment.id) ? "heart.fill" : "heart")
+                                }
+                                .foregroundStyle(likedIDs.contains(moment.id) ? .pink : MoonStyle.accent)
+                            }.font(.subheadline)
+                        }
+                        .padding(16)
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
+                        .transition(.opacity)
+                    }
+                }
             }.padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 24)
         }.scrollIndicators(.hidden)
+            .alert("发布动态", isPresented: $showingComposer) {
+                TextField("分享此刻…", text: $draft, axis: .vertical)
+                Button("取消", role: .cancel) { draft = "" }
+                Button("发布") { publish() }.disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } message: { Text("动态保存在本机。") }
     }
+
+    private func publish() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        var updated = moments
+        updated.insert(LocalMoment(text: text), at: 0)
+        if let encoded = try? JSONEncoder().encode(updated) { storedMoments = encoded }
+        draft = ""
+    }
+
+    private func toggleLike(_ id: String) {
+        if likedIDs.contains(id) { likedIDs.remove(id) } else { likedIDs.insert(id) }
+    }
+}
+
+private struct LocalMoment: Codable, Identifiable {
+    var id = UUID().uuidString
+    var text: String
+    var date = Date.now
 }
 
 private struct MeView: View {
@@ -405,11 +473,89 @@ private struct ProfileEditView: View {
 }
 
 private struct CameraView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var showCamera = false
+    @State private var showPicker = false
+    @State private var capturedImage: UIImage?
+    @State private var cameraError: String?
+    @State private var selectedPhoto: PhotosPickerItem?
+
     var body: some View {
-        VStack(spacing: 18) {
-            PageHeader(title: "拍摄", subtitle: "捕捉此刻", symbol: "camera")
-            EmptyPanel(title: "拍摄功能将在此打开", detail: "拍照和录制视频将连接原生相机与媒体库。", symbol: "camera")
-        }.padding(.horizontal, 18).padding(.top, 12)
+        NavigationStack {
+            VStack(spacing: 18) {
+                PageHeader(title: "拍摄", subtitle: "捕捉此刻", symbol: "camera")
+                if let capturedImage {
+                    Image(uiImage: capturedImage).resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 24))
+                        .frame(maxHeight: 420)
+                    Button {
+                        if let data = capturedImage.jpegData(compressionQuality: 0.92) {
+                            model.mediaStore.importImage(data, title: "拍摄的照片")
+                        }
+                        self.capturedImage = nil
+                    } label: {
+                        Label("保存到库", systemImage: "square.and.arrow.down")
+                            .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
+                } else {
+                    EmptyPanel(title: "准备好记录此刻了吗？", detail: "拍摄或从照片图库导入，内容会保存到库。", symbol: "camera")
+                    Button {
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                        else { cameraError = "当前设备没有可用的相机，请从照片图库导入。" }
+                    } label: {
+                        Label("打开相机", systemImage: "camera.fill")
+                            .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
+                    }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
+                    Button { showPicker = true } label: {
+                        Label("从照片图库导入", systemImage: "photo.on.rectangle")
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }.buttonStyle(.bordered)
+                }
+            }
+            .padding(.horizontal, 18).padding(.top, 12)
+            .alert("提示", isPresented: Binding(get: { cameraError != nil }, set: { if !$0 { cameraError = nil } })) {
+                Button("好", role: .cancel) { cameraError = nil }
+            } message: { Text(cameraError ?? "") }
+            .sheet(isPresented: $showCamera) {
+                CameraCaptureView { image in capturedImage = image }
+                    .ignoresSafeArea()
+            }
+            .photosPicker(isPresented: $showPicker, selection: $selectedPhoto, matching: .images)
+            .task(id: selectedPhoto) {
+                guard let selectedPhoto,
+                      let data = try? await selectedPhoto.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data) else { return }
+                capturedImage = image
+            }
+        }
+    }
+}
+
+private struct CameraCaptureView: UIViewControllerRepresentable {
+    let onCapture: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeCoordinator() -> Coordinator { Coordinator(onCapture: onCapture, dismiss: dismiss) }
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onCapture: (UIImage) -> Void
+        let dismiss: DismissAction
+        init(onCapture: @escaping (UIImage) -> Void, dismiss: DismissAction) {
+            self.onCapture = onCapture; self.dismiss = dismiss
+        }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage { onCapture(image) }
+            dismiss()
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { dismiss() }
     }
 }
 
@@ -642,5 +788,6 @@ private extension View {
         }
     }
 }
+
 
 
