@@ -571,8 +571,7 @@ private struct MomentsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                 HStack {
                     Text("最近动态").font(.title3.bold())
-                    Spacer(minLength: 4)
-                    Button("发布", action: onCompose).foregroundStyle(MoonStyle.accent)
+                    Spacer()
                 }
                 if model.moments.isEmpty {
                     EmptyPanel(title: "还没有动态", detail: "写下近况，发布后会保存在本机朋友圈。", symbol: "person.2")
@@ -583,7 +582,10 @@ private struct MomentsView: View {
                                 Image(systemName: "person.crop.circle.fill").font(.system(size: 36)).foregroundStyle(MoonStyle.accent)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(moment.authorName).font(.subheadline.weight(.semibold))
-                                    Text(moment.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                                    HStack(spacing: 6) {
+                                        Text(moment.date.formatted(date: .abbreviated, time: .shortened))
+                                        if moment.isVirtual { Text("虚拟好友") }
+                                    }.font(.caption).foregroundStyle(.secondary)
                                 }
                             }
                             if !moment.text.isEmpty {
