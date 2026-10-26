@@ -591,7 +591,21 @@ private struct MomentsView: View {
                     ForEach(model.moments) { moment in
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 10) {
-                                Image(systemName: "person.crop.circle.fill").font(.system(size: 36)).foregroundStyle(MoonStyle.accent)
+                                Group {
+                                    if moment.isVirtual {
+                                        Image(systemName: "person.crop.circle.fill").resizable().scaledToFit()
+                                            .foregroundStyle(MoonStyle.accent)
+                                    } else if isMoviePath(avatarPath), !avatarPath.isEmpty {
+                                        Image(systemName: "play.circle.fill").resizable().scaledToFit()
+                                            .foregroundStyle(MoonStyle.accent)
+                                    } else if !avatarPath.isEmpty, let avatar = UIImage(contentsOfFile: avatarPath) {
+                                        Image(uiImage: avatar).resizable().scaledToFill()
+                                    } else {
+                                        Image(systemName: "person.crop.circle.fill").resizable().scaledToFit()
+                                            .foregroundStyle(MoonStyle.accent)
+                                    }
+                                }
+                                .frame(width: 38, height: 38).clipShape(Circle())
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(moment.authorName).font(.subheadline.weight(.semibold))
                                     HStack(spacing: 6) {
