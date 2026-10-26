@@ -72,7 +72,9 @@ final class AppModel: ObservableObject {
     }
 
     func publishMoment(text: String, attachment: MediaEntry?) {
-        moments.insert(MomentPost(text: text, attachment: attachment), at: 0)
+        var updated = moments
+        updated.insert(MomentPost(text: text, attachment: attachment), at: 0)
+        moments = Array(updated.prefix(500))
     }
 
     func toggleMomentLike(_ id: String) {
@@ -117,7 +119,8 @@ final class AppModel: ObservableObject {
             provider: virtualAIProvider,
             apiKey: SecureSettings.read(virtualAIProvider.keychainAccount) ?? ""
         )
-        moments.insert(MomentPost(
+        var updated = moments
+        updated.insert(MomentPost(
             text: generated?.caption ?? captions.randomElement() ?? "分享一条新内容。",
             attachment: entry,
             authorName: name,
@@ -125,6 +128,7 @@ final class AppModel: ObservableObject {
             comments: [generated?.comment ?? comments.randomElement() ?? "不错。"],
             isVirtual: true
         ), at: 0)
+        moments = Array(updated.prefix(500))
     }
 
     private func simulateVirtualInteractions() {
@@ -133,6 +137,7 @@ final class AppModel: ObservableObject {
             if Int.random(in: 0..<100) < 55 { updated[index].likes += 1 }
             if Int.random(in: 0..<100) < 24 {
                 updated[index].comments.append(["这个我也喜欢。", "刚刚看完了。", "转给朋友看看。"].randomElement() ?? "好看。")
+                if updated[index].comments.count > 20 { updated[index].comments.removeFirst() }
             }
             if Int.random(in: 0..<100) < 10 { updated[index].reposts += 1 }
         }
@@ -140,7 +145,7 @@ final class AppModel: ObservableObject {
     }
 }
 
-enum VirtualAIProvider: String, CaseIterable, Identifiable {
+enum VirtualAIProvider: String, CaseIterable, Identifiable, Sendable {
     case openAI, grok
     var id: Self { self }
     var title: String { self == .openAI ? "OpenAI" : "Grok" }
@@ -162,6 +167,28 @@ struct MomentPost: Codable, Identifiable {
     var comments: [String] = []
     var reposts = 0
     var isVirtual = false
+
+    init(id: String = UUID().uuidString, text: String, date: Date = .now, attachment: MediaEntry? = nil, likedByMe: Bool = false, authorName: String = "我", likes: Int = 0, comments: [String] = [], reposts: Int = 0, isVirtual: Bool = false) {
+        self.id = id; self.text = text; self.date = date; self.attachment = attachment
+        self.likedByMe = likedByMe; self.authorName = authorName; self.likes = likes
+        self.comments = comments; self.reposts = reposts; self.isVirtual = isVirtual
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, text, date, attachment, likedByMe, authorName, likes, comments, reposts, isVirtual }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+        text = try values.decodeIfPresent(String.self, forKey: .text) ?? ""
+        date = try values.decodeIfPresent(Date.self, forKey: .date) ?? .now
+        attachment = try values.decodeIfPresent(MediaEntry.self, forKey: .attachment)
+        likedByMe = try values.decodeIfPresent(Bool.self, forKey: .likedByMe) ?? false
+        authorName = try values.decodeIfPresent(String.self, forKey: .authorName) ?? "我"
+        likes = try values.decodeIfPresent(Int.self, forKey: .likes) ?? 0
+        comments = try values.decodeIfPresent([String].self, forKey: .comments) ?? []
+        reposts = try values.decodeIfPresent(Int.self, forKey: .reposts) ?? 0
+        isVirtual = try values.decodeIfPresent(Bool.self, forKey: .isVirtual) ?? false
+    }
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
