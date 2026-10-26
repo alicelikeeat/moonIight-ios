@@ -108,10 +108,9 @@ final class AppModel: ObservableObject {
     }
 
     private func createVirtualMoment(with entry: MediaEntry) async {
-        let friends = ["小林", "阿月", "晚风", "橘子汽水", "星河", "山雀"]
         let captions = ["刚好刷到这条，分享给大家。", "今天看到的有趣内容，先收藏再转发。", "这个片段让我停下来多看了一会儿。", "晚上的放松时间，推荐给你们。"]
         let comments = ["这个封面好有氛围。", "看完了，确实不错。", "先点赞收藏啦。", "这个来源还有类似内容吗？"]
-        let name = friends.randomElement() ?? "小林"
+        let name = VirtualFriendRoster.names.randomElement() ?? "小林"
         let generated = await MediaAPI.generateVirtualFriendText(
             title: entry.title,
             author: entry.author,
@@ -146,6 +145,10 @@ enum VirtualAIProvider: String, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String { self == .openAI ? "OpenAI" : "Grok" }
     var keychainAccount: String { self == .openAI ? "virtual_ai_openai" : "virtual_ai_grok" }
+}
+
+enum VirtualFriendRoster {
+    static let names = ["小林", "阿月", "晚风", "橘子汽水", "星河", "山雀"]
 }
 
 struct MomentPost: Codable, Identifiable {
