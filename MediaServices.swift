@@ -638,6 +638,7 @@ final class MediaStore: ObservableObject {
     }
 
     private func merge(_ incoming: [MediaEntry]) {
+        guard !incoming.isEmpty else { return }
         discoverItems = unique(incoming.shuffled())
         if let data = try? JSONEncoder().encode(discoverItems) {
             defaults.set(data, forKey: "moonlight-discover-cache")
