@@ -530,6 +530,7 @@ private struct CameraView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showCamera = false
     @State private var showPicker = false
+    @State private var captureVideo = false
     @State private var capturedImage: UIImage?
     @State private var cameraError: String?
     @State private var selectedPhoto: PhotosPickerItem?
@@ -554,12 +555,21 @@ private struct CameraView: View {
                 } else {
                     EmptyPanel(title: "准备好记录此刻了吗？", detail: "拍摄或从照片图库导入，内容会保存到库。", symbol: "camera")
                     Button {
+                        captureVideo = false
                         if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
                         else { cameraError = "当前设备没有可用的相机，请从照片图库导入。" }
                     } label: {
                         Label("打开相机", systemImage: "camera.fill")
                             .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
                     }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
+                    Button {
+                        captureVideo = true
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                        else { cameraError = "当前设备没有可用的相机，请从照片图库导入视频。" }
+                    } label: {
+                        Label("录制视频", systemImage: "video.fill")
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }.buttonStyle(.bordered)
                     Button { showPicker = true } label: {
                         Label("从照片图库导入", systemImage: "photo.on.rectangle")
                             .frame(maxWidth: .infinity, minHeight: 48)
@@ -571,7 +581,11 @@ private struct CameraView: View {
                 Button("好", role: .cancel) { cameraError = nil }
             } message: { Text(cameraError ?? "") }
             .sheet(isPresented: $showCamera) {
-                CameraCaptureView { image in capturedImage = image }
+                CameraCaptureView(captureVideo: captureVideo, onCapture: { image in
+                    capturedImage = image
+                }, onCaptureVideo: { url in
+                    model.mediaStore.importVideoFile(url, title: "拍摄的视频")
+                })
                     .ignoresSafeArea()
             }
             .photosPicker(isPresented: $showPicker, selection: $selectedPhoto, matching: .any(of: [.images, .videos]))
@@ -588,14 +602,19 @@ private struct CameraView: View {
 }
 
 private struct CameraCaptureView: UIViewControllerRepresentable {
+    let captureVideo: Bool
     let onCapture: (UIImage) -> Void
+    let onCaptureVideo: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
 
-    func makeCoordinator() -> Coordinator { Coordinator(onCapture: onCapture, dismiss: dismiss) }
+    func makeCoordinator() -> Coordinator { Coordinator(onCapture: onCapture, onCaptureVideo: onCaptureVideo, dismiss: dismiss) }
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.cameraCaptureMode = .photo
+        picker.mediaTypes = [captureVideo ? UTType.movie.identifier : UTType.image.identifier]
+        picker.cameraCaptureMode = captureVideo ? .video : .photo
+        picker.videoQuality = .typeHigh
+        picker.videoMaximumDuration = 300
         picker.delegate = context.coordinator
         return picker
     }
@@ -603,12 +622,14 @@ private struct CameraCaptureView: UIViewControllerRepresentable {
 
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
         let onCapture: (UIImage) -> Void
+        let onCaptureVideo: (URL) -> Void
         let dismiss: DismissAction
-        init(onCapture: @escaping (UIImage) -> Void, dismiss: DismissAction) {
-            self.onCapture = onCapture; self.dismiss = dismiss
+        init(onCapture: @escaping (UIImage) -> Void, onCaptureVideo: @escaping (URL) -> Void, dismiss: DismissAction) {
+            self.onCapture = onCapture; self.onCaptureVideo = onCaptureVideo; self.dismiss = dismiss
         }
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let image = info[.originalImage] as? UIImage { onCapture(image) }
+            if let url = info[.mediaURL] as? URL { onCaptureVideo(url) }
             dismiss()
         }
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { dismiss() }
