@@ -1223,11 +1223,11 @@ private struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("手势说明") {
-                    Label("点按：播放或打开", systemImage: "hand.tap")
-                    Label("双击：首页喜欢；朋友圈点赞", systemImage: "hand.tap")
-                    Label("长按：打开对象菜单", systemImage: "hand.point.up.left")
-                    Label("下拉：刷新首页或发现", systemImage: "arrow.down")
-                    Label("上下滑：切换内容；左滑：查看详情", systemImage: "hand.draw")
+                    Label("点按媒体卡片：打开播放或预览", systemImage: "hand.tap")
+                    Label("长按媒体卡片：按上方设置显示快捷菜单", systemImage: "hand.point.up.left")
+                    Label("快捷菜单：打开、收藏、加入库；弹出菜单还可删除", systemImage: "circle.grid.2x2")
+                    Label("下拉首页或发现：刷新内容源", systemImage: "arrow.down")
+                    Label("播放方向：可在播放设置中开启横屏", systemImage: "rectangle.landscape")
                 }
             }
             .scrollContentBackground(.hidden)
