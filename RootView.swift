@@ -618,6 +618,7 @@ private struct MenuRow: View {
 
 
 
+@MainActor
 @ViewBuilder
 private func glassTabContainer<Content: View>(@ViewBuilder content: () -> Content) -> some View {
     if #available(iOS 26.0, *) {
