@@ -87,8 +87,9 @@ final class AppModel: ObservableObject {
 
     func publishMoment(text: String, attachment: MediaEntry?) {
         var updated = moments
-        updated.insert(MomentPost(text: text, attachment: attachment), at: 0)
-        moments = Array(updated.prefix(500))
+        let author = UserDefaults.standard.string(forKey: "moonlight.profile.displayName") ?? "我的朋友"
+        updated.insert(MomentPost(text: text, attachment: attachment, authorName: author), at: 0)
+        withAnimation(.easeOut(duration: 0.22)) { moments = Array(updated.prefix(500)) }
     }
 
     func toggleMomentLike(_ id: String) {
@@ -113,7 +114,7 @@ final class AppModel: ObservableObject {
         let original = updated[index]
         updated[index].reposts += 1
         updated.insert(MomentPost(text: "转发了 \(original.authorName) 的动态：\(original.text)", attachment: original.attachment), at: 0)
-        moments = Array(updated.prefix(500))
+        withAnimation(.easeOut(duration: 0.22)) { moments = Array(updated.prefix(500)) }
     }
 
     func runVirtualActivityLoop() async {
