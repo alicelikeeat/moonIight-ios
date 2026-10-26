@@ -1,13 +1,27 @@
 import SwiftUI
+import UIKit
 
 @main
 struct MoonlightApp: App {
+    @UIApplicationDelegateAdaptor(MoonlightOrientationDelegate.self) private var orientationDelegate
     @StateObject private var model = AppModel()
 
     var body: some Scene {
         WindowGroup {
             RootView().environmentObject(model)
         }
+    }
+}
+
+@MainActor
+final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
+    static var playerAllowsLandscape = false
+
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        if Self.playerAllowsLandscape {
+            return [.portrait, .landscapeLeft, .landscapeRight]
+        }
+        return .portrait
     }
 }
 
