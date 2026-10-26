@@ -15,11 +15,25 @@ struct MoonlightApp: App {
 final class AppModel: ObservableObject {
     @Published var selectedTab: AppTab = .home
     @Published var mediaStore = MediaStore()
-    @Published var longPressStyle: LongPressStyle = .popover
-    @Published var portraitPlaybackOnly = true
+    @Published var longPressStyle: LongPressStyle = .popover {
+        didSet { UserDefaults.standard.set(longPressStyle.rawValue, forKey: "moonlight.longPressStyle") }
+    }
+    @Published var portraitPlaybackOnly = true {
+        didSet { UserDefaults.standard.set(portraitPlaybackOnly, forKey: "moonlight.portraitPlaybackOnly") }
+    }
     @Published var bannerColumns = 2
     @Published var bannerScale = 1.0
     @Published var refreshCount = 0
+
+    init() {
+        if let rawValue = UserDefaults.standard.string(forKey: "moonlight.longPressStyle"),
+           let savedStyle = LongPressStyle(rawValue: rawValue) {
+            longPressStyle = savedStyle
+        }
+        if UserDefaults.standard.object(forKey: "moonlight.portraitPlaybackOnly") != nil {
+            portraitPlaybackOnly = UserDefaults.standard.bool(forKey: "moonlight.portraitPlaybackOnly")
+        }
+    }
 
     @MainActor
     func refresh(_ tab: AppTab) async {
@@ -65,6 +79,7 @@ enum LongPressStyle: String, CaseIterable, Identifiable {
         }
     }
 }
+
 
 
 
