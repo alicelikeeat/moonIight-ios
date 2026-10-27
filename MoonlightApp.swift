@@ -60,8 +60,8 @@ enum QuickActionID: String, CaseIterable, Identifiable {
 }
 
 struct ActiveLongPressMenu: Identifiable, Equatable {
-    var id: String { entry.id }
-    var entry: MediaEntry
+    var id: String { entry?.id ?? "global-hold" }
+    var entry: MediaEntry?
     var location: CGPoint
     var fingerLocation: CGPoint
     var fingerDown = true
@@ -344,6 +344,7 @@ enum LongPressStyle: String, CaseIterable, Identifiable {
         }
     }
 }
+
 
 
 

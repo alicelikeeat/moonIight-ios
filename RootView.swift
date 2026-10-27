@@ -61,7 +61,6 @@ struct RootView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                tabBar
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -75,11 +74,11 @@ struct RootView: View {
                         actions: model.longPressQuickActions,
                         style: model.longPressStyle,
                         selectionMode: model.longPressSelectionMode,
-                        onAction: { performQuickAction($0, for: menu.entry) },
+                        onAction: { if let entry = menu.entry { performQuickAction($0, for: entry) } },
                         onMore: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             model.activeLongPressMenu = nil
-                            activeSheet = .quickActions(menu.entry)
+                            if let entry = menu.entry { activeSheet = .quickActions(entry) }
                         },
                         onDismiss: { model.activeLongPressMenu = nil }
                     )
@@ -89,6 +88,8 @@ struct RootView: View {
             }
             .animation(.spring(response: 0.28, dampingFraction: 0.76), value: model.activeLongPressMenu != nil)
         }
+        .universalLongPress(target: .page(for: model.selectedTab))
+        .overlay(alignment: .bottom) { tabBar.zIndex(100) }
         .fullScreenCover(item: $activePlayer) { entry in
             MediaPlayerView(entry: entry) {
                 activePlayer = nil
@@ -96,10 +97,10 @@ struct RootView: View {
                     try? await Task.sleep(nanoseconds: 350_000_000)
                     activeSheet = .composer(entry)
                 }
-            }
+            }.universalLongPress(target: .home)
         }
         .sheet(item: $activeSheet) { destination in
-            switch destination {
+            Group { switch destination {
             case .composer(let entry):
                 MomentComposerView(initialAttachment: entry) { text, attachment in
                     model.publishMoment(text: text, attachment: attachment)
@@ -118,7 +119,7 @@ struct RootView: View {
                 .presentationDragIndicator(.visible)
             case .share(let entry):
                 ActivityShareSheet(items: [entry.remoteURL?.absoluteString ?? entry.title])
-            }
+            } }.universalLongPress(target: .actionsPanel)
         }
         .task {
             #if DEBUG
@@ -168,9 +169,6 @@ struct RootView: View {
 
     private func refreshable<Content: View>(_ tab: AppTab, @ViewBuilder content: @escaping () -> Content) -> some View {
         GeometryReader { geometry in
-            let windowTop = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-                .flatMap(\.windows).first(where: \.isKeyWindow)?.safeAreaInsets.top ?? 0
-            let clipTop = max(geometry.safeAreaInsets.top, windowTop - geometry.frame(in: .global).minY)
             ScrollView(.vertical) {
                 content()
                     .frame(maxWidth: .infinity)
@@ -184,7 +182,7 @@ struct RootView: View {
                     await model.mediaStore.searchDiscover(discoveryQuery)
                 } else { await model.refresh(tab) }
             }
-            .clipShape(ScrollTopSafeAreaClip(inset: clipTop))
+            .clipped()
         }
     }
 
@@ -209,9 +207,6 @@ struct RootView: View {
             HStack(spacing: 0) {
                 ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
                     if index > 0 { Spacer(minLength: 12) }
-                    Button {
-                        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { model.selectedTab = tab }
-                    } label: {
                         VStack(spacing: 4) {
                             Image(systemName: tab.symbol).font(.system(size: 16, weight: .semibold))
                             Text(tab.title).font(.system(size: 9, weight: .medium))
@@ -220,21 +215,248 @@ struct RootView: View {
                         .frame(width: diameter, height: diameter)
                         .moonGlassCircle(.button(for: tab))
                         .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.7) : .clear, lineWidth: 1.5).allowsHitTesting(false))
-                    }
-                    .buttonStyle(.plain).accessibilityLabel(tab.title)
+                    .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
             .frame(maxWidth: 540)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+                PriorityTabSurface { tab in
+                    model.activeLongPressMenu = nil
+                    NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { model.selectedTab = tab }
+                }
+            }
         }
         .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
     }
 }
 
-private struct ScrollTopSafeAreaClip: Shape {
-    var inset: CGFloat
-    func path(in rect: CGRect) -> Path {
-        Path(CGRect(x: rect.minX, y: rect.minY + inset, width: rect.width, height: max(0, rect.height - inset)))
+// Transparent gaps pass touches through to the feed. Each visible circle owns
+// one native button, above media surfaces, with a minimum 48 pt touch target.
+private struct PriorityTabSurface: UIViewRepresentable {
+    var onSelect: (AppTab) -> Void
+    func makeUIView(context: Context) -> PriorityTabView { PriorityTabView() }
+    func updateUIView(_ view: PriorityTabView, context: Context) { view.onSelect = onSelect }
+}
+
+private final class PriorityTabView: UIView {
+    var onSelect: ((AppTab) -> Void)?
+    private var buttons: [UIButton] = []
+    init() {
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        for (index, tab) in AppTab.allCases.enumerated() {
+            let button = UIButton(type: .custom)
+            button.tag = index
+            button.accessibilityLabel = tab.title
+            button.accessibilityIdentifier = "navigation-\(tab.rawValue)"
+            button.addTarget(self, action: #selector(selected(_:)), for: .touchUpInside)
+            addSubview(button)
+            buttons.append(button)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = min(bounds.width, 540)
+        let diameter = min(50, max(44, (bounds.width - 80) / 6))
+        let step = (width - diameter) / 4
+        for (index, button) in buttons.enumerated() {
+            let center = CGPoint(x: (bounds.width - width) / 2 + diameter / 2 + CGFloat(index) * step, y: bounds.midY)
+            let hitSize = max(48, diameter)
+            button.frame = CGRect(x: center.x - hitSize / 2, y: center.y - hitSize / 2, width: hitSize, height: hitSize)
+        }
+    }
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
+    }
+    @objc private func selected(_ sender: UIButton) {
+        guard AppTab.allCases.indices.contains(sender.tag) else { return }
+        onSelect?(AppTab.allCases[sender.tag])
+    }
+}
+
+private extension View {
+    func universalLongPress(target: BackgroundTarget) -> some View {
+        modifier(UniversalHoldScope(target: target))
+    }
+}
+
+private enum HoldDestination: Identifiable {
+    case background(BackgroundTarget), backgrounds, guide, more
+    var id: String {
+        switch self { case .background(let target): target.rawValue; case .backgrounds: "backgrounds"; case .guide: "guide"; case .more: "more" }
+    }
+}
+
+private struct UniversalHoldScope: ViewModifier {
+    let target: BackgroundTarget
+    @EnvironmentObject private var model: AppModel
+    @State private var menu: ActiveLongPressMenu?
+    @State private var heldTarget: BackgroundTarget?
+    @State private var destination: HoldDestination?
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                GlobalHoldObserver(enabled: menu == nil && model.activeLongPressMenu == nil,
+                    onBegin: { point, buttonTarget in
+                        heldTarget = buttonTarget ?? target
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        menu = ActiveLongPressMenu(entry: nil, location: point, fingerLocation: point)
+                    }, onMove: { point in
+                        guard var current = menu, current.fingerDown else { return }
+                        current.fingerLocation = point
+                        if model.longPressStyle != .popover { current.location = point }
+                        menu = current
+                    }, onEnd: { menu?.fingerDown = false })
+            }
+            .overlay {
+                if let menu {
+                    LongPressRingOverlay(menu: menu, actions: QuickActionID.allCases,
+                        style: model.longPressStyle, selectionMode: model.longPressSelectionMode,
+                        onAction: perform, onMore: { self.menu = nil; destination = .more },
+                        onDismiss: { self.menu = nil })
+                        .accessibilityIdentifier("global-long-press-menu")
+                }
+            }
+            .onChange(of: model.selectedTab) { _ in menu = nil }
+            .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationTapped"))) { _ in menu = nil }
+            .sheet(item: $destination) { item in
+                NavigationStack {
+                    Group {
+                        switch item {
+                        case .background(let selected): BackgroundEditorView(target: selected)
+                        case .backgrounds: BackgroundSettingsView()
+                        case .guide: holdGuide
+                        case .more:
+                            List {
+                                Section("外观") {
+                                    Button("调整当前背景") { destination = .background(heldTarget ?? target) }
+                                    Button("页面与按键背景") { destination = .backgrounds }
+                                }
+                                Section("操作") {
+                                    Button("刷新当前页面") { perform(.play) }
+                                    Button("手势说明") { destination = .guide }
+                                }
+                            }.navigationTitle("更多操作")
+                        }
+                    }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { destination = nil } } }
+                }.presentationDragIndicator(.visible)
+            }
+    }
+
+    private func perform(_ action: QuickActionID) {
+        menu = nil
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        switch action {
+        case .play: destination = nil; Task { await model.refresh(model.selectedTab) }
+        case .favorite: destination = .background(heldTarget ?? target)
+        case .library: destination = .backgrounds
+        case .share: destination = .guide
+        }
+    }
+
+    private var holdGuide: some View {
+        List {
+            Label("先移动手指：优先滚动，不触发点按或长按", systemImage: "arrow.up.and.down")
+            Label("静止按住：触感反馈，圆环旋转打开", systemImage: "hand.point.up.left")
+            Label("松手后圆环保持打开，再点按执行", systemImage: "hand.tap")
+            Label("媒体卡片显示播放、收藏、加入库和分享", systemImage: "play.rectangle")
+            Label("页面空白和按键显示背景、刷新等常用操作", systemImage: "square.grid.2x2")
+            Label("中心 … 打开更多操作；点空白处或下滑收起", systemImage: "ellipsis.circle")
+            Label("输入框与系统照片选择器保留系统手势", systemImage: "keyboard")
+        }.navigationTitle("手势说明")
+    }
+}
+
+// Observe the hosting view instead of laying a touch-swallowing layer over it.
+// There is no pan recognizer: movement cancels a hold at 7 pt, leaving UIScrollView
+// in charge. Native pickers, text editing and media-card recognizers stay local.
+private struct GlobalHoldObserver: UIViewRepresentable {
+    var enabled: Bool
+    var onBegin: (CGPoint, BackgroundTarget?) -> Void
+    var onMove: (CGPoint) -> Void
+    var onEnd: () -> Void
+    func makeUIView(context: Context) -> GlobalHoldMarker { GlobalHoldMarker() }
+    func updateUIView(_ view: GlobalHoldMarker, context: Context) {
+        view.canBegin = enabled
+        view.onBegin = onBegin; view.onMove = onMove; view.onEnd = onEnd
+        view.installIfNeeded()
+    }
+    static func dismantleUIView(_ view: GlobalHoldMarker, coordinator: ()) { view.detach() }
+}
+
+private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
+    var canBegin = true
+    var onBegin: ((CGPoint, BackgroundTarget?) -> Void)?
+    var onMove: ((CGPoint) -> Void)?
+    var onEnd: (() -> Void)?
+    private weak var owner: UIViewController?
+    private let hold = UILongPressGestureRecognizer()
+    private var heldTarget: BackgroundTarget?
+    private weak var touchedView: UIView?
+    init() {
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+        hold.minimumPressDuration = 0.48; hold.allowableMovement = 7
+        hold.cancelsTouchesInView = true
+        hold.delaysTouchesBegan = false; hold.delaysTouchesEnded = false
+        hold.delegate = self; hold.addTarget(self, action: #selector(held(_:)))
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func didMoveToWindow() { super.didMoveToWindow(); installIfNeeded() }
+    func installIfNeeded() {
+        guard window != nil else { detach(); return }
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let controller = current as? UIViewController {
+                if owner !== controller {
+                    detach(); owner = controller; controller.view.addGestureRecognizer(hold)
+                }
+                return
+            }
+            responder = current.next
+        }
+    }
+    func detach() { hold.view?.removeGestureRecognizer(hold); owner = nil }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard canBegin, owner?.presentedViewController == nil else { return false }
+        touchedView = touch.view; heldTarget = nil
+        var ancestor = touch.view
+        while let view = ancestor {
+            if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider { return false }
+            if let identifier = view.accessibilityIdentifier,
+               identifier.hasPrefix("navigation-"),
+               let tab = AppTab(rawValue: String(identifier.dropFirst("navigation-".count))) {
+                heldTarget = .button(for: tab)
+            }
+            ancestor = view.superview
+        }
+        return true
+    }
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard canBegin else { return false }
+        var ancestor = touchedView
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView, scroll.isDragging || scroll.isDecelerating { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+    @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
+        let point = recognizer.location(in: self)
+        switch recognizer.state {
+        case .began: onBegin?(point, heldTarget)
+        case .changed: onMove?(point)
+        case .ended: onMove?(point); onEnd?()
+        case .cancelled: onEnd?()
+        default: break
+        }
     }
 }
 
@@ -274,12 +496,6 @@ private struct LongPressRingOverlay: View {
                             if value.translation.height > 28 { onDismiss() }
                         }
                     )
-                Circle()
-                    .strokeBorder(.white.opacity(0.46), lineWidth: 1)
-                    .background(Circle().fill(.ultraThinMaterial.opacity(0.42)))
-                    .frame(width: 146, height: 146)
-                    .scaleEffect(ringAppeared ? 1 : 0.72)
-                    .position(center)
                 glassTabContainer {
                     ZStack {
                         ForEach(Array(actions.prefix(4).enumerated()), id: \.element) { item in
@@ -303,6 +519,8 @@ private struct LongPressRingOverlay: View {
                 }
                 .scaleEffect(ringAppeared ? 1 : 0.72,
                              anchor: UnitPoint(x: center.x / max(geometry.size.width, 1), y: center.y / max(geometry.size.height, 1)))
+                .rotationEffect(.degrees(ringAppeared ? 0 : -90),
+                                anchor: UnitPoint(x: center.x / max(geometry.size.width, 1), y: center.y / max(geometry.size.height, 1)))
                 .opacity(ringAppeared ? 1 : 0)
                 .scaleEffect(style == .droplet ? menu.dropletScale : 1)
                 .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.62), value: menu.dropletScale)
@@ -325,19 +543,27 @@ private struct LongPressRingOverlay: View {
     }
 
     private func ringButton(_ action: QuickActionID) -> some View {
-        let isFavorite = menu.entry.isFavorite
+        let isFavorite = menu.entry?.isFavorite ?? false
         return Button { onAction(action) } label: {
             VStack(spacing: 3) {
-                Image(systemName: action == .favorite && isFavorite ? "heart.slash.fill" : action.symbol)
+                Image(systemName: menu.entry == nil ? globalSymbol(action) : action == .favorite && isFavorite ? "heart.slash.fill" : action.symbol)
                     .font(.system(size: 16, weight: .semibold))
-                Text(action == .favorite && isFavorite ? "取消收藏" : action == .play ? "打开" : action == .favorite ? "收藏" : action == .library ? "加入库" : "分享")
+                Text(menu.entry == nil ? globalTitle(action) : action == .favorite && isFavorite ? "取消收藏" : action == .play ? "打开" : action == .favorite ? "收藏" : action == .library ? "加入库" : "分享")
                     .font(.system(size: 9, weight: .medium)).lineLimit(1).minimumScaleFactor(0.75)
             }
             .frame(width: 58, height: 58)
             .moonGlassCircle(.ring(for: action))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(action.title)
+        .accessibilityLabel(menu.entry == nil ? globalTitle(action) : action.title)
+    }
+
+    private func globalTitle(_ action: QuickActionID) -> String {
+        switch action { case .play: "刷新"; case .favorite: "当前背景"; case .library: "全部背景"; case .share: "手势说明" }
+    }
+
+    private func globalSymbol(_ action: QuickActionID) -> String {
+        switch action { case .play: "arrow.clockwise"; case .favorite: "photo"; case .library: "square.grid.2x2"; case .share: "hand.draw" }
     }
 
     private func actionOffsets(for count: Int) -> [CGPoint] {
@@ -495,7 +721,7 @@ private struct DiscoverView: View {
                 Button { columns = columns == 1 ? 2 : 1 } label: {
                     Image(systemName: columns == 1 ? "rectangle.grid.2x2" : "rectangle.grid.1x2")
                         .font(.headline).frame(width: 42, height: 42).moonGlassCircle(.discoverLayout)
-                }.buttonStyle(.plain).accessibilityLabel("切换单双列")
+                }.buttonStyle(.plain).accessibilityLabel("切换单双列").accessibilityIdentifier("discover-layout")
             }
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -775,7 +1001,7 @@ private struct MediaEntryCard: View {
     }
 
     private func finishLongPress() {
-        if var menu = model.activeLongPressMenu, menu.entry.id == entry.id {
+        if var menu = model.activeLongPressMenu, menu.entry?.id == entry.id {
             menu.fingerDown = false
             model.activeLongPressMenu = menu
         }
@@ -785,7 +1011,7 @@ private struct MediaEntryCard: View {
 
     private func updateLongPressLocation(_ location: CGPoint) {
         let now = Date.timeIntervalSinceReferenceDate
-        guard var menu = model.activeLongPressMenu, menu.entry.id == entry.id else { return }
+        guard var menu = model.activeLongPressMenu, menu.entry?.id == entry.id else { return }
         menu.fingerLocation = location
         if model.longPressStyle != .popover { menu.location = location }
         if model.longPressStyle == .droplet, let previous = lastFingerPoint, let previousTime = lastFingerTime {
@@ -1660,7 +1886,7 @@ private struct PageHeader<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.largeTitle.bold()).tracking(-0.5)
+                Text(title).font(.largeTitle.bold()).tracking(-0.5).accessibilityIdentifier("page-title-\(title)")
                 Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
@@ -1725,9 +1951,6 @@ private func glassTabContainer<Content: View>(@ViewBuilder content: () -> Conten
         GlassEffectContainer(spacing: 10) { content() }
     } else {
         content()
-            .padding(6)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 1))
     }
 }
 
@@ -1737,5 +1960,6 @@ private extension View {
         modifier(MediaGlassCircle(target: target))
     }
 }
+
 
 

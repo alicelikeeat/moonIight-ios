@@ -71,6 +71,61 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertFalse(app.buttons["关闭"].exists)
     }
 
+    @MainActor
+    func testHeaderButtonsAreFullyVisibleAndNavigationWinsOverMenu() {
+        let app = launch(discover: true)
+        let title = app.staticTexts["page-title-发现"]
+        XCTAssertTrue(title.isHittable)
+        let sources = app.buttons["discover-sources"]
+        let layout = app.buttons["discover-layout"]
+        XCTAssertTrue(sources.isHittable)
+        XCTAssertTrue(layout.isHittable)
+        XCTAssertGreaterThanOrEqual(sources.frame.minY, app.statusBars.firstMatch.frame.maxY)
+        XCTAssertLessThanOrEqual(abs(sources.frame.midY - title.frame.midY), 35)
+        app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["打开全部操作"].waitForExistence(timeout: 3))
+        app.buttons["navigation-me"].tap()
+        XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
+        XCTAssertFalse(app.buttons["关闭"].exists)
+        app.buttons["navigation-discover"].tap()
+        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        attach(app, name: "review-header-and-priority-tabs")
+    }
+
+    @MainActor
+    func testHoldOnNavigationAndOrdinaryButtonDoesNotTapThrough() {
+        let app = launch(discover: true)
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["settings-entry"].exists, "A hold switched tabs")
+        app.buttons["当前背景"].tap()
+        XCTAssertTrue(app.navigationBars["我"].waitForExistence(timeout: 5), "The held tab must edit its own button background")
+        app.buttons["完成"].firstMatch.tap()
+        app.buttons["discover-sources"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["手势说明"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists, "A hold also opened the drawer")
+        attach(app, name: "review-rotating-global-ring")
+        app.buttons["navigation-home"].tap()
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testHoldOnPageAndSwipeOnHeaderButton() {
+        let app = launch(discover: true)
+        app.staticTexts["page-title-发现"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.6)).tap()
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
+        let before = card.frame.minY
+        let start = app.buttons["discover-sources"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -90)), withVelocity: .slow, thenHoldForDuration: 0.1)
+        XCTAssertGreaterThan(before - card.frame.minY, 30)
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
+        XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists)
+    }
+
     @MainActor func testHomeFastCardScroll() { assertCardScrolls(discover: false, velocity: .fast) }
     @MainActor func testHomeSlowCardScroll() { assertCardScrolls(discover: false, velocity: .slow) }
     @MainActor func testDiscoverTwoColumnFastCardScroll() { assertCardScrolls(discover: true, velocity: .fast) }
@@ -171,3 +226,4 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(incoming.waitForExistence(timeout: 8), "MediaStore updates did not invalidate the discovery view")
     }
 }
+
