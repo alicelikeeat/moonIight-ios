@@ -69,9 +69,21 @@ struct LibraryFolder: Codable, Identifiable, Hashable, Sendable {
     var createdAt: Date = .now
 }
 
+struct PlaybackProgress: Codable, Hashable, Sendable {
+    var position: Double
+    var duration: Double
+    var updatedAt: Date = .now
+
+    var isFinished: Bool {
+        duration > 0 && position >= max(0, duration - 8)
+    }
+}
+
 private struct LibraryOrganization: Codable {
     var folders: [LibraryFolder]
     var assignments: [String: String]
+    var playback: [String: PlaybackProgress] = [:]
+    var queueIDs: [String] = []
 }
 
 struct MediaSource: Codable, Identifiable, Hashable, Sendable {
@@ -436,6 +448,8 @@ final class MediaStore: ObservableObject {
     @Published private(set) var items: [MediaEntry] = []
     @Published private(set) var folders: [LibraryFolder] = []
     @Published private(set) var folderAssignments: [String: String] = [:]
+    @Published private(set) var playback: [String: PlaybackProgress] = [:]
+    @Published private(set) var queueIDs: [String] = []
     @Published private(set) var discoverItems: [MediaEntry] = []
     @Published private(set) var searchResults: [MediaEntry] = []
     @Published private(set) var isRefreshing = false
@@ -502,6 +516,8 @@ final class MediaStore: ObservableObject {
             let knownFolders = Set(saved.folders.map(\.id))
             let knownItems = Set(items.map(\.id))
             folderAssignments = saved.assignments.filter { knownItems.contains($0.key) && knownFolders.contains($0.value) }
+            playback = saved.playback.filter { knownItems.contains($0.key) }
+            queueIDs = saved.queueIDs.filter { knownItems.contains($0) }
         }
     }
 
@@ -744,6 +760,66 @@ final class MediaStore: ObservableObject {
 
     func folderID(for entry: MediaEntry) -> String? { folderAssignments[entry.id] }
 
+    var queueItems: [MediaEntry] {
+        queueIDs.compactMap { id in items.first(where: { $0.id == id }) }
+    }
+
+    func progress(for entry: MediaEntry) -> PlaybackProgress? { playback[entry.id] }
+
+    func resumePosition(for entry: MediaEntry) -> Double {
+        guard let progress = playback[entry.id], !progress.isFinished else { return 0 }
+        return max(0, progress.position)
+    }
+
+    func recordPlayback(_ entry: MediaEntry, position: Double, duration: Double = 0) {
+        guard position.isFinite, position >= 0 else { return }
+        let normalizedDuration = duration.isFinite && duration > 0 ? duration : playback[entry.id]?.duration ?? 0
+        playback[entry.id] = PlaybackProgress(position: position, duration: normalizedDuration)
+        persistFolders()
+    }
+
+    func markOpened(_ entry: MediaEntry) {
+        if entry.kind != .video { recordPlayback(entry, position: 1, duration: 1) }
+    }
+
+    func enqueue(_ entries: [MediaEntry], replacing: Bool = false) {
+        let available = Set(items.map(\.id))
+        let incoming = entries.map(\.id).filter { available.contains($0) }
+        queueIDs = replacing ? incoming : queueIDs + incoming.filter { !queueIDs.contains($0) }
+        persistFolders()
+        notice = queueIDs.isEmpty ? "播放队列为空。" : "已加入播放队列，共 \(queueIDs.count) 项。"
+    }
+
+    func removeFromQueue(_ entry: MediaEntry) {
+        queueIDs.removeAll { $0 == entry.id }
+        persistFolders()
+    }
+
+    func clearQueue() {
+        queueIDs.removeAll()
+        persistFolders()
+    }
+
+    func nextQueued(after entry: MediaEntry) -> MediaEntry? {
+        guard let current = queueIDs.firstIndex(of: entry.id) else { return queueItems.first }
+        let following = queueIDs.dropFirst(current + 1)
+        return following.compactMap { id in items.first(where: { $0.id == id }) }.first
+    }
+
+    var continueWatching: [MediaEntry] {
+        items.filter { entry in
+            guard let progress = playback[entry.id] else { return false }
+            return progress.position > 3 && !progress.isFinished
+        }.sorted { (playback[$0.id]?.updatedAt ?? .distantPast) > (playback[$1.id]?.updatedAt ?? .distantPast) }
+    }
+
+    var unwatchedItems: [MediaEntry] {
+        items.filter { entry in
+            guard let progress = playback[entry.id] else { return true }
+            return !progress.isFinished && progress.position == 0
+        }
+    }
+
     func items(in folder: LibraryFolder) -> [MediaEntry] {
         items.filter { folderAssignments[$0.id] == folder.id }
     }
@@ -876,6 +952,8 @@ final class MediaStore: ObservableObject {
         let deleted = items.filter { $0.id == entry.id }
         items.removeAll { $0.id == entry.id }
         folderAssignments.removeValue(forKey: entry.id)
+        playback.removeValue(forKey: entry.id)
+        queueIDs.removeAll { $0 == entry.id }
         let mediaDirectory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true).standardizedFileURL
         let prefix = mediaDirectory.path + "/"
         for item in deleted {
@@ -907,7 +985,7 @@ final class MediaStore: ObservableObject {
     }
 
     private func persistFolders() {
-        guard let data = try? JSONEncoder().encode(LibraryOrganization(folders: folders, assignments: folderAssignments)) else { return }
+        guard let data = try? JSONEncoder().encode(LibraryOrganization(folders: folders, assignments: folderAssignments, playback: playback, queueIDs: queueIDs)) else { return }
         try? data.write(to: organizationURL, options: .atomic)
     }
 }

@@ -127,13 +127,19 @@ struct RootView: View {
         }
         .fullScreenCover(item: $reelsRequest) { request in ReelsView(source: request.source) }
         .fullScreenCover(item: $activePlayer) { entry in
-            MediaPlayerView(entry: entry) {
+            MediaPlayerView(entry: entry, onShareToMoments: {
                 activePlayer = nil
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 350_000_000)
                     activeSheet = .composer(entry)
                 }
-            }.universalLongPress(target: .home)
+            }, onQueueAdvance: { next in
+                activePlayer = nil
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                    activePlayer = next
+                }
+            }).universalLongPress(target: .home)
         }
         .sheet(item: $activeSheet) { destination in
             Group { switch destination {
@@ -1015,6 +1021,14 @@ struct QuickActionsPanel: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("内容信息") {
+                    LabeledContent("来源", value: entry.platform)
+                    if !entry.author.isEmpty { LabeledContent("作者", value: entry.author) }
+                    LabeledContent("位置", value: model.mediaStore.folders.first(where: { $0.id == model.mediaStore.folderID(for: entry) })?.name ?? "未分类")
+                    if let progress = model.mediaStore.progress(for: entry), progress.position > 0 {
+                        LabeledContent("观看进度", value: "\(Int(progress.position / 60)):\(String(format: "%02d", Int(progress.position) % 60))")
+                    }
+                }
                 Section("已配置的更多操作") {
                     ForEach(InteractionPreferences.shared.actions("media").filter { $0.mediaAction == nil }) { action in
                         Button {
@@ -1525,9 +1539,11 @@ private struct LocalVideoPoster: View {
 private struct MediaPlayerView: View {
     let entry: MediaEntry
     let onShareToMoments: () -> Void
+    let onQueueAdvance: (MediaEntry) -> Void
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
+    @State private var controlsVisible = true
 
     var body: some View {
         ZStack {
@@ -1536,7 +1552,7 @@ private struct MediaPlayerView: View {
                 if entry.kind == .embed, let url = entry.embedURL {
                     WebEmbedView(url: url)
                 } else if entry.kind == .video, let player {
-                    FillVideoPlayer(player: player, showsControls: true)
+                    FillVideoPlayer(player: player, showsControls: controlsVisible)
                 } else if entry.kind == .video {
                     ProgressView().tint(.white)
                 } else if entry.kind == .image, let url = entry.remoteURL {
@@ -1549,6 +1565,7 @@ private struct MediaPlayerView: View {
                 }
             }
             .ignoresSafeArea()
+            if controlsVisible {
             VStack {
                 HStack(spacing: 12) {
                     Button("关闭") { dismiss() }
@@ -1566,24 +1583,50 @@ private struct MediaPlayerView: View {
                     Button { onShareToMoments(); dismiss() } label: {
                         Image(systemName: "square.and.arrow.up")
                     }.accessibilityLabel("朋友圈")
+                    if !model.mediaStore.queueItems.isEmpty {
+                        Button {
+                            if let next = model.mediaStore.nextQueued(after: entry) { onQueueAdvance(next) }
+                        } label: { Image(systemName: "forward.end.fill") }
+                        .accessibilityLabel("播放队列下一条")
+                    }
                 }
                 .padding(12)
                 .foregroundStyle(.white)
                 .background(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom))
                 Spacer()
             }
+            }
         }
+        .contentShape(Rectangle())
+        .onTapGesture { withAnimation(.easeInOut(duration: 0.18)) { controlsVisible.toggle() } }
         .preferredColorScheme(.dark)
         .task(id: entry.id) {
             if entry.kind == .video, let url = entry.remoteURL {
                 player = AVPlayer(url: url)
+                let resume = model.mediaStore.resumePosition(for: entry)
+                if resume > 0 { player?.seek(to: CMTime(seconds: resume, preferredTimescale: 600)) }
                 player?.play()
+            } else {
+                model.mediaStore.markOpened(entry)
             }
+        }
+        .task(id: "controls-\(entry.id)") {
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            if !Task.isCancelled { withAnimation(.easeOut(duration: 0.2)) { controlsVisible = false } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { note in
+            guard let item = note.object as? AVPlayerItem, item === player?.currentItem else { return }
+            model.mediaStore.recordPlayback(entry, position: max(0, item.duration.seconds), duration: item.duration.seconds)
+            if let next = model.mediaStore.nextQueued(after: entry) { onQueueAdvance(next) }
         }
         .onAppear {
             MoonlightOrientationDelegate.playerAllowsLandscape = !model.portraitPlaybackOnly
         }
         .onDisappear {
+            if let player {
+                let duration = player.currentItem?.duration.seconds ?? 0
+                model.mediaStore.recordPlayback(entry, position: player.currentTime().seconds, duration: duration)
+            }
             player?.pause(); player = nil
             MoonlightOrientationDelegate.playerAllowsLandscape = false
         }
@@ -2344,6 +2387,7 @@ private struct LibraryView: View {
     @State private var showingRenameFolder = false
     @State private var showingDeleteFolder = false
     @State private var reelsFolder: LibraryFolder?
+    @State private var reelsQueue = false
 
     private var selectedFolder: LibraryFolder? {
         model.mediaStore.folders.first { $0.id == selectedFolderID }
@@ -2356,6 +2400,8 @@ private struct LibraryView: View {
         switch filter {
         case "收藏": return model.mediaStore.items.filter(\.isFavorite)
         case "下载": return model.mediaStore.items.filter { $0.source == "download" }
+        case "继续观看": return model.mediaStore.continueWatching
+        case "未观看": return model.mediaStore.unwatchedItems
         default: return model.mediaStore.items
         }
     }
@@ -2395,6 +2441,9 @@ private struct LibraryView: View {
             .fullScreenCover(item: $reelsFolder) { folder in
                 ReelsView(source: .folder(folder.id)).environmentObject(model)
             }
+            .fullScreenCover(isPresented: $reelsQueue) {
+                ReelsView(source: .queue).environmentObject(model)
+            }
             .task(id: model.command?.id) {
                 switch initialAction ?? model.command?.action {
                 case .selectAll: selectionMode = true; selectedIDs = Set(visibleItems.map(\.id))
@@ -2424,6 +2473,16 @@ private struct LibraryView: View {
                 Spacer()
                 Text("库").font(.title2.bold())
                 Spacer()
+                Menu {
+                    Button("将当前列表加入队列") { model.mediaStore.enqueue(visibleItems) }
+                    Button("替换播放队列") { model.mediaStore.enqueue(visibleItems, replacing: true) }
+                    if !model.mediaStore.queueItems.isEmpty {
+                        Button("播放队列") { reelsQueue = true }
+                        Button("清空播放队列", role: .destructive) { model.mediaStore.clearQueue() }
+                    }
+                } label: {
+                    Image(systemName: "text.badge.play").font(.subheadline.weight(.semibold))
+                }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
                 PhotosPicker(selection: $selection, matching: .any(of: [.images, .videos])) {
                     Label("导入", systemImage: "plus").font(.subheadline.weight(.semibold))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
@@ -2444,9 +2503,17 @@ private struct LibraryView: View {
                     } label: { Image(systemName: "ellipsis.circle") }
                 }.font(.subheadline.weight(.medium)).buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
             } else {
-                Picker("分类", selection: $filter) {
-                    ForEach(["全部", "收藏", "下载"], id: \.self) { Text($0).tag($0) }
-                }.pickerStyle(.segmented)
+                Menu {
+                    ForEach(["全部", "继续观看", "未观看", "收藏", "下载"], id: \.self) { choice in
+                        Button(choice) { filter = choice }
+                    }
+                } label: {
+                    Label(filter, systemImage: "line.3.horizontal.decrease.circle")
+                        .font(.subheadline.weight(.medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }.buttonStyle(.plain)
             }
             if selectionMode {
                 VStack(spacing: 10) {
@@ -2504,6 +2571,15 @@ private struct LibraryView: View {
                             } else { onPlay(entry) }
                         }
                         .transition(.opacity)
+                        .overlay(alignment: .topLeading) {
+                            if let progress = model.mediaStore.progress(for: entry), progress.position > 0, !progress.isFinished {
+                                Text("继续 \(timeLabel(progress.position))")
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 7).padding(.vertical, 4)
+                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .padding(7)
+                            }
+                        }
                     }
                 }
             }
@@ -2512,6 +2588,11 @@ private struct LibraryView: View {
         .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 24)
         .padding(.bottom, 72)
         .animation(.easeOut(duration: 0.22), value: visibleItems.map(\.id))
+    }
+
+    private func timeLabel(_ seconds: Double) -> String {
+        let rounded = max(0, Int(seconds.rounded()))
+        return String(format: "%d:%02d", rounded / 60, rounded % 60)
     }
 
     private var folderSection: some View {
