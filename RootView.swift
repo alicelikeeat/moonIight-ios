@@ -167,6 +167,7 @@ struct RootView: View {
                     await model.mediaStore.searchDiscover(discoveryQuery)
                 } else { await model.refresh(tab) }
             }
+            .clipShape(ScrollTopSafeAreaClip(inset: geometry.safeAreaInsets.top))
         }
     }
 
@@ -198,7 +199,7 @@ struct RootView: View {
                             Image(systemName: tab.symbol).font(.system(size: 16, weight: .semibold))
                             Text(tab.title).font(.system(size: 9, weight: .medium))
                         }
-                        .foregroundStyle(model.selectedTab == tab ? MoonStyle.accent : .secondary)
+                        .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? MoonStyle.accent : .secondary))
                         .frame(width: diameter, height: diameter)
                         .moonGlassCircle(.button(for: tab))
                         .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.7) : .clear, lineWidth: 1.5).allowsHitTesting(false))
@@ -210,6 +211,13 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
+    }
+}
+
+private struct ScrollTopSafeAreaClip: Shape {
+    var inset: CGFloat
+    func path(in rect: CGRect) -> Path {
+        Path(CGRect(x: rect.minX, y: rect.minY + inset, width: rect.width, height: max(0, rect.height - inset)))
     }
 }
 
@@ -930,6 +938,8 @@ private struct MomentsView: View {
     @AppStorage("moonlight.profile.coverPath") private var coverPath = ""
     @State private var avatarSelection: PhotosPickerItem?
     @State private var coverSelection: PhotosPickerItem?
+    @State private var avatarPickerPresented = false
+    @State private var coverPickerPresented = false
     @State private var commentTargetID: String?
     @State private var commentDraft = ""
     @State private var showingCommentPrompt = false
@@ -938,7 +948,7 @@ private struct MomentsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 ZStack(alignment: .bottomLeading) {
-                    PhotosPicker(selection: $coverSelection, matching: .any(of: [.images, .videos])) {
+                    Button { coverPickerPresented = true } label: {
                         ProfileBackgroundMedia(target: .cover)
                         .frame(height: 190).frame(maxWidth: .infinity).clipped()
                         .overlay(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom))
@@ -949,14 +959,18 @@ private struct MomentsView: View {
                                 Image(systemName: "photo").font(.headline).padding(10).background(.ultraThinMaterial, in: Circle())
                             }.foregroundStyle(.white).padding(14)
                         }
+                        .overlay(Color.clear.contentShape(Rectangle()))
                     }
                     .contentShape(Rectangle()).buttonStyle(.plain).accessibilityLabel("更换朋友圈横幅")
+                    .photosPicker(isPresented: $coverPickerPresented, selection: $coverSelection, matching: .any(of: [.images, .videos]))
                     HStack(spacing: 12) {
-                        PhotosPicker(selection: $avatarSelection, matching: .any(of: [.images, .videos])) {
+                        Button { avatarPickerPresented = true } label: {
                             ProfileBackgroundMedia(target: .avatar)
                             .frame(width: 60, height: 60).clipShape(Circle())
                             .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                            .overlay(Color.clear.contentShape(Circle()))
                         }.contentShape(Circle()).buttonStyle(.plain).accessibilityLabel("更换朋友圈头像")
+                        .photosPicker(isPresented: $avatarPickerPresented, selection: $avatarSelection, matching: .any(of: [.images, .videos]))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(displayName).font(.headline).foregroundStyle(.white)
                             Text("点击头像或横幅更换媒体").font(.caption).foregroundStyle(.white.opacity(0.82))

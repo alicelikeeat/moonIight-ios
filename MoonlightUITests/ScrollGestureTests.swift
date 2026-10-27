@@ -7,6 +7,16 @@ final class ScrollGestureTests: XCTestCase {
         attachment.name = name; attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    @MainActor
+    private func closeMediaPicker(_ app: XCUIApplication) {
+        let labels = ["Cancel", "取消", "Close", "关闭", "Dismiss"]
+        let dismiss = app.buttons.matching(NSPredicate(format: "label IN %@ OR identifier IN %@", labels, labels)).firstMatch
+        let shown = dismiss.waitForExistence(timeout: 8)
+        if !shown { print(app.debugDescription); attach(app, name: "review-picker-failure") }
+        XCTAssertTrue(shown, "The native media picker did not expose a dismiss control")
+        if shown { dismiss.tap() }
+    }
     @MainActor
     private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
@@ -140,14 +150,10 @@ final class ScrollGestureTests: XCTestCase {
         let avatar = app.buttons["更换朋友圈头像"]
         XCTAssertTrue(avatar.waitForExistence(timeout: 5))
         avatar.tap()
-        var cancel = app.buttons["Cancel"].firstMatch
-        if !cancel.waitForExistence(timeout: 3) { cancel = app.buttons["取消"].firstMatch }
-        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
-        cancel.tap()
+        attach(app, name: "review-profile-avatar-picker")
+        closeMediaPicker(app)
         app.buttons["更换朋友圈横幅"].tap()
-        cancel = app.buttons["Cancel"].firstMatch
-        if !cancel.waitForExistence(timeout: 3) { cancel = app.buttons["取消"].firstMatch }
-        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
-        cancel.tap()
+        attach(app, name: "review-profile-cover-picker")
+        closeMediaPicker(app)
     }
 }
