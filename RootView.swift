@@ -774,6 +774,8 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
             if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider || view is UISwitch { return false }
             if let slider = view as? SlidingTabControl { heldTarget = .button(for: slider.tab(at: touch.location(in: slider))) }
             if let identifier = view.accessibilityIdentifier,
+               identifier.hasPrefix("moment-post-card-") { return false }
+            if let identifier = view.accessibilityIdentifier,
                identifier.hasPrefix("navigation-"),
                let tab = AppTab(rawValue: String(identifier.dropFirst("navigation-".count))) {
                 heldTarget = .button(for: tab)
@@ -1767,9 +1769,6 @@ private struct MomentsView: View {
                                     }.font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 4)
-                                Button { deletingMoment = moment.id } label: {
-                                    Image(systemName: "trash").frame(width: 36, height: 36).moonGlassCircle()
-                                }.buttonStyle(.plain).accessibilityLabel("删除动态")
                             }
                             if !moment.text.isEmpty {
                                 Text(moment.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
@@ -1823,6 +1822,13 @@ private struct MomentsView: View {
                         }
                         .padding(16)
                         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
+                        .contentShape(RoundedRectangle(cornerRadius: 22))
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                deletingMoment = moment.id
+                            } label: { Label("删除动态", systemImage: "trash") }
+                        }
+                        .accessibilityIdentifier("moment-post-card-\(moment.id)")
                         .transition(.opacity)
                     }
                 }

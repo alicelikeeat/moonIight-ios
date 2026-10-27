@@ -232,7 +232,10 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(text.frame.minX, viewport.minX)
         XCTAssertLessThanOrEqual(text.frame.maxX, viewport.maxX)
         attach(app, name: "review-wide-moment-fixed")
-        app.buttons["删除动态"].firstMatch.tap()
+        text.press(forDuration: 0.7)
+        let delete = app.buttons["删除动态"].firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
         attach(app, name: "review-moment-delete-confirmation")
         let confirmation = app.buttons["confirm-delete-moment"].firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
