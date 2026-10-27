@@ -150,13 +150,12 @@ struct RootView: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
             if ProcessInfo.processInfo.arguments.contains("--moments-width-ui-tests") {
-                model.moments = []
                 let image = UIGraphicsImageRenderer(size: CGSize(width: 3000, height: 220)).image { context in
                     UIColor.systemIndigo.setFill(); context.fill(CGRect(x: 0, y: 0, width: 3000, height: 220))
                 }
                 if let data = image.jpegData(compressionQuality: 0.85) {
                     model.mediaStore.importImage(data, title: "宽幅图片回归测试")
-                    if let entry = model.mediaStore.items.first { model.publishMoment(text: "宽幅图片布局测试", attachment: entry) }
+                    if let entry = model.mediaStore.items.first { model.prepareWideMomentUITest(entry) }
                 }
                 model.selectedTab = .moments
             }

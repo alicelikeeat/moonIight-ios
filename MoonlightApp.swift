@@ -195,6 +195,12 @@ final class AppModel: ObservableObject {
     func deleteMoment(_ id: String) {
         withAnimation(.easeOut(duration: 0.22)) { moments.removeAll { $0.id == id } }
     }
+    #if DEBUG
+    func prepareWideMomentUITest(_ entry: MediaEntry) {
+        moments = []
+        publishMoment(text: "宽幅图片布局测试", attachment: entry)
+    }
+    #endif
 
     func addMomentComment(_ id: String, text: String) {
         let comment = text.trimmingCharacters(in: .whitespacesAndNewlines)
