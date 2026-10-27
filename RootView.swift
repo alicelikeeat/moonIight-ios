@@ -261,7 +261,7 @@ struct RootView: View {
         Group {
         if interactions.navigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
-                .frame(height: 66).padding(.horizontal, 18).padding(.bottom, 8)
+                .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
         } else {
         GeometryReader { geometry in
             let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
@@ -389,39 +389,13 @@ private struct PriorityTabSurface: UIViewRepresentable {
     func updateUIView(_ view: PriorityTabView, context: Context) { view.onSelect = onSelect }
 }
 
-// Slider mode keeps its native pan recognizer, but the visuals use five
-// separate glass pieces. The gaps make the bar lighter and prevent one large
-// translucent slab from covering the content underneath.
+// Slider mode shows the actual UIKit segmented control. The recognizer below
+// adds cross-segment dragging while UIKit keeps its native tint and layout.
 private struct SlidingTabSurface: View {
     let selected: AppTab
     var onSelect: (AppTab) -> Void
     var body: some View {
-        ZStack {
-            HStack(spacing: 11) {
-                ForEach(AppTab.allCases) { tab in
-                    let isSelected = tab == selected
-                    VStack(spacing: 3) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: isSelected ? 48 : 42, height: isSelected ? 48 : 42)
-                            .background {
-                                Circle().fill(isSelected ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial))
-                                    .overlay(Circle().strokeBorder(isSelected ? MoonStyle.accent.opacity(0.76) : .white.opacity(0.38), lineWidth: isSelected ? 1.5 : 0.7))
-                                    .shadow(color: .black.opacity(isSelected ? 0.17 : 0.08), radius: isSelected ? 8 : 4, y: 3)
-                            }
-                            .scaleEffect(isSelected ? 1 : 0.94)
-                        Text(tab.title).font(.system(size: 9, weight: isSelected ? .semibold : .medium))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .foregroundStyle(isSelected ? MoonStyle.accent : .secondary)
-                    .animation(.spring(response: 0.28, dampingFraction: 0.76), value: selected)
-                }
-            }
-            .allowsHitTesting(false).accessibilityHidden(true)
-            SlidingTabNativeSurface(selected: selected, onSelect: onSelect)
-        }
-        .frame(height: 62)
-        .padding(.horizontal, 15)
+        SlidingTabNativeSurface(selected: selected, onSelect: onSelect)
     }
 }
 
@@ -445,10 +419,7 @@ private final class SlidingTabControl: UISegmentedControl, UIGestureRecognizerDe
         selectedSegmentIndex = 0
         addTarget(self, action: #selector(chosen), for: .valueChanged)
         pan.addTarget(self, action: #selector(slid(_:))); pan.delegate = self; addGestureRecognizer(pan)
-        selectedSegmentTintColor = .clear
-        backgroundColor = .clear
-        setTitleTextAttributes([.foregroundColor: UIColor.clear], for: .normal)
-        setTitleTextAttributes([.foregroundColor: UIColor.clear], for: .selected)
+        apportionsSegmentWidthsByContent = false
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func tab(at point: CGPoint) -> AppTab {

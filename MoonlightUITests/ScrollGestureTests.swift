@@ -308,7 +308,11 @@ final class ScrollGestureTests: XCTestCase {
         let app = launch(discover: false, flags: ["--keep-menu-settings"])
         func openEditor() {
             app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
-            app.buttons["context-menu-settings-entry"].tap(); app.buttons["媒体卡片"].tap()
+            app.buttons["context-menu-settings-entry"].tap()
+            XCTAssertTrue(app.buttons["页面长按菜单"].exists)
+            XCTAssertTrue(app.buttons["按键长按菜单"].exists)
+            XCTAssertFalse(app.buttons["页面背景 · 首页"].exists)
+            app.buttons["媒体卡片"].tap()
         }
         openEditor()
         let photo = app.buttons["menu-action-photo"]

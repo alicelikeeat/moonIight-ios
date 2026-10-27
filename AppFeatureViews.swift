@@ -41,18 +41,45 @@ struct ContextMenuSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("长按菜单") {
-                Text("每个位置单独设置并保存顺序。前 4 项显示在圆环，其余放进中心 … 的面板。媒体操作需要具体媒体，系统相机和照片选择器保留系统操作。")
+                Text("可先设置页面或按键的通用菜单，再按需覆盖具体位置。前 4 项显示在圆环，其余放进中心 … 的面板。")
                     .font(.caption).foregroundStyle(.secondary)
                 NavigationLink("媒体卡片") { ContextActionEditor(context: "media", title: "媒体卡片") }
-                ForEach(BackgroundTarget.allCases.filter { $0.rawValue.hasPrefix("page.") || $0.rawValue.hasPrefix("button.") }) { target in
-                    NavigationLink(target.section + " · " + target.title) { ContextActionEditor(context: target.rawValue, title: target.title) }
-                }
+                NavigationLink("页面长按菜单") { ContextTargetListView(section: "page.", common: .allPages) }
+                NavigationLink("按键长按菜单") { ContextTargetListView(section: "button.", common: .allButtons) }
             }
             Section("玻璃样式说明") {
                 Text("应用自有操作按键使用 Liquid Glass（iOS 26）或系统毛玻璃（较早系统）。媒体图片和视频本身保留清晰预览；相机、键盘、系统照片选择器、分享面板、第三方网页播放器的内部控件由系统或平台管理，应用无法统一替换。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }.navigationTitle("长按与底栏").pageBackground(.settings)
+    }
+}
+
+private struct ContextTargetListView: View {
+    let section: String
+    let common: BackgroundTarget
+    private var targets: [BackgroundTarget] {
+        BackgroundTarget.allCases.filter { $0.rawValue.hasPrefix(section) && $0 != common }
+    }
+    var body: some View {
+        List {
+            Section {
+                NavigationLink("通用菜单") {
+                    ContextActionEditor(context: common.rawValue, title: "通用菜单")
+                }
+            } footer: {
+                Text("具体位置未单独设置时，使用通用菜单。")
+            }
+            Section("单独设置") {
+                ForEach(targets) { target in
+                    NavigationLink(target.title) {
+                        ContextActionEditor(context: target.rawValue, title: target.title)
+                    }
+                }
+            }
+        }
+        .navigationTitle(section == "page." ? "页面长按菜单" : "按键长按菜单")
+        .pageBackground(.settings)
     }
 }
 
@@ -91,7 +118,9 @@ private struct ContextActionEditor: View {
                     .accessibilityValue(enabled ? "1" : "0")
                 }
             }
-            Button("恢复当前页面默认菜单") { preferences.reset(context) }
+            Button(context.hasSuffix(".all") ? "恢复默认通用菜单" : "清除单独设置并使用通用菜单") {
+                preferences.reset(context)
+            }
         }.navigationTitle(title).toolbar { EditButton() }.pageBackground(.settings)
     }
 }

@@ -346,7 +346,12 @@ enum BottomNavigationMode: String, CaseIterable, Identifiable {
         navigationMode = BottomNavigationMode(rawValue: UserDefaults.standard.string(forKey: "moonlight.navigationMode") ?? "circles") ?? .circles
         menus = UserDefaults.standard.data(forKey: "moonlight.contextMenus").flatMap { try? JSONDecoder().decode([String: [AppCommand]].self, from: $0) } ?? [:]
     }
-    func actions(_ context: String) -> [AppCommand] { menus[context] ?? defaults(context) }
+    func actions(_ context: String) -> [AppCommand] {
+        if let saved = menus[context] { return saved }
+        if context != "page.all", context.hasPrefix("page."), let common = menus["page.all"] { return common }
+        if context != "button.all", context.hasPrefix("button."), let common = menus["button.all"] { return common }
+        return defaults(context)
+    }
     func set(_ actions: [AppCommand], for context: String) { menus[context] = Array(NSOrderedSet(array: actions.map(\.rawValue)).array.compactMap { ($0 as? String).flatMap(AppCommand.init(rawValue:)) }) }
     func reset(_ context: String) { menus.removeValue(forKey: context) }
     #if DEBUG
