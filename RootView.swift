@@ -109,7 +109,7 @@ struct RootView: View {
         }
     }
 
-    private func refreshable<Content: View>(_ tab: AppTab, @ViewBuilder content: () -> Content) -> some View {
+    private func refreshable<Content: View>(_ tab: AppTab, @ViewBuilder content: @escaping () -> Content) -> some View {
         GeometryReader { geometry in
             ScrollView(.vertical) {
                 content()
