@@ -203,6 +203,10 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
         let controller = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .vertical)
         controller.dataSource = context.coordinator; controller.delegate = context.coordinator
         controller.view.backgroundColor = .black
+        controller.view.subviews.compactMap { $0 as? UIScrollView }.forEach {
+            $0.backgroundColor = .black
+            $0.isOpaque = true
+        }
         context.coordinator.pager = controller
         if !entries.isEmpty { controller.setViewControllers([context.coordinator.page(index)], direction: .forward, animated: false) }
         return controller
@@ -215,8 +219,14 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
             controller.setViewControllers([coordinator.page(index)], direction: index > visible ? .forward : .reverse, animated: false)
         }
         for (key, host) in coordinator.hosts { host.rootView = coordinator.content(key) }
-        // Only keep the current page and its neighbors, releasing old players.
-        coordinator.hosts = coordinator.hosts.filter { abs($0.key - index) <= 1 }
+        // UIPageViewController still owns the outgoing and pending pages while
+        // its scroll animation runs. Dropping either host here can expose its
+        // empty internal scroll view during a quick reverse swipe.
+        if !coordinator.turning {
+            coordinator.hosts = coordinator.hosts.filter {
+                abs($0.key - index) <= 2 || $0.key == visible
+            }
+        }
     }
     final class ReelHost: UIHostingController<ReelPage> { var pageIndex = 0 }
     @MainActor final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
@@ -234,7 +244,12 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
         }
         func page(_ value: Int) -> ReelHost {
             if let host = hosts[value] { host.rootView = content(value); return host }
-            let host = ReelHost(rootView: content(value)); host.pageIndex = value; host.view.backgroundColor = .black; hosts[value] = host; return host
+            let host = ReelHost(rootView: content(value))
+            host.pageIndex = value
+            host.view.backgroundColor = .black
+            host.view.isOpaque = true
+            hosts[value] = host
+            return host
         }
         func pageViewController(_ controller: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
             guard let host = viewController as? ReelHost, host.pageIndex > 0 else { return nil }; return page(host.pageIndex - 1)

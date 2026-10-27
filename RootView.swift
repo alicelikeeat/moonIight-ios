@@ -1234,11 +1234,6 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        enclosingScrollViews.contains { otherGestureRecognizer === $0.panGestureRecognizer }
-    }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         otherGestureRecognizer is UIPanGestureRecognizer
     }
@@ -1509,6 +1504,10 @@ struct WebEmbedView: UIViewRepresentable {
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: configuration)
+        view.isOpaque = false
+        view.backgroundColor = .black
+        view.underPageBackgroundColor = .black
+        view.scrollView.backgroundColor = .black
         view.scrollView.isScrollEnabled = scrolling
         context.coordinator.requestedURL = url
         view.load(URLRequest(url: url))

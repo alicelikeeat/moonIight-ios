@@ -225,6 +225,15 @@ final class ScrollGestureTests: XCTestCase {
             .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)), withVelocity: .fast, thenHoldForDuration: 0)
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "2 / 24"), object: position)], timeout: 5), .completed)
         XCTAssertEqual(position.label, "2 / 24")
+        // Keep swiping while the pager is settling, including a reversal.
+        // This catches a blank internal page caused by releasing a pending host.
+        let lower = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.78))
+        let upper = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20))
+        lower.press(forDuration: 0.01, thenDragTo: upper, withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "3 / 24"), object: position)], timeout: 5), .completed)
+        upper.press(forDuration: 0.01, thenDragTo: lower, withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "2 / 24"), object: position)], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["播放或暂停"].isHittable)
         attach(app, name: "review-vertical-reels")
         app.buttons["关闭抖音模式"].tap()
         XCTAssertTrue(app.buttons["navigation-home"].waitForExistence(timeout: 5))
