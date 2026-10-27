@@ -26,7 +26,7 @@ struct RootView: View {
         ZStack {
             LinearGradient(colors: [Color(uiColor: .systemBackground), MoonStyle.background], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
-            VStack(spacing: 0) {
+            ZStack(alignment: .bottom) {
                 Group {
                     switch model.selectedTab {
                     case .home: refreshable(.home) { HomeView(onSelect: { activePlayer = $0 }) }
@@ -144,6 +144,7 @@ struct RootView: View {
                 content()
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: geometry.size.height, alignment: .topLeading)
+                    .padding(.bottom, 76)
             }
             .scrollIndicators(.hidden)
             .accessibilityIdentifier("feed-scroll-\(tab.rawValue)")
@@ -172,15 +173,16 @@ struct RootView: View {
 
     private var tabBar: some View {
         GeometryReader { geometry in
-            let diameter = min(62, max(48, (geometry.size.width - 24) / 5))
-            HStack(spacing: 6) {
-                ForEach(AppTab.allCases) { tab in
+            let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
+            HStack(spacing: 0) {
+                ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
+                    if index > 0 { Spacer(minLength: 12) }
                     Button {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { model.selectedTab = tab }
                     } label: {
                         VStack(spacing: 4) {
-                            Image(systemName: tab.symbol).font(.system(size: 18, weight: .semibold))
-                            Text(tab.title).font(.system(size: 10, weight: .medium))
+                            Image(systemName: tab.symbol).font(.system(size: 16, weight: .semibold))
+                            Text(tab.title).font(.system(size: 9, weight: .medium))
                         }
                         .foregroundStyle(model.selectedTab == tab ? MoonStyle.accent : .secondary)
                         .frame(width: diameter, height: diameter)
@@ -189,9 +191,10 @@ struct RootView: View {
                     .buttonStyle(.plain).accessibilityLabel(tab.title)
                 }
             }
+            .frame(maxWidth: 540)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(height: 66).padding(.horizontal, 14).padding(.bottom, 6)
+        .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
     }
 }
 

@@ -44,7 +44,13 @@ struct DiscoverySourcePanel: View {
                         panelAction("订阅 / 添加内容源", symbol: "dot.radiowaves.left.and.right", color: .purple) { addingSource = true }
                         Divider().padding(.leading, 54)
                         PhotosPicker(selection: $importedMedia, maxSelectionCount: 20, matching: .any(of: [.images, .videos])) {
-                            actionLabel("从相册导入", symbol: "square.and.arrow.down", color: .orange)
+                            HStack(spacing: 12) {
+                                Image(systemName: "square.and.arrow.down").font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                                    .frame(width: 32, height: 32).background(Color.orange.gradient, in: Circle())
+                                Text("从相册导入").font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
+                            }.padding(.vertical, 12)
                         }.buttonStyle(.plain)
                         Divider().padding(.leading, 54)
                         panelAction("刷新", symbol: "arrow.clockwise", color: .gray) {
