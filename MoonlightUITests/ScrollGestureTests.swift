@@ -269,18 +269,21 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["背景测试就绪"].waitForExistence(timeout: 20))
         func openBackgroundSettings() {
             app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
-            XCTAssertTrue(app.otherElements["background-settings"].waitForExistence(timeout: 5))
+            let entry = app.buttons["backgrounds-entry"]
+            XCTAssertTrue(entry.waitForExistence(timeout: 5))
+            entry.tap()
+            XCTAssertTrue(app.navigationBars["背景与按键"].waitForExistence(timeout: 5))
         }
         openBackgroundSettings()
         for id in ["ui-test-background-image", "ui-test-background-video"] {
             let asset = app.buttons["playlist-asset-\(id)"]
-            for _ in 0..<6 { if asset.isHittable { break }; app.swipeUp() }
+            for _ in 0..<16 { if asset.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(asset.isHittable)
             if asset.value as? String != "已选择" { asset.tap() }
             XCTAssertEqual(asset.value as? String, "已选择", "The background row did not accept selection")
         }
         let picker = app.descendants(matching: .any).matching(identifier: "background-playback-mode").firstMatch
-        for _ in 0..<6 { if picker.isHittable { break }; app.swipeDown() }
+        for _ in 0..<16 { if picker.isHittable { break }; app.swipeDown() }
         picker.tap(); app.buttons["顺序循环"].tap()
         XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
         attach(app, name: "review-button-background-playlist")
