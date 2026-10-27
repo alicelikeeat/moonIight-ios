@@ -119,6 +119,23 @@ struct RootView: View {
             }
             .scrollIndicators(.hidden)
             .refreshable { await model.refresh(tab) }
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .local)
+                    .onChanged { value in
+                        let vertical = abs(value.translation.height)
+                        let horizontal = abs(value.translation.width)
+                        guard vertical >= 6, vertical > horizontal * 1.12 else { return }
+                        model.noteVerticalScrollGesture()
+                    }
+                    .onEnded { value in
+                        let vertical = abs(value.translation.height)
+                        let horizontal = abs(value.translation.width)
+                        if vertical >= 6, vertical > horizontal * 1.12 {
+                            model.noteVerticalScrollGesture()
+                        }
+                    },
+                including: .all
+            )
         }
     }
 
@@ -505,17 +522,7 @@ private struct MediaEntryCard: View {
     @State private var lastFingerTime: TimeInterval?
 
     var body: some View {
-        Button {
-            if suppressNextTap {
-                suppressNextTap = false
-            } else if let recentVerticalSwipeAt,
-                      Date.timeIntervalSinceReferenceDate - recentVerticalSwipeAt < 0.7 {
-                self.recentVerticalSwipeAt = nil
-            } else {
-                onSelect()
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
                     GeometryReader { proxy in
                         thumbnail
@@ -547,15 +554,24 @@ private struct MediaEntryCard: View {
                     Text(entry.author.isEmpty ? entry.platform : entry.author)
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }.padding(12)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
-            .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
+        .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            let now = Date.timeIntervalSinceReferenceDate
+            let parentSawVerticalSwipe = model.lastVerticalScrollGestureAt.map { now - $0 < 0.45 } ?? false
+            let cardSawVerticalSwipe = recentVerticalSwipeAt.map { now - $0 < 0.45 } ?? false
+            guard !suppressNextTap, !parentSawVerticalSwipe, !cardSawVerticalSwipe else {
+                recentVerticalSwipeAt = nil
+                return
+            }
+            onSelect()
+        }
+        .accessibilityAddTraits(.isButton)
         .simultaneousGesture(
             DragGesture(minimumDistance: 6, coordinateSpace: .local)
                 .onChanged { value in
@@ -564,6 +580,7 @@ private struct MediaEntryCard: View {
                     let horizontal = abs(value.translation.width)
                     if vertical >= 6 && vertical > horizontal * 1.12 {
                         recentVerticalSwipeAt = Date.timeIntervalSinceReferenceDate
+                        model.noteVerticalScrollGesture()
                     }
                 }
         )

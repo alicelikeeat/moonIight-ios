@@ -81,6 +81,7 @@ final class AppModel: ObservableObject {
         didSet { UserDefaults.standard.set(longPressQuickActions.map(\.rawValue), forKey: "moonlight.longPressQuickActions") }
     }
     @Published var activeLongPressMenu: ActiveLongPressMenu?
+    var lastVerticalScrollGestureAt: TimeInterval?
     @Published var portraitPlaybackOnly = true {
         didSet { UserDefaults.standard.set(portraitPlaybackOnly, forKey: "moonlight.portraitPlaybackOnly") }
     }
@@ -130,6 +131,10 @@ final class AppModel: ObservableObject {
         if UserDefaults.standard.object(forKey: "moonlight.portraitPlaybackOnly") != nil {
             portraitPlaybackOnly = UserDefaults.standard.bool(forKey: "moonlight.portraitPlaybackOnly")
         }
+    }
+
+    func noteVerticalScrollGesture() {
+        lastVerticalScrollGestureAt = Date.timeIntervalSinceReferenceDate
     }
 
     func setQuickAction(_ action: QuickActionID, enabled: Bool) {
