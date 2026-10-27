@@ -1724,7 +1724,7 @@ private struct MeView: View {
     let selectedImage: Image?
     @Binding var selection: PhotosPickerItem?
     let onSelect: (MediaEntry) -> Void
-    @State private var commandPath: [AppCommand] = []
+    @State private var commandPath = NavigationPath()
     var body: some View {
         NavigationStack(path: $commandPath) {
             ScrollView {
@@ -1783,7 +1783,7 @@ private struct MeView: View {
         .task(id: model.command?.id) {
             guard let action = model.command?.action,
                   [.library, .selectAll, .favorites, .downloads, .settings, .friends, .messages, .profile].contains(action) else { return }
-            commandPath = [action]
+            commandPath = NavigationPath([action])
             model.command = nil
         }
     }
@@ -2111,7 +2111,6 @@ private struct LibraryView: View {
 private struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     var body: some View {
-        NavigationStack {
             Form {
                 Section("外观与媒体") {
                     NavigationLink { ContextMenuSettingsView() } label: { Label("长按菜单与底栏", systemImage: "hand.point.up.left") }
@@ -2192,7 +2191,7 @@ private struct SettingsView: View {
             .pageBackground(.settings)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
-        }
+            .toolbar(.visible, for: .navigationBar)
     }
 }
 
