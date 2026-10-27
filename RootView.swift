@@ -1068,6 +1068,11 @@ struct QuickActionsPanel: View {
                     } label: {
                         Label("加入库", systemImage: "plus.rectangle.on.folder")
                     }
+                    Button {
+                        model.mediaStore.enqueue([entry])
+                    } label: {
+                        Label("加入播放队列", systemImage: "text.badge.play")
+                    }
                 }
                 Section("危险操作") {
                     Button(role: .destructive) { confirmDelete = true } label: {
@@ -1744,6 +1749,7 @@ private struct MomentsView: View {
     @State private var showingCommentPrompt = false
     @State private var deletingMoment: String?
     @State private var activeVideoID: String?
+    @State private var timelineFilter = "全部"
     @AppStorage("moonlight.glass.bannerSize") private var bannerSizeRaw = GlassSurfaceSize.balanced.rawValue
     private var bannerSize: GlassSurfaceSize { GlassSurfaceSize(rawValue: bannerSizeRaw) ?? .balanced }
 
@@ -1788,11 +1794,25 @@ private struct MomentsView: View {
                 HStack {
                     Text("最近动态").font(.title3.bold())
                     Spacer()
+                    Menu {
+                        ForEach(["全部", "我的动态", "虚拟好友", "含媒体"], id: \.self) { option in
+                            Button(option) { timelineFilter = option }
+                        }
+                    } label: { Label(timelineFilter, systemImage: "line.3.horizontal.decrease.circle") }
+                    .buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
                 }
-                if model.moments.isEmpty {
+                let filteredMoments = model.moments.filter { moment in
+                    switch timelineFilter {
+                    case "我的动态": return !moment.isVirtual
+                    case "虚拟好友": return moment.isVirtual
+                    case "含媒体": return moment.attachment != nil
+                    default: return true
+                    }
+                }
+                if filteredMoments.isEmpty {
                     EmptyPanel(title: "还没有动态", detail: "写下近况，发布后会保存在本机朋友圈。", symbol: "person.2")
                 } else {
-                    ForEach(model.moments) { moment in
+                    ForEach(filteredMoments) { moment in
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 10) {
                                 Group {
