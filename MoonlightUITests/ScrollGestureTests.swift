@@ -8,7 +8,10 @@ final class ScrollGestureTests: XCTestCase {
         if discover { app.launchArguments.append("--test-discover") }
         if singleColumn { app.launchArguments.append("--single-column") }
         app.launch()
-        XCTAssertTrue(app.buttons["media-card-scroll-fixture-0"].waitForExistence(timeout: 15))
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
+        let exists = card.waitForExistence(timeout: 15)
+        if !exists { print(app.debugDescription) }
+        XCTAssertTrue(exists)
         return app
     }
 
@@ -16,7 +19,7 @@ final class ScrollGestureTests: XCTestCase {
     private func assertCardScrolls(discover: Bool, singleColumn: Bool = false,
                                    velocity: XCUIGestureVelocity) {
         let app = launch(discover: discover, singleColumn: singleColumn)
-        let card = app.buttons["media-card-scroll-fixture-0"]
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         XCTAssertTrue(card.isHittable)
         let before = card.frame.minY
         // Both endpoints begin within the card's visible image area. This
@@ -51,13 +54,13 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testStationaryHoldOpensRingAndReleaseKeepsItOpen() {
         let app = launch(discover: true)
-        app.buttons["media-card-scroll-fixture-0"].press(forDuration: 0.7)
+        app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["打开全部操作"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["关闭"].exists, "Long press also triggered playback")
         // Dismiss outside the ring, then verify a later card scroll is usable.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.15)).tap()
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
-        let card = app.buttons["media-card-scroll-fixture-0"]
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         let before = card.frame.minY
         let start = card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
         start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -130)))
@@ -67,8 +70,24 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testShortTapStillOpensPlayer() {
         let app = launch(discover: true)
-        app.buttons["media-card-scroll-fixture-0"].tap()
+        app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.tap()
         XCTAssertTrue(app.buttons["关闭"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
+    }
+
+    @MainActor
+    func testSourceSwitchPersistsAndSidebarScrolls() {
+        let app = launch(discover: true)
+        app.buttons["discover-sources"].tap()
+        let scroll = app.scrollViews["source-sidebar-scroll"]
+        let toggle = app.switches["source-toggle-peertube"]
+        for _ in 0..<5 { if toggle.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(toggle.isHittable)
+        if toggle.value as? String != "1" { toggle.tap() }
+        app.terminate()
+        app.launch()
+        app.buttons["discover-sources"].tap()
+        for _ in 0..<5 { if toggle.isHittable { break }; scroll.swipeUp() }
+        XCTAssertEqual(toggle.value as? String, "1")
     }
 }

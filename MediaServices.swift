@@ -68,11 +68,39 @@ struct MediaSource: Codable, Identifiable, Hashable, Sendable {
     var name: String
     var kind: String
     var enabled: Bool
+    var url: String? = nil
 
     static let defaults = [
         MediaSource(id: "bili-popular", name: "哔哩哔哩", kind: "bili", enabled: true),
-        MediaSource(id: "youtube-rss", name: "YouTube", kind: "youtube", enabled: true)
+        MediaSource(id: "bili-ranking", name: "哔哩热榜", kind: "bili", enabled: false),
+        MediaSource(id: "youtube-rss", name: "YouTube", kind: "youtube", enabled: true),
+        MediaSource(id: "vimeo", name: "Vimeo", kind: "vimeo", enabled: false),
+        MediaSource(id: "dailymotion", name: "Dailymotion", kind: "dailymotion", enabled: false),
+        MediaSource(id: "archive", name: "Archive.org", kind: "archive", enabled: false),
+        MediaSource(id: "nasa", name: "NASA", kind: "nasa", enabled: false),
+        MediaSource(id: "peertube", name: "PeerTube", kind: "peertube", enabled: false),
+        MediaSource(id: "commons", name: "维基共享资源", kind: "commons", enabled: false),
+        MediaSource(id: "rss", name: "播客 / RSS", kind: "rss", enabled: false),
+        MediaSource(id: "web", name: "网页视频", kind: "web", enabled: false),
+        MediaSource(id: "pexels", name: "Pexels", kind: "pexels", enabled: false),
+        MediaSource(id: "pixabay", name: "Pixabay", kind: "pixabay", enabled: false),
+        MediaSource(id: "twitch", name: "Twitch", kind: "twitch", enabled: false)
     ]
+
+    var symbol: String {
+        switch kind {
+        case "bili": id == "bili-ranking" ? "flame.fill" : "play.rectangle.fill"
+        case "youtube", "dailymotion": "play.rectangle.fill"
+        case "vimeo": "play.circle.fill"
+        case "archive": "building.columns.fill"
+        case "nasa": "sparkles"
+        case "peertube": "person.3.fill"
+        case "commons", "pexels", "pixabay": "photo.on.rectangle.angled"
+        case "rss": "dot.radiowaves.left.and.right"
+        case "twitch": "tv.fill"
+        default: "globe"
+        }
+    }
 }
 
 enum PlatformResolver {
@@ -404,9 +432,19 @@ final class MediaStore: ObservableObject {
     @Published private(set) var hasMoreYouTubeResults = false
     @Published private(set) var enabledSources: [MediaSource] = MediaSource.defaults
     @Published var youtubeAPIKeyDraft = ""
+    @Published private(set) var sourceStatuses: [String: String] = [:]
+    @Published private(set) var failedSourceIDs = Set<String>()
 
     private var searchQuery = ""
     private var nextYouTubePageToken: String?
+    private var sourceRefreshTask: Task<Void, Never>?
+    private var discoverRequestID = UUID()
+    private var searchRequestID = UUID()
+    private var searchPool: [MediaEntry] = []
+    private var shownSearchIDs = Set<String>()
+    private var searchPage = 1
+    private var searchTokens: [String: String] = [:]
+    private var searchExhaustedIDs = Set<String>()
     private var youtubeAPIKey: String
     private let defaults = UserDefaults.standard
     private let itemURL: URL
@@ -427,7 +465,8 @@ final class MediaStore: ObservableObject {
         }
         if let data = defaults.data(forKey: "moonlight-enabled-sources"),
            let saved = try? JSONDecoder().decode([MediaSource].self, from: data) {
-            enabledSources = saved
+            enabledSources = MediaSource.defaults.map { fallback in saved.first(where: { $0.id == fallback.id }) ?? fallback }
+            enabledSources += saved.filter { savedSource in !MediaSource.defaults.contains(where: { $0.id == savedSource.id }) }
         }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") {
@@ -457,75 +496,190 @@ final class MediaStore: ObservableObject {
         if let data = try? JSONEncoder().encode(enabledSources) {
             defaults.set(data, forKey: "moonlight-enabled-sources")
         }
+        discoverItems = discoverItems.filter(isFromEnabledSource)
+        searchResults = searchResults.filter(isFromEnabledSource)
+        scheduleSourceReload()
+    }
+
+    func sourceKey(_ kind: String) -> String {
+        if kind == "youtube" { return youtubeAPIKey }
+        return SecureSettings.read("discovery-\(kind)-key") ?? ""
+    }
+
+    func configureSource(_ id: String, url: String, key: String, clientID: String = "") {
+        guard let index = enabledSources.firstIndex(where: { $0.id == id }) else { return }
+        let kind = enabledSources[index].kind
+        enabledSources[index].url = url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if kind == "youtube" { setYouTubeAPIKey(key) }
+        else if key.isEmpty { SecureSettings.delete("discovery-\(kind)-key") }
+        else { SecureSettings.write(key.trimmingCharacters(in: .whitespacesAndNewlines), account: "discovery-\(kind)-key") }
+        if kind == "twitch" { SecureSettings.write(clientID.trimmingCharacters(in: .whitespacesAndNewlines), account: "discovery-twitch-client-key") }
+        if let data = try? JSONEncoder().encode(enabledSources) { defaults.set(data, forKey: "moonlight-enabled-sources") }
+        scheduleSourceReload()
+    }
+
+    func addCustomSource(name: String, url: String, kind: String) {
+        let cleaned = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let address = URL(string: cleaned), ["https", "http"].contains(address.scheme?.lowercased() ?? "") else {
+            notice = "请输入完整的 HTTP / HTTPS 地址。"; return
+        }
+        if enabledSources.contains(where: { $0.url == cleaned }) { notice = "这个内容源已经存在。"; return }
+        enabledSources.append(MediaSource(id: "custom-\(UUID().uuidString)", name: name.isEmpty ? address.host ?? "自定义内容源" : name, kind: kind, enabled: true, url: cleaned))
+        if let data = try? JSONEncoder().encode(enabledSources) { defaults.set(data, forKey: "moonlight-enabled-sources") }
+        scheduleSourceReload()
+    }
+
+    func removeCustomSource(_ id: String) {
+        guard id.hasPrefix("custom-") else { return }
+        enabledSources.removeAll { $0.id == id }
+        discoverItems.removeAll { $0.source == id }
+        if let data = try? JSONEncoder().encode(enabledSources) { defaults.set(data, forKey: "moonlight-enabled-sources") }
+        scheduleSourceReload()
+    }
+
+    private func scheduleSourceReload() {
+        sourceRefreshTask?.cancel()
+        sourceRefreshTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            if searchQuery.isEmpty { await refreshDiscover() }
+            else { await searchDiscover(searchQuery) }
+        }
+    }
+
+    private func discoveryKeys() -> [String: String] {
+        Dictionary(uniqueKeysWithValues: ["youtube", "vimeo", "pexels", "pixabay", "twitch", "twitch-client"].map { ($0, sourceKey($0)) })
+    }
+
+    private func isFromEnabledSource(_ entry: MediaEntry) -> Bool {
+        if enabledSources.contains(where: { $0.id == entry.source }) {
+            return enabledSources.contains { $0.enabled && $0.id == entry.source }
+        }
+        return enabledSources.contains { $0.enabled && $0.kind == entry.platform }
     }
 
     func refreshHome() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        var incoming: [MediaEntry] = []
-        if enabledSources.first(where: { $0.id == "bili-popular" })?.enabled == true,
-           let bili = try? await MediaAPI.bilibiliPopular() {
-            incoming += bili
-        }
-        if enabledSources.first(where: { $0.id == "youtube-rss" })?.enabled == true {
-            for channel in MediaAPI.youtubeChannels {
-                if let videos = try? await MediaAPI.youtubeRSS(channelID: channel, limit: 8) {
-                    incoming += videos
-                }
-            }
-        }
-        merge(incoming)
-        notice = incoming.isEmpty ? "暂时没有取到新内容，请稍后重试。" : "已同步 \(incoming.count) 条来源内容。"
+        await refreshDiscover()
     }
 
     func refreshDiscover() async {
-        guard !isRefreshing else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") { return }
+        #endif
+        let requestID = UUID()
+        discoverRequestID = requestID
         isRefreshing = true
-        defer { isRefreshing = false }
-        var incoming: [MediaEntry] = []
-        if enabledSources.first(where: { $0.id == "bili-popular" })?.enabled == true,
-           let bili = try? await MediaAPI.bilibiliPopular() {
-            incoming += bili
-        }
-        if enabledSources.first(where: { $0.id == "youtube-rss" })?.enabled == true {
-            for channel in MediaAPI.youtubeChannels.prefix(3) {
-                if let videos = try? await MediaAPI.youtubeRSS(channelID: channel, limit: 8) {
-                    incoming += videos
-                }
-            }
-        }
-        if !incoming.isEmpty {
-            discoverItems = unique(incoming.shuffled())
-            if let data = try? JSONEncoder().encode(discoverItems) {
-                defaults.set(data, forKey: "moonlight-discover-cache")
-            }
-            notice = nil
-        } else {
-            notice = discoverItems.isEmpty ? "暂时没有取到发现内容。" : "网络暂时不可用，已保留上次加载的内容。"
-        }
+        defer { if discoverRequestID == requestID { isRefreshing = false } }
+        let sources = enabledSources.filter(\.enabled)
+        sources.forEach { sourceStatuses[$0.id] = "正在加载…" }
+        guard !sources.isEmpty else { discoverItems = []; notice = "在内容源中至少启用一个来源。"; return }
+        let results = await DiscoveryAPI.load(sources: sources, query: nil, page: 1, keys: discoveryKeys())
+        guard discoverRequestID == requestID, !Task.isCancelled else { return }
+        applySourceStatuses(results)
+        let failed = Set(results.filter { $0.error != nil }.map(\.sourceID))
+        let cached = discoverItems.filter { failed.contains($0.source) && isFromEnabledSource($0) }
+        let incoming = results.flatMap(\.entries).filter(isFromEnabledSource)
+        if !incoming.isEmpty || !cached.isEmpty {
+            discoverItems = spread(unique(incoming + cached).shuffled())
+        } else if failed.count == sources.count {
+            discoverItems = discoverItems.filter(isFromEnabledSource)
+        } else { discoverItems = [] }
+        if let data = try? JSONEncoder().encode(discoverItems) { defaults.set(data, forKey: "moonlight-discover-cache") }
+        notice = failed.isEmpty ? "已加载 \(discoverItems.count) 条内容。" : "\(sources.count - failed.count)/\(sources.count) 个来源已加载；详情见内容源。"
     }
 
     func searchYouTube(_ query: String, nextPage: Bool = false) async {
+        await searchDiscover(query, nextPage: nextPage)
+    }
+
+    func searchDiscover(_ query: String, nextPage: Bool = false) async {
         let cleaned = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { searchResults = []; notice = nil; return }
-        if !nextPage { searchQuery = cleaned; nextYouTubePageToken = nil; hasMoreYouTubeResults = false; searchResults = [] }
-        guard !isSearching else { return }
-        isSearching = true
-        defer { isSearching = false }
-        do {
-            let page = try await MediaAPI.youtubeSearch(
-                query: searchQuery,
-                apiKey: youtubeAPIKey,
-                pageToken: nextPage ? nextYouTubePageToken : nil
-            )
-            nextYouTubePageToken = page.nextPageToken
-            hasMoreYouTubeResults = page.nextPageToken != nil
-            searchResults = unique(searchResults + page.entries)
-            notice = page.entries.isEmpty && searchResults.isEmpty ? "YouTube 没有返回结果。" : nil
-        } catch {
-            notice = error.localizedDescription
+        guard !cleaned.isEmpty else { clearDiscoverySearch(); return }
+        let requestID = UUID()
+        searchRequestID = requestID
+        if !nextPage || searchQuery != cleaned {
+            searchQuery = cleaned; searchPage = 1; searchPool = []; shownSearchIDs = []
+            searchTokens = [:]; searchExhaustedIDs = []; searchResults = []
         }
+        if nextPage, searchPool.filter({ !shownSearchIDs.contains($0.identity) }).count >= 10 {
+            isSearching = false; showSearchBatch(); return
+        }
+        isSearching = true
+        defer { if searchRequestID == requestID { isSearching = false } }
+        if let url = URL(string: cleaned), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            do { searchResults = [try await DiscoveryAPI.resolve(url)]; notice = "点击预览；长按可加入库。" }
+            catch { notice = error.localizedDescription }
+            hasMoreYouTubeResults = false
+            return
+        }
+        if nextPage { searchPage += 1 }
+        let sources = enabledSources.filter { $0.enabled && !searchExhaustedIDs.contains($0.id) }
+        sources.forEach { sourceStatuses[$0.id] = "正在搜索…" }
+        let results = await DiscoveryAPI.load(sources: sources, query: cleaned, page: searchPage, keys: discoveryKeys(), tokens: searchTokens)
+        guard searchRequestID == requestID, !Task.isCancelled else { return }
+        applySourceStatuses(results)
+        let knownSearchIDs = Set(searchPool.map(\.identity))
+        for result in results {
+            searchTokens[result.sourceID] = result.nextPageToken
+            if result.entries.isEmpty || result.error != nil || result.entries.allSatisfy({ knownSearchIDs.contains($0.identity) }) || (result.sourceID == "youtube-rss" && result.nextPageToken == nil) {
+                searchExhaustedIDs.insert(result.sourceID)
+            }
+        }
+        searchPool = unique(searchPool + results.flatMap(\.entries)).filter(isFromEnabledSource)
+        showSearchBatch()
+        notice = searchPool.isEmpty ? "所选来源没有返回结果，打开内容源查看具体原因。" : "已汇集 \(searchPool.count) 条，当前显示 \(searchResults.count) 条。"
+    }
+
+    func clearDiscoverySearch() {
+        searchRequestID = UUID()
+        searchQuery = ""; searchResults = []; searchPool = []; shownSearchIDs = []
+        hasMoreYouTubeResults = false; isSearching = false
+    }
+
+    private func applySourceStatuses(_ results: [DiscoverySourceResult]) {
+        for result in results {
+            sourceStatuses[result.sourceID] = result.error ?? "\(result.entries.count) 条内容"
+            if result.error != nil { failedSourceIDs.insert(result.sourceID) }
+            else { failedSourceIDs.remove(result.sourceID) }
+        }
+    }
+
+    private func showSearchBatch() {
+        var unseen = searchPool.filter { !shownSearchIDs.contains($0.identity) }.shuffled()
+        if unseen.isEmpty, !searchPool.isEmpty {
+            let current = Set(searchResults.map(\.identity))
+            shownSearchIDs = []
+            unseen = searchPool.filter { !current.contains($0.identity) }.shuffled()
+            if unseen.isEmpty { unseen = searchPool.shuffled() }
+        }
+        searchResults = spread(Array(unseen.prefix(10)))
+        shownSearchIDs.formUnion(searchResults.map(\.identity))
+        hasMoreYouTubeResults = !searchPool.isEmpty
+    }
+
+    private func spread(_ entries: [MediaEntry]) -> [MediaEntry] {
+        var groups = Dictionary(grouping: entries, by: \.platform)
+        var result: [MediaEntry] = []
+        while groups.values.contains(where: { !$0.isEmpty }) {
+            for key in groups.keys.sorted() {
+                if var values = groups[key], !values.isEmpty {
+                    result.append(values.removeFirst()); groups[key] = values
+                }
+            }
+        }
+        return result
+    }
+
+    func addRemoteLinks(_ raw: String) async {
+        var entries: [MediaEntry] = []
+        var failures = 0
+        for line in raw.components(separatedBy: .newlines).map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }).prefix(30) {
+            guard let url = URL(string: line), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { failures += 1; continue }
+            do { entries.append(try await DiscoveryAPI.resolve(url)) }
+            catch { failures += 1 }
+        }
+        appendToLibrary(entries)
+        notice = "已处理 \(entries.count) 条链接" + (failures > 0 ? "，\(failures) 条未能解析。" : "。")
     }
 
     func addRandom(count: Int) async -> Int {

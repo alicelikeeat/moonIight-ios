@@ -19,6 +19,8 @@ struct RootView: View {
     @State private var selectedImage: Image?
     @State private var activeSheet: RootSheet?
     @State private var activePlayer: MediaEntry?
+    @State private var discoveryQuery = ""
+    @State private var discoverySourcesPresented = false
 
     var body: some View {
         ZStack {
@@ -28,7 +30,30 @@ struct RootView: View {
                 Group {
                     switch model.selectedTab {
                     case .home: refreshable(.home) { HomeView(onSelect: { activePlayer = $0 }) }
-                    case .discover: refreshable(.discover) { DiscoverView(onSelect: { activePlayer = $0 }) }
+                    case .discover:
+                        refreshable(.discover) {
+                            DiscoverView(query: $discoveryQuery, onSelect: { activePlayer = $0 }, onSources: {
+                                model.activeLongPressMenu = nil
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) { discoverySourcesPresented = true }
+                            })
+                        }
+                        .overlay {
+                            if discoverySourcesPresented {
+                                GeometryReader { geometry in
+                                    ZStack(alignment: .leading) {
+                                        Color.black.opacity(0.18).contentShape(Rectangle()).onTapGesture {
+                                            withAnimation { discoverySourcesPresented = false }
+                                        }
+                                        DiscoverySourcePanel(query: $discoveryQuery, onClose: {
+                                            withAnimation { discoverySourcesPresented = false }
+                                        })
+                                        .frame(width: min(380, geometry.size.width * 0.86), height: geometry.size.height)
+                                        .shadow(color: .black.opacity(0.12), radius: 24, x: 6)
+                                        .transition(.move(edge: .leading))
+                                    }
+                                }
+                            }
+                        }
                     case .camera: CameraView()
                     case .moments: MomentsView(onSelect: { activePlayer = $0 }, onCompose: { activeSheet = .composer(nil) })
                     case .me: MeView(selectedImage: selectedImage, selection: $selectedMedia, onSelect: { activePlayer = $0 })
@@ -400,8 +425,9 @@ private struct HomeView: View {
 
 private struct DiscoverView: View {
     @EnvironmentObject private var model: AppModel
+    @Binding var query: String
     let onSelect: (MediaEntry) -> Void
-    @State private var query = ""
+    let onSources: () -> Void
     @AppStorage("discover_columns") private var columns = 2
     @AppStorage("discover_banner_scale") private var bannerScale = 1.0
     private let grid = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
@@ -413,6 +439,10 @@ private struct DiscoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "发现", subtitle: "探索新的内容源", symbol: "safari") {
+                Button(action: onSources) {
+                    Image(systemName: "line.3.horizontal.decrease").font(.headline)
+                        .frame(width: 42, height: 42).moonGlassCircle()
+                }.buttonStyle(.plain).accessibilityLabel("内容源").accessibilityIdentifier("discover-sources")
                 Button { columns = columns == 1 ? 2 : 1 } label: {
                     Image(systemName: columns == 1 ? "rectangle.grid.2x2" : "rectangle.grid.1x2")
                         .font(.headline).frame(width: 42, height: 42).moonGlassCircle()
@@ -420,12 +450,12 @@ private struct DiscoverView: View {
             }
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜索 YouTube 视频或粘贴链接", text: $query)
+                TextField("搜索所选内容源或粘贴链接", text: $query)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .submitLabel(.search)
-                    .onSubmit { Task { await model.mediaStore.searchYouTube(query) } }
+                    .onSubmit { Task { await model.mediaStore.searchDiscover(query) } }
                 if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                    Button { query = ""; model.mediaStore.clearDiscoverySearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
                 }
             }
             .padding(.horizontal, 15).frame(height: 50)
@@ -441,17 +471,19 @@ private struct DiscoverView: View {
             HStack {
                 Text(query.isEmpty ? "推荐内容" : "搜索结果").font(.title3.bold())
                 Spacer()
-                Button { Task { await model.mediaStore.searchYouTube(query) } } label: {
+                Button {
+                    Task {
+                        if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await model.mediaStore.refreshDiscover() }
+                        else { await model.mediaStore.searchDiscover(query) }
+                    }
+                } label: {
                     Label("搜索", systemImage: "magnifyingglass").font(.subheadline.weight(.medium))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
             }
             let results = query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults
             if results.isEmpty {
-                if !query.isEmpty && !model.mediaStore.youtubeKeyConfigured {
-                    YouTubeSearchFallback(query: query)
-                } else {
-                    EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "下拉刷新内容源，或在设置中配置 YouTube API Key。", symbol: "safari")
-                }
+                EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "打开内容源选择分类并查看加载状态。", symbol: "safari")
+                Button(action: onSources) { Label("查看内容源", systemImage: "slider.horizontal.3") }.buttonStyle(.bordered)
             } else {
                 LazyVGrid(columns: columns == 1 ? [GridItem(.flexible())] : grid, spacing: 14) {
                     ForEach(results) { entry in
@@ -461,12 +493,17 @@ private struct DiscoverView: View {
                 }
             }
             if !query.isEmpty && model.mediaStore.hasMoreYouTubeResults {
-                Button("加载更多") { Task { await model.mediaStore.searchYouTube(query, nextPage: true) } }.buttonStyle(.bordered)
+                Button("换一批") { Task { await model.mediaStore.searchDiscover(query, nextPage: true) } }.buttonStyle(.bordered)
             }
-            if model.mediaStore.isSearching { ProgressView().frame(maxWidth: .infinity) }
+            if !query.isEmpty, !model.mediaStore.youtubeKeyConfigured,
+               model.mediaStore.enabledSources.contains(where: { $0.kind == "youtube" && $0.enabled }) {
+                YouTubeSearchFallback(query: query)
+            }
+            if model.mediaStore.isSearching || model.mediaStore.isRefreshing { ProgressView().frame(maxWidth: .infinity) }
             if let notice = model.mediaStore.notice { Text(notice).font(.footnote).foregroundStyle(.secondary) }
         }
         .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 24)
+        .onChange(of: query) { value in if value.isEmpty { model.mediaStore.clearDiscoverySearch() } }
     }
 }
 
@@ -634,7 +671,7 @@ private struct MediaEntryCard: View {
                             .foregroundStyle(.white, MoonStyle.accent)
                             .padding(9)
                     }
-                    Text(entry.platform == "bili" ? "哔哩" : entry.platform == "youtube" ? "YouTube" : entry.platform)
+                    Text(model.mediaStore.enabledSources.first(where: { $0.id == entry.source })?.name ?? MediaSource.defaults.first(where: { $0.kind == entry.platform })?.name ?? entry.platform)
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 9).padding(.vertical, 6)
                         .background(.ultraThinMaterial, in: Capsule())
@@ -849,8 +886,10 @@ private struct YouTubeSearchFallback: View {
             Label("YouTube 网页搜索", systemImage: "globe")
                 .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             if let searchURL {
-                WebEmbedView(url: searchURL).frame(height: 520)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                Link(destination: searchURL) {
+                    Label("在 YouTube 打开搜索", systemImage: "arrow.up.right.square")
+                }.buttonStyle(.bordered)
+                Text("App 内的 YouTube 关键词结果需要在内容源中配置 API Key。").font(.caption).foregroundStyle(.secondary)
             } else {
                 EmptyPanel(title: "搜索链接无效", detail: "请检查搜索词后重试。", symbol: "exclamationmark.triangle")
             }
