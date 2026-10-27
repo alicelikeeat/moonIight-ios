@@ -254,7 +254,21 @@ enum DiscoveryAPI {
     }
 
     static func resolve(_ url: URL) async throws -> MediaEntry {
-        if let resolved = PlatformResolver.resolve(url.absoluteString) { return resolved }
+        if var resolved = PlatformResolver.resolve(url.absoluteString) {
+            if resolved.platform == "youtube",
+               let root = try? await json("https://www.youtube.com/oembed", ["url": url.absoluteString, "format": "json"]) {
+                resolved.title = root["title"] as? String ?? resolved.title
+                resolved.author = root["author_name"] as? String ?? resolved.author
+                resolved.coverURL = safeURL(root["thumbnail_url"] as? String) ?? resolved.coverURL
+            } else if resolved.platform == "bili", let id = PlatformResolver.bilibiliID(in: url.absoluteString),
+                      let root = try? await json("https://api.bilibili.com/x/web-interface/view", ["bvid": id]),
+                      let data = root["data"] as? [String: Any] {
+                resolved.title = data["title"] as? String ?? resolved.title
+                resolved.coverURL = safeURL((data["pic"] as? String)?.replacingOccurrences(of: "http://", with: "https://"))
+                resolved.author = (data["owner"] as? [String: Any])?["name"] as? String ?? resolved.author
+            }
+            return resolved
+        }
         if url.host?.lowercased().hasSuffix("vimeo.com") == true {
             let root = try await json("https://vimeo.com/api/oembed.json", ["url": url.absoluteString])
             var entry = directEntry(url, title: root["title"] as? String ?? "Vimeo")

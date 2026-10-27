@@ -225,7 +225,9 @@ private struct SourceConfigurationView: View {
 private struct AddDiscoverySourceView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var name = "", url = "", kind = "rss"
+    @State private var name = ""
+    @State private var url = ""
+    @State private var kind = "rss"
     @State private var error: String?
     var body: some View {
         NavigationStack {

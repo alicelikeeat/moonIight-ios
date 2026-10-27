@@ -147,7 +147,11 @@ struct RootView: View {
             }
             .scrollIndicators(.hidden)
             .accessibilityIdentifier("feed-scroll-\(tab.rawValue)")
-            .refreshable { await model.refresh(tab) }
+            .refreshable {
+                if tab == .discover, !discoveryQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    await model.mediaStore.searchDiscover(discoveryQuery)
+                } else { await model.refresh(tab) }
+            }
         }
     }
 
