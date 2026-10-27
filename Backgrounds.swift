@@ -447,7 +447,9 @@ struct ProfileBackgroundMedia: View {
             LinearGradient(colors: [.indigo.opacity(0.7), Color(red: 0.48, green: 0.45, blue: 0.30)], startPoint: .topLeading, endPoint: .bottomTrailing)
             if let config = store.resolved(target) { BackgroundMediaLayer(configuration: config, paused: paused) }
             else if target == .avatar { Image(systemName: "person.fill").resizable().scaledToFit().foregroundStyle(.white.opacity(0.9)).padding(14) }
-        }.accessibilityHidden(true)
+        }
+        .background { BackgroundTargetAnchor(target: target).allowsHitTesting(false).accessibilityHidden(true) }
+        .accessibilityHidden(true)
     }
 }
 

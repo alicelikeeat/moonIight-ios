@@ -288,7 +288,7 @@ struct AppCommandRequest: Identifiable, Equatable {
 enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     case home, discover, moments, me, library, settings, friends, messages, profile
     case refresh, sources, layout, random10, random15, random20, importMedia
-    case photo, video, compose, avatar, cover, reelsLibrary, reelsSources
+    case photo, video, compose, avatar, cover, deleteCover, reelsLibrary, reelsSources
     case background, backgrounds, backgroundLibrary, gestures, menuSettings
     case playMedia, favoriteMedia, saveMedia, shareMedia
     case portrait, virtualFriends, navigationMode, selectAll, favorites, downloads
@@ -300,7 +300,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
         case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
         case .random10: "随机加入 10 条"; case .random15: "随机加入 15 条"; case .random20: "随机加入 20 条"
         case .importMedia: "导入图片或视频"; case .photo: "拍照"; case .video: "录制视频"
-        case .compose: "发布动态"; case .avatar: "更换头像"; case .cover: "更换横幅"
+        case .compose: "发布动态"; case .avatar: "更换头像"; case .cover: "更换横幅"; case .deleteCover: "删除横幅"
         case .reelsLibrary: "抖音模式 · 库"; case .reelsSources: "抖音模式 · 内容源"
         case .background: "当前背景"; case .backgrounds: "全部背景"; case .backgroundLibrary: "按键背景库"
         case .gestures: "手势说明"; case .menuSettings: "配置长按菜单"
@@ -316,7 +316,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
         case .settings, .menuSettings: "gearshape"; case .messages: "bubble.left.and.bubble.right"
         case .refresh: "arrow.clockwise"; case .sources: "line.3.horizontal.decrease"; case .layout: "rectangle.grid.2x2"
         case .random10, .random15, .random20: "shuffle"; case .importMedia: "square.and.arrow.down"
-        case .photo: "camera"; case .video: "video"; case .compose: "square.and.pencil"; case .cover, .background: "photo"
+        case .photo: "camera"; case .video: "video"; case .compose: "square.and.pencil"; case .cover, .background: "photo"; case .deleteCover: "trash"
         case .reelsLibrary, .reelsSources: "play.rectangle.fill"; case .backgrounds, .backgroundLibrary: "photo.stack"
         case .gestures: "hand.draw"; case .playMedia: "play.fill"; case .favoriteMedia, .favorites: "heart"
         case .shareMedia: "square.and.arrow.up"; case .portrait: "lock.rotation"; case .virtualFriends: "person.2.wave.2"
@@ -365,6 +365,7 @@ enum BottomNavigationMode: String, CaseIterable, Identifiable {
         case "page.me", "button.me": [.library, .profile, .settings, .background]
         case "page.library": [.selectAll, .favorites, .downloads, .importMedia]
         case "page.settings": [.menuSettings, .backgroundLibrary, .navigationMode, .background]
+        case "profile.cover": [.cover, .background, .backgrounds, .gestures, .deleteCover]
         default: [.background, .backgrounds, .gestures, .menuSettings]
         }
     }

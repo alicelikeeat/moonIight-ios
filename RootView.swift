@@ -27,6 +27,7 @@ struct RootView: View {
     @State private var rootImporter = false
     @State private var rootNotice: String?
     @State private var reelsRequest: ReelsRequest?
+    @State private var deleteCoverConfirmation = false
 
     var body: some View {
         ZStack {
@@ -109,6 +110,14 @@ struct RootView: View {
         .alert("提示", isPresented: Binding(get: { rootNotice != nil }, set: { if !$0 { rootNotice = nil } })) {
             Button("好", role: .cancel) { rootNotice = nil }
         } message: { Text(rootNotice ?? "") }
+        .confirmationDialog("删除朋友圈横幅？", isPresented: $deleteCoverConfirmation, titleVisibility: .visible) {
+            Button("删除横幅", role: .destructive) {
+                backgroundStore.reset(.cover)
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("只移除当前横幅设置，媒体文件仍保留在背景库中。")
+        }
         .fullScreenCover(item: $captureRequest) { request in
             CameraCaptureView(captureVideo: request.video, onCapture: { image in
                 if let data = image.jpegData(compressionQuality: 0.92) { model.mediaStore.importImage(data, title: "拍摄的照片") }
@@ -252,7 +261,7 @@ struct RootView: View {
         Group {
         if interactions.navigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
-                .frame(height: 50).moonGlassPanel().padding(.horizontal, 18).padding(.bottom, 8)
+                .frame(height: 66).padding(.horizontal, 18).padding(.bottom, 8)
         } else {
         GeometryReader { geometry in
             let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
@@ -311,6 +320,7 @@ struct RootView: View {
         case .reelsSources: reelsRequest = ReelsRequest(source: .sources)
         case .compose: activeSheet = .composer(nil)
         case .avatar, .cover: model.selectedTab = .moments
+        case .deleteCover: deleteCoverConfirmation = true
         case .refresh:
             Task {
                 if model.selectedTab == .discover && !discoveryQuery.isEmpty { await model.mediaStore.searchDiscover(discoveryQuery) }
@@ -380,7 +390,43 @@ private struct PriorityTabSurface: UIViewRepresentable {
     func updateUIView(_ view: PriorityTabView, context: Context) { view.onSelect = onSelect }
 }
 
-private struct SlidingTabSurface: UIViewRepresentable {
+// Slider mode keeps its native pan recognizer, but the visuals use five
+// separate glass pieces. The gaps make the bar lighter and prevent one large
+// translucent slab from covering the content underneath.
+private struct SlidingTabSurface: View {
+    let selected: AppTab
+    var onSelect: (AppTab) -> Void
+    var body: some View {
+        ZStack {
+            HStack(spacing: 11) {
+                ForEach(AppTab.allCases) { tab in
+                    let isSelected = tab == selected
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: isSelected ? 48 : 42, height: isSelected ? 48 : 42)
+                            .background {
+                                Circle().fill(isSelected ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.ultraThinMaterial))
+                                    .overlay(Circle().strokeBorder(isSelected ? MoonStyle.accent.opacity(0.76) : .white.opacity(0.38), lineWidth: isSelected ? 1.5 : 0.7))
+                                    .shadow(color: .black.opacity(isSelected ? 0.17 : 0.08), radius: isSelected ? 8 : 4, y: 3)
+                            }
+                            .scaleEffect(isSelected ? 1 : 0.94)
+                        Text(tab.title).font(.system(size: 9, weight: isSelected ? .semibold : .medium))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(isSelected ? MoonStyle.accent : .secondary)
+                    .animation(.spring(response: 0.28, dampingFraction: 0.76), value: selected)
+                }
+            }
+            .allowsHitTesting(false).accessibilityHidden(true)
+            SlidingTabNativeSurface(selected: selected, onSelect: onSelect)
+        }
+        .frame(height: 62)
+        .padding(.horizontal, 15)
+    }
+}
+
+private struct SlidingTabNativeSurface: UIViewRepresentable {
     let selected: AppTab
     var onSelect: (AppTab) -> Void
     func makeUIView(context: Context) -> SlidingTabControl { SlidingTabControl() }
@@ -396,11 +442,14 @@ private final class SlidingTabControl: UISegmentedControl, UIGestureRecognizerDe
     init() {
         super.init(items: AppTab.allCases.map(\.title))
         accessibilityIdentifier = "navigation-slider"
+        accessibilityLabel = "底部滑块导航"
         selectedSegmentIndex = 0
         addTarget(self, action: #selector(chosen), for: .valueChanged)
         pan.addTarget(self, action: #selector(slid(_:))); pan.delegate = self; addGestureRecognizer(pan)
-        selectedSegmentTintColor = .tertiarySystemFill
-        backgroundColor = UIColor.secondarySystemGroupedBackground.withAlphaComponent(0.72)
+        selectedSegmentTintColor = .clear
+        backgroundColor = .clear
+        setTitleTextAttributes([.foregroundColor: UIColor.clear], for: .normal)
+        setTitleTextAttributes([.foregroundColor: UIColor.clear], for: .selected)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func tab(at point: CGPoint) -> AppTab {
@@ -1176,11 +1225,18 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // A tap must wait for the native scroll pan to fail. A hold must not
-        // impose that dependency: the scroll pan can win as soon as movement starts.
-        gestureRecognizer === tap && enclosingScrollViews.contains {
+        // Every card recognizer gives the enclosing native scroll pan first
+        // refusal. This matters for repeated flicks: a second stroke can begin
+        // before the previous deceleration ends, and it must never wait for a
+        // card tap or hold to resolve.
+        enclosingScrollViews.contains {
             otherGestureRecognizer === $0.panGestureRecognizer
         }
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        enclosingScrollViews.contains { otherGestureRecognizer === $0.panGestureRecognizer }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
@@ -1227,6 +1283,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         for scroll in enclosingScrollViews {
             scroll.delaysContentTouches = false
             scroll.canCancelContentTouches = true
+            scroll.panGestureRecognizer.cancelsTouchesInView = true
         }
     }
 }
@@ -1524,7 +1581,6 @@ private struct MomentsView: View {
                             HStack {
                                 Text("朋友圈").font(.title2.bold())
                                 Spacer()
-                                Image(systemName: "photo").font(.headline).padding(10).background(.ultraThinMaterial, in: Circle())
                             }.foregroundStyle(.white).padding(14)
                         }
                         .overlay(Color.clear.contentShape(Rectangle()))
