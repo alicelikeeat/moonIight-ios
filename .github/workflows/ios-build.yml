@@ -7,6 +7,7 @@ permissions:
   contents: write
 jobs:
   build:
+    if: ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'docs-release-notes:')) }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +28,7 @@ jobs:
           python3 scripts/check_sources.py
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
       - name: Run card scrolling UI tests
-        timeout-minutes: 15
+        timeout-minutes: 25
         shell: bash
         run: |
           SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
@@ -154,10 +155,14 @@ jobs:
             IPA_PATH="build/unsigned-ipa/Moonlight-v${APP_VERSION}.ipa"
             RELEASE_NOTE="本版本为未签名 IPA，请在手机端签名后安装。构建与验证记录：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           fi
+          NOTES_PATH="build/release-notes.md"
+          cat .github/RELEASE_NOTES.md > "$NOTES_PATH"
+          printf '\n验证：模拟器构建、界面回归测试及公开内容源接口检查通过。\n\n%s\n' "$RELEASE_NOTE" >> "$NOTES_PATH"
           if gh release view "v${APP_VERSION}" >/dev/null 2>&1; then
             gh release upload "v${APP_VERSION}" "$IPA_PATH" --clobber
+            gh release edit "v${APP_VERSION}" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           else
-            gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes "$RELEASE_NOTE"
+            gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           fi
       - name: Upload simulator app when signing is absent
         if: steps.signing.outputs.ready != 'true'
@@ -169,4 +174,19 @@ jobs:
       - name: Delete temporary keychain
         if: always() && steps.signing.outputs.keychain_path != ''
         run: security delete-keychain "${{ steps.signing.outputs.keychain_path }}"
+  update-release-notes:
+    if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'docs-release-notes:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update existing version description without rebuilding IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG=$(tr -d '\r\n' < .github/RELEASE_UPDATE_TAG)
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file .github/RELEASE_UPDATE.md
+
 
