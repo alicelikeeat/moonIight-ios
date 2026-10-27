@@ -647,7 +647,11 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
                 // not add a button/hold failure dependency to that new stroke.
                 if scroll.isDecelerating { return false }
             }
-            if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider { return false }
+            // Keep Apple's value controls in charge of their own short taps.
+            // A global hold on a switch delays or cancels the state transition
+            // on some devices, while ordinary buttons and page backgrounds
+            // continue to participate in the contextual hold menu.
+            if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider || view is UISwitch { return false }
             if let slider = view as? SlidingTabControl { heldTarget = .button(for: slider.tab(at: touch.location(in: slider))) }
             if let identifier = view.accessibilityIdentifier,
                identifier.hasPrefix("navigation-"),
