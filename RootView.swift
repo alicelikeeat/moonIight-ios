@@ -211,7 +211,10 @@ private struct DiscoverView: View {
                 }
             } else {
                 LazyVGrid(columns: columns == 1 ? [GridItem(.flexible())] : grid, spacing: 14) {
-                    ForEach(results) { entry in MediaEntryCard(entry: entry, height: CGFloat(columns == 1 ? 220 : 155) * bannerScale, onSelect: { onSelect(entry) }) }
+                    ForEach(results) { entry in
+                        MediaEntryCard(entry: entry, height: CGFloat(columns == 1 ? 220 : 155) * bannerScale, onSelect: { onSelect(entry) })
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
             if !query.isEmpty && model.mediaStore.hasMoreYouTubeResults {
@@ -259,6 +262,7 @@ private struct MediaEntryCard: View {
     @State private var suppressNextTap = false
     @State private var showPopover = false
     @State private var showGlassMenu = false
+    @State private var longPressActivated = false
     @State private var fingerPoint: CGPoint = .zero
     @State private var dropletScale: CGFloat = 1
     @State private var lastFingerPoint: CGPoint?
@@ -271,8 +275,13 @@ private struct MediaEntryCard: View {
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
-                    thumbnail
-                        .frame(maxWidth: .infinity).frame(height: height).clipped()
+                    GeometryReader { proxy in
+                        thumbnail
+                            .frame(width: proxy.size.width, height: height)
+                            .clipped()
+                    }
+                    .frame(height: height)
+                    .clipped()
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.title2)
@@ -297,6 +306,7 @@ private struct MediaEntryCard: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }.padding(12)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(uiColor: .secondarySystemGroupedBackground))
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
@@ -304,30 +314,15 @@ private struct MediaEntryCard: View {
         }
         .buttonStyle(.plain)
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.48).onEnded { _ in
-                suppressNextTap = true
-                switch model.longPressStyle {
-                case .popover: showPopover = true
-                case .trackingGlass, .droplet: showGlassMenu = true
-                }
-            }
-        )
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            LongPressGesture(minimumDuration: 0.5, maximumDistance: 10)
+                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
                 .onChanged { value in
-                    let now = Date.timeIntervalSinceReferenceDate
-                    fingerPoint = value.location
-                    if model.longPressStyle == .droplet, let previous = lastFingerPoint, let previousTime = lastFingerTime {
-                        let elapsed = max(0.01, now - previousTime)
-                        let speed = hypot(value.location.x - previous.x, value.location.y - previous.y) / elapsed
-                        withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.58)) {
-                            dropletScale = min(1.32, max(0.78, 1 + speed / 1500))
-                        }
-                    }
-                    lastFingerPoint = value.location
-                    lastFingerTime = now
+                    guard case .second(true, let dragValue) = value else { return }
+                    if let dragValue { updateLongPressLocation(dragValue.location) }
+                    if !longPressActivated { activateLongPress() }
                 }
                 .onEnded { _ in
+                    longPressActivated = false
                     lastFingerPoint = nil
                     lastFingerTime = nil
                     withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { dropletScale = 1 }
@@ -368,6 +363,31 @@ private struct MediaEntryCard: View {
             Button("删除", role: .destructive) { model.mediaStore.delete(entry) }
             Button("取消", role: .cancel) { }
         }
+    }
+
+    private func activateLongPress() {
+        longPressActivated = true
+        suppressNextTap = true
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
+            switch model.longPressStyle {
+            case .popover: showPopover = true
+            case .trackingGlass, .droplet: showGlassMenu = true
+            }
+        }
+    }
+
+    private func updateLongPressLocation(_ location: CGPoint) {
+        let now = Date.timeIntervalSinceReferenceDate
+        fingerPoint = location
+        if model.longPressStyle == .droplet, let previous = lastFingerPoint, let previousTime = lastFingerTime {
+            let elapsed = max(0.01, now - previousTime)
+            let speed = hypot(location.x - previous.x, location.y - previous.y) / elapsed
+            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.58)) {
+                dropletScale = min(1.32, max(0.78, 1 + speed / 1500))
+            }
+        }
+        lastFingerPoint = location
+        lastFingerTime = now
     }
 
     private func quickAction(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
@@ -1331,6 +1351,5 @@ private extension View {
         }
     }
 }
-
 
 
