@@ -28,7 +28,7 @@ final class ScrollGestureTests: XCTestCase {
         app.launchArguments += flags
         app.launch()
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
-        let exists = card.waitForExistence(timeout: 15)
+        let exists = flags.contains("--moments-width-ui-tests") ? app.staticTexts["宽幅图片布局测试"].waitForExistence(timeout: 15) : card.waitForExistence(timeout: 15)
         if !exists { print(app.debugDescription) }
         XCTAssertTrue(exists)
         return app
@@ -200,24 +200,30 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertLessThanOrEqual(text.frame.maxX, viewport.maxX)
         attach(app, name: "review-wide-moment-fixed")
         app.buttons["删除动态"].firstMatch.tap()
-        let confirmation = app.buttons.matching(NSPredicate(format: "label == %@", "删除动态")).allElementsBoundByIndex.last(where: { $0.isHittable })
-        XCTAssertNotNil(confirmation)
-        confirmation?.tap()
-        XCTAssertFalse(text.exists)
+        attach(app, name: "review-moment-delete-confirmation")
+        let confirmation = app.buttons["confirm-delete-moment"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
+        confirmation.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: text)], timeout: 3), .completed)
         XCTAssertTrue(app.staticTexts["还没有动态"].exists)
     }
 
     @MainActor
     func testReelsUsesVerticalPagesAndReturnsToHome() {
-        let app = launch(discover: false, flags: ["--reels-ui-tests"])
+        let app = launch(discover: false, backgrounds: true, flags: ["--reels-ui-tests"])
+        XCTAssertTrue(app.staticTexts["背景测试就绪"].waitForExistence(timeout: 20))
         app.buttons["navigation-home"].press(forDuration: 0.7)
         app.buttons["抖音模式 · 库"].tap()
         XCTAssertTrue(app.buttons["关闭抖音模式"].waitForExistence(timeout: 8))
         let position = app.staticTexts["reels-position"]
         XCTAssertEqual(position.label, "1 / 24")
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-            .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)))
-        XCTAssertTrue(NSPredicate(format: "label == %@", "2 / 24").evaluate(with: position) || position.waitForExistence(timeout: 3))
+        let playback = app.buttons["播放或暂停"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "正在播放"), object: playback)], timeout: 10), .completed)
+        playback.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "已暂停"), object: playback)], timeout: 3), .completed)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)), withVelocity: .fast, thenHoldForDuration: 0)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "2 / 24"), object: position)], timeout: 5), .completed)
         XCTAssertEqual(position.label, "2 / 24")
         attach(app, name: "review-vertical-reels")
         app.buttons["关闭抖音模式"].tap()
@@ -270,6 +276,7 @@ final class ScrollGestureTests: XCTestCase {
             for _ in 0..<6 { if asset.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(asset.isHittable)
             if asset.value as? String != "已选择" { asset.tap() }
+            XCTAssertEqual(asset.value as? String, "已选择", "The background row did not accept selection")
         }
         let picker = app.descendants(matching: .any).matching(identifier: "background-playback-mode").firstMatch
         for _ in 0..<6 { if picker.isHittable { break }; app.swipeDown() }
@@ -291,8 +298,9 @@ final class ScrollGestureTests: XCTestCase {
         let photo = app.switches["menu-action-photo"]
         for _ in 0..<10 { if photo.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(photo.isHittable)
-        if photo.value as? String == "1" { photo.tap() }
-        photo.tap()
+        if photo.value as? String == "1" { photo.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
+        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(photo.value as? String, "1", "The native switch did not turn on")
         app.terminate(); app.launch(); openEditor()
         for _ in 0..<10 { if photo.isHittable { break }; app.swipeUp() }
         XCTAssertEqual(photo.value as? String, "1")

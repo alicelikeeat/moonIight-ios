@@ -487,6 +487,11 @@ final class MediaStore: ObservableObject {
     func insertAsyncUITestEntry() {
         discoverItems.insert(MediaEntry(id: "async-source-item", kind: .image, title: "异步到达的新内容", author: "UI verification", platform: "test", source: "ui-test"), at: 0)
     }
+    func prepareReelsUITest(videoURL: URL, imageURL: URL) {
+        guard items.count >= 2 else { return }
+        items[0].kind = .video; items[0].remoteURL = videoURL
+        items[1].kind = .image; items[1].remoteURL = imageURL
+    }
     #endif
 
     func setYouTubeAPIKey(_ key: String) {
@@ -832,6 +837,7 @@ final class MediaStore: ObservableObject {
         try? data.write(to: itemURL, options: .atomic)
     }
 }
+
 
 
 

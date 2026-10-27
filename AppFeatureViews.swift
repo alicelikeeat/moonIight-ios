@@ -3,6 +3,7 @@ import PhotosUI
 import SwiftUI
 import UIKit
 import ImageIO
+import Combine
 
 struct LocalMediaImage: View {
     let url: URL
@@ -105,6 +106,7 @@ struct ReelsView: View {
     let source: ReelsSource
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var entries: [MediaEntry] = []
     @State private var index = 0
     @State private var loading = false
@@ -123,7 +125,7 @@ struct ReelsView: View {
                     Button("重新加载") { Task { await load() } }
                 }.frame(maxHeight: .infinity)
             } else {
-                VerticalReelsPager(entries: entries, favoriteIDs: Set(model.mediaStore.items.filter(\.isFavorite).map(\.id)), index: $index, muted: muted, autoAdvance: autoAdvance, photoSeconds: photoSeconds,
+                VerticalReelsPager(entries: entries, favoriteIDs: Set(model.mediaStore.items.filter(\.isFavorite).map(\.id)), index: $index, scenePhase: actionEntry == nil ? scenePhase : .inactive, muted: muted, autoAdvance: autoAdvance, photoSeconds: photoSeconds,
                     onOptions: { actionEntry = $0 }, onFavorite: { model.mediaStore.toggleFavorite($0) }, onNext: next)
                     .ignoresSafeArea(edges: .bottom)
                     .accessibilityIdentifier("vertical-reels-pager")
@@ -168,6 +170,7 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
     let entries: [MediaEntry]
     let favoriteIDs: Set<String>
     @Binding var index: Int
+    let scenePhase: ScenePhase
     let muted: Bool
     let autoAdvance: Bool
     let photoSeconds: Double
@@ -204,7 +207,7 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
         func content(_ value: Int) -> ReelPage {
             var entry = parent.entries[min(max(0, value), parent.entries.count - 1)]
             entry.isFavorite = parent.favoriteIDs.contains(entry.id)
-            return ReelPage(entry: entry, active: value == parent.index,
+            return ReelPage(entry: entry, active: value == parent.index, scenePhase: parent.scenePhase,
                      muted: parent.muted, autoAdvance: parent.autoAdvance, photoSeconds: parent.photoSeconds,
                      onOptions: parent.onOptions, onFavorite: parent.onFavorite, onNext: parent.onNext)
         }
@@ -229,15 +232,16 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
 private struct ReelPage: View {
     let entry: MediaEntry
     let active: Bool
+    let scenePhase: ScenePhase
     let muted: Bool
     let autoAdvance: Bool
     let photoSeconds: Double
     let onOptions: (MediaEntry) -> Void
     let onFavorite: (MediaEntry) -> Void
     let onNext: () -> Void
-    @Environment(\.scenePhase) private var scenePhase
     @State private var player: AVPlayer?
     @State private var paused = false
+    @State private var playbackStatus = "缓冲中"
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             Color.black
@@ -246,6 +250,9 @@ private struct ReelPage: View {
                     WebEmbedView(url: url, scrolling: false)
                 } else if entry.kind == .video, let player {
                     VideoPlayer(player: player)
+                        .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+                            playbackStatus = status == .playing ? "正在播放" : status == .waitingToPlayAtSpecifiedRate ? "缓冲中" : "已暂停"
+                        }
                 } else if entry.kind == .image, let url = entry.remoteURL {
                     if url.isFileURL { LocalMediaImage(url: url) }
                     else { AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView().tint(.white) } }
@@ -265,14 +272,17 @@ private struct ReelPage: View {
                 HStack {
                     Button { onFavorite(entry) } label: { Label(entry.isFavorite ? "已收藏" : "收藏", systemImage: entry.isFavorite ? "heart.fill" : "heart") }
                     Button { onOptions(entry) } label: { Label("更多", systemImage: "ellipsis") }
-                    if entry.kind != .embed { Button(action: toggle) { Image(systemName: paused ? "play.fill" : "pause.fill") } }
+                    if entry.kind != .embed {
+                        Button(action: toggle) { Image(systemName: paused ? "play.fill" : "pause.fill") }
+                            .accessibilityLabel("播放或暂停").accessibilityValue(entry.kind == .video ? playbackStatus : paused ? "已暂停" : "图片展示中")
+                    }
                 }
             }.foregroundStyle(.white).padding(18).padding(.bottom, 28)
                 .background(LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom))
         }.buttonStyle(MoonGlassButtonStyle())
         .onChange(of: active) { _ in updatePlayer() }.onChange(of: muted) { value in player?.isMuted = value }
         .onChange(of: scenePhase) { _ in updatePlayer() }.onDisappear { player?.pause(); player = nil }
-        .task(id: "\(active)-\(paused)-\(autoAdvance)-\(photoSeconds)") {
+        .task(id: "\(active)-\(paused)-\(autoAdvance)-\(photoSeconds)-\(scenePhase)") {
             updatePlayer()
             if active && entry.kind == .image && autoAdvance && !paused {
                 try? await Task.sleep(nanoseconds: UInt64(max(3, photoSeconds) * 1_000_000_000))
@@ -280,7 +290,8 @@ private struct ReelPage: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { note in
-            guard active, let item = note.object as? AVPlayerItem, item === player?.currentItem else { return }
+            guard active, scenePhase == .active, let item = note.object as? AVPlayerItem, item === player?.currentItem else { return }
+            if paused { player?.seek(to: .zero); return }
             if autoAdvance { onNext() } else { player?.seek(to: .zero); player?.play() }
         }
     }

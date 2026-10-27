@@ -10,7 +10,7 @@ struct MoonGlassButtonStyle: ButtonStyle {
     var prominent = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(.horizontal, 12).padding(.vertical, 8)
-            .background { GlassCapsule(prominent: prominent) }
+            .background { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -498,7 +498,7 @@ struct MediaGlassCircle: ViewModifier {
         let playlist = store.playlist(for: target)
         let configuration = resolvedConfiguration(playlist)
         let decorated = content.background {
-            BackgroundTargetAnchor(target: target)
+            BackgroundTargetAnchor(target: target).allowsHitTesting(false).accessibilityHidden(true)
             if let configuration { BackgroundMediaLayer(configuration: configuration).clipShape(Circle()) }
         }
         if #available(iOS 26.0, *) {
@@ -562,7 +562,7 @@ extension View {
         else { background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16)) }
     }
     func pageBackground(_ target: BackgroundTarget) -> some View {
-        background { PageBackground(target: target).ignoresSafeArea(); BackgroundTargetAnchor(target: target) }
+        background { PageBackground(target: target).ignoresSafeArea(); BackgroundTargetAnchor(target: target).allowsHitTesting(false).accessibilityHidden(true) }
     }
 }
 

@@ -149,6 +149,13 @@ struct RootView: View {
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
+            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") {
+                await backgroundStore.prepareUITestMedia()
+                if let video = backgroundStore.assets.first(where: { $0.id == "ui-test-background-video" }),
+                   let image = backgroundStore.assets.first(where: { $0.id == "ui-test-background-image" }) {
+                    model.mediaStore.prepareReelsUITest(videoURL: backgroundStore.url(for: video), imageURL: backgroundStore.url(for: image))
+                }
+            }
             if ProcessInfo.processInfo.arguments.contains("--moments-width-ui-tests") {
                 let image = UIGraphicsImageRenderer(size: CGSize(width: 3000, height: 220)).image { context in
                     UIColor.systemIndigo.setFill(); context.fill(CGRect(x: 0, y: 0, width: 3000, height: 220))
@@ -494,6 +501,7 @@ private struct UniversalHoldScope: ViewModifier {
                         if model.longPressStyle != .popover { current.location = point }
                         menu = current
                     }, onEnd: { menu?.fingerDown = false })
+                    .allowsHitTesting(false).accessibilityHidden(true)
             }
             .overlay {
                 if let menu {
@@ -734,6 +742,9 @@ private struct LongPressRingOverlay: View {
                                 .accessibilityLabel("打开全部操作")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("打开全部操作")
+                        .accessibilityIdentifier("打开全部操作")
                         .allowsHitTesting(!menu.fingerDown)
                         .position(center)
                     }
@@ -1601,7 +1612,7 @@ private struct MomentsView: View {
                 Button("删除动态", role: .destructive) {
                     if let id = deletingMoment { model.deleteMoment(id) }
                     deletingMoment = nil
-                }
+                }.buttonStyle(.automatic).accessibilityIdentifier("confirm-delete-moment")
                 Button("取消", role: .cancel) { deletingMoment = nil }
             }
         }
