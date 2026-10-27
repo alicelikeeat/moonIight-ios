@@ -844,6 +844,7 @@ private struct LongPressRingOverlay: View {
         GeometryReader { geometry in
             let center = clamped(menu.location, to: geometry.size)
             let highlightedAction = dragHighlightedAction(center: center)
+            let bubbleOrigin = bubbleStartOffset(center: center, size: geometry.size)
             ZStack {
                 Color.black.opacity(menu.fingerDown ? 0.035 : 0.015)
                     .contentShape(Rectangle())
@@ -860,8 +861,11 @@ private struct LongPressRingOverlay: View {
                             let action = item.element
                             let offset = actionOffsets(for: actions.count)[index]
                             ringButton(action)
-                                .scaleEffect(isHighlighted(index, center: center) ? 1.14 : 1)
-                                .position(x: center.x + offset.x, y: center.y + offset.y)
+                                .scaleEffect(style == .bubble && !ringAppeared ? 0.32 : isHighlighted(index, center: center) ? 1.14 : 1)
+                                .opacity(style == .bubble && !ringAppeared ? 0.55 : 1)
+                                .position(x: center.x + (style == .bubble && !ringAppeared ? bubbleOrigin.x : offset.x),
+                                          y: center.y + (style == .bubble && !ringAppeared ? bubbleOrigin.y : offset.y))
+                                .animation(.spring(response: 0.42, dampingFraction: 0.7).delay(Double(index) * 0.055), value: ringAppeared)
                         }
                         Image(systemName: "ellipsis")
                                 .font(.system(size: 21, weight: .bold))
@@ -873,13 +877,15 @@ private struct LongPressRingOverlay: View {
                                         .frame(width: 54, height: 54)
                                 }
                         .position(center)
+                        .scaleEffect(style == .bubble && !ringAppeared ? 0.84 : 1)
+                        .animation(.spring(response: 0.3, dampingFraction: 0.68), value: ringAppeared)
                     }
                 }
-                .scaleEffect(ringAppeared ? 1 : 0.72,
+                .scaleEffect(style == .bubble ? 1 : ringAppeared ? 1 : 0.72,
                              anchor: UnitPoint(x: center.x / max(geometry.size.width, 1), y: center.y / max(geometry.size.height, 1)))
-                .rotationEffect(.degrees(ringAppeared ? 0 : -90),
+                .rotationEffect(.degrees(style == .bubble ? 0 : ringAppeared ? 0 : -90),
                                 anchor: UnitPoint(x: center.x / max(geometry.size.width, 1), y: center.y / max(geometry.size.height, 1)))
-                .opacity(ringAppeared ? 1 : 0)
+                .opacity(style == .bubble ? 1 : ringAppeared ? 1 : 0)
                 .scaleEffect(style == .droplet ? menu.dropletScale : 1)
                 .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.62), value: menu.dropletScale)
                 .animation(.interactiveSpring(response: 0.16, dampingFraction: 0.78), value: menu.location)
@@ -932,6 +938,13 @@ private struct LongPressRingOverlay: View {
         case 3: [CGPoint(x: -48, y: -42), CGPoint(x: 48, y: -42), CGPoint(x: 0, y: 62)]
         default: [CGPoint(x: -48, y: -48), CGPoint(x: 48, y: -48), CGPoint(x: 48, y: 48), CGPoint(x: -48, y: 48)]
         }
+    }
+
+    private func bubbleStartOffset(center: CGPoint, size: CGSize) -> CGPoint {
+        if center.y > size.height * 0.62 { return CGPoint(x: 0, y: -18) }
+        if center.x > size.width * 0.66 { return CGPoint(x: -18, y: 0) }
+        if center.x < size.width * 0.34 { return CGPoint(x: 18, y: 0) }
+        return CGPoint(x: 18, y: -10)
     }
 
     private func clamped(_ point: CGPoint, to size: CGSize) -> CGPoint {
@@ -1671,6 +1684,7 @@ private struct YouTubeSearchFallback: View {
 
 private struct MomentsView: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     let onSelect: (MediaEntry) -> Void
     let onCompose: () -> Void
     @AppStorage("moonlight.profile.displayName") private var displayName = "我的朋友"
@@ -1684,6 +1698,7 @@ private struct MomentsView: View {
     @State private var commentDraft = ""
     @State private var showingCommentPrompt = false
     @State private var deletingMoment: String?
+    @State private var activeVideoID: String?
     @AppStorage("moonlight.glass.bannerSize") private var bannerSizeRaw = GlassSurfaceSize.balanced.rawValue
     private var bannerSize: GlassSurfaceSize { GlassSurfaceSize(rawValue: bannerSizeRaw) ?? .balanced }
 
@@ -1760,8 +1775,18 @@ private struct MomentsView: View {
                                 Text(moment.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
                             }
                             if let attachment = moment.attachment {
-                                Button { onSelect(attachment) } label: { MomentAttachmentPreview(entry: attachment) }
+                                Button { onSelect(attachment) } label: {
+                                    MomentAttachmentPreview(entry: attachment, isPlaying: activeVideoID == moment.id && scenePhase == .active)
+                                }
                                     .buttonStyle(.plain)
+                                    .background {
+                                        if attachment.kind == .video, attachment.remoteURL != nil {
+                                            GeometryReader { geometry in
+                                                Color.clear.preference(key: MomentVideoFramesKey.self,
+                                                    value: [moment.id: geometry.frame(in: .named("moments-feed"))])
+                                            }
+                                        }
+                                    }
                             }
                             HStack(spacing: 8) {
                                 Button { model.toggleMomentLike(moment.id) } label: {
@@ -1803,7 +1828,14 @@ private struct MomentsView: View {
                 }
             }.frame(width: max(0, viewport.size.width - 36))
                 .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 96)
-        }.scrollIndicators(.hidden).pageBackground(.moments)
+        }.coordinateSpace(name: "moments-feed")
+            .onPreferenceChange(MomentVideoFramesKey.self) { frames in
+                let visible = CGRect(x: 0, y: 0, width: viewport.size.width, height: max(0, viewport.size.height - 80))
+                activeVideoID = frames.map { (id: $0.key, area: $0.value.intersection(visible).height) }
+                    .filter { $0.area > 100 }
+                    .max(by: { $0.area < $1.area })?.id
+            }
+            .scrollIndicators(.hidden).pageBackground(.moments)
             .task(id: model.command?.id) {
                 if model.command?.action == .avatar { avatarPickerPresented = true; model.command = nil }
                 if model.command?.action == .cover { coverPickerPresented = true; model.command = nil }
@@ -1833,6 +1865,13 @@ private struct MomentsView: View {
     }
 }
 
+private struct MomentVideoFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
 @MainActor
 private func saveProfileMedia(_ item: PhotosPickerItem?, name: String) async -> String? {
     guard let item else { return nil }
@@ -1843,13 +1882,22 @@ private func saveProfileMedia(_ item: PhotosPickerItem?, name: String) async -> 
 
 private struct MomentAttachmentPreview: View {
     let entry: MediaEntry
+    let isPlaying: Bool
     var body: some View {
         GeometryReader { bounds in
         ZStack(alignment: .bottomLeading) {
             if entry.kind == .image, let url = entry.remoteURL, url.isFileURL {
                 LocalMediaImage(url: url, fill: true).frame(width: bounds.size.width, height: 210).clipped()
-            } else if entry.kind == .video, let url = entry.remoteURL, url.isFileURL {
-                LocalVideoPoster(url: url).frame(width: bounds.size.width, height: 210).clipped()
+            } else if entry.kind == .video, let url = entry.remoteURL {
+                if isPlaying {
+                    MomentInlineVideo(url: url, isPlaying: true)
+                        .frame(width: bounds.size.width, height: 210).clipped()
+                } else if url.isFileURL {
+                    LocalVideoPoster(url: url).frame(width: bounds.size.width, height: 210).clipped()
+                } else if let cover = entry.coverURL {
+                    AsyncImage(url: cover) { image in image.resizable().scaledToFill() } placeholder: { attachmentFallback }
+                        .frame(width: bounds.size.width, height: 210).clipped()
+                } else { attachmentFallback.frame(height: 210) }
             } else if let cover = entry.coverURL {
                 AsyncImage(url: cover) { image in image.resizable().scaledToFill() } placeholder: { attachmentFallback }
                     .frame(width: bounds.size.width, height: 210).clipped()
@@ -1872,6 +1920,57 @@ private struct MomentAttachmentPreview: View {
     private var attachmentFallback: some View {
         LinearGradient(colors: [MoonStyle.accent.opacity(0.72), .indigo.opacity(0.34)], startPoint: .topLeading, endPoint: .bottomTrailing)
             .overlay(Image(systemName: "play.rectangle.fill").font(.largeTitle).foregroundStyle(.white.opacity(0.82)))
+    }
+}
+
+private struct MomentInlineVideo: UIViewRepresentable {
+    let url: URL
+    let isPlaying: Bool
+    func makeUIView(context: Context) -> MomentInlineVideoView { MomentInlineVideoView() }
+    func updateUIView(_ view: MomentInlineVideoView, context: Context) { view.configure(url: url, playing: isPlaying) }
+    static func dismantleUIView(_ view: MomentInlineVideoView, coordinator: ()) { view.stop() }
+}
+
+private final class MomentInlineVideoView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+    private var player: AVQueuePlayer?
+    private var looper: AVPlayerLooper?
+    private var currentURL: URL?
+    private var playing = false
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .black
+        (layer as? AVPlayerLayer)?.videoGravity = .resizeAspectFill
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func configure(url: URL, playing: Bool) {
+        if currentURL != url {
+            stop()
+            currentURL = url
+            let queue = AVQueuePlayer()
+            queue.isMuted = true
+            queue.preventsDisplaySleepDuringVideoPlayback = false
+            looper = AVPlayerLooper(player: queue, templateItem: AVPlayerItem(url: url))
+            player = queue
+            (layer as? AVPlayerLayer)?.player = queue
+        }
+        self.playing = playing
+        if playing && window != nil { player?.play() } else { player?.pause() }
+    }
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if playing && window != nil { player?.play() } else { player?.pause() }
+    }
+    func stop() {
+        player?.pause()
+        looper?.disableLooping()
+        looper = nil
+        player?.removeAllItems()
+        player = nil
+        currentURL = nil
+        playing = false
+        (layer as? AVPlayerLayer)?.player = nil
     }
 }
 
@@ -2536,6 +2635,8 @@ private struct SettingsView: View {
                     Picker("菜单样式", selection: $model.longPressStyle) {
                         ForEach(LongPressStyle.allCases) { style in Text(style.title).tag(style) }
                     }
+                    Text("玻璃气泡分离会从长按位置的一侧依次弹出操作按键，并自动避开屏幕边缘。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Picker("选择方式", selection: $model.longPressSelectionMode) {
                         ForEach(LongPressSelectionMode.allCases) { mode in Text(mode.title).tag(mode) }
                     }

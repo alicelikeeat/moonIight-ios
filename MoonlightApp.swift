@@ -147,7 +147,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(columns, forKey: "discover_columns")
             UserDefaults.standard.set(1.0, forKey: "discover_banner_scale")
             virtualActivityEnabled = false
-            longPressStyle = .popover
+            longPressStyle = ProcessInfo.processInfo.arguments.contains("--bubble-ui-tests") ? .bubble : .popover
             longPressSelectionMode = .tap
         }
         #endif
@@ -455,13 +455,14 @@ enum AppTab: String, CaseIterable, Identifiable {
 }
 
 enum LongPressStyle: String, CaseIterable, Identifiable {
-    case popover, trackingGlass, droplet
+    case popover, trackingGlass, droplet, bubble
     var id: Self { self }
     var title: String {
         switch self {
         case .popover: "弹出菜单"
         case .trackingGlass: "跟手圆形玻璃"
         case .droplet: "水滴融合"
+        case .bubble: "玻璃气泡分离"
         }
     }
 }

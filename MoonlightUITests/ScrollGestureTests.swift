@@ -138,6 +138,18 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists)
     }
 
+    @MainActor
+    func testBubbleLongPressKeepsMenuInteractive() {
+        let app = launch(discover: true, flags: ["--bubble-ui-tests"])
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
+        card.press(forDuration: 0.7)
+        let center = app.buttons["打开全部操作"]
+        XCTAssertTrue(center.waitForExistence(timeout: 3))
+        attach(app, name: "review-glass-bubble-long-press")
+        center.tap()
+        XCTAssertTrue(app.buttons["播放 / 打开"].waitForExistence(timeout: 5))
+    }
+
     @MainActor func testHomeFastCardScroll() { assertCardScrolls(discover: false, velocity: .fast) }
 
     @MainActor
