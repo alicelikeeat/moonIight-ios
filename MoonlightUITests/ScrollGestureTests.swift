@@ -298,8 +298,11 @@ final class ScrollGestureTests: XCTestCase {
         let photo = app.switches["menu-action-photo"]
         for _ in 0..<10 { if photo.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(photo.isHittable)
-        if photo.value as? String == "1" { photo.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
-        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        // Only turn the switch on. Repeated test rounds retain the already-on
+        // preference; blindly tapping twice can leave the native toggle off.
+        for _ in 0..<3 where photo.value as? String != "1" {
+            photo.tap()
+        }
         XCTAssertEqual(photo.value as? String, "1", "The native switch did not turn on")
         app.terminate(); app.launch(); openEditor()
         for _ in 0..<10 { if photo.isHittable { break }; app.swipeUp() }
