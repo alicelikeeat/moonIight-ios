@@ -1888,7 +1888,7 @@ private func saveProfileMedia(_ item: PhotosPickerItem?, name: String) async -> 
 
 private struct MomentAttachmentPreview: View {
     let entry: MediaEntry
-    let isPlaying: Bool
+    var isPlaying = false
     var body: some View {
         GeometryReader { bounds in
         ZStack(alignment: .bottomLeading) {
