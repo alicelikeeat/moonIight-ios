@@ -65,7 +65,7 @@ struct BackgroundAssetThumbnail: View {
                 Image(systemName: "play.fill").font(.caption2).foregroundStyle(.white)
                     .padding(5).background(.black.opacity(0.45), in: Circle())
             }
-        }.clipped().allowsHitTesting(false)
+        }.clipped()
     }
 }
 
@@ -108,6 +108,10 @@ struct BackgroundEditorView: View {
                     Spacer()
                     PhotosPicker(selection: $selection, matching: .videos) { Label("选视频", systemImage: "video") }
                 }.buttonStyle(.borderless).disabled(importing)
+                if let draft, let asset = store.asset(draft) {
+                    Text(asset.isVideo ? "视频背景 · 静音循环" : "图片背景")
+                        .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("background-media-kind")
+                }
                 if importing { ProgressView("正在导入并生成预览…") }
                 if let importError { Text(importError).font(.caption).foregroundStyle(.red) }
             }

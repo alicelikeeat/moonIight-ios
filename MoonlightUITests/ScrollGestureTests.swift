@@ -132,6 +132,10 @@ final class ScrollGestureTests: XCTestCase {
         for _ in 0..<5 { if video.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(video.isHittable)
         video.tap()
+        let kind = app.staticTexts["background-media-kind"]
+        for _ in 0..<5 { if kind.exists { break }; app.swipeDown() }
+        XCTAssertTrue(kind.waitForExistence(timeout: 5))
+        XCTAssertEqual(kind.label, "视频背景 · 静音循环", "The selected video was not applied")
         app.buttons["首页"].tap()
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5))

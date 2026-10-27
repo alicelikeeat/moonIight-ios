@@ -154,6 +154,9 @@ struct RootView: View {
 
     private func refreshable<Content: View>(_ tab: AppTab, @ViewBuilder content: @escaping () -> Content) -> some View {
         GeometryReader { geometry in
+            let windowTop = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows).first(where: \.isKeyWindow)?.safeAreaInsets.top ?? 0
+            let clipTop = max(geometry.safeAreaInsets.top, windowTop - geometry.frame(in: .global).minY)
             ScrollView(.vertical) {
                 content()
                     .frame(maxWidth: .infinity)
@@ -167,7 +170,7 @@ struct RootView: View {
                     await model.mediaStore.searchDiscover(discoveryQuery)
                 } else { await model.refresh(tab) }
             }
-            .clipShape(ScrollTopSafeAreaClip(inset: geometry.safeAreaInsets.top))
+            .clipShape(ScrollTopSafeAreaClip(inset: clipTop))
         }
     }
 

@@ -142,6 +142,11 @@ jobs:
           SIGNED_READY: ${{ steps.signing.outputs.ready }}
         shell: bash
         run: |
+          CURRENT_MAIN=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
+          if [[ "$CURRENT_MAIN" != "$GITHUB_SHA" ]]; then
+            echo "A newer commit superseded this build; keeping its artifacts without replacing the release."
+            exit 0
+          fi
           if [[ "$SIGNED_READY" == "true" ]]; then
             IPA_PATH="build/ipa/Moonlight-v${APP_VERSION}.ipa"
             RELEASE_NOTE="本版本为已签名 IPA。构建与验证记录：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
