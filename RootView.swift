@@ -304,7 +304,12 @@ struct RootView: View {
                 if model.selectedTab == .discover && !discoveryQuery.isEmpty { await model.mediaStore.searchDiscover(discoveryQuery) }
                 else { await model.refresh(model.selectedTab) }
             }
-        case .sources: model.selectedTab = .discover; discoverySourcesPresented = true
+        case .sources:
+            model.selectedTab = .discover
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                discoverySourcesPresented = true
+            }
         case .layout:
             model.selectedTab = .discover
             let old = UserDefaults.standard.integer(forKey: "discover_columns")
@@ -469,6 +474,7 @@ private enum HoldDestination: Identifiable {
 private struct UniversalHoldScope: ViewModifier {
     let target: BackgroundTarget
     @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismissPresentation
     @ObservedObject private var interactions = InteractionPreferences.shared
     @State private var menu: ActiveLongPressMenu?
     @State private var heldTarget: BackgroundTarget?
@@ -528,7 +534,7 @@ private struct UniversalHoldScope: ViewModifier {
                         }
                     }
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { destination = nil } } }
-                }.presentationDragIndicator(.visible)
+                }.universalLongPress(target: .settings).presentationDragIndicator(.visible)
             }
     }
 
@@ -543,10 +549,10 @@ private struct UniversalHoldScope: ViewModifier {
         case .gestures: destination = .guide
         case .menuSettings: destination = .menus
         default:
-            let hadPanel = destination != nil
             destination = nil
+            dismissPresentation()
             Task { @MainActor in
-                if hadPanel { try? await Task.sleep(nanoseconds: 350_000_000) }
+                try? await Task.sleep(nanoseconds: 350_000_000)
                 model.send(command, context: (heldTarget ?? target).rawValue)
             }
         }
@@ -827,7 +833,7 @@ struct QuickActionsPanel: View {
         NavigationStack {
             List {
                 Section("已配置的更多操作") {
-                    ForEach(Array(InteractionPreferences.shared.actions("media").dropFirst(4))) { action in
+                    ForEach(InteractionPreferences.shared.actions("media").filter { $0.mediaAction == nil }) { action in
                         Button {
                             if let media = action.mediaAction {
                                 switch media {
@@ -1283,9 +1289,8 @@ private struct MediaEntryCard: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if entry.kind == .image, let url = entry.remoteURL, url.isFileURL,
-           let image = UIImage(contentsOfFile: url.path) {
-            Image(uiImage: image).resizable().scaledToFill()
+        if entry.kind == .image, let url = entry.remoteURL, url.isFileURL {
+            LocalMediaImage(url: url, fill: true)
         } else if entry.kind == .video, let url = entry.remoteURL, url.isFileURL {
             LocalVideoPoster(url: url)
         } else if let url = entry.coverURL {
