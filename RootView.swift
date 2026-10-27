@@ -1515,30 +1515,32 @@ private struct MediaPlayerView: View {
     @State private var player: AVPlayer?
 
     var body: some View {
-        NavigationStack {
+        ZStack {
+            Color.black.ignoresSafeArea()
             Group {
                 if entry.kind == .embed, let url = entry.embedURL {
                     WebEmbedView(url: url)
-                } else if entry.kind == .video, let url = entry.remoteURL {
-                    VideoPlayer(player: player ?? AVPlayer(url: url))
-                        .onAppear { player = AVPlayer(url: url); player?.play() }
-                        .onDisappear { player?.pause() }
-                } else if entry.kind == .image, let url = entry.remoteURL, url.isFileURL,
-                          let image = UIImage(contentsOfFile: url.path) {
-                    Image(uiImage: image).resizable().scaledToFit()
-                } else if let url = entry.remoteURL ?? entry.coverURL {
-                    AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView() }
+                } else if entry.kind == .video, let player {
+                    FillVideoPlayer(player: player, showsControls: true)
+                } else if entry.kind == .video {
+                    ProgressView().tint(.white)
+                } else if entry.kind == .image, let url = entry.remoteURL {
+                    FullBleedImage(url: url)
+                } else if let url = entry.coverURL ?? entry.remoteURL {
+                    FullBleedImage(url: url)
                 } else {
                     EmptyPanel(title: "无法打开内容", detail: "这个条目没有可用的媒体地址。", symbol: "exclamationmark.triangle")
+                        .padding(24)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.black)
-            .navigationTitle(entry.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if entry.kind != .embed, let url = entry.remoteURL, ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-                    ToolbarItem(placement: .topBarTrailing) {
+            .ignoresSafeArea()
+            VStack {
+                HStack(spacing: 12) {
+                    Button("关闭") { dismiss() }
+                    Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if entry.kind != .embed, let url = entry.remoteURL,
+                       ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                         Button {
                             Task { await model.mediaStore.downloadDirectFile(entry) }
                         } label: {
@@ -1546,21 +1548,66 @@ private struct MediaPlayerView: View {
                             else { Image(systemName: "arrow.down.to.line") }
                         }.accessibilityLabel("下载")
                     }
+                    Button { onShareToMoments(); dismiss() } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }.accessibilityLabel("朋友圈")
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { onShareToMoments(); dismiss() } label: { Label("朋友圈", systemImage: "square.and.arrow.up") }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { dismiss() }
-                }
+                .padding(12)
+                .foregroundStyle(.white)
+                .background(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom))
+                Spacer()
+            }
+        }
+        .preferredColorScheme(.dark)
+        .task(id: entry.id) {
+            if entry.kind == .video, let url = entry.remoteURL {
+                player = AVPlayer(url: url)
+                player?.play()
             }
         }
         .onAppear {
             MoonlightOrientationDelegate.playerAllowsLandscape = !model.portraitPlaybackOnly
         }
         .onDisappear {
+            player?.pause(); player = nil
             MoonlightOrientationDelegate.playerAllowsLandscape = false
         }
+    }
+}
+
+struct FillVideoPlayer: UIViewControllerRepresentable {
+    let player: AVPlayer
+    var showsControls = false
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.videoGravity = .resizeAspectFill
+        controller.showsPlaybackControls = showsControls
+        controller.view.backgroundColor = .black
+        return controller
+    }
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        if controller.player !== player { controller.player = player }
+        controller.videoGravity = .resizeAspectFill
+        controller.showsPlaybackControls = showsControls
+    }
+}
+
+struct FullBleedImage: View {
+    let url: URL
+    var body: some View {
+        GeometryReader { geometry in
+            Group {
+                if url.isFileURL { LocalMediaImage(url: url, fill: true) }
+                else {
+                    AsyncImage(url: url) { image in image.resizable().scaledToFill() }
+                        placeholder: { ProgressView().tint(.white) }
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
+        .background(.black)
     }
 }
 
@@ -2202,9 +2249,9 @@ private struct LibraryView: View {
             return model.mediaStore.items.filter { model.mediaStore.folderAssignments[$0.id] == selectedFolderID }
         }
         switch filter {
-        case "收藏": model.mediaStore.items.filter(\.isFavorite)
-        case "下载": model.mediaStore.items.filter { $0.source == "download" }
-        default: model.mediaStore.items
+        case "收藏": return model.mediaStore.items.filter(\.isFavorite)
+        case "下载": return model.mediaStore.items.filter { $0.source == "download" }
+        default: return model.mediaStore.items
         }
     }
 

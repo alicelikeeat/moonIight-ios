@@ -169,7 +169,7 @@ struct ReelsView: View {
             } else {
                 VerticalReelsPager(entries: entries, favoriteIDs: Set(model.mediaStore.items.filter(\.isFavorite).map(\.id)), index: $index, scenePhase: actionEntry == nil ? scenePhase : .inactive, muted: muted, autoAdvance: autoAdvance, photoSeconds: photoSeconds,
                     onOptions: { actionEntry = $0 }, onFavorite: { model.mediaStore.toggleFavorite($0) }, onNext: next)
-                    .ignoresSafeArea(edges: .bottom)
+                    .ignoresSafeArea()
                     .accessibilityIdentifier("vertical-reels-pager")
             }
             HStack(spacing: 10) {
@@ -326,22 +326,21 @@ private struct ReelPage: View {
     @State private var playbackStatus = "缓冲中"
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Color.black
+            Color.black.ignoresSafeArea()
             Group {
                 if entry.kind == .embed, let url = entry.embedURL, active {
                     WebEmbedView(url: url, scrolling: false)
                 } else if entry.kind == .video, let player {
-                    VideoPlayer(player: player)
+                    FillVideoPlayer(player: player)
                         .onReceive(player.publisher(for: \.timeControlStatus)) { status in
                             playbackStatus = status == .playing ? "正在播放" : status == .waitingToPlayAtSpecifiedRate ? "缓冲中" : "已暂停"
                         }
                 } else if entry.kind == .image, let url = entry.remoteURL {
-                    if url.isFileURL { LocalMediaImage(url: url) }
-                    else { AsyncImage(url: url) { image in image.resizable().scaledToFit() } placeholder: { ProgressView().tint(.white) } }
+                    FullBleedImage(url: url)
                 } else if let cover = entry.coverURL {
-                    AsyncImage(url: cover) { image in image.resizable().scaledToFit() } placeholder: { ProgressView().tint(.white) }
+                    FullBleedImage(url: cover)
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).ignoresSafeArea()
             if entry.kind != .embed {
                 CardGestureSurface(onTap: toggle, onHoldBegan: { _ in onOptions(entry) }, onHoldMoved: { _ in }, onHoldEnded: {},
                     onDoubleTap: { if !entry.isFavorite { onFavorite(entry) } })
