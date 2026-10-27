@@ -139,7 +139,9 @@ struct GestureHelpView: View {
     }
 }
 
-enum ReelsSource: String { case library, sources }
+enum ReelsSource: Equatable {
+    case library, sources, folder(String)
+}
 
 struct ReelsView: View {
     let source: ReelsSource
@@ -160,7 +162,8 @@ struct ReelsView: View {
                 VStack(spacing: 18) {
                     if loading { ProgressView().tint(.white) }
                     Text(loading ? "正在读取内容…" : "还没有可以播放的内容").foregroundStyle(.white)
-                    Text(source == .library ? "先在库中导入图片或视频。" : "在发现中启用内容源后重试。").foregroundStyle(.white.opacity(0.7))
+                    Text(source == .sources ? "在发现中启用内容源后重试。" : "先在库中导入图片或视频，并移入此文件夹。")
+                        .foregroundStyle(.white.opacity(0.7))
                     Button("重新加载") { Task { await load() } }
                 }.frame(maxHeight: .infinity)
             } else {
@@ -173,7 +176,7 @@ struct ReelsView: View {
                 Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 24, height: 24) }
                     .accessibilityLabel("关闭抖音模式")
                     .accessibilityIdentifier("reels-close")
-                Text(source == .library ? "库 · 抖音模式" : "内容源 · 抖音模式").font(.subheadline.bold())
+                Text(reelsTitle).font(.subheadline.bold())
                 Spacer()
                 Text(entries.isEmpty ? "" : "\(index + 1) / \(entries.count)").font(.caption.monospacedDigit()).accessibilityIdentifier("reels-position")
                 Button { muted.toggle() } label: { Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill") }
@@ -198,15 +201,27 @@ struct ReelsView: View {
                 .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
         }
     }
+    private var reelsTitle: String {
+        switch source {
+        case .library: "库 · 抖音模式"
+        case .sources: "内容源 · 抖音模式"
+        case .folder(let id): "\(model.mediaStore.folders.first(where: { $0.id == id })?.name ?? "文件夹") · 抖音模式"
+        }
+    }
     private func next() {
         guard !entries.isEmpty else { return }
         if index < entries.count - 1 { withAnimation { index += 1 } }
-        else if source == .library { withAnimation { index = 0 } }
+        else if source != .sources { withAnimation { index = 0 } }
         else { Task { await load(append: true); if index < entries.count - 1 { index += 1 } else if !entries.isEmpty { index = 0 } } }
     }
     private func load(append: Bool = false) async {
         guard !loading else { return }; loading = true; defer { loading = false }
         if source == .library { entries = model.mediaStore.items; index = min(index, max(0, entries.count - 1)); return }
+        if case .folder(let folderID) = source {
+            entries = model.mediaStore.items.filter { model.mediaStore.folderAssignments[$0.id] == folderID }
+            index = min(index, max(0, entries.count - 1))
+            return
+        }
         if !append && !model.mediaStore.discoverItems.isEmpty { entries = model.mediaStore.discoverItems.shuffled(); return }
         await model.mediaStore.refreshDiscover()
         let incoming = model.mediaStore.discoverItems.shuffled()
@@ -269,6 +284,7 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
             entry.isFavorite = parent.favoriteIDs.contains(entry.id)
             return ReelPage(entry: entry, active: value == parent.index, scenePhase: parent.scenePhase,
                      muted: parent.muted, autoAdvance: parent.autoAdvance, photoSeconds: parent.photoSeconds,
+                     loopsCurrentPage: parent.entries.count == 1,
                      onOptions: parent.onOptions, onFavorite: parent.onFavorite, onNext: parent.onNext)
         }
         func page(_ value: Int) -> ReelHost {
@@ -301,6 +317,7 @@ private struct ReelPage: View {
     let muted: Bool
     let autoAdvance: Bool
     let photoSeconds: Double
+    let loopsCurrentPage: Bool
     let onOptions: (MediaEntry) -> Void
     let onFavorite: (MediaEntry) -> Void
     let onNext: () -> Void
@@ -357,7 +374,8 @@ private struct ReelPage: View {
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { note in
             guard active, scenePhase == .active, let item = note.object as? AVPlayerItem, item === player?.currentItem else { return }
             if paused { player?.seek(to: .zero); return }
-            if autoAdvance { onNext() } else { player?.seek(to: .zero); player?.play() }
+            if autoAdvance && !loopsCurrentPage { onNext() }
+            else { player?.seek(to: .zero); player?.play() }
         }
     }
     private func toggle() { paused.toggle(); if paused { player?.pause() } else { player?.play() } }

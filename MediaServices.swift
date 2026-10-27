@@ -63,6 +63,17 @@ struct MediaEntry: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+struct LibraryFolder: Codable, Identifiable, Hashable, Sendable {
+    var id: String = UUID().uuidString
+    var name: String
+    var createdAt: Date = .now
+}
+
+private struct LibraryOrganization: Codable {
+    var folders: [LibraryFolder]
+    var assignments: [String: String]
+}
+
 struct MediaSource: Codable, Identifiable, Hashable, Sendable {
     var id: String
     var name: String
@@ -423,6 +434,8 @@ enum SecureSettings {
 @MainActor
 final class MediaStore: ObservableObject {
     @Published private(set) var items: [MediaEntry] = []
+    @Published private(set) var folders: [LibraryFolder] = []
+    @Published private(set) var folderAssignments: [String: String] = [:]
     @Published private(set) var discoverItems: [MediaEntry] = []
     @Published private(set) var searchResults: [MediaEntry] = []
     @Published private(set) var isRefreshing = false
@@ -448,6 +461,7 @@ final class MediaStore: ObservableObject {
     private var youtubeAPIKey: String
     private let defaults = UserDefaults.standard
     private let itemURL: URL
+    private let organizationURL: URL
 
     init() {
         youtubeAPIKey = SecureSettings.read("youtube_api_key") ?? ""
@@ -455,6 +469,7 @@ final class MediaStore: ObservableObject {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         itemURL = directory.appendingPathComponent("moonlight-media.json")
+        organizationURL = directory.appendingPathComponent("moonlight-library-folders.json")
         if let data = try? Data(contentsOf: itemURL),
            let decoded = try? JSONDecoder().decode([MediaEntry].self, from: data) {
             items = decoded
@@ -476,9 +491,18 @@ final class MediaStore: ObservableObject {
                            platform: "test", source: "ui-test")
             }
             items = fixtures
+            items[0].isFavorite = true
+            items[1].source = "download"
             discoverItems = fixtures
         }
         #endif
+        if let data = try? Data(contentsOf: organizationURL),
+           let saved = try? JSONDecoder().decode(LibraryOrganization.self, from: data) {
+            folders = saved.folders
+            let knownFolders = Set(saved.folders.map(\.id))
+            let knownItems = Set(items.map(\.id))
+            folderAssignments = saved.assignments.filter { knownItems.contains($0.key) && knownFolders.contains($0.value) }
+        }
     }
 
     var youtubeKeyConfigured: Bool { !youtubeAPIKey.isEmpty }
@@ -718,6 +742,49 @@ final class MediaStore: ObservableObject {
         notice = "已加入库。"
     }
 
+    func folderID(for entry: MediaEntry) -> String? { folderAssignments[entry.id] }
+
+    func items(in folder: LibraryFolder) -> [MediaEntry] {
+        items.filter { folderAssignments[$0.id] == folder.id }
+    }
+
+    @discardableResult
+    func createFolder(named name: String) -> LibraryFolder? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { notice = "请输入文件夹名称。"; return nil }
+        guard !folders.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            notice = "同名文件夹已存在。"; return nil
+        }
+        let folder = LibraryFolder(name: trimmed)
+        folders.append(folder)
+        persistFolders()
+        return folder
+    }
+
+    func renameFolder(_ folder: LibraryFolder, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        guard !folders.contains(where: { $0.id != folder.id && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            notice = "同名文件夹已存在。"; return
+        }
+        folders[index].name = trimmed
+        persistFolders()
+    }
+
+    func deleteFolder(_ folder: LibraryFolder) {
+        folders.removeAll { $0.id == folder.id }
+        folderAssignments = folderAssignments.filter { $0.value != folder.id }
+        persistFolders()
+    }
+
+    func moveItems(_ ids: Set<String>, to folder: LibraryFolder?) {
+        guard folder == nil || folders.contains(where: { $0.id == folder?.id }) else { return }
+        let known = Set(items.map(\.id))
+        for id in ids where known.contains(id) { folderAssignments[id] = folder?.id }
+        persistFolders()
+        notice = folder.map { "已移入“\($0.name)”。" } ?? "已移出文件夹。"
+    }
+
     func importImage(_ data: Data, title: String) {
         importMedia(data, title: title, kind: .image, fileExtension: "jpg")
     }
@@ -808,6 +875,7 @@ final class MediaStore: ObservableObject {
     func delete(_ entry: MediaEntry) {
         let deleted = items.filter { $0.id == entry.id }
         items.removeAll { $0.id == entry.id }
+        folderAssignments.removeValue(forKey: entry.id)
         let mediaDirectory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true).standardizedFileURL
         let prefix = mediaDirectory.path + "/"
         for item in deleted {
@@ -817,6 +885,7 @@ final class MediaStore: ObservableObject {
             try? FileManager.default.removeItem(at: url)
         }
         persist()
+        persistFolders()
     }
 
     private func merge(_ incoming: [MediaEntry]) {
@@ -835,6 +904,11 @@ final class MediaStore: ObservableObject {
     private func persist() {
         guard let data = try? JSONEncoder().encode(items) else { return }
         try? data.write(to: itemURL, options: .atomic)
+    }
+
+    private func persistFolders() {
+        guard let data = try? JSONEncoder().encode(LibraryOrganization(folders: folders, assignments: folderAssignments)) else { return }
+        try? data.write(to: organizationURL, options: .atomic)
     }
 }
 

@@ -279,6 +279,65 @@ final class ScrollGestureTests: XCTestCase {
     }
 
     @MainActor
+    func testLibraryFolderKeepsReelsInsideItsContents() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        XCTAssertTrue(app.navigationBars["库"].waitForExistence(timeout: 5))
+        app.buttons["新建文件夹"].tap()
+        let name = app.alerts.textFields["文件夹名称"]
+        XCTAssertTrue(name.waitForExistence(timeout: 3))
+        name.typeText("测试片单")
+        app.alerts.buttons["创建"].tap()
+        XCTAssertTrue(app.staticTexts["文件夹还是空的"].waitForExistence(timeout: 3))
+        app.buttons["全部内容"].tap()
+        app.buttons["选择"].tap()
+        let first = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        first.tap()
+        app.buttons["移至文件夹"].tap()
+        app.buttons["测试片单"].tap()
+        let folder = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library-folder-")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 3))
+        folder.tap()
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).count, 1)
+        app.buttons["播放此文件夹"].tap()
+        let position = app.staticTexts["reels-position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 5))
+        XCTAssertEqual(position.label, "1 / 1")
+        app.swipeUp()
+        XCTAssertEqual(position.label, "1 / 1", "Folder playback escaped into the rest of the library")
+        app.buttons["关闭抖音模式"].tap()
+        app.terminate(); app.launch()
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        let savedFolder = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "library-folder-")).firstMatch
+        XCTAssertTrue(savedFolder.waitForExistence(timeout: 5))
+        savedFolder.tap()
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).count, 1)
+    }
+
+    @MainActor
+    func testFavoriteAndDownloadFiltersUseCardsAndCanDelete() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        let category = app.segmentedControls.firstMatch
+        XCTAssertTrue(category.waitForExistence(timeout: 5))
+        for (name, cardID) in [("收藏", "media-card-scroll-fixture-0"), ("下载", "media-card-scroll-fixture-1")] {
+            category.buttons[name].tap()
+            let card = app.descendants(matching: .any).matching(identifier: cardID).firstMatch
+            XCTAssertTrue(card.waitForExistence(timeout: 3), "\(name) should use the normal library card")
+            app.buttons["选择"].tap()
+            card.tap()
+            XCTAssertTrue(app.buttons["删除"].isEnabled)
+            app.buttons["删除"].tap()
+            XCTAssertFalse(card.exists, "\(name) card was not deleted")
+            app.buttons["取消"].tap()
+        }
+    }
+
+    @MainActor
     func testNativeSliderSwitchesPages() {
         let app = launch(discover: false, flags: ["--slider-ui-tests"])
         let bar = app.segmentedControls["navigation-slider"]
