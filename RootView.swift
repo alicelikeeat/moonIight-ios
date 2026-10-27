@@ -123,7 +123,7 @@ private struct HomeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "月光", subtitle: "为你留一段安静的时间", symbol: "moon.stars.fill")
+            PageHeader(title: "月淡", subtitle: "为你留一段安静的时间", symbol: "moon.stars.fill")
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -736,7 +736,7 @@ private struct MomentAttachmentPreview: View {
             } else { attachmentFallback.frame(height: 210) }
             LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 5) {
-                Text(entry.platform == "bili" ? "哔哩哔哩" : entry.platform == "youtube" ? "YouTube" : "月光库")
+                Text(entry.platform == "bili" ? "哔哩哔哩" : entry.platform == "youtube" ? "YouTube" : "月淡库")
                     .font(.caption.weight(.semibold))
                 Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(2)
             }.foregroundStyle(.white).padding(12)
