@@ -409,7 +409,9 @@ private final class DiscoveryFeedParser: NSObject, XMLParserDelegate {
     var entries: [MediaEntry] = []
     private var insideItem = false
     private var textStack: [String] = []
-    private var title = "", author = "", link = "", media = "", cover = "", videoID = ""
+    private var title = "", author = "", link = "", media = "", cover = "", videoID = "", mediaType = ""
+    private var channelCover = ""
+    private var inChannelImage = false
 
     init(source: MediaSource) { self.source = source }
 
@@ -417,11 +419,16 @@ private final class DiscoveryFeedParser: NSObject, XMLParserDelegate {
         textStack.append("")
         let local = name.components(separatedBy: ":").last?.lowercased() ?? name
         if local == "item" || local == "entry" {
-            insideItem = true; title = ""; author = ""; link = ""; media = ""; cover = ""; videoID = ""
+            insideItem = true; title = ""; author = ""; link = ""; media = ""; cover = ""; videoID = ""; mediaType = ""
         }
-        guard insideItem else { return }
+        guard insideItem else {
+            if name.lowercased() == "itunes:image" { channelCover = attributes["href"] ?? attributes["url"] ?? channelCover }
+            if local == "image" { inChannelImage = true }
+            return
+        }
         if local == "enclosure" || (local == "link" && attributes["rel"] == "enclosure") {
             media = attributes["url"] ?? attributes["href"] ?? media
+            mediaType = attributes["type"] ?? mediaType
         } else if local == "link", let href = attributes["href"], attributes["rel"] == nil || attributes["rel"] == "alternate" {
             link = href
         } else if local == "thumbnail" || name.lowercased() == "itunes:image" {
@@ -443,8 +450,12 @@ private final class DiscoveryFeedParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName qName: String?) {
         let value = (textStack.popLast() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !textStack.isEmpty { textStack[textStack.count - 1] += value }
-        guard insideItem else { return }
         let local = name.components(separatedBy: ":").last?.lowercased() ?? name
+        guard insideItem else {
+            if local == "url", inChannelImage { channelCover = value }
+            if local == "image" { inChannelImage = false }
+            return
+        }
         switch local {
         case "title": if title.isEmpty { title = value }
         case "link": if !value.isEmpty { link = value }
@@ -455,10 +466,11 @@ private final class DiscoveryFeedParser: NSObject, XMLParserDelegate {
             let raw = !media.isEmpty ? media : link
             guard let url = DiscoveryAPI.safeURL(raw) else { return }
             var entry = PlatformResolver.resolve(url.absoluteString) ?? DiscoveryAPI.directEntry(url, title: title)
+            if !media.isEmpty, mediaType.hasPrefix("audio/") || mediaType.hasPrefix("video/") { entry.kind = .video; entry.embedURL = nil }
             if !videoID.isEmpty, let resolved = PlatformResolver.resolve("https://www.youtube.com/watch?v=\(videoID)") { entry = resolved }
             entry.title = title.isEmpty ? source.name : title
             entry.author = author.isEmpty ? source.name : author
-            entry.coverURL = DiscoveryAPI.safeURL(cover) ?? entry.coverURL
+            entry.coverURL = DiscoveryAPI.safeURL(cover) ?? entry.coverURL ?? DiscoveryAPI.safeURL(channelCover)
             entry.source = source.id
             if source.kind == "rss" { entry.platform = "rss" }
             entries.append(entry)

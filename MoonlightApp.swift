@@ -8,7 +8,7 @@ struct MoonlightApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model)
+            RootView().environmentObject(model).environmentObject(BackgroundStore.shared)
         }
     }
 }

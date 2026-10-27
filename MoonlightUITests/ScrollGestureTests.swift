@@ -2,11 +2,12 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
-    private func launch(discover: Bool, singleColumn: Bool = false) -> XCUIApplication {
+    private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--scroll-ui-tests"]
         if discover { app.launchArguments.append("--test-discover") }
         if singleColumn { app.launchArguments.append("--single-column") }
+        if backgrounds { app.launchArguments.append("--background-ui-tests") }
         app.launch()
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         let exists = card.waitForExistence(timeout: 15)
@@ -32,13 +33,23 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertFalse(app.buttons["关闭"].exists, "Scrolling opened the player")
         XCTAssertFalse(app.buttons["打开全部操作"].exists, "Scrolling opened the long-press ring")
 
-        // Reverse direction from the same card to detect a stuck recognizer.
-        let reverseStart = card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-        let reverseBefore = card.frame.minY
+        // A fast flick can move the original card outside the viewport. Begin
+        // the reverse drag on a fully visible card, away from system bars.
+        let viewport = app.scrollViews[discover ? "feed-scroll-discover" : "feed-scroll-home"].frame
+        var reverseCard = card
+        let cards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).allElementsBoundByIndex
+        for candidate in cards {
+            if candidate.isHittable, candidate.frame.minY > viewport.minY + 10, candidate.frame.maxY < viewport.maxY - 76 {
+                reverseCard = candidate; break
+            }
+        }
+        print("Forward card before: \(before), after: \(card.frame); reverse card: \(reverseCard.frame); viewport: \(viewport)")
+        let reverseStart = reverseCard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        let reverseBefore = reverseCard.frame.minY
         reverseStart.press(forDuration: 0.01,
                            thenDragTo: reverseStart.withOffset(CGVector(dx: 0, dy: 100)),
                            withVelocity: velocity, thenHoldForDuration: 0.15)
-        XCTAssertGreaterThan(card.frame.minY - reverseBefore, 30)
+        XCTAssertGreaterThan(reverseCard.frame.minY - reverseBefore, 30)
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
         XCTAssertFalse(app.buttons["关闭"].exists)
     }
@@ -89,5 +100,27 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["discover-sources"].tap()
         for _ in 0..<5 { if toggle.isHittable { break }; scroll.swipeUp() }
         XCTAssertEqual(toggle.value as? String, "1")
+    }
+
+    @MainActor
+    func testBackgroundImagesVideosAndEditorKeepCardScrolling() {
+        let app = launch(discover: false, backgrounds: true)
+        XCTAssertTrue(app.staticTexts["背景测试就绪"].waitForExistence(timeout: 20))
+        app.buttons["我"].tap()
+        app.buttons["settings-entry"].tap()
+        app.buttons["backgrounds-entry"].tap()
+        app.buttons["background-target-page.home"].tap()
+        let video = app.buttons["使用这个视频背景"].firstMatch
+        for _ in 0..<5 { if video.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(video.isHittable)
+        video.tap()
+        app.buttons["首页"].tap()
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        let before = card.frame.minY
+        let start = card.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -130)), withVelocity: .slow, thenHoldForDuration: 0.15)
+        XCTAssertGreaterThan(before - card.frame.minY, 40)
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
     }
 }

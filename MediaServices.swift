@@ -552,6 +552,7 @@ final class MediaStore: ObservableObject {
     }
 
     private func isFromEnabledSource(_ entry: MediaEntry) -> Bool {
+        if entry.source.hasPrefix("custom-") { return enabledSources.contains { $0.enabled && $0.id == entry.source } }
         if enabledSources.contains(where: { $0.id == entry.source }) {
             return enabledSources.contains { $0.enabled && $0.id == entry.source }
         }

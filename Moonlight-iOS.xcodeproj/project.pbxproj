@@ -4,6 +4,10 @@
 	classes = {};
 	objectVersion = 60;
 	objects = {
+        A1000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backgrounds.swift; sourceTree = "<group>"; };
+        A1000000000000000000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSettingsView.swift; sourceTree = "<group>"; };
+        A10000000000000000000027 = {isa = PBXBuildFile; fileRef = A1000000000000000000000B; };
+        A10000000000000000000028 = {isa = PBXBuildFile; fileRef = A1000000000000000000000C; };
         A10000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverySources.swift; sourceTree = "<group>"; };
         A1000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverySourcesView.swift; sourceTree = "<group>"; };
         A10000000000000000000025 = {isa = PBXBuildFile; fileRef = A10000000000000000000009; };
@@ -24,10 +28,10 @@
         A10000000000000000000007 /* MediaServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaServices.swift; sourceTree = "<group>"; };
 		A10000000000000000000008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A10000000000000000000003 /* Moonlight.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Moonlight.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A10000000000000000000004 /* Sources */ = {isa = PBXGroup; children = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A1000000000000000000000A,); name = Sources; sourceTree = "<group>"; };
+		A10000000000000000000004 /* Sources */ = {isa = PBXGroup; children = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000C,); name = Sources; sourceTree = "<group>"; };
 		A10000000000000000000005 = {isa = PBXGroup; children = (A10000000000000000000004, A10000000000000000000006, B10000000000000000000001,); sourceTree = "<group>"; };
 		A10000000000000000000006 /* Products */ = {isa = PBXGroup; children = (A10000000000000000000003, B10000000000000000000002,); name = Products; sourceTree = "<group>"; };
-		A10000000000000000000010 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000021, A10000000000000000000022, A10000000000000000000023, A10000000000000000000025, A10000000000000000000026,); runOnlyForDeploymentPostprocessing = 0; };
+		A10000000000000000000010 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000021, A10000000000000000000022, A10000000000000000000023, A10000000000000000000025, A10000000000000000000026, A10000000000000000000027, A10000000000000000000028,); runOnlyForDeploymentPostprocessing = 0; };
 		A10000000000000000000012 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000024,); runOnlyForDeploymentPostprocessing = 0; };
 		A10000000000000000000011 /* Moonlight */ = {isa = PBXNativeTarget; buildConfigurationList = A10000000000000000000030; buildPhases = (A10000000000000000000010, A10000000000000000000012,); buildRules = (); dependencies = (); name = Moonlight; productName = Moonlight; productReference = A10000000000000000000003; productType = "com.apple.product-type.application"; };
 		A10000000000000000000021 /* MoonlightApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001; };

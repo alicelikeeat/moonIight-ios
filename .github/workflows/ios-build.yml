@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: macos-latest
@@ -118,6 +120,25 @@ jobs:
           name: Moonlight-iOS-IPA-v${{ steps.version.outputs.marketing }}
           path: build/ipa/Moonlight-v${{ steps.version.outputs.marketing }}.ipa
           if-no-files-found: error
+      - name: Publish versioned IPA download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ steps.version.outputs.marketing }}
+          SIGNED_READY: ${{ steps.signing.outputs.ready }}
+        shell: bash
+        run: |
+          if [[ "$SIGNED_READY" == "true" ]]; then
+            IPA_PATH="build/ipa/Moonlight-v${APP_VERSION}.ipa"
+            RELEASE_NOTE="本版本为已签名 IPA。构建与验证记录：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          else
+            IPA_PATH="build/unsigned-ipa/Moonlight-v${APP_VERSION}.ipa"
+            RELEASE_NOTE="本版本为未签名 IPA，请在手机端签名后安装。构建与验证记录：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          fi
+          if gh release view "v${APP_VERSION}" >/dev/null 2>&1; then
+            gh release upload "v${APP_VERSION}" "$IPA_PATH" --clobber
+          else
+            gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes "$RELEASE_NOTE"
+          fi
       - name: Upload simulator app when signing is absent
         if: steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4

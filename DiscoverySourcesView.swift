@@ -101,6 +101,7 @@ struct DiscoverySourcePanel: View {
                 }.padding(16)
             }.scrollIndicators(.hidden).accessibilityIdentifier("source-sidebar-scroll")
         }
+        .background { OptionalMediaBackground(target: .sourcePanel) }
         .background(.regularMaterial)
         .sheet(item: $editingSource) { SourceConfigurationView(source: $0) }
         .sheet(isPresented: $addingSource) { AddDiscoverySourceView() }

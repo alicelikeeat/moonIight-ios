@@ -14,6 +14,7 @@ private enum MoonStyle {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var backgroundStore: BackgroundStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedMedia: PhotosPickerItem?
     @State private var selectedImage: Image?
@@ -24,7 +25,7 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color(uiColor: .systemBackground), MoonStyle.background], startPoint: .top, endPoint: .bottom)
+            PageBackground(target: .page(for: model.selectedTab))
                 .ignoresSafeArea()
             ZStack(alignment: .bottom) {
                 Group {
@@ -119,8 +120,20 @@ struct RootView: View {
             }
         }
         .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
+            #endif
             guard !ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") else { return }
             await model.mediaStore.refreshDiscover()
+        }
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") {
+                Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
+                    .font(.caption2).foregroundStyle(.secondary).allowsHitTesting(false)
+                    .accessibilityIdentifier("background-test-state")
+            }
+            #endif
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
@@ -186,7 +199,8 @@ struct RootView: View {
                         }
                         .foregroundStyle(model.selectedTab == tab ? MoonStyle.accent : .secondary)
                         .frame(width: diameter, height: diameter)
-                        .moonGlassCircle()
+                        .moonGlassCircle(.button(for: tab))
+                        .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.7) : .clear, lineWidth: 1.5).allowsHitTesting(false))
                     }
                     .buttonStyle(.plain).accessibilityLabel(tab.title)
                 }
@@ -254,7 +268,7 @@ private struct LongPressRingOverlay: View {
                             Image(systemName: "ellipsis")
                                 .font(.system(size: 21, weight: .bold))
                                 .frame(width: 54, height: 54)
-                                .moonGlassCircle()
+                                .moonGlassCircle(.ringCenter)
                                 .accessibilityLabel("打开全部操作")
                         }
                         .buttonStyle(.plain)
@@ -294,7 +308,7 @@ private struct LongPressRingOverlay: View {
                     .font(.system(size: 9, weight: .medium)).lineLimit(1).minimumScaleFactor(0.75)
             }
             .frame(width: 58, height: 58)
-            .moonGlassCircle()
+            .moonGlassCircle(.ring(for: action))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
@@ -368,6 +382,8 @@ private struct QuickActionsPanel: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .pageBackground(.actionsPanel)
             .navigationTitle("更多操作")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("完成") { dismiss() } } }
@@ -448,11 +464,11 @@ private struct DiscoverView: View {
             PageHeader(title: "发现", subtitle: "探索新的内容源", symbol: "safari") {
                 Button(action: onSources) {
                     Image(systemName: "line.3.horizontal.decrease").font(.headline)
-                        .frame(width: 42, height: 42).moonGlassCircle()
+                        .frame(width: 42, height: 42).moonGlassCircle(.discoverSources)
                 }.buttonStyle(.plain).accessibilityLabel("内容源").accessibilityIdentifier("discover-sources")
                 Button { columns = columns == 1 ? 2 : 1 } label: {
                     Image(systemName: columns == 1 ? "rectangle.grid.2x2" : "rectangle.grid.1x2")
-                        .font(.headline).frame(width: 42, height: 42).moonGlassCircle()
+                        .font(.headline).frame(width: 42, height: 42).moonGlassCircle(.discoverLayout)
                 }.buttonStyle(.plain).accessibilityLabel("切换单双列")
             }
             HStack(spacing: 10) {
@@ -922,15 +938,7 @@ private struct MomentsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 ZStack(alignment: .bottomLeading) {
                     PhotosPicker(selection: $coverSelection, matching: .any(of: [.images, .videos])) {
-                        Group {
-                            if isMoviePath(coverPath), !coverPath.isEmpty {
-                                LocalVideoPoster(url: URL(fileURLWithPath: coverPath))
-                            } else if !coverPath.isEmpty, let image = UIImage(contentsOfFile: coverPath) {
-                                Image(uiImage: image).resizable().scaledToFill()
-                            } else {
-                                LinearGradient(colors: [Color.indigo.opacity(0.72), MoonStyle.accent.opacity(0.68)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                            }
-                        }
+                        ProfileBackgroundMedia(target: .cover)
                         .frame(height: 190).frame(maxWidth: .infinity).clipped()
                         .overlay(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom))
                         .overlay(alignment: .topLeading) {
@@ -944,15 +952,7 @@ private struct MomentsView: View {
                     .buttonStyle(.plain)
                     HStack(spacing: 12) {
                         PhotosPicker(selection: $avatarSelection, matching: .any(of: [.images, .videos])) {
-                            Group {
-                                if !avatarPath.isEmpty, let image = UIImage(contentsOfFile: avatarPath) {
-                                    Image(uiImage: image).resizable().scaledToFill()
-                                } else {
-                                    Image(systemName: isMoviePath(avatarPath) ? "play.fill" : "person.crop.circle.fill")
-                                        .font(.system(size: 36)).foregroundStyle(.white).frame(width: 60, height: 60)
-                                        .background(MoonStyle.accent.gradient, in: Circle())
-                                }
-                            }
+                            ProfileBackgroundMedia(target: .avatar)
                             .frame(width: 60, height: 60).clipShape(Circle())
                             .overlay(Circle().strokeBorder(.white, lineWidth: 2))
                         }.buttonStyle(.plain).accessibilityLabel("更换朋友圈头像")
@@ -981,14 +981,8 @@ private struct MomentsView: View {
                                     if moment.isVirtual {
                                         Image(systemName: "person.crop.circle.fill").resizable().scaledToFit()
                                             .foregroundStyle(MoonStyle.accent)
-                                    } else if isMoviePath(avatarPath), !avatarPath.isEmpty {
-                                        Image(systemName: "play.circle.fill").resizable().scaledToFit()
-                                            .foregroundStyle(MoonStyle.accent)
-                                    } else if !avatarPath.isEmpty, let avatar = UIImage(contentsOfFile: avatarPath) {
-                                        Image(uiImage: avatar).resizable().scaledToFill()
                                     } else {
-                                        Image(systemName: "person.crop.circle.fill").resizable().scaledToFit()
-                                            .foregroundStyle(MoonStyle.accent)
+                                        ProfileBackgroundMedia(target: .avatar, paused: true)
                                     }
                                 }
                                 .frame(width: 38, height: 38).clipShape(Circle())
@@ -1045,8 +1039,8 @@ private struct MomentsView: View {
                         .transition(.opacity)
                     }
                 }
-            }.padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 24)
-        }.scrollIndicators(.hidden)
+            }.padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 96)
+        }.scrollIndicators(.hidden).pageBackground(.moments)
             .task(id: avatarSelection) {
                 if let path = await saveProfileMedia(avatarSelection, name: "avatar") { avatarPath = path }
             }
@@ -1066,17 +1060,10 @@ private struct MomentsView: View {
 
 @MainActor
 private func saveProfileMedia(_ item: PhotosPickerItem?, name: String) async -> String? {
-    guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return nil }
-    let type = item.supportedContentTypes.first
-    let ext = type?.preferredFilenameExtension ?? (type?.conforms(to: .movie) == true ? "mov" : "jpg")
-    let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("profile", isDirectory: true)
-    do {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("\(name)-\(UUID().uuidString).\(ext)")
-        try data.write(to: url, options: .atomic)
-        return url.path
-    } catch { return nil }
+    guard let item else { return nil }
+    let store = BackgroundStore.shared
+    guard let asset = try? await store.importSelection(item, for: name == "avatar" ? .avatar : .cover) else { return nil }
+    return store.url(for: asset).path
 }
 
 private struct MomentAttachmentPreview: View {
@@ -1138,6 +1125,7 @@ private struct MomentComposerView: View {
                 }
             }
             .navigationTitle("发布动态")
+            .scrollContentBackground(.hidden).pageBackground(.composer)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -1181,27 +1169,15 @@ private struct MeView: View {
                         NavigationLink { SettingsView() } label: {
                             Image(systemName: "gearshape").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
                         }
+                        .accessibilityIdentifier("settings-entry")
                     }
-                    if !coverPath.isEmpty, let cover = UIImage(contentsOfFile: coverPath) {
-                        Image(uiImage: cover).resizable().scaledToFill()
-                            .frame(height: 150).frame(maxWidth: .infinity).clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 24))
-                    } else if isMoviePath(coverPath), !coverPath.isEmpty {
-                        let url = URL(fileURLWithPath: coverPath)
-                        VideoPlayer(player: AVPlayer(url: url)).frame(height: 150)
+                    if !coverPath.isEmpty {
+                        ProfileBackgroundMedia(target: .cover).frame(height: 150)
                             .clipShape(RoundedRectangle(cornerRadius: 24))
                     }
                     NavigationLink { ProfileEditView() } label: {
                         HStack(spacing: 14) {
-                            if !avatarPath.isEmpty, let avatar = UIImage(contentsOfFile: avatarPath) {
-                                Image(uiImage: avatar).resizable().scaledToFill().frame(width: 58, height: 58).clipShape(Circle())
-                            } else if isMoviePath(avatarPath) {
-                                Image(systemName: "play.circle.fill").font(.system(size: 54)).foregroundStyle(MoonStyle.accent)
-                            } else if let selectedImage {
-                                selectedImage.resizable().scaledToFill().frame(width: 58, height: 58).clipShape(Circle())
-                            } else {
-                                Image(systemName: "person.crop.circle.fill").font(.system(size: 58)).foregroundStyle(MoonStyle.accent)
-                            }
+                            ProfileBackgroundMedia(target: .avatar).frame(width: 58, height: 58).clipShape(Circle())
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(displayName).font(.title3.bold()).foregroundStyle(.primary)
                                 Text(profileBio).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
@@ -1225,9 +1201,10 @@ private struct MeView: View {
                     }
                     .buttonStyle(.plain).padding(.horizontal, 14)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
-                }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 24)
+                }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
+            .pageBackground(.me)
             .toolbar(.hidden, for: .navigationBar)
         }
     }
@@ -1274,6 +1251,7 @@ private struct VirtualFriendsView: View {
                 }
             }
         }.navigationTitle("朋友").navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden).pageBackground(.friends)
     }
 }
 
@@ -1294,6 +1272,7 @@ private struct VirtualMessagesView: View {
                 }
             }
         }.navigationTitle("消息").navigationBarTitleDisplayMode(.inline)
+            .scrollContentBackground(.hidden).pageBackground(.messages)
     }
 }
 
@@ -1312,43 +1291,28 @@ private struct ProfileEditView: View {
                 TextField("签名", text: $profileBio, axis: .vertical).lineLimit(1...3)
             }
             Section("个人头像") {
-                if !avatarPath.isEmpty, let image = UIImage(contentsOfFile: avatarPath) {
-                    Image(uiImage: image).resizable().scaledToFill().frame(width: 88, height: 88).clipShape(Circle())
-                }
+                ProfileBackgroundMedia(target: .avatar).frame(width: 88, height: 88).clipShape(Circle())
                 PhotosPicker(selection: $avatar, matching: .any(of: [.images, .videos])) {
                     Label("选择头像照片或视频", systemImage: "person.crop.circle")
                 }
+                NavigationLink("调整头像画面与背景") { BackgroundEditorView(target: .avatar) }
             }
             Section("顶部封面") {
-                if !coverPath.isEmpty, let image = UIImage(contentsOfFile: coverPath) {
-                    Image(uiImage: image).resizable().scaledToFill().frame(height: 130).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 16))
-                } else if isMoviePath(coverPath), !coverPath.isEmpty {
-                    let url = URL(fileURLWithPath: coverPath)
-                    VideoPlayer(player: AVPlayer(url: url)).frame(height: 130).clipShape(RoundedRectangle(cornerRadius: 16))
-                }
+                ProfileBackgroundMedia(target: .cover).frame(height: 130).clipShape(RoundedRectangle(cornerRadius: 16))
                 PhotosPicker(selection: $cover, matching: .any(of: [.images, .videos])) {
                     Label("选择顶部封面照片或视频", systemImage: "rectangle.fill")
                 }
+                NavigationLink("调整顶部横幅画面与背景") { BackgroundEditorView(target: .cover) }
             }
-        }.navigationTitle("编辑资料")
+        }.navigationTitle("编辑资料").scrollContentBackground(.hidden).pageBackground(.profile)
             .task(id: avatar) { await save(avatar, key: "avatar") }
             .task(id: cover) { await save(cover, key: "cover") }
     }
 
     @MainActor
     private func save(_ item: PhotosPickerItem?, key: String) async {
-        guard let item, let data = try? await item.loadTransferable(type: Data.self) else { return }
-        let type = item.supportedContentTypes.first
-        let isVideo = type?.conforms(to: .movie) == true
-        let ext = type?.preferredFilenameExtension ?? (isVideo ? "mov" : "jpg")
-        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("profile", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appendingPathComponent("\(key)-\(UUID().uuidString).\(ext)")
-            try data.write(to: url, options: .atomic)
-            if key == "avatar" { avatarPath = url.path } else { coverPath = url.path }
-        } catch { }
+        guard let path = await saveProfileMedia(item, name: key) else { return }
+        if key == "avatar" { avatarPath = path } else { coverPath = path }
     }
 }
 
@@ -1484,6 +1448,10 @@ private struct LibraryView: View {
     }
 
     var body: some View {
+        ScrollView { libraryContent }.scrollIndicators(.hidden).pageBackground(.library)
+    }
+
+    private var libraryContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Button(selectionMode ? "取消" : "全选") {
@@ -1546,6 +1514,7 @@ private struct LibraryView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 24)
+        .padding(.bottom, 72)
         .animation(.easeOut(duration: 0.22), value: visibleItems.map(\.id))
     }
 }
@@ -1555,6 +1524,14 @@ private struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("外观与媒体") {
+                    NavigationLink { BackgroundSettingsView() } label: {
+                        Label("背景与按键", systemImage: "photo.on.rectangle.angled")
+                    }
+                    .accessibilityIdentifier("backgrounds-entry")
+                    Text("各页面、底部按键、长按圆环、头像和横幅支持图片或视频背景。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("播放") {
                     Toggle("视频保持竖屏", isOn: $model.portraitPlaybackOnly)
                     Text(model.portraitPlaybackOnly ? "关闭后，视频播放页可跟随设备方向横屏。" : "横屏仅在视频播放页启用，其他页面保持竖屏。")
@@ -1626,7 +1603,7 @@ private struct SettingsView: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(MoonStyle.background)
+            .pageBackground(.settings)
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
         }
@@ -1717,13 +1694,8 @@ private func glassTabContainer<Content: View>(@ViewBuilder content: () -> Conten
 
 private extension View {
     @ViewBuilder
-    func moonGlassCircle() -> some View {
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: Circle())
-        } else {
-            self.background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1))
-        }
+    func moonGlassCircle(_ target: BackgroundTarget = .allButtons) -> some View {
+        modifier(MediaGlassCircle(target: target))
     }
 }
 
