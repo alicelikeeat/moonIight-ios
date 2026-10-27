@@ -478,13 +478,20 @@ private struct MediaEntryCard: View {
     let onSelect: () -> Void
     @State private var suppressNextTap = false
     @State private var longPressActivated = false
+    @State private var recentVerticalSwipeAt: TimeInterval?
     @State private var lastFingerPoint: CGPoint?
     @State private var lastFingerTime: TimeInterval?
 
     var body: some View {
         Button {
-            if suppressNextTap { suppressNextTap = false }
-            else { onSelect() }
+            if suppressNextTap {
+                suppressNextTap = false
+            } else if let recentVerticalSwipeAt,
+                      Date.timeIntervalSinceReferenceDate - recentVerticalSwipeAt < 0.7 {
+                self.recentVerticalSwipeAt = nil
+            } else {
+                onSelect()
+            }
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 ZStack(alignment: .topLeading) {
@@ -527,6 +534,17 @@ private struct MediaEntryCard: View {
         }
         .buttonStyle(.plain)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 6, coordinateSpace: .local)
+                .onChanged { value in
+                    guard !longPressActivated else { return }
+                    let vertical = abs(value.translation.height)
+                    let horizontal = abs(value.translation.width)
+                    if vertical >= 6 && vertical > horizontal * 1.12 {
+                        recentVerticalSwipeAt = Date.timeIntervalSinceReferenceDate
+                    }
+                }
+        )
         .simultaneousGesture(
             LongPressGesture(minimumDuration: 0.48, maximumDistance: 8)
                 .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("moonlight-root")))
@@ -1440,6 +1458,7 @@ private struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("手势说明") {
+                    Label("静止抬起才算点按；纵向滑动优先滚动", systemImage: "arrow.up.and.down")
                     Label("点按媒体卡片：打开播放或预览", systemImage: "hand.tap")
                     Label("长按媒体卡片：手指周围展开最多 4 个快捷键", systemImage: "hand.point.up.left")
                     Label("松开后圆环保留；点按按钮执行，或在设置中启用拖动选择", systemImage: "circle.grid.2x2")
