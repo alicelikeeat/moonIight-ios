@@ -39,6 +39,28 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: "moonlight-root")
+        .overlay {
+            GeometryReader { geometry in
+                if let menu = model.activeLongPressMenu {
+                    LongPressRingOverlay(
+                        menu: menu,
+                        actions: model.longPressQuickActions,
+                        style: model.longPressStyle,
+                        selectionMode: model.longPressSelectionMode,
+                        onAction: { performQuickAction($0, for: menu.entry) },
+                        onMore: {
+                            model.activeLongPressMenu = nil
+                            activeSheet = .quickActions(menu.entry)
+                        },
+                        onDismiss: { model.activeLongPressMenu = nil }
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .transition(.opacity)
+                }
+            }
+            .animation(.spring(response: 0.28, dampingFraction: 0.76), value: model.activeLongPressMenu != nil)
+        }
         .fullScreenCover(item: $activePlayer) { entry in
             MediaPlayerView(entry: entry) {
                 activePlayer = nil
@@ -56,6 +78,18 @@ struct RootView: View {
                 }
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+            case .quickActions(let entry):
+                QuickActionsPanel(entry: entry, onPlay: {
+                    activeSheet = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        activePlayer = entry
+                    }
+                })
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            case .share(let entry):
+                ActivityShareSheet(items: [entry.remoteURL?.absoluteString ?? entry.title])
             }
         }
         .task { await model.mediaStore.refreshDiscover() }
@@ -76,9 +110,29 @@ struct RootView: View {
     }
 
     private func refreshable<Content: View>(_ tab: AppTab, @ViewBuilder content: () -> Content) -> some View {
-        ScrollView { content().frame(maxWidth: .infinity) }
+        GeometryReader { geometry in
+            ScrollView(.vertical) {
+                content()
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: geometry.size.height, alignment: .topLeading)
+            }
             .scrollIndicators(.hidden)
             .refreshable { await model.refresh(tab) }
+        }
+    }
+
+    private func performQuickAction(_ action: QuickActionID, for entry: MediaEntry) {
+        model.activeLongPressMenu = nil
+        switch action {
+        case .play:
+            activePlayer = entry
+        case .favorite:
+            model.mediaStore.toggleFavorite(entry)
+        case .library:
+            model.mediaStore.appendToLibrary([entry])
+        case .share:
+            activeSheet = .share(entry)
+        }
     }
 
     private var tabBar: some View {
@@ -108,11 +162,174 @@ struct RootView: View {
 
 private enum RootSheet: Identifiable {
     case composer(MediaEntry?)
+    case quickActions(MediaEntry)
+    case share(MediaEntry)
     var id: String {
         switch self {
         case .composer(let entry): "composer-\(entry?.id ?? "new")"
+        case .quickActions(let entry): "quick-actions-\(entry.id)"
+        case .share(let entry): "share-\(entry.id)"
         }
     }
+}
+
+private struct LongPressRingOverlay: View {
+    let menu: ActiveLongPressMenu
+    let actions: [QuickActionID]
+    let style: LongPressStyle
+    let selectionMode: LongPressSelectionMode
+    let onAction: (QuickActionID) -> Void
+    let onMore: () -> Void
+    let onDismiss: () -> Void
+
+    var body: some View {
+        GeometryReader { geometry in
+            let center = clamped(menu.location, to: geometry.size)
+            ZStack {
+                Color.black.opacity(menu.fingerDown ? 0.035 : 0.015)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onDismiss)
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 14).onEnded { value in
+                            if value.translation.height > 28 { onDismiss() }
+                        }
+                    )
+                Circle()
+                    .strokeBorder(.white.opacity(0.46), lineWidth: 1)
+                    .background(Circle().fill(.ultraThinMaterial.opacity(0.42)))
+                    .frame(width: 146, height: 146)
+                    .position(center)
+                glassTabContainer {
+                    ZStack {
+                        ForEach(Array(actions.prefix(4).enumerated()), id: \.element) { item in
+                            let index = item.offset
+                            let action = item.element
+                            let offset = actionOffsets(for: actions.count)[index]
+                            ringButton(action)
+                                .scaleEffect(isHighlighted(index, center: center) ? 1.14 : 1)
+                                .position(x: center.x + offset.x, y: center.y + offset.y)
+                        }
+                        Button(action: onMore) {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 21, weight: .bold))
+                                .frame(width: 54, height: 54)
+                                .moonGlassCircle()
+                                .accessibilityLabel("打开全部操作")
+                        }
+                        .buttonStyle(.plain)
+                        .position(center)
+                    }
+                }
+                .scaleEffect(style == .droplet ? menu.dropletScale : 1)
+                .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.62), value: menu.dropletScale)
+            }
+            .onChange(of: menu.fingerDown) { fingerDown in
+                guard !fingerDown, selectionMode == .drag,
+                      let index = hitAction(at: menu.fingerLocation, center: center, count: min(4, actions.count)) else { return }
+                onAction(actions[index])
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func ringButton(_ action: QuickActionID) -> some View {
+        let isFavorite = menu.entry.isFavorite
+        return Button { onAction(action) } label: {
+            VStack(spacing: 3) {
+                Image(systemName: action == .favorite && isFavorite ? "heart.slash.fill" : action.symbol)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(action == .favorite && isFavorite ? "取消收藏" : action == .play ? "打开" : action == .favorite ? "收藏" : action == .library ? "加入库" : "分享")
+                    .font(.system(size: 9, weight: .medium)).lineLimit(1).minimumScaleFactor(0.75)
+            }
+            .frame(width: 58, height: 58)
+            .moonGlassCircle()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(action.title)
+    }
+
+    private func actionOffsets(for count: Int) -> [CGPoint] {
+        switch count {
+        case 1: [CGPoint(x: 0, y: -66)]
+        case 2: [CGPoint(x: -54, y: 0), CGPoint(x: 54, y: 0)]
+        case 3: [CGPoint(x: -48, y: -42), CGPoint(x: 48, y: -42), CGPoint(x: 0, y: 62)]
+        default: [CGPoint(x: -48, y: -48), CGPoint(x: 48, y: -48), CGPoint(x: 48, y: 48), CGPoint(x: -48, y: 48)]
+        }
+    }
+
+    private func clamped(_ point: CGPoint, to size: CGSize) -> CGPoint {
+        CGPoint(x: min(max(point.x, 82), max(82, size.width - 82)),
+                y: min(max(point.y, 92), max(92, size.height - 92)))
+    }
+
+    private func isHighlighted(_ index: Int, center: CGPoint) -> Bool {
+        guard menu.fingerDown, index < min(4, actions.count) else { return false }
+        let offset = actionOffsets(for: actions.count)[index]
+        return selectionMode == .drag && hypot(menu.fingerLocation.x - center.x - offset.x, menu.fingerLocation.y - center.y - offset.y) < 36
+    }
+
+    private func hitAction(at point: CGPoint, center: CGPoint, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        return actionOffsets(for: count).enumerated().first { item in
+            hypot(point.x - center.x - item.element.x, point.y - center.y - item.element.y) < 34
+        }?.offset
+    }
+}
+
+private struct QuickActionsPanel: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let entry: MediaEntry
+    let onPlay: () -> Void
+    @State private var confirmDelete = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("播放与分享") {
+                    Button(action: onPlay) { Label("播放 / 打开", systemImage: "play.fill") }
+                    ShareLink(item: entry.remoteURL?.absoluteString ?? entry.title, preview: SharePreview(entry.title)) {
+                        Label("分享", systemImage: "square.and.arrow.up")
+                    }
+                }
+                Section("保存与整理") {
+                    Button {
+                        model.mediaStore.toggleFavorite(entry)
+                    } label: {
+                        Label(entry.isFavorite ? "取消收藏" : "收藏", systemImage: entry.isFavorite ? "heart.slash" : "heart")
+                    }
+                    Button {
+                        model.mediaStore.appendToLibrary([entry])
+                    } label: {
+                        Label("加入库", systemImage: "plus.rectangle.on.folder")
+                    }
+                }
+                Section("危险操作") {
+                    Button(role: .destructive) { confirmDelete = true } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                }
+            }
+            .navigationTitle("更多操作")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("完成") { dismiss() } } }
+        }
+        .confirmationDialog("从库中删除这条内容？", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                model.mediaStore.delete(entry)
+                dismiss()
+            }
+            Button("取消", role: .cancel) { }
+        }
+    }
+}
+
+private struct ActivityShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) { }
 }
 
 private struct HomeView: View {
@@ -260,11 +477,7 @@ private struct MediaEntryCard: View {
     var isSelected = false
     let onSelect: () -> Void
     @State private var suppressNextTap = false
-    @State private var showPopover = false
-    @State private var showGlassMenu = false
     @State private var longPressActivated = false
-    @State private var fingerPoint: CGPoint = .zero
-    @State private var dropletScale: CGFloat = 1
     @State private var lastFingerPoint: CGPoint?
     @State private var lastFingerTime: TimeInterval?
 
@@ -313,93 +526,63 @@ private struct MediaEntryCard: View {
             .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
         }
         .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.5, maximumDistance: 10)
-                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+            LongPressGesture(minimumDuration: 0.48, maximumDistance: 8)
+                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("moonlight-root")))
                 .onChanged { value in
-                    guard case .second(true, let dragValue) = value else { return }
-                    if let dragValue { updateLongPressLocation(dragValue.location) }
-                    if !longPressActivated { activateLongPress() }
+                    guard case .second(true, let dragValue) = value, let dragValue else { return }
+                    if !longPressActivated {
+                        activateLongPress(at: dragValue.location)
+                    } else {
+                        updateLongPressLocation(dragValue.location)
+                    }
                 }
-                .onEnded { _ in
+                .onEnded { value in
+                    if case .second(true, let dragValue) = value, let dragValue,
+                       var menu = model.activeLongPressMenu {
+                        updateLongPressLocation(dragValue.location)
+                        menu = model.activeLongPressMenu ?? menu
+                        menu.fingerDown = false
+                        model.activeLongPressMenu = menu
+                    }
+                    let didActivate = longPressActivated
                     longPressActivated = false
                     lastFingerPoint = nil
                     lastFingerTime = nil
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) { dropletScale = 1 }
+                    if didActivate {
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 700_000_000)
+                            suppressNextTap = false
+                        }
+                    }
                 }
         )
-        .overlay {
-            GeometryReader { geometry in
-                if showGlassMenu {
-                    let x = min(max(fingerPoint.x, 104), max(104, geometry.size.width - 104))
-                    let y = min(max(fingerPoint.y, 38), max(38, geometry.size.height - 38))
-                    ZStack {
-                        Color.clear.contentShape(Rectangle()).onTapGesture { showGlassMenu = false }
-                        glassTabContainer {
-                            HStack(spacing: 4) {
-                                quickAction("play.fill", title: "打开") { onSelect() }
-                                quickAction(entry.isFavorite ? "heart.slash" : "heart", title: entry.isFavorite ? "取消收藏" : "收藏") {
-                                    model.mediaStore.toggleFavorite(entry)
-                                }
-                                quickAction("plus", title: "加入库") { model.mediaStore.appendToLibrary([entry]) }
-                                Button { showGlassMenu = false } label: {
-                                    Image(systemName: "xmark").font(.caption.bold()).frame(width: 38, height: 38).moonGlassCircle()
-                                }.buttonStyle(.plain).accessibilityLabel("关闭快捷菜单")
-                            }.padding(7)
-                        }
-                        .scaleEffect(model.longPressStyle == .droplet ? dropletScale : 1)
-                        .position(x: x, y: y)
-                    }
-                    .transition(.scale(scale: 0.82).combined(with: .opacity))
-                    .zIndex(10)
-                }
-            }
-            .animation(.spring(response: 0.28, dampingFraction: 0.72), value: showGlassMenu)
-        }
-        .confirmationDialog("快捷操作", isPresented: $showPopover, titleVisibility: .visible) {
-            Button("打开") { onSelect() }
-            Button(entry.isFavorite ? "取消收藏" : "收藏") { model.mediaStore.toggleFavorite(entry) }
-            Button("加入库") { model.mediaStore.appendToLibrary([entry]) }
-            Button("删除", role: .destructive) { model.mediaStore.delete(entry) }
-            Button("取消", role: .cancel) { }
-        }
     }
 
-    private func activateLongPress() {
+    private func activateLongPress(at location: CGPoint) {
         longPressActivated = true
         suppressNextTap = true
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.72)) {
-            switch model.longPressStyle {
-            case .popover: showPopover = true
-            case .trackingGlass, .droplet: showGlassMenu = true
-            }
-        }
+        lastFingerPoint = location
+        lastFingerTime = Date.timeIntervalSinceReferenceDate
+        model.activeLongPressMenu = ActiveLongPressMenu(entry: entry, location: location, fingerLocation: location)
     }
 
     private func updateLongPressLocation(_ location: CGPoint) {
         let now = Date.timeIntervalSinceReferenceDate
-        fingerPoint = location
+        guard var menu = model.activeLongPressMenu, menu.entry.id == entry.id else { return }
+        menu.fingerLocation = location
+        if model.longPressStyle != .popover { menu.location = location }
         if model.longPressStyle == .droplet, let previous = lastFingerPoint, let previousTime = lastFingerTime {
             let elapsed = max(0.01, now - previousTime)
             let speed = hypot(location.x - previous.x, location.y - previous.y) / elapsed
             withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.58)) {
-                dropletScale = min(1.32, max(0.78, 1 + speed / 1500))
+                menu.dropletScale = min(1.32, max(0.78, 1 + speed / 1500))
             }
         }
         lastFingerPoint = location
         lastFingerTime = now
-    }
-
-    private func quickAction(_ symbol: String, title: String, action: @escaping () -> Void) -> some View {
-        Button {
-            action()
-            showGlassMenu = false
-        } label: {
-            VStack(spacing: 3) {
-                Image(systemName: symbol).font(.system(size: 14, weight: .semibold))
-                Text(title).font(.system(size: 9, weight: .medium)).lineLimit(1)
-            }.frame(width: 48, height: 38).moonGlassCircle()
-        }.buttonStyle(.plain)
+        model.activeLongPressMenu = menu
     }
 
     @ViewBuilder
@@ -1220,9 +1403,23 @@ private struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("长按菜单") {
-                    Picker("交互方式", selection: $model.longPressStyle) {
+                    Picker("菜单样式", selection: $model.longPressStyle) {
                         ForEach(LongPressStyle.allCases) { style in Text(style.title).tag(style) }
                     }
+                    Picker("选择方式", selection: $model.longPressSelectionMode) {
+                        ForEach(LongPressSelectionMode.allCases) { mode in Text(mode.title).tag(mode) }
+                    }
+                }
+                Section("圆环快捷键（最多 4 个）") {
+                    ForEach(QuickActionID.allCases) { action in
+                        Toggle(action.title, isOn: Binding(
+                            get: { model.longPressQuickActions.contains(action) },
+                            set: { model.setQuickAction(action, enabled: $0) }
+                        ))
+                        .disabled(model.longPressQuickActions.count >= 4 && !model.longPressQuickActions.contains(action))
+                    }
+                    Text("松开只会保留圆环，不会误触。点按模式需再点圆环按钮；拖动模式可划到按钮上松开执行。“…”打开完整操作面板，删除只在面板中。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("虚拟好友") {
                     Toggle("自动生成朋友圈动态", isOn: $model.virtualActivityEnabled)
@@ -1244,8 +1441,10 @@ private struct SettingsView: View {
                 }
                 Section("手势说明") {
                     Label("点按媒体卡片：打开播放或预览", systemImage: "hand.tap")
-                    Label("长按媒体卡片：按上方设置显示快捷菜单", systemImage: "hand.point.up.left")
-                    Label("快捷菜单：打开、收藏、加入库；弹出菜单还可删除", systemImage: "circle.grid.2x2")
+                    Label("长按媒体卡片：手指周围展开最多 4 个快捷键", systemImage: "hand.point.up.left")
+                    Label("松开后圆环保留；点按按钮执行，或在设置中启用拖动选择", systemImage: "circle.grid.2x2")
+                    Label("圆环中心“…”：打开播放、分享、保存、整理和删除面板", systemImage: "ellipsis.circle")
+                    Label("点空白处或下滑：收起圆环", systemImage: "arrow.down")
                     Label("下拉首页或发现：刷新内容源", systemImage: "arrow.down")
                     Label("播放方向：可在播放设置中开启横屏", systemImage: "rectangle.landscape")
                 }

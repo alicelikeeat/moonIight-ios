@@ -618,8 +618,13 @@ final class MediaStore: ObservableObject {
     }
 
     func toggleFavorite(_ entry: MediaEntry) {
-        guard let index = items.firstIndex(where: { $0.id == entry.id }) else { return }
-        items[index].isFavorite.toggle()
+        if let index = items.firstIndex(where: { $0.identity == entry.identity }) {
+            items[index].isFavorite.toggle()
+        } else {
+            var saved = entry
+            saved.isFavorite = true
+            items.insert(saved, at: 0)
+        }
         persist()
     }
 
@@ -655,7 +660,6 @@ final class MediaStore: ObservableObject {
         try? data.write(to: itemURL, options: .atomic)
     }
 }
-
 
 
 

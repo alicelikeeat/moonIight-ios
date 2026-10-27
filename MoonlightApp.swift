@@ -25,6 +25,48 @@ final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+enum LongPressSelectionMode: String, CaseIterable, Identifiable {
+    case tap
+    case drag
+
+    var id: Self { self }
+    var title: String { self == .tap ? "松手后点按" : "跟随拖动选择" }
+}
+
+enum QuickActionID: String, CaseIterable, Identifiable {
+    case play
+    case favorite
+    case library
+    case share
+
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .play: "打开播放"
+        case .favorite: "收藏 / 取消收藏"
+        case .library: "加入库"
+        case .share: "分享"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .play: "play.fill"
+        case .favorite: "heart"
+        case .library: "plus"
+        case .share: "square.and.arrow.up"
+        }
+    }
+}
+
+struct ActiveLongPressMenu: Identifiable, Equatable {
+    var id: String { entry.id }
+    var entry: MediaEntry
+    var location: CGPoint
+    var fingerLocation: CGPoint
+    var fingerDown = true
+    var dropletScale: CGFloat = 1
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selectedTab: AppTab = .home
@@ -32,6 +74,13 @@ final class AppModel: ObservableObject {
     @Published var longPressStyle: LongPressStyle = .popover {
         didSet { UserDefaults.standard.set(longPressStyle.rawValue, forKey: "moonlight.longPressStyle") }
     }
+    @Published var longPressSelectionMode: LongPressSelectionMode = .tap {
+        didSet { UserDefaults.standard.set(longPressSelectionMode.rawValue, forKey: "moonlight.longPressSelectionMode") }
+    }
+    @Published var longPressQuickActions: [QuickActionID] = [.play, .favorite, .library, .share] {
+        didSet { UserDefaults.standard.set(longPressQuickActions.map(\.rawValue), forKey: "moonlight.longPressQuickActions") }
+    }
+    @Published var activeLongPressMenu: ActiveLongPressMenu?
     @Published var portraitPlaybackOnly = true {
         didSet { UserDefaults.standard.set(portraitPlaybackOnly, forKey: "moonlight.portraitPlaybackOnly") }
     }
@@ -71,8 +120,24 @@ final class AppModel: ObservableObject {
            let savedStyle = LongPressStyle(rawValue: rawValue) {
             longPressStyle = savedStyle
         }
+        if let rawValue = UserDefaults.standard.string(forKey: "moonlight.longPressSelectionMode"),
+           let savedMode = LongPressSelectionMode(rawValue: rawValue) {
+            longPressSelectionMode = savedMode
+        }
+        if let rawValues = UserDefaults.standard.stringArray(forKey: "moonlight.longPressQuickActions") {
+            longPressQuickActions = Array(rawValues.compactMap(QuickActionID.init(rawValue:)).prefix(4))
+        }
         if UserDefaults.standard.object(forKey: "moonlight.portraitPlaybackOnly") != nil {
             portraitPlaybackOnly = UserDefaults.standard.bool(forKey: "moonlight.portraitPlaybackOnly")
+        }
+    }
+
+    func setQuickAction(_ action: QuickActionID, enabled: Bool) {
+        if enabled {
+            guard !longPressQuickActions.contains(action), longPressQuickActions.count < 4 else { return }
+            longPressQuickActions.append(action)
+        } else {
+            longPressQuickActions.removeAll { $0 == action }
         }
     }
 
@@ -257,7 +322,6 @@ enum LongPressStyle: String, CaseIterable, Identifiable {
         }
     }
 }
-
 
 
 
