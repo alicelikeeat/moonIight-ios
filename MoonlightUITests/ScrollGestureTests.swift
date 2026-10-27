@@ -141,6 +141,27 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor func testHomeFastCardScroll() { assertCardScrolls(discover: false, velocity: .fast) }
 
     @MainActor
+    func testBottomPullRefreshUsesFeedPan() {
+        let app = launch(discover: true)
+        let scroll = app.scrollViews["feed-scroll-discover"]
+        let last = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-23").firstMatch
+        for _ in 0..<24 {
+            if last.isHittable { break }
+            scroll.swipeUp()
+        }
+        XCTAssertTrue(last.isHittable, "Could not reach the end of the discovery feed")
+        scroll.swipeUp()
+        let state = app.staticTexts["bottom-refresh-state-discover"]
+        XCTAssertEqual(state.value as? String, "0")
+        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+        start.press(forDuration: 0.01,
+                    thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20)),
+                    withVelocity: .slow, thenHoldForDuration: 0)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: state)], timeout: 6), .completed)
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
+    }
+
+    @MainActor
     func testConsecutiveCardFlicksKeepMoving() {
         let app = launch(discover: true)
         let viewport = app.frame.insetBy(dx: 10, dy: 100)
