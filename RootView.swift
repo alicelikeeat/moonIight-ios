@@ -50,6 +50,7 @@ struct RootView: View {
                         selectionMode: model.longPressSelectionMode,
                         onAction: { performQuickAction($0, for: menu.entry) },
                         onMore: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             model.activeLongPressMenu = nil
                             activeSheet = .quickActions(menu.entry)
                         },
@@ -122,6 +123,7 @@ struct RootView: View {
     }
 
     private func performQuickAction(_ action: QuickActionID, for entry: MediaEntry) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
         model.activeLongPressMenu = nil
         switch action {
         case .play:
@@ -181,10 +183,12 @@ private struct LongPressRingOverlay: View {
     let onAction: (QuickActionID) -> Void
     let onMore: () -> Void
     let onDismiss: () -> Void
+    @State private var ringAppeared = false
 
     var body: some View {
         GeometryReader { geometry in
             let center = clamped(menu.location, to: geometry.size)
+            let highlightedAction = dragHighlightedAction(center: center)
             ZStack {
                 Color.black.opacity(menu.fingerDown ? 0.035 : 0.015)
                     .contentShape(Rectangle())
@@ -198,6 +202,7 @@ private struct LongPressRingOverlay: View {
                     .strokeBorder(.white.opacity(0.46), lineWidth: 1)
                     .background(Circle().fill(.ultraThinMaterial.opacity(0.42)))
                     .frame(width: 146, height: 146)
+                    .scaleEffect(ringAppeared ? 1 : 0.72)
                     .position(center)
                 glassTabContainer {
                     ZStack {
@@ -220,13 +225,24 @@ private struct LongPressRingOverlay: View {
                         .position(center)
                     }
                 }
+                .scaleEffect(ringAppeared ? 1 : 0.72,
+                             anchor: UnitPoint(x: center.x / max(geometry.size.width, 1), y: center.y / max(geometry.size.height, 1)))
+                .opacity(ringAppeared ? 1 : 0)
                 .scaleEffect(style == .droplet ? menu.dropletScale : 1)
                 .animation(.interactiveSpring(response: 0.2, dampingFraction: 0.62), value: menu.dropletScale)
+                .animation(.interactiveSpring(response: 0.16, dampingFraction: 0.78), value: menu.location)
+            }
+            .onAppear {
+                withAnimation(.spring(response: 0.34, dampingFraction: 0.68)) { ringAppeared = true }
             }
             .onChange(of: menu.fingerDown) { fingerDown in
                 guard !fingerDown, selectionMode == .drag,
                       let index = hitAction(at: menu.fingerLocation, center: center, count: min(4, actions.count)) else { return }
                 onAction(actions[index])
+            }
+            .onChange(of: highlightedAction) { action in
+                guard action != nil else { return }
+                UISelectionFeedbackGenerator().selectionChanged()
             }
         }
         .accessibilityElement(children: .contain)
@@ -266,6 +282,12 @@ private struct LongPressRingOverlay: View {
         guard menu.fingerDown, index < min(4, actions.count) else { return false }
         let offset = actionOffsets(for: actions.count)[index]
         return selectionMode == .drag && hypot(menu.fingerLocation.x - center.x - offset.x, menu.fingerLocation.y - center.y - offset.y) < 36
+    }
+
+    private func dragHighlightedAction(center: CGPoint) -> QuickActionID? {
+        guard selectionMode == .drag, menu.fingerDown,
+              let index = hitAction(at: menu.fingerLocation, center: center, count: min(4, actions.count)) else { return nil }
+        return actions[index]
     }
 
     private func hitAction(at point: CGPoint, center: CGPoint, count: Int) -> Int? {
@@ -581,6 +603,9 @@ private struct MediaEntryCard: View {
     private func activateLongPress(at location: CGPoint) {
         longPressActivated = true
         suppressNextTap = true
+        let feedback = UIImpactFeedbackGenerator(style: .medium)
+        feedback.prepare()
+        feedback.impactOccurred()
         lastFingerPoint = location
         lastFingerTime = Date.timeIntervalSinceReferenceDate
         model.activeLongPressMenu = ActiveLongPressMenu(entry: entry, location: location, fingerLocation: location)
@@ -1460,7 +1485,7 @@ private struct SettingsView: View {
                 Section("手势说明") {
                     Label("静止抬起才算点按；纵向滑动优先滚动", systemImage: "arrow.up.and.down")
                     Label("点按媒体卡片：打开播放或预览", systemImage: "hand.tap")
-                    Label("长按媒体卡片：手指周围展开最多 4 个快捷键", systemImage: "hand.point.up.left")
+                    Label("长按有触感反馈和弹性展开；手指周围最多 4 个快捷键", systemImage: "hand.point.up.left")
                     Label("松开后圆环保留；点按按钮执行，或在设置中启用拖动选择", systemImage: "circle.grid.2x2")
                     Label("圆环中心“…”：打开播放、分享、保存、整理和删除面板", systemImage: "ellipsis.circle")
                     Label("点空白处或下滑：收起圆环", systemImage: "arrow.down")
