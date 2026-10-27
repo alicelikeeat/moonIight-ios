@@ -429,6 +429,17 @@ final class MediaStore: ObservableObject {
            let saved = try? JSONDecoder().decode([MediaSource].self, from: data) {
             enabledSources = saved
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") {
+            let fixtures = (0..<24).map { index in
+                MediaEntry(id: "scroll-fixture-\(index)", kind: .image,
+                           title: "Scroll fixture \(index)", author: "Gesture verification",
+                           platform: "test", source: "ui-test")
+            }
+            items = fixtures
+            discoverItems = fixtures
+        }
+        #endif
     }
 
     var youtubeKeyConfigured: Bool { !youtubeAPIKey.isEmpty }

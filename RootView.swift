@@ -93,7 +93,10 @@ struct RootView: View {
                 ActivityShareSheet(items: [entry.remoteURL?.absoluteString ?? entry.title])
             }
         }
-        .task { await model.mediaStore.refreshDiscover() }
+        .task {
+            guard !ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") else { return }
+            await model.mediaStore.refreshDiscover()
+        }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await model.runVirtualActivityLoop()
@@ -118,24 +121,8 @@ struct RootView: View {
                     .frame(minHeight: geometry.size.height, alignment: .topLeading)
             }
             .scrollIndicators(.hidden)
+            .accessibilityIdentifier("feed-scroll-\(tab.rawValue)")
             .refreshable { await model.refresh(tab) }
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 6, coordinateSpace: .local)
-                    .onChanged { value in
-                        let vertical = abs(value.translation.height)
-                        let horizontal = abs(value.translation.width)
-                        guard vertical >= 6, vertical > horizontal * 1.12 else { return }
-                        model.noteVerticalScrollGesture()
-                    }
-                    .onEnded { value in
-                        let vertical = abs(value.translation.height)
-                        let horizontal = abs(value.translation.width)
-                        if vertical >= 6, vertical > horizontal * 1.12 {
-                            model.noteVerticalScrollGesture()
-                        }
-                    },
-                including: .all
-            )
         }
     }
 
@@ -509,15 +496,124 @@ private struct DiscoverTile: View {
     }
 }
 
+// Keep card interactions outside SwiftUI's drag arbitration. The enclosing
+// UIScrollView owns pans; this surface only recognizes taps and stationary holds.
+private struct CardGestureSurface: UIViewRepresentable {
+    var onTap: () -> Void
+    var onHoldBegan: (CGPoint) -> Void
+    var onHoldMoved: (CGPoint) -> Void
+    var onHoldEnded: () -> Void
+
+    func makeUIView(context: Context) -> CardGestureView {
+        let view = CardGestureView()
+        updateUIView(view, context: context)
+        return view
+    }
+
+    func updateUIView(_ view: CardGestureView, context: Context) {
+        view.onTap = onTap
+        view.onHoldBegan = onHoldBegan
+        view.onHoldMoved = onHoldMoved
+        view.onHoldEnded = onHoldEnded
+    }
+
+    static func dismantleUIView(_ view: CardGestureView, coordinator: ()) {
+        view.cancelHold()
+    }
+}
+
+private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
+    var onTap: (() -> Void)?
+    var onHoldBegan: ((CGPoint) -> Void)?
+    var onHoldMoved: ((CGPoint) -> Void)?
+    var onHoldEnded: (() -> Void)?
+    private var holdActive = false
+    private let tap = UITapGestureRecognizer()
+    private let hold = UILongPressGestureRecognizer()
+
+    init() {
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        isAccessibilityElement = false
+        tap.addTarget(self, action: #selector(tapped(_:)))
+        hold.addTarget(self, action: #selector(held(_:)))
+        hold.minimumPressDuration = 0.48
+        hold.allowableMovement = 7
+        for recognizer in [tap, hold] {
+            recognizer.delegate = self
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesBegan = false
+            recognizer.delaysTouchesEnded = false
+            addGestureRecognizer(recognizer)
+        }
+        tap.require(toFail: hold)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private var enclosingScrollViews: [UIScrollView] {
+        var result: [UIScrollView] = []
+        var ancestor = superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView { result.append(scroll) }
+            ancestor = view.superview
+        }
+        return result
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // A tap must wait for the native scroll pan to fail. A hold must not
+        // impose that dependency: the scroll pan can win as soon as movement starts.
+        gestureRecognizer === tap && enclosingScrollViews.contains {
+            otherGestureRecognizer === $0.panGestureRecognizer
+        }
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        !enclosingScrollViews.contains { $0.isDragging || $0.isDecelerating }
+    }
+
+    @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended, !holdActive else { return }
+        onTap?()
+    }
+
+    @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            holdActive = true
+            onHoldBegan?(recognizer.location(in: self))
+        case .changed:
+            if holdActive { onHoldMoved?(recognizer.location(in: self)) }
+        case .ended:
+            if holdActive { onHoldMoved?(recognizer.location(in: self)) }
+            cancelHold()
+        case .cancelled, .failed:
+            cancelHold()
+        default:
+            break
+        }
+    }
+
+    func cancelHold() {
+        guard holdActive else { return }
+        holdActive = false
+        onHoldEnded?()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { cancelHold() }
+    }
+}
+
 private struct MediaEntryCard: View {
     @EnvironmentObject private var model: AppModel
     let entry: MediaEntry
     let height: CGFloat
     var isSelected = false
     let onSelect: () -> Void
-    @State private var suppressNextTap = false
-    @State private var longPressActivated = false
-    @State private var recentVerticalSwipeAt: TimeInterval?
     @State private var lastFingerPoint: CGPoint?
     @State private var lastFingerTime: TimeInterval?
 
@@ -561,71 +657,44 @@ private struct MediaEntryCard: View {
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
         .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .onTapGesture {
-            let now = Date.timeIntervalSinceReferenceDate
-            let parentSawVerticalSwipe = model.lastVerticalScrollGestureAt.map { now - $0 < 0.45 } ?? false
-            let cardSawVerticalSwipe = recentVerticalSwipeAt.map { now - $0 < 0.45 } ?? false
-            guard !suppressNextTap, !parentSawVerticalSwipe, !cardSawVerticalSwipe else {
-                recentVerticalSwipeAt = nil
-                return
+        .overlay {
+            GeometryReader { geometry in
+                let frame = geometry.frame(in: .named("moonlight-root"))
+                CardGestureSurface(
+                    onTap: onSelect,
+                    onHoldBegan: { point in
+                        activateLongPress(at: CGPoint(x: frame.minX + point.x, y: frame.minY + point.y))
+                    },
+                    onHoldMoved: { point in
+                        updateLongPressLocation(CGPoint(x: frame.minX + point.x, y: frame.minY + point.y))
+                    },
+                    onHoldEnded: finishLongPress
+                )
             }
-            onSelect()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(entry.title)
+        .accessibilityIdentifier("media-card-\(entry.id)")
         .accessibilityAddTraits(.isButton)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 6, coordinateSpace: .local)
-                .onChanged { value in
-                    guard !longPressActivated else { return }
-                    let vertical = abs(value.translation.height)
-                    let horizontal = abs(value.translation.width)
-                    if vertical >= 6 && vertical > horizontal * 1.12 {
-                        recentVerticalSwipeAt = Date.timeIntervalSinceReferenceDate
-                        model.noteVerticalScrollGesture()
-                    }
-                }
-        )
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.48, maximumDistance: 8)
-                .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named("moonlight-root")))
-                .onChanged { value in
-                    guard case .second(true, let dragValue) = value, let dragValue else { return }
-                    if !longPressActivated {
-                        activateLongPress(at: dragValue.location)
-                    } else {
-                        updateLongPressLocation(dragValue.location)
-                    }
-                }
-                .onEnded { value in
-                    if case .second(true, let dragValue) = value, let dragValue,
-                       var menu = model.activeLongPressMenu {
-                        updateLongPressLocation(dragValue.location)
-                        menu = model.activeLongPressMenu ?? menu
-                        menu.fingerDown = false
-                        model.activeLongPressMenu = menu
-                    }
-                    let didActivate = longPressActivated
-                    longPressActivated = false
-                    lastFingerPoint = nil
-                    lastFingerTime = nil
-                    if didActivate {
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 700_000_000)
-                            suppressNextTap = false
-                        }
-                    }
-                }
-        )
+        .accessibilityAction { onSelect() }
     }
 
     private func activateLongPress(at location: CGPoint) {
-        longPressActivated = true
-        suppressNextTap = true
         let feedback = UIImpactFeedbackGenerator(style: .medium)
         feedback.prepare()
         feedback.impactOccurred()
         lastFingerPoint = location
         lastFingerTime = Date.timeIntervalSinceReferenceDate
         model.activeLongPressMenu = ActiveLongPressMenu(entry: entry, location: location, fingerLocation: location)
+    }
+
+    private func finishLongPress() {
+        if var menu = model.activeLongPressMenu, menu.entry.id == entry.id {
+            menu.fingerDown = false
+            model.activeLongPressMenu = menu
+        }
+        lastFingerPoint = nil
+        lastFingerTime = nil
     }
 
     private func updateLongPressLocation(_ location: CGPoint) {

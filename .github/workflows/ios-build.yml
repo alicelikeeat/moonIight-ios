@@ -20,6 +20,19 @@ jobs:
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
           xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO build
+      - name: Run card scrolling UI tests
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -resultBundlePath build/ScrollGestureTests.xcresult -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+      - name: Upload gesture test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScrollGestureTests-v${{ steps.version.outputs.marketing }}
+          path: build/ScrollGestureTests.xcresult
+          if-no-files-found: ignore
       - name: Import Ad Hoc signing
         id: signing
         shell: bash
