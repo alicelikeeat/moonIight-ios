@@ -136,6 +136,20 @@ struct RootView: View {
             }
             #endif
         }
+        .overlay(alignment: .topTrailing) {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--async-discovery-ui-tests") {
+                VStack {
+                    Button("模拟异步内容") {
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 1_000_000_000)
+                            model.mediaStore.insertAsyncUITestEntry()
+                        }
+                    }.padding(12).background(.regularMaterial).accessibilityIdentifier("simulate-data-update")
+                }.padding(.top, 80)
+            }
+            #endif
+        }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             await model.runVirtualActivityLoop()
@@ -894,18 +908,25 @@ private struct MediaPlayerView: View {
 private struct WebEmbedView: UIViewRepresentable {
     let url: URL
 
+    final class Coordinator { var requestedURL: URL? }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.scrollView.isScrollEnabled = true
+        context.coordinator.requestedURL = url
         view.load(URLRequest(url: url))
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
-        if view.url != url { view.load(URLRequest(url: url)) }
+        if context.coordinator.requestedURL != url {
+            context.coordinator.requestedURL = url
+            view.load(URLRequest(url: url))
+        }
     }
 }
 

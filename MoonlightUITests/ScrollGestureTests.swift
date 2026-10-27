@@ -18,12 +18,13 @@ final class ScrollGestureTests: XCTestCase {
         if shown { dismiss.tap() }
     }
     @MainActor
-    private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false) -> XCUIApplication {
+    private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false, asyncUpdates: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--scroll-ui-tests"]
         if discover { app.launchArguments.append("--test-discover") }
         if singleColumn { app.launchArguments.append("--single-column") }
         if backgrounds { app.launchArguments.append("--background-ui-tests") }
+        if asyncUpdates { app.launchArguments.append("--async-discovery-ui-tests") }
         app.launch()
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         let exists = card.waitForExistence(timeout: 15)
@@ -159,5 +160,14 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["更换朋友圈横幅"].tap()
         attach(app, name: "review-profile-cover-picker")
         closeMediaPicker(app)
+    }
+
+    @MainActor
+    func testAsyncDiscoveryUpdatesWithoutSwitchingTabs() {
+        let app = launch(discover: true, asyncUpdates: true)
+        let incoming = app.descendants(matching: .any).matching(identifier: "media-card-async-source-item").firstMatch
+        XCTAssertFalse(incoming.exists)
+        app.buttons["simulate-data-update"].tap()
+        XCTAssertTrue(incoming.waitForExistence(timeout: 8), "MediaStore updates did not invalidate the discovery view")
     }
 }

@@ -483,6 +483,12 @@ final class MediaStore: ObservableObject {
 
     var youtubeKeyConfigured: Bool { !youtubeAPIKey.isEmpty }
 
+    #if DEBUG
+    func insertAsyncUITestEntry() {
+        discoverItems.insert(MediaEntry(id: "async-source-item", kind: .image, title: "异步到达的新内容", author: "UI verification", platform: "test", source: "ui-test"), at: 0)
+    }
+    #endif
+
     func setYouTubeAPIKey(_ key: String) {
         youtubeAPIKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
         youtubeAPIKeyDraft = youtubeAPIKey

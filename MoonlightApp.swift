@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Combine
 
 @main
 struct MoonlightApp: App {
@@ -70,7 +71,10 @@ struct ActiveLongPressMenu: Identifiable, Equatable {
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selectedTab: AppTab = .home
-    @Published var mediaStore = MediaStore()
+    @Published var mediaStore = MediaStore() {
+        didSet { observeMediaChanges() }
+    }
+    private var mediaUpdates: AnyCancellable?
     @Published var longPressStyle: LongPressStyle = .popover {
         didSet { UserDefaults.standard.set(longPressStyle.rawValue, forKey: "moonlight.longPressStyle") }
     }
@@ -109,6 +113,7 @@ final class AppModel: ObservableObject {
     }
 
     init() {
+        observeMediaChanges()
         let savedInterval = UserDefaults.standard.integer(forKey: "moonlight.virtualFriends.interval")
         if savedInterval > 0 { virtualIntervalMinutes = max(15, savedInterval) }
         virtualAIKeyDraft = SecureSettings.read(virtualAIProvider.keychainAccount) ?? ""
@@ -141,6 +146,12 @@ final class AppModel: ObservableObject {
             longPressSelectionMode = .tap
         }
         #endif
+    }
+
+    private func observeMediaChanges() {
+        mediaUpdates = mediaStore.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor [weak self] in self?.objectWillChange.send() }
+        }
     }
 
     func setQuickAction(_ action: QuickActionID, enabled: Bool) {
