@@ -66,6 +66,7 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .coordinateSpace(name: "moonlight-root")
+        .onChange(of: model.selectedTab) { _ in discoverySourcesPresented = false }
         .overlay {
             GeometryReader { geometry in
                 if let menu = model.activeLongPressMenu {
@@ -949,13 +950,13 @@ private struct MomentsView: View {
                             }.foregroundStyle(.white).padding(14)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .contentShape(Rectangle()).buttonStyle(.plain).accessibilityLabel("更换朋友圈横幅")
                     HStack(spacing: 12) {
                         PhotosPicker(selection: $avatarSelection, matching: .any(of: [.images, .videos])) {
                             ProfileBackgroundMedia(target: .avatar)
                             .frame(width: 60, height: 60).clipShape(Circle())
                             .overlay(Circle().strokeBorder(.white, lineWidth: 2))
-                        }.buttonStyle(.plain).accessibilityLabel("更换朋友圈头像")
+                        }.contentShape(Circle()).buttonStyle(.plain).accessibilityLabel("更换朋友圈头像")
                         VStack(alignment: .leading, spacing: 3) {
                             Text(displayName).font(.headline).foregroundStyle(.white)
                             Text("点击头像或横幅更换媒体").font(.caption).foregroundStyle(.white.opacity(0.82))
@@ -1236,7 +1237,7 @@ private struct VirtualFriendsView: View {
                                     EmptyPanel(title: "还没有动态", detail: "开启虚拟好友自动动态后，这里会显示其分享。", symbol: "person.crop.circle")
                                 }
                             }.padding(16)
-                        }.navigationTitle(name).navigationBarTitleDisplayMode(.inline)
+                        }.navigationTitle(name).navigationBarTitleDisplayMode(.inline).pageBackground(.friends)
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "person.crop.circle.fill").font(.system(size: 38))

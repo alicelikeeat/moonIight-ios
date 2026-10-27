@@ -4,6 +4,7 @@ import ImageIO
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 enum BackgroundTarget: String, Codable, CaseIterable, Identifiable {
     case allPages = "page.all", home = "page.home", discover = "page.discover", camera = "page.camera"
@@ -219,7 +220,7 @@ final class BackgroundStore: ObservableObject {
             defer { try? FileManager.default.removeItem(at: movie.url) }
             let name = "\(id).\(movie.url.pathExtension)"
             let destination = directory.appendingPathComponent(name)
-            try FileManager.default.copyItem(at: movie.url, to: destination)
+            try FileManager.default.moveItem(at: movie.url, to: destination)
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: destination))
             generator.appliesPreferredTrackTransform = true
             generator.maximumSize = CGSize(width: 1280, height: 1280)
@@ -232,12 +233,18 @@ final class BackgroundStore: ObservableObject {
             }
             asset = BackgroundAsset(id: id, fileName: name, posterName: poster, isVideo: true, createdAt: .now)
         } else {
-            guard let data = try await item.loadTransferable(type: Data.self), let image = UIImage(data: data) else { throw BackgroundImportError.unreadable }
-            let factor = min(1, 2560 / max(image.size.width, image.size.height))
-            let size = CGSize(width: image.size.width * factor, height: image.size.height * factor)
-            let format = UIGraphicsImageRendererFormat(); format.scale = 1
-            let normalized = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-            guard let jpeg = normalized.jpegData(compressionQuality: 0.92) else { throw BackgroundImportError.unreadable }
+            guard let data = try await item.loadTransferable(type: Data.self) else { throw BackgroundImportError.unreadable }
+            let jpeg = try await Task.detached(priority: .userInitiated) {
+                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                      let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                                              kCGImageSourceThumbnailMaxPixelSize: 2560,
+                                                                              kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { throw BackgroundImportError.unreadable }
+                let output = NSMutableData()
+                guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { throw BackgroundImportError.unreadable }
+                CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary)
+                guard CGImageDestinationFinalize(destination) else { throw BackgroundImportError.unreadable }
+                return Data(referencing: output)
+            }.value
             let name = "\(id).jpg"
             try jpeg.write(to: directory.appendingPathComponent(name), options: .atomic)
             asset = BackgroundAsset(id: id, fileName: name, isVideo: false, createdAt: .now)
@@ -250,10 +257,19 @@ final class BackgroundStore: ObservableObject {
     var unusedCount: Int { assets.filter { asset in !configurations.values.contains(where: { $0.assetID == asset.id }) }.count }
     func cleanUnused() {
         let unused = assets.filter { asset in !configurations.values.contains(where: { $0.assetID == asset.id }) }
+        let used = assets.filter { asset in configurations.values.contains(where: { $0.assetID == asset.id }) }
+        var protected = Set(used.map { url(for: $0).standardizedFileURL.path })
+        protected.formUnion(used.compactMap(\.posterName).map { directory.appendingPathComponent($0).standardizedFileURL.path })
+        let profileDirectory = directory.deletingLastPathComponent().appendingPathComponent("profile").standardizedFileURL.path + "/"
         for asset in unused {
             let file = url(for: asset).standardizedFileURL
-            if file.path.hasPrefix(directory.standardizedFileURL.path + "/") { try? FileManager.default.removeItem(at: file) }
-            if let poster = asset.posterName { try? FileManager.default.removeItem(at: directory.appendingPathComponent(poster)) }
+            if !protected.contains(file.path), file.path.hasPrefix(directory.standardizedFileURL.path + "/") || file.path.hasPrefix(profileDirectory) {
+                try? FileManager.default.removeItem(at: file)
+            }
+            if let poster = asset.posterName {
+                let file = directory.appendingPathComponent(poster).standardizedFileURL
+                if !protected.contains(file.path), file.path.hasPrefix(directory.standardizedFileURL.path + "/") { try? FileManager.default.removeItem(at: file) }
+            }
         }
         let ids = Set(unused.map(\.id)); assets.removeAll { ids.contains($0.id) }
         imageCache.removeAllObjects(); persist()

@@ -32,6 +32,21 @@ jobs:
         run: |
           SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
           xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -resultBundlePath build/ScrollGestureTests.xcresult -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+      - name: Export UI review screenshots
+        if: always()
+        shell: bash
+        run: |
+          if [[ -d build/ScrollGestureTests.xcresult ]]; then
+            xcrun xcresulttool export attachments --path build/ScrollGestureTests.xcresult --output-path build/ui-attachments
+            python3 scripts/export_review_images.py
+          fi
+      - name: Upload UI review screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: UI-Review-v${{ steps.version.outputs.marketing }}
+          path: build/ui-review
+          if-no-files-found: ignore
       - name: Upload gesture test results
         if: always()
         uses: actions/upload-artifact@v4

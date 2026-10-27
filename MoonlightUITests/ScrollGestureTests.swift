@@ -2,6 +2,12 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    private func attach(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+    @MainActor
     private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--scroll-ui-tests"]
@@ -100,6 +106,7 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["discover-sources"].tap()
         for _ in 0..<5 { if toggle.isHittable { break }; scroll.swipeUp() }
         XCTAssertEqual(toggle.value as? String, "1")
+        attach(app, name: "review-source-sidebar")
     }
 
     @MainActor
@@ -110,6 +117,7 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["settings-entry"].tap()
         app.buttons["backgrounds-entry"].tap()
         app.buttons["background-target-page.home"].tap()
+        attach(app, name: "review-background-editor")
         let video = app.buttons["使用这个视频背景"].firstMatch
         for _ in 0..<5 { if video.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(video.isHittable)
@@ -122,5 +130,24 @@ final class ScrollGestureTests: XCTestCase {
         start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -130)), withVelocity: .slow, thenHoldForDuration: 0.15)
         XCTAssertGreaterThan(before - card.frame.minY, 40)
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
+        attach(app, name: "review-floating-tabs-video-background")
+    }
+
+    @MainActor
+    func testProfileAvatarAndCoverOpenNativeMediaPicker() {
+        let app = launch(discover: false)
+        app.buttons["朋友圈"].tap()
+        let avatar = app.buttons["更换朋友圈头像"]
+        XCTAssertTrue(avatar.waitForExistence(timeout: 5))
+        avatar.tap()
+        var cancel = app.buttons["Cancel"].firstMatch
+        if !cancel.waitForExistence(timeout: 3) { cancel = app.buttons["取消"].firstMatch }
+        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
+        cancel.tap()
+        app.buttons["更换朋友圈横幅"].tap()
+        cancel = app.buttons["Cancel"].firstMatch
+        if !cancel.waitForExistence(timeout: 3) { cancel = app.buttons["取消"].firstMatch }
+        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
+        cancel.tap()
     }
 }

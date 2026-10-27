@@ -158,6 +158,7 @@ struct BackgroundEditorView: View {
             do { try await store.importSelection(selection, for: target); draft = store.resolved(target) }
             catch { importError = error.localizedDescription }
             importing = false
+            self.selection = nil
         }
         .sheet(isPresented: $cropping) {
             if let draft { BackgroundCropView(target: target, initial: draft) { update($0) } }
