@@ -88,7 +88,12 @@ struct RootView: View {
                         onMore: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             model.activeLongPressMenu = nil
-                            if let entry = menu.entry { activeSheet = .quickActions(entry) }
+                            if let entry = menu.entry {
+                                Task { @MainActor in
+                                    try? await Task.sleep(nanoseconds: 250_000_000)
+                                    activeSheet = .quickActions(entry)
+                                }
+                            }
                         },
                         onDismiss: { model.activeLongPressMenu = nil }
                     )
@@ -745,7 +750,7 @@ private struct LongPressRingOverlay: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("打开全部操作")
                         .accessibilityIdentifier("打开全部操作")
-                        .allowsHitTesting(!menu.fingerDown)
+                        .accessibilityValue(menu.fingerDown ? "长按中" : "可点选")
                         .position(center)
                     }
                 }
@@ -788,7 +793,6 @@ private struct LongPressRingOverlay: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(action.title)
-        .allowsHitTesting(!menu.fingerDown)
     }
 
     private func globalTitle(_ action: QuickActionID) -> String {
@@ -860,7 +864,9 @@ struct QuickActionsPanel: View {
                                     model.send(action, context: "media")
                                 }
                             }
-                        } label: { Label(action.title, systemImage: action.symbol) }
+                        } label: { Label(action.title, systemImage: action.symbol).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle()) }
+                        .accessibilityElement(children: .ignore).accessibilityLabel(action.title)
+                        .accessibilityIdentifier("configured-action-\(action.rawValue)")
                     }
                 }
                 Section("播放与分享") {

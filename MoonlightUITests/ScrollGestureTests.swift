@@ -306,8 +306,12 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertEqual(photo.value as? String, "1")
         app.buttons["navigation-home"].tap()
         app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.press(forDuration: 0.7)
+        print("More button:", app.buttons["打开全部操作"].firstMatch.debugDescription)
         app.buttons["打开全部操作"].tap()
-        XCTAssertTrue(app.buttons["拍照"].waitForExistence(timeout: 5))
+        let configured = app.buttons["configured-action-photo"].firstMatch
+        let exists = configured.waitForExistence(timeout: 5)
+        if !exists { print(app.debugDescription) }
+        XCTAssertTrue(exists)
         attach(app, name: "review-configured-media-actions")
     }
     @MainActor func testHomeSlowCardScroll() { assertCardScrolls(discover: false, velocity: .slow) }

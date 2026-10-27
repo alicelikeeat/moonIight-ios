@@ -10,6 +10,7 @@ struct MoonGlassButtonStyle: ButtonStyle {
     var prominent = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(.horizontal, 12).padding(.vertical, 8)
+            .contentShape(Rectangle())
             .background { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)

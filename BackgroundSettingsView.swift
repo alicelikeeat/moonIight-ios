@@ -103,6 +103,7 @@ struct ButtonBackgroundLibraryView: View {
                         draftBinding.wrappedValue = value
                     } label: {
                         HStack { thumbnail(asset); Text(asset.isVideo ? "视频背景" : "图片背景"); Spacer(); Image(systemName: draft.assetIDs.contains(asset.id) ? "checkmark.circle.fill" : "circle") }
+                            .frame(maxWidth: .infinity).contentShape(Rectangle())
                     }.accessibilityIdentifier("playlist-asset-\(asset.id)").accessibilityValue(draft.assetIDs.contains(asset.id) ? "已选择" : "未选择")
                 }
             }
