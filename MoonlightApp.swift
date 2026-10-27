@@ -302,7 +302,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
         case .importMedia: "导入图片或视频"; case .photo: "拍照"; case .video: "录制视频"
         case .compose: "发布动态"; case .avatar: "更换头像"; case .cover: "更换横幅"; case .deleteCover: "删除横幅"
         case .reelsLibrary: "抖音模式 · 库"; case .reelsSources: "抖音模式 · 内容源"
-        case .background: "当前背景"; case .backgrounds: "全部背景"; case .backgroundLibrary: "按键背景库"
+        case .background: "当前背景"; case .backgrounds: "全部背景"; case .backgroundLibrary: "背景与按键"
         case .gestures: "手势说明"; case .menuSettings: "配置长按菜单"
         case .playMedia: "打开播放"; case .favoriteMedia: "收藏 / 取消收藏"; case .saveMedia: "加入库"; case .shareMedia: "分享"
         case .portrait: "切换竖屏锁定"; case .virtualFriends: "切换虚拟好友活动"; case .navigationMode: "切换底栏模式"

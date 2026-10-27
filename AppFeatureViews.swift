@@ -140,17 +140,28 @@ struct ReelsView: View {
                     .ignoresSafeArea(edges: .bottom)
                     .accessibilityIdentifier("vertical-reels-pager")
             }
-            HStack {
-                Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 24, height: 24) }.accessibilityLabel("关闭抖音模式")
+            HStack(spacing: 10) {
+                Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 24, height: 24) }
+                    .accessibilityLabel("关闭抖音模式")
+                    .accessibilityIdentifier("reels-close")
                 Text(source == .library ? "库 · 抖音模式" : "内容源 · 抖音模式").font(.subheadline.bold())
                 Spacer()
                 Text(entries.isEmpty ? "" : "\(index + 1) / \(entries.count)").font(.caption.monospacedDigit()).accessibilityIdentifier("reels-position")
-                Button { muted.toggle() } label: { Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill") }.accessibilityLabel("切换静音")
+                Button { muted.toggle() } label: { Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill") }
+                    .accessibilityLabel("切换静音")
+                    .accessibilityIdentifier("reels-mute")
                 Menu {
                     Toggle("自动播放下一条", isOn: $autoAdvance)
                     Picker("图片停留", selection: $photoSeconds) { ForEach([3.0, 6, 10, 15], id: \.self) { Text("\(Int($0)) 秒").tag($0) } }
                 } label: { Image(systemName: "slider.horizontal.3") }
-            }.foregroundStyle(.white).padding(12)
+                .accessibilityLabel("抖音播放选项")
+                .accessibilityIdentifier("reels-options")
+            }
+            .foregroundStyle(.white)
+            .padding(12)
+            .contentShape(Rectangle())
+            .zIndex(10)
+            .simultaneousGesture(TapGesture().onEnded { })
         }.buttonStyle(MoonGlassButtonStyle()).task { await load() }
         .onChange(of: index) { value in if source == .sources && value >= entries.count - 3 { Task { await load(append: true) } } }
         .sheet(item: $actionEntry) { entry in

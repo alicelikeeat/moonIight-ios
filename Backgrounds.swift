@@ -6,10 +6,24 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+enum GlassSurfaceSize: String, CaseIterable, Identifiable {
+    case compact, balanced, spacious
+    var id: String { rawValue }
+    var title: String { switch self { case .compact: "紧凑"; case .balanced: "均衡"; case .spacious: "舒展" } }
+    var circleScale: CGFloat { switch self { case .compact: 0.88; case .balanced: 1; case .spacious: 1.12 } }
+    var buttonHorizontalPadding: CGFloat { switch self { case .compact: 9; case .balanced: 12; case .spacious: 16 } }
+    var buttonVerticalPadding: CGFloat { switch self { case .compact: 6; case .balanced: 8; case .spacious: 11 } }
+    var panelRadius: CGFloat { switch self { case .compact: 13; case .balanced: 16; case .spacious: 21 } }
+    var panelInset: CGFloat { switch self { case .compact: 0; case .balanced: 2; case .spacious: 5 } }
+    var bannerScale: CGFloat { switch self { case .compact: 0.88; case .balanced: 1; case .spacious: 1.12 } }
+}
+
 struct MoonGlassButtonStyle: ButtonStyle {
     var prominent = false
+    @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
+    private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.padding(.horizontal, 12).padding(.vertical, 8)
+        configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding)
             .contentShape(Rectangle())
             .background { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
@@ -497,6 +511,8 @@ struct MediaGlassCircle: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var currentAssetID: String?
     @State private var shuffled: [String] = []
+    @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
+    private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     func body(content: Content) -> some View {
         let playlist = store.playlist(for: target)
         let configuration = resolvedConfiguration(playlist)
@@ -505,13 +521,13 @@ struct MediaGlassCircle: ViewModifier {
             if let configuration { BackgroundMediaLayer(configuration: configuration).clipShape(Circle()) }
         }
         if #available(iOS 26.0, *) {
-            if let configuration { decorated.foregroundStyle(configuration.veil.foreground).glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)) }
-            else { decorated.glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)) }
+            if let configuration { decorated.foregroundStyle(configuration.veil.foreground).glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale) }
+            else { decorated.glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale) }
         } else {
             if let configuration {
-                decorated.foregroundStyle(configuration.veil.foreground).background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance))
+                decorated.foregroundStyle(configuration.veil.foreground).background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)
             } else {
-                decorated.background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance))
+                decorated.background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)
             }
         }
     }
@@ -559,10 +575,22 @@ private struct BackgroundClock: ViewModifier {
     }
 }
 
+private struct GlassPanelSizing: ViewModifier {
+    @AppStorage("moonlight.glass.panelSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
+    private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
+    @ViewBuilder func body(content: Content) -> some View {
+        let surface = content.padding(size.panelInset)
+        if #available(iOS 26.0, *) {
+            surface.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: size.panelRadius))
+        } else {
+            surface.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: size.panelRadius))
+        }
+    }
+}
+
 extension View {
     @ViewBuilder func moonGlassPanel() -> some View {
-        if #available(iOS 26.0, *) { glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16)) }
-        else { background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16)) }
+        modifier(GlassPanelSizing())
     }
     func pageBackground(_ target: BackgroundTarget) -> some View {
         background { PageBackground(target: target).ignoresSafeArea(); BackgroundTargetAnchor(target: target).allowsHitTesting(false).accessibilityHidden(true) }

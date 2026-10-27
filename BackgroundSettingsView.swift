@@ -4,15 +4,33 @@ import SwiftUI
 struct BackgroundSettingsView: View {
     @EnvironmentObject private var store: BackgroundStore
     @State private var cleanConfirmation = false
+    @State private var buttonTarget = BackgroundTarget.allButtons
+    @State private var buttonDraft = ButtonBackgroundPlaylist()
+    @State private var buttonSelections: [PhotosPickerItem] = []
+    @State private var buttonImporting = false
+    @State private var buttonImportError: String?
+    @AppStorage("moonlight.glass.buttonSize") private var glassButtonSize = GlassSurfaceSize.balanced.rawValue
+    @AppStorage("moonlight.glass.bannerSize") private var glassBannerSize = GlassSurfaceSize.balanced.rawValue
+    @AppStorage("moonlight.glass.panelSize") private var glassPanelSize = GlassSurfaceSize.balanced.rawValue
     var body: some View {
         List {
             Section {
-                NavigationLink { ButtonBackgroundLibraryView() } label: {
-                    Label("按键背景库与播放顺序", systemImage: "photo.stack")
-                }.accessibilityIdentifier("button-background-library-entry")
                 Label("图片和视频都可用于页面、玻璃按键与个人资料。", systemImage: "photo.on.rectangle.angled")
                     .font(.subheadline)
-                Text("通用背景会应用到未单独设置的位置。每个位置可以覆盖通用设置，或恢复跟随。")
+                Text("页面背景、玻璃按键和播放顺序在这里统一管理。通用背景会应用到未单独设置的位置，每个位置仍可覆盖通用设置或恢复跟随。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("玻璃尺寸") {
+                Picker("按键与圆环", selection: $glassButtonSize) {
+                    ForEach(GlassSurfaceSize.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Picker("横幅与卡片", selection: $glassBannerSize) {
+                    ForEach(GlassSurfaceSize.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Picker("弹出面板", selection: $glassPanelSize) {
+                    ForEach(GlassSurfaceSize.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                Text("按键会保留至少 44 pt 的触控范围；横幅、卡片与面板使用同一套圆角、留白和玻璃层级，以避免组件相互遮挡。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             ForEach(BackgroundTarget.sections, id: \.self) { section in
@@ -33,6 +51,84 @@ struct BackgroundSettingsView: View {
                     }
                 }
             }
+            Section("按键背景与播放") {
+                Picker("应用到", selection: $buttonTarget) {
+                    ForEach(BackgroundTarget.allCases.filter(\.isButton)) { target in
+                        Text(target.section + " · " + target.title).tag(target)
+                    }
+                }
+                Picker("播放模式", selection: buttonDraftBinding.mode) {
+                    ForEach(BackgroundPlaybackMode.allCases) { Text($0.title).tag($0) }
+                }
+                .accessibilityIdentifier("background-playback-mode")
+                Stepper("每项 \(Int(buttonDraft.interval)) 秒", value: buttonDraftBinding.interval, in: 3...120, step: 3)
+                    .disabled(buttonDraft.mode == .fixed)
+                Text("已选 \(buttonDraft.assetIDs.count) 项 · \(buttonDraft.mode.title)")
+                    .accessibilityIdentifier("background-playback-summary")
+                Text("图片和视频共用同一套队列：顺序、洗牌或随机播放。视频静音循环；离开页面或进入后台会自动停止计时。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("已选按键背景 · 可拖动排序") {
+                if buttonDraft.assetIDs.isEmpty {
+                    Text("从下方背景素材中选择图片或视频后，会出现在这里。")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(buttonDraft.assetIDs, id: \.self) { id in
+                    if let asset = store.assets.first(where: { $0.id == id }) {
+                        HStack {
+                            buttonThumbnail(asset)
+                            Text(asset.isVideo ? "视频背景" : "图片背景")
+                            Spacer()
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .onMove { from, to in
+                    var value = buttonDraft
+                    value.assetIDs.move(fromOffsets: from, toOffset: to)
+                    buttonDraftBinding.wrappedValue = value
+                }
+                .onDelete { offsets in
+                    var value = buttonDraft
+                    value.assetIDs.remove(atOffsets: offsets)
+                    buttonDraftBinding.wrappedValue = value
+                }
+            }
+            Section("按键背景素材") {
+                PhotosPicker(selection: $buttonSelections, maxSelectionCount: 20, matching: .any(of: [.images, .videos])) {
+                    Label("添加图片或视频", systemImage: "plus")
+                }
+                .disabled(buttonImporting)
+                if buttonImporting { ProgressView("正在添加…") }
+                if let buttonImportError { Text(buttonImportError).foregroundStyle(.red).font(.caption) }
+                if store.assets.isEmpty {
+                    Text("还没有背景素材。添加后可供页面、按键、长按圆环和横幅重复使用。")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(store.assets) { asset in
+                    Button {
+                        var value = buttonDraft
+                        if value.assetIDs.contains(asset.id) { value.assetIDs.removeAll { $0 == asset.id } }
+                        else { value.assetIDs.append(asset.id) }
+                        buttonDraftBinding.wrappedValue = value
+                    } label: {
+                        HStack {
+                            buttonThumbnail(asset)
+                            Text(asset.isVideo ? "视频背景" : "图片背景")
+                            Spacer()
+                            Image(systemName: buttonDraft.assetIDs.contains(asset.id) ? "checkmark.circle.fill" : "circle")
+                        }
+                        .frame(maxWidth: .infinity).contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier("playlist-asset-\(asset.id)")
+                    .accessibilityValue(buttonDraft.assetIDs.contains(asset.id) ? "已选择" : "未选择")
+                }
+                Button("恢复跟随通用播放设置") {
+                    store.resetPlaylist(for: buttonTarget)
+                    buttonDraft = store.playlist(for: buttonTarget) ?? ButtonBackgroundPlaylist()
+                }
+            }
             Section("媒体管理") {
                 Button { cleanConfirmation = true } label: {
                     Label("清理未使用背景（\(store.unusedCount)）", systemImage: "sparkles")
@@ -42,10 +138,30 @@ struct BackgroundSettingsView: View {
             }
         }
         .navigationTitle("背景与按键").navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("background-settings")
+        .toolbar { EditButton() }
         .scrollContentBackground(.hidden).pageBackground(.settings)
         .confirmationDialog("清理 \(store.unusedCount) 个未使用背景？", isPresented: $cleanConfirmation, titleVisibility: .visible) {
             Button("清理未使用", role: .destructive) { store.cleanUnused() }
             Button("取消", role: .cancel) {}
+        }
+        .task(id: buttonTarget) {
+            buttonDraft = store.playlist(for: buttonTarget) ?? ButtonBackgroundPlaylist()
+        }
+        .task(id: buttonSelections) {
+            guard !buttonSelections.isEmpty else { return }
+            buttonImporting = true; buttonImportError = nil
+            for item in buttonSelections {
+                do {
+                    let asset = try await store.importSelection(item, for: buttonTarget, apply: false)
+                    var value = buttonDraft
+                    if !value.assetIDs.contains(asset.id) { value.assetIDs.append(asset.id) }
+                    buttonDraftBinding.wrappedValue = value
+                } catch {
+                    buttonImportError = error.localizedDescription
+                }
+            }
+            buttonSelections = []; buttonImporting = false
         }
     }
 
@@ -54,77 +170,11 @@ struct BackgroundSettingsView: View {
         let inherited = store.configurations[target.rawValue] == nil
         return (asset.isVideo ? "视频 · 静音循环" : "图片") + (inherited ? " · 跟随通用" : " · 单独设置")
     }
-}
-
-struct ButtonBackgroundLibraryView: View {
-    @EnvironmentObject private var store: BackgroundStore
-    @State private var target = BackgroundTarget.allButtons
-    @State private var draft = ButtonBackgroundPlaylist()
-    @State private var selections: [PhotosPickerItem] = []
-    @State private var importing = false
-    @State private var error: String?
-    var body: some View {
-        List {
-            Section("预览与应用范围") {
-                Image(systemName: "hand.tap").font(.title).frame(width: 70, height: 70)
-                    .modifier(MediaGlassCircle(target: target)).frame(maxWidth: .infinity)
-                Picker("应用到", selection: $target) {
-                    ForEach(BackgroundTarget.allCases.filter(\.isButton)) { Text($0.section + " · " + $0.title).tag($0) }
-                }
-                Text("可为所有按键共用一组媒体，也可给某个按键单独设置。视频静音循环，按间隔切换下一项；减少动态效果时保留静态封面。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("播放逻辑") {
-                Picker("模式", selection: draftBinding.mode) { ForEach(BackgroundPlaybackMode.allCases) { Text($0.title).tag($0) } }
-                    .accessibilityIdentifier("background-playback-mode")
-                Stepper("每项 \(Int(draft.interval)) 秒", value: draftBinding.interval, in: 3...120, step: 3)
-                    .disabled(draft.mode == .fixed)
-                Text("已选 \(draft.assetIDs.count) 项 · \(draft.mode.title)").accessibilityIdentifier("background-playback-summary")
-                Text("顺序和洗牌会完整轮播；随机模式避免连续重复。离开页面或应用进入后台后，计时任务自动停止。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("已选背景 · 可拖动排序") {
-                ForEach(draft.assetIDs, id: \.self) { id in
-                    if let asset = store.assets.first(where: { $0.id == id }) {
-                        HStack { thumbnail(asset); Text(asset.isVideo ? "视频背景" : "图片背景"); Spacer(); Image(systemName: "line.3.horizontal") }
-                    }
-                }.onMove { from, to in var value = draft; value.assetIDs.move(fromOffsets: from, toOffset: to); draftBinding.wrappedValue = value }
-                    .onDelete { offsets in var value = draft; value.assetIDs.remove(atOffsets: offsets); draftBinding.wrappedValue = value }
-            }
-            Section("按键背景库") {
-                PhotosPicker(selection: $selections, matching: .any(of: [.images, .videos])) { Label("添加图片或视频", systemImage: "plus") }.disabled(importing)
-                if importing { ProgressView("正在添加…") }
-                if let error { Text(error).foregroundStyle(.red).font(.caption) }
-                ForEach(store.assets) { asset in
-                    Button {
-                        var value = draft
-                        if value.assetIDs.contains(asset.id) { value.assetIDs.removeAll { $0 == asset.id } }
-                        else { value.assetIDs.append(asset.id) }
-                        draftBinding.wrappedValue = value
-                    } label: {
-                        HStack { thumbnail(asset); Text(asset.isVideo ? "视频背景" : "图片背景"); Spacer(); Image(systemName: draft.assetIDs.contains(asset.id) ? "checkmark.circle.fill" : "circle") }
-                            .frame(maxWidth: .infinity).contentShape(Rectangle())
-                    }.accessibilityIdentifier("playlist-asset-\(asset.id)").accessibilityValue(draft.assetIDs.contains(asset.id) ? "已选择" : "未选择")
-                }
-            }
-            Button("恢复跟随通用播放设置") { store.resetPlaylist(for: target); draft = store.playlist(for: target) ?? ButtonBackgroundPlaylist() }
-        }.navigationTitle("按键背景库").toolbar { EditButton() }.pageBackground(.settings)
-        .task(id: target) { draft = store.playlist(for: target) ?? ButtonBackgroundPlaylist() }
-        .task(id: selections) {
-            guard !selections.isEmpty else { return }
-            importing = true; error = nil
-            for item in selections {
-                do { let asset = try await store.importSelection(item, for: target, apply: false); var value = draft; value.assetIDs.append(asset.id); draftBinding.wrappedValue = value }
-                catch { self.error = error.localizedDescription }
-            }
-            selections = []; importing = false
-        }
-    }
-    private func thumbnail(_ asset: BackgroundAsset) -> some View {
+    private func buttonThumbnail(_ asset: BackgroundAsset) -> some View {
         BackgroundAssetThumbnail(asset: asset).frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 12))
     }
-    private var draftBinding: Binding<ButtonBackgroundPlaylist> {
-        Binding(get: { draft }, set: { value in draft = value; store.setPlaylist(value, for: target) })
+    private var buttonDraftBinding: Binding<ButtonBackgroundPlaylist> {
+        Binding(get: { buttonDraft }, set: { value in buttonDraft = value; store.setPlaylist(value, for: buttonTarget) })
     }
 }
 

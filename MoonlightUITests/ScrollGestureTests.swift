@@ -267,10 +267,11 @@ final class ScrollGestureTests: XCTestCase {
     func testButtonBackgroundPlaylistPersists() {
         let app = launch(discover: false, backgrounds: true)
         XCTAssertTrue(app.staticTexts["背景测试就绪"].waitForExistence(timeout: 20))
-        func openLibrary() {
-            app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap(); app.buttons["按键背景库"].firstMatch.tap()
+        func openBackgroundSettings() {
+            app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
+            XCTAssertTrue(app.otherElements["background-settings"].waitForExistence(timeout: 5))
         }
-        openLibrary()
+        openBackgroundSettings()
         for id in ["ui-test-background-image", "ui-test-background-video"] {
             let asset = app.buttons["playlist-asset-\(id)"]
             for _ in 0..<6 { if asset.isHittable { break }; app.swipeUp() }
@@ -283,7 +284,7 @@ final class ScrollGestureTests: XCTestCase {
         picker.tap(); app.buttons["顺序循环"].tap()
         XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
         attach(app, name: "review-button-background-playlist")
-        app.terminate(); app.launch(); openLibrary()
+        app.terminate(); app.launch(); openBackgroundSettings()
         XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
     }
 

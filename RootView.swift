@@ -353,8 +353,7 @@ struct RootView: View {
         switch action {
         case .settings: SettingsView()
         case .menuSettings: ContextMenuSettingsView()
-        case .backgroundLibrary: ButtonBackgroundLibraryView()
-        case .background, .backgrounds: BackgroundSettingsView()
+        case .background, .backgrounds, .backgroundLibrary: BackgroundSettingsView()
         case .friends: VirtualFriendsView(onSelect: { activeSheet = nil; activePlayer = $0 })
         case .messages: VirtualMessagesView()
         case .profile: ProfileEditView()
@@ -576,7 +575,7 @@ private struct UniversalHoldScope: ViewModifier {
                         case .backgrounds: BackgroundSettingsView()
                         case .guide: GestureHelpView()
                         case .menus: ContextMenuSettingsView()
-                        case .backgroundLibrary: ButtonBackgroundLibraryView()
+                        case .backgroundLibrary: BackgroundSettingsView()
                         case .more:
                             List {
                                 Section((heldTarget ?? target).title) {
@@ -1567,6 +1566,8 @@ private struct MomentsView: View {
     @State private var commentDraft = ""
     @State private var showingCommentPrompt = false
     @State private var deletingMoment: String?
+    @AppStorage("moonlight.glass.bannerSize") private var bannerSizeRaw = GlassSurfaceSize.balanced.rawValue
+    private var bannerSize: GlassSurfaceSize { GlassSurfaceSize(rawValue: bannerSizeRaw) ?? .balanced }
 
     var body: some View {
         GeometryReader { viewport in
@@ -1575,7 +1576,7 @@ private struct MomentsView: View {
                 ZStack(alignment: .bottomLeading) {
                     Button { coverPickerPresented = true } label: {
                         ProfileBackgroundMedia(target: .cover)
-                        .frame(height: 190).frame(maxWidth: .infinity).clipped()
+                        .frame(height: 190 * bannerSize.bannerScale).frame(maxWidth: .infinity).clipped()
                         .overlay(LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .center, endPoint: .bottom))
                         .overlay(alignment: .topLeading) {
                             HStack {
@@ -2210,12 +2211,11 @@ private struct SettingsView: View {
                 Section("外观与媒体") {
                     NavigationLink { ContextMenuSettingsView() } label: { Label("长按菜单与底栏", systemImage: "hand.point.up.left") }
                         .accessibilityIdentifier("context-menu-settings-entry")
-                    NavigationLink { ButtonBackgroundLibraryView() } label: { Label("按键背景库", systemImage: "photo.stack") }
                     NavigationLink { BackgroundSettingsView() } label: {
                         Label("背景与按键", systemImage: "photo.on.rectangle.angled")
                     }
                     .accessibilityIdentifier("backgrounds-entry")
-                    Text("各页面、底部按键、长按圆环、头像和横幅支持图片或视频背景。")
+                    Text("各页面、底部按键、长按圆环、头像和横幅的素材、应用范围及播放顺序统一在这里设置。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("播放") {
