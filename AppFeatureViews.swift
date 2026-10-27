@@ -73,12 +73,22 @@ private struct ContextActionEditor: View {
             }
             Section("应用操作目录") {
                 ForEach(AppCommand.allCases) { action in
-                    Toggle(isOn: Binding(get: { preferences.actions(context).contains(action) }, set: { enabled in
+                    let enabled = preferences.actions(context).contains(action)
+                    Button {
                         var actions = preferences.actions(context)
-                        if enabled { actions.append(action) } else { actions.removeAll { $0 == action } }
+                        if enabled { actions.removeAll { $0 == action } } else { actions.append(action) }
                         preferences.set(actions, for: context)
-                    })) { Label(action.title, systemImage: action.symbol) }
+                    } label: {
+                        HStack {
+                            Label(action.title, systemImage: action.symbol)
+                            Spacer()
+                            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(enabled ? Color.accentColor : .secondary)
+                        }.contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                     .accessibilityIdentifier("menu-action-\(action.rawValue)")
+                    .accessibilityValue(enabled ? "1" : "0")
                 }
             }
             Button("恢复当前页面默认菜单") { preferences.reset(context) }
