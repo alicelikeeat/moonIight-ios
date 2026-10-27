@@ -1799,6 +1799,7 @@ private struct MeView: View {
                         NavigationLink(value: AppCommand.settings) {
                             Image(systemName: "gearshape").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
                         }
+                        .buttonStyle(.plain)
                         .accessibilityIdentifier("settings-entry")
                     }
                     if !coverPath.isEmpty {
@@ -2320,7 +2321,7 @@ private struct MenuRow: View {
             Text(title).font(.body.weight(.medium))
             Spacer()
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-        }.padding(.vertical, 13).padding(.horizontal, 8).moonGlassPanel()
+        }.padding(.vertical, 13).padding(.horizontal, 8)
     }
 }
 

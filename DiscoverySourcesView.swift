@@ -125,7 +125,7 @@ struct DiscoverySourcePanel: View {
     }
 
     private func panelAction(_ title: String, symbol: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) { actionLabel(title, symbol: symbol, color: color) }.buttonStyle(MoonGlassButtonStyle())
+        Button(action: action) { actionLabel(title, symbol: symbol, color: color) }.buttonStyle(.plain)
     }
 
     private func actionLabel(_ title: String, symbol: String, color: Color) -> some View {
