@@ -306,13 +306,17 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertEqual(photo.value as? String, "1")
         app.buttons["navigation-home"].tap()
         app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.press(forDuration: 0.7)
-        print("More button:", app.buttons["打开全部操作"].firstMatch.debugDescription)
         app.buttons["打开全部操作"].tap()
-        let configured = app.buttons["configured-action-photo"].firstMatch
+        let configured = app.descendants(matching: .any).matching(identifier: "configured-action-photo").firstMatch
         let exists = configured.waitForExistence(timeout: 5)
         if !exists { print(app.debugDescription) }
         XCTAssertTrue(exists)
         attach(app, name: "review-configured-media-actions")
+        configured.tap()
+        // Verify the configured action actually routes after the menu dismisses.
+        // The simulator must show the same camera availability fallback as the tab.
+        XCTAssertTrue(app.alerts["提示"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "没有可用相机")).firstMatch.exists)
     }
     @MainActor func testHomeSlowCardScroll() { assertCardScrolls(discover: false, velocity: .slow) }
     @MainActor func testDiscoverTwoColumnFastCardScroll() { assertCardScrolls(discover: true, velocity: .fast) }
