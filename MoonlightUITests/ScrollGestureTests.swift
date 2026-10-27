@@ -201,7 +201,7 @@ final class ScrollGestureTests: XCTestCase {
         attach(app, name: "review-wide-moment-fixed")
         app.buttons["删除动态"].firstMatch.tap()
         attach(app, name: "review-moment-delete-confirmation")
-        let confirmation = app.buttons["confirm-delete-moment"]
+        let confirmation = app.buttons["confirm-delete-moment"].firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 3))
         confirmation.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: text)], timeout: 3), .completed)

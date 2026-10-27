@@ -28,7 +28,7 @@ jobs:
           python3 scripts/check_sources.py
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
       - name: Run card scrolling UI tests
-        timeout-minutes: 25
+        timeout-minutes: 35
         shell: bash
         run: |
           SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
@@ -40,13 +40,15 @@ jobs:
             ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
-          xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
+          for ROUND in 1 2; do
+            xcodebuild "${COMMON[@]}" -resultBundlePath "build/SettingsTestsRound${ROUND}.xcresult" "${ONLY[@]}" test
+          done
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
       - name: Export UI review screenshots
         if: always()
         shell: bash
         run: |
-          for RESULT in build/SettingsTests.xcresult build/ScrollGestureTests.xcresult; do
+          for RESULT in build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
             if [[ -f "$RESULT/Info.plist" ]]; then
               xcrun xcresulttool export attachments --path "$RESULT" --output-path "build/ui-attachments/$(basename "$RESULT" .xcresult)"
             fi
@@ -65,7 +67,7 @@ jobs:
         with:
           name: ScrollGestureTests-v${{ steps.version.outputs.marketing }}
           path: |
-            build/SettingsTests.xcresult
+            build/SettingsTests*.xcresult
             build/ScrollGestureTests.xcresult
           if-no-files-found: ignore
       - name: Import Ad Hoc signing
