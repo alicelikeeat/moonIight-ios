@@ -150,7 +150,7 @@ struct ReelsView: View {
         guard !entries.isEmpty else { return }
         if index < entries.count - 1 { withAnimation { index += 1 } }
         else if source == .library { withAnimation { index = 0 } }
-        else { Task { await load(append: true); if index < entries.count - 1 { index += 1 } } }
+        else { Task { await load(append: true); if index < entries.count - 1 { index += 1 } else if !entries.isEmpty { index = 0 } } }
     }
     private func load(append: Bool = false) async {
         guard !loading else { return }; loading = true; defer { loading = false }

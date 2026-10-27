@@ -222,6 +222,24 @@ final class ScrollGestureTests: XCTestCase {
     }
 
     @MainActor
+    func testContextLibraryNavigationCanPlayAndReturn() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        XCTAssertTrue(app.navigationBars["库"].waitForExistence(timeout: 5))
+        let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["打开全部操作"].waitForExistence(timeout: 3))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.65)).tap()
+        card.tap()
+        XCTAssertTrue(app.buttons["关闭"].waitForExistence(timeout: 5))
+        app.buttons["关闭"].tap()
+        app.buttons["navigation-home"].tap(); app.buttons["navigation-me"].tap()
+        XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5), "A consumed menu command reopened the previous destination")
+    }
+
+    @MainActor
     func testNativeSliderSwitchesPages() {
         let app = launch(discover: false, flags: ["--slider-ui-tests"])
         let bar = app.segmentedControls["navigation-slider"]

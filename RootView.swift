@@ -240,7 +240,7 @@ struct RootView: View {
         Group {
         if interactions.navigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
-                .frame(height: 50).padding(.horizontal, 18).padding(.bottom, 8)
+                .frame(height: 50).moonGlassPanel().padding(.horizontal, 18).padding(.bottom, 8)
         } else {
         GeometryReader { geometry in
             let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
@@ -314,6 +314,8 @@ struct RootView: View {
         case .portrait: model.portraitPlaybackOnly.toggle()
         case .virtualFriends: model.virtualActivityEnabled.toggle()
         case .navigationMode: interactions.navigationMode = interactions.navigationMode == .circles ? .slider : .circles
+        case .library, .selectAll, .favorites, .downloads, .settings, .friends, .messages, .profile:
+            model.selectedTab = .me
         case .playMedia, .favoriteMedia, .saveMedia, .shareMedia:
             activeSheet = .destination(action)
         default: activeSheet = .destination(action)
@@ -1573,8 +1575,8 @@ private struct MomentsView: View {
                 .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 96)
         }.scrollIndicators(.hidden).pageBackground(.moments)
             .task(id: model.command?.id) {
-                if model.command?.action == .avatar { avatarPickerPresented = true }
-                if model.command?.action == .cover { coverPickerPresented = true }
+                if model.command?.action == .avatar { avatarPickerPresented = true; model.command = nil }
+                if model.command?.action == .cover { coverPickerPresented = true; model.command = nil }
             }
             .task(id: avatarSelection) {
                 if let path = await saveProfileMedia(avatarSelection, name: "avatar") { avatarPath = path }
@@ -1706,12 +1708,13 @@ private struct MeView: View {
     let selectedImage: Image?
     @Binding var selection: PhotosPickerItem?
     let onSelect: (MediaEntry) -> Void
+    @State private var commandPath: [AppCommand] = []
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $commandPath) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     PageHeader(title: "我", subtitle: "个人空间", symbol: "person.crop.circle") {
-                        NavigationLink { SettingsView() } label: {
+                        NavigationLink(value: AppCommand.settings) {
                             Image(systemName: "gearshape").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
                         }
                         .accessibilityIdentifier("settings-entry")
@@ -1720,7 +1723,7 @@ private struct MeView: View {
                         ProfileBackgroundMedia(target: .cover).frame(height: 150)
                             .clipShape(RoundedRectangle(cornerRadius: 24))
                     }
-                    NavigationLink { ProfileEditView() } label: {
+                    NavigationLink(value: AppCommand.profile) {
                         HStack(spacing: 14) {
                             ProfileBackgroundMedia(target: .avatar).frame(width: 58, height: 58).clipShape(Circle())
                             VStack(alignment: .leading, spacing: 5) {
@@ -1738,11 +1741,11 @@ private struct MeView: View {
                         StatCard(value: "\(model.mediaStore.items.filter(\.isFavorite).count)", label: "收藏")
                     }
                     VStack(spacing: 0) {
-                        NavigationLink { LibraryView(selectedImage: selectedImage, selection: $selection, onPlay: onSelect) } label: { MenuRow(symbol: "square.grid.2x2.fill", title: "库", color: .orange) }
+                        NavigationLink(value: AppCommand.library) { MenuRow(symbol: "square.grid.2x2.fill", title: "库", color: .orange) }
                         Divider().padding(.leading, 56)
-                        NavigationLink { VirtualFriendsView(onSelect: onSelect) } label: { MenuRow(symbol: "person.2.fill", title: "朋友", color: .green) }
+                        NavigationLink(value: AppCommand.friends) { MenuRow(symbol: "person.2.fill", title: "朋友", color: .green) }
                         Divider().padding(.leading, 56)
-                        NavigationLink { VirtualMessagesView() } label: { MenuRow(symbol: "bubble.left.and.bubble.right.fill", title: "消息", color: .purple) }
+                        NavigationLink(value: AppCommand.messages) { MenuRow(symbol: "bubble.left.and.bubble.right.fill", title: "消息", color: .purple) }
                     }
                     .buttonStyle(.plain).padding(.horizontal, 14)
                     .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
@@ -1751,6 +1754,21 @@ private struct MeView: View {
             .scrollIndicators(.hidden)
             .pageBackground(.me)
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: AppCommand.self) { action in
+                switch action {
+                case .settings: SettingsView()
+                case .profile: ProfileEditView()
+                case .friends: VirtualFriendsView(onSelect: onSelect)
+                case .messages: VirtualMessagesView()
+                default: LibraryView(selectedImage: selectedImage, selection: $selection, onPlay: onSelect, initialAction: action)
+                }
+            }
+        }
+        .task(id: model.command?.id) {
+            guard let action = model.command?.action,
+                  [.library, .selectAll, .favorites, .downloads, .settings, .friends, .messages, .profile].contains(action) else { return }
+            commandPath = [action]
+            model.command = nil
         }
     }
 }
@@ -1979,6 +1997,7 @@ private struct LibraryView: View {
     let selectedImage: Image?
     @Binding var selection: PhotosPickerItem?
     let onPlay: (MediaEntry) -> Void
+    var initialAction: AppCommand? = nil
     @EnvironmentObject private var model: AppModel
     @State private var selectionMode = false
     @State private var selectedIDs = Set<String>()
@@ -1996,7 +2015,7 @@ private struct LibraryView: View {
         ScrollView { libraryContent }.scrollIndicators(.hidden).pageBackground(.library)
             .navigationTitle("库")
             .task(id: model.command?.id) {
-                switch model.command?.action {
+                switch initialAction ?? model.command?.action {
                 case .selectAll: selectionMode = true; selectedIDs = Set(visibleItems.map(\.id))
                 case .favorites: filter = "收藏"
                 case .downloads: filter = "下载"
