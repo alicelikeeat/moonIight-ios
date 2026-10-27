@@ -439,6 +439,14 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
         }
         return true
     }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // SwiftUI's press recognizer can begin before a stationary hold. Make
+        // those button gestures wait for the hold to fail, never native pans.
+        // Quick releases fail immediately; movement > 7 pt also fails the hold.
+        !(otherGestureRecognizer is UIPanGestureRecognizer)
+            && !(otherGestureRecognizer is UILongPressGestureRecognizer)
+    }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard canBegin else { return false }
         var ancestor = touchedView

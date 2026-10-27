@@ -80,7 +80,10 @@ final class ScrollGestureTests: XCTestCase {
         let layout = app.buttons["discover-layout"]
         XCTAssertTrue(sources.isHittable)
         XCTAssertTrue(layout.isHittable)
-        XCTAssertGreaterThanOrEqual(sources.frame.minY, app.statusBars.firstMatch.frame.maxY)
+        attach(app, name: "review-discovery-header-unclipped")
+        // UIKit does not expose the status bar in every simulator's app tree.
+        // The supported iPhone fixture has a top safe area above this boundary.
+        XCTAssertGreaterThanOrEqual(sources.frame.minY, app.frame.minY + 44)
         XCTAssertLessThanOrEqual(abs(sources.frame.midY - title.frame.midY), 35)
         app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["打开全部操作"].waitForExistence(timeout: 3))
@@ -96,6 +99,11 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testHoldOnNavigationAndOrdinaryButtonDoesNotTapThrough() {
         let app = launch(discover: true)
+        app.buttons["discover-sources"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["手势说明"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists)
+        attach(app, name: "review-rotating-global-ring")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.6)).tap()
         app.buttons["navigation-me"].press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["settings-entry"].exists, "A hold switched tabs")
