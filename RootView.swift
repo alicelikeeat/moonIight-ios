@@ -739,18 +739,15 @@ private struct LongPressRingOverlay: View {
                                 .scaleEffect(isHighlighted(index, center: center) ? 1.14 : 1)
                                 .position(x: center.x + offset.x, y: center.y + offset.y)
                         }
-                        Button(action: onMore) {
-                            Image(systemName: "ellipsis")
+                        Image(systemName: "ellipsis")
                                 .font(.system(size: 21, weight: .bold))
                                 .frame(width: 54, height: 54)
                                 .moonGlassCircle(.ringCenter)
-                                .accessibilityLabel("打开全部操作")
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("打开全部操作")
-                        .accessibilityIdentifier("打开全部操作")
-                        .accessibilityValue(menu.fingerDown ? "长按中" : "可点选")
+                                .allowsHitTesting(false).accessibilityHidden(true)
+                                .overlay {
+                                    RingTouchButton(title: "打开全部操作", identifier: "打开全部操作", onActivate: onMore)
+                                        .frame(width: 54, height: 54)
+                                }
                         .position(center)
                     }
                 }
@@ -781,8 +778,7 @@ private struct LongPressRingOverlay: View {
 
     private func ringButton(_ action: RingAction) -> some View {
         let isFavorite = menu.entry?.isFavorite ?? false
-        return Button { onAction(action) } label: {
-            VStack(spacing: 3) {
+        return VStack(spacing: 3) {
                 Image(systemName: action.mediaAction == .favorite && isFavorite ? "heart.slash.fill" : action.symbol)
                     .font(.system(size: 16, weight: .semibold))
                 Text(action.mediaAction == .favorite && isFavorite ? "取消收藏" : action.title)
@@ -790,9 +786,11 @@ private struct LongPressRingOverlay: View {
             }
             .frame(width: 58, height: 58)
             .moonGlassCircle(action.background)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(action.title)
+            .allowsHitTesting(false).accessibilityHidden(true)
+            .overlay {
+                RingTouchButton(title: action.title, identifier: "ring-action-\(action.symbol)", onActivate: { onAction(action) })
+                    .frame(width: 58, height: 58)
+            }
     }
 
     private func globalTitle(_ action: QuickActionID) -> String {
@@ -835,6 +833,37 @@ private struct LongPressRingOverlay: View {
             hypot(point.x - center.x - item.element.x, point.y - center.y - item.element.y) < 34
         }?.offset
     }
+}
+
+// Keep glass rendering separate from touch delivery. Plain SwiftUI image labels
+// can expose a larger accessibility frame than their painted hit region while
+// rotating, sending a center tap to the dismissal scrim instead of the button.
+private struct RingTouchButton: UIViewRepresentable {
+    let title: String
+    let identifier: String
+    let onActivate: () -> Void
+    func makeUIView(context: Context) -> RingTouchControl { RingTouchControl() }
+    func updateUIView(_ view: RingTouchControl, context: Context) {
+        view.accessibilityLabel = title
+        view.accessibilityIdentifier = identifier
+        view.onActivate = onActivate
+    }
+}
+
+private final class RingTouchControl: UIButton {
+    var onActivate: (() -> Void)?
+    init() {
+        super.init(frame: .zero)
+        backgroundColor = .clear
+        isAccessibilityElement = true
+        accessibilityTraits = .button
+        addTarget(self, action: #selector(activate), for: .touchUpInside)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        UIBezierPath(ovalIn: bounds).contains(point)
+    }
+    @objc private func activate() { onActivate?() }
 }
 
 struct QuickActionsPanel: View {
