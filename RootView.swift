@@ -22,6 +22,11 @@ struct RootView: View {
     @State private var activePlayer: MediaEntry?
     @State private var discoveryQuery = ""
     @State private var discoverySourcesPresented = false
+    @ObservedObject private var interactions = InteractionPreferences.shared
+    @State private var captureRequest: CameraRequest?
+    @State private var rootImporter = false
+    @State private var rootNotice: String?
+    @State private var reelsRequest: ReelsRequest?
 
     var body: some View {
         ZStack {
@@ -66,15 +71,20 @@ struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .coordinateSpace(name: "moonlight-root")
         .onChange(of: model.selectedTab) { _ in discoverySourcesPresented = false }
+        .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
+        .buttonStyle(MoonGlassButtonStyle())
         .overlay {
             GeometryReader { geometry in
                 if let menu = model.activeLongPressMenu {
                     LongPressRingOverlay(
                         menu: menu,
-                        actions: model.longPressQuickActions,
+                        actions: interactions.actions("media").map(RingAction.command),
                         style: model.longPressStyle,
                         selectionMode: model.longPressSelectionMode,
-                        onAction: { if let entry = menu.entry { performQuickAction($0, for: entry) } },
+                        onAction: { action in
+                            if let mediaAction = action.mediaAction, let entry = menu.entry { performQuickAction(mediaAction, for: entry) }
+                            else if case .command(let command) = action { model.activeLongPressMenu = nil; model.send(command, context: "media") }
+                        },
                         onMore: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             model.activeLongPressMenu = nil
@@ -90,6 +100,16 @@ struct RootView: View {
         }
         .universalLongPress(target: .page(for: model.selectedTab))
         .overlay(alignment: .bottom) { tabBar.zIndex(100) }
+        .photosPicker(isPresented: $rootImporter, selection: $selectedMedia, matching: .any(of: [.images, .videos]))
+        .alert("提示", isPresented: Binding(get: { rootNotice != nil }, set: { if !$0 { rootNotice = nil } })) {
+            Button("好", role: .cancel) { rootNotice = nil }
+        } message: { Text(rootNotice ?? "") }
+        .fullScreenCover(item: $captureRequest) { request in
+            CameraCaptureView(captureVideo: request.video, onCapture: { image in
+                if let data = image.jpegData(compressionQuality: 0.92) { model.mediaStore.importImage(data, title: "拍摄的照片") }
+            }, onCaptureVideo: { model.mediaStore.importVideoFile($0, title: "拍摄的视频") }).ignoresSafeArea()
+        }
+        .fullScreenCover(item: $reelsRequest) { request in ReelsView(source: request.source) }
         .fullScreenCover(item: $activePlayer) { entry in
             MediaPlayerView(entry: entry) {
                 activePlayer = nil
@@ -119,11 +139,27 @@ struct RootView: View {
                 .presentationDragIndicator(.visible)
             case .share(let entry):
                 ActivityShareSheet(items: [entry.remoteURL?.absoluteString ?? entry.title])
+            case .destination(let action):
+                NavigationStack {
+                    commandDestination(action)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { activeSheet = nil } } }
+                }
             } }.universalLongPress(target: .actionsPanel)
         }
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
+            if ProcessInfo.processInfo.arguments.contains("--moments-width-ui-tests") {
+                model.moments = []
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 3000, height: 220)).image { context in
+                    UIColor.systemIndigo.setFill(); context.fill(CGRect(x: 0, y: 0, width: 3000, height: 220))
+                }
+                if let data = image.jpegData(compressionQuality: 0.85) {
+                    model.mediaStore.importImage(data, title: "宽幅图片回归测试")
+                    if let entry = model.mediaStore.items.first { model.publishMoment(text: "宽幅图片布局测试", attachment: entry) }
+                }
+                model.selectedTab = .moments
+            }
             #endif
             guard !ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") else { return }
             await model.mediaStore.refreshDiscover()
@@ -202,6 +238,11 @@ struct RootView: View {
     }
 
     private var tabBar: some View {
+        Group {
+        if interactions.navigationMode == .slider {
+            SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
+                .frame(height: 50).padding(.horizontal, 18).padding(.bottom, 8)
+        } else {
         GeometryReader { geometry in
             let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
             HStack(spacing: 0) {
@@ -225,13 +266,93 @@ struct RootView: View {
                     model.activeLongPressMenu = nil
                     NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
                     UISelectionFeedbackGenerator().selectionChanged()
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { model.selectedTab = tab }
+                    selectTab(tab)
                 }
             }
         }
         .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
+        }
+        }
+    }
+
+    private func selectTab(_ tab: AppTab) {
+        if tab == .camera { openCamera(video: false) }
+        else { withAnimation(.easeOut(duration: 0.16)) { model.selectedTab = tab } }
+    }
+
+    private func openCamera(video: Bool) {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            rootNotice = "当前设备没有可用相机。你可以长按拍摄按钮，选择从照片图库导入。"; return
+        }
+        captureRequest = CameraRequest(video: video)
+    }
+
+    private func route(_ action: AppCommand, context: String) {
+        switch action {
+        case .home: selectTab(.home)
+        case .discover: selectTab(.discover)
+        case .moments: selectTab(.moments)
+        case .me: selectTab(.me)
+        case .photo: openCamera(video: false)
+        case .video: openCamera(video: true)
+        case .importMedia: rootImporter = true
+        case .reelsLibrary: reelsRequest = ReelsRequest(source: .library)
+        case .reelsSources: reelsRequest = ReelsRequest(source: .sources)
+        case .compose: activeSheet = .composer(nil)
+        case .avatar, .cover: model.selectedTab = .moments
+        case .refresh:
+            Task {
+                if model.selectedTab == .discover && !discoveryQuery.isEmpty { await model.mediaStore.searchDiscover(discoveryQuery) }
+                else { await model.refresh(model.selectedTab) }
+            }
+        case .sources: model.selectedTab = .discover; discoverySourcesPresented = true
+        case .layout:
+            model.selectedTab = .discover
+            let old = UserDefaults.standard.integer(forKey: "discover_columns")
+            UserDefaults.standard.set(old == 1 ? 2 : 1, forKey: "discover_columns")
+        case .random10, .random15, .random20:
+            Task { await model.mediaStore.addRandom(count: action == .random10 ? 10 : action == .random15 ? 15 : 20) }
+        case .portrait: model.portraitPlaybackOnly.toggle()
+        case .virtualFriends: model.virtualActivityEnabled.toggle()
+        case .navigationMode: interactions.navigationMode = interactions.navigationMode == .circles ? .slider : .circles
+        case .playMedia, .favoriteMedia, .saveMedia, .shareMedia:
+            activeSheet = .destination(action)
+        default: activeSheet = .destination(action)
+        }
+    }
+
+    @ViewBuilder private func commandDestination(_ action: AppCommand) -> some View {
+        switch action {
+        case .settings: SettingsView()
+        case .menuSettings: ContextMenuSettingsView()
+        case .backgroundLibrary: ButtonBackgroundLibraryView()
+        case .background, .backgrounds: BackgroundSettingsView()
+        case .friends: VirtualFriendsView(onSelect: { activeSheet = nil; activePlayer = $0 })
+        case .messages: VirtualMessagesView()
+        case .profile: ProfileEditView()
+        case .gestures: GestureHelpView()
+        case .playMedia, .favoriteMedia, .saveMedia, .shareMedia:
+            List {
+                Section("选择要操作的媒体") {
+                    ForEach(model.mediaStore.items) { entry in
+                        Button(entry.title) {
+                            activeSheet = nil
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 350_000_000)
+                                if let operation = action.mediaAction { performQuickAction(operation, for: entry) }
+                            }
+                        }
+                    }
+                    if model.mediaStore.items.isEmpty { Text("请先向库中导入媒体。") }
+                }
+            }.navigationTitle(action.title)
+        default: LibraryView(selectedImage: selectedImage, selection: $selectedMedia, onPlay: { activeSheet = nil; activePlayer = $0 })
+        }
     }
 }
+
+private struct CameraRequest: Identifiable { let id = UUID(); var video: Bool }
+private struct ReelsRequest: Identifiable { let id = UUID(); let source: ReelsSource }
 
 // Transparent gaps pass touches through to the feed. Each visible circle owns
 // one native button, above media surfaces, with a minimum 48 pt touch target.
@@ -239,6 +360,58 @@ private struct PriorityTabSurface: UIViewRepresentable {
     var onSelect: (AppTab) -> Void
     func makeUIView(context: Context) -> PriorityTabView { PriorityTabView() }
     func updateUIView(_ view: PriorityTabView, context: Context) { view.onSelect = onSelect }
+}
+
+private struct SlidingTabSurface: UIViewRepresentable {
+    let selected: AppTab
+    var onSelect: (AppTab) -> Void
+    func makeUIView(context: Context) -> SlidingTabControl { SlidingTabControl() }
+    func updateUIView(_ view: SlidingTabControl, context: Context) {
+        view.onSelect = onSelect
+        if view.pan.state != .changed { view.selectedSegmentIndex = AppTab.allCases.firstIndex(of: selected) ?? 0 }
+    }
+}
+
+private final class SlidingTabControl: UISegmentedControl, UIGestureRecognizerDelegate {
+    var onSelect: ((AppTab) -> Void)?
+    let pan = UIPanGestureRecognizer()
+    init() {
+        super.init(items: AppTab.allCases.map(\.title))
+        accessibilityIdentifier = "navigation-slider"
+        selectedSegmentIndex = 0
+        addTarget(self, action: #selector(chosen), for: .valueChanged)
+        pan.addTarget(self, action: #selector(slid(_:))); pan.delegate = self; addGestureRecognizer(pan)
+        selectedSegmentTintColor = .tertiarySystemFill
+        backgroundColor = UIColor.secondarySystemGroupedBackground.withAlphaComponent(0.72)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func tab(at point: CGPoint) -> AppTab {
+        AppTab.allCases[min(4, max(0, Int(point.x / max(1, bounds.width / 5))))]
+    }
+    override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard recognizer === pan else { return true }
+        let velocity = pan.velocity(in: self)
+        return abs(velocity.x) > abs(velocity.y)
+    }
+    @objc private func chosen() {
+        guard AppTab.allCases.indices.contains(selectedSegmentIndex) else { return }
+        NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
+        onSelect?(AppTab.allCases[selectedSegmentIndex])
+    }
+    @objc private func slid(_ recognizer: UIPanGestureRecognizer) {
+        let tab = tab(at: recognizer.location(in: self))
+        let index = AppTab.allCases.firstIndex(of: tab) ?? 0
+        switch recognizer.state {
+        case .began, .changed:
+            if selectedSegmentIndex != index {
+                selectedSegmentIndex = index
+                UISelectionFeedbackGenerator().selectionChanged()
+                if tab != .camera { chosen() }
+            }
+        case .ended: selectedSegmentIndex = index; chosen()
+        default: break
+        }
+    }
 }
 
 private final class PriorityTabView: UIView {
@@ -286,15 +459,16 @@ private extension View {
 }
 
 private enum HoldDestination: Identifiable {
-    case background(BackgroundTarget), backgrounds, guide, more
+    case background(BackgroundTarget), backgrounds, guide, more, menus, backgroundLibrary
     var id: String {
-        switch self { case .background(let target): target.rawValue; case .backgrounds: "backgrounds"; case .guide: "guide"; case .more: "more" }
+        switch self { case .background(let target): target.rawValue; case .backgrounds: "backgrounds"; case .guide: "guide"; case .more: "more"; case .menus: "menus"; case .backgroundLibrary: "backgroundLibrary" }
     }
 }
 
 private struct UniversalHoldScope: ViewModifier {
     let target: BackgroundTarget
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var interactions = InteractionPreferences.shared
     @State private var menu: ActiveLongPressMenu?
     @State private var heldTarget: BackgroundTarget?
     @State private var destination: HoldDestination?
@@ -316,7 +490,7 @@ private struct UniversalHoldScope: ViewModifier {
             }
             .overlay {
                 if let menu {
-                    LongPressRingOverlay(menu: menu, actions: QuickActionID.allCases,
+                    LongPressRingOverlay(menu: menu, actions: interactions.actions((heldTarget ?? target).rawValue).map(RingAction.command),
                         style: model.longPressStyle, selectionMode: model.longPressSelectionMode,
                         onAction: perform, onMore: { self.menu = nil; destination = .more },
                         onDismiss: { self.menu = nil })
@@ -331,15 +505,22 @@ private struct UniversalHoldScope: ViewModifier {
                         switch item {
                         case .background(let selected): BackgroundEditorView(target: selected)
                         case .backgrounds: BackgroundSettingsView()
-                        case .guide: holdGuide
+                        case .guide: GestureHelpView()
+                        case .menus: ContextMenuSettingsView()
+                        case .backgroundLibrary: ButtonBackgroundLibraryView()
                         case .more:
                             List {
+                                Section((heldTarget ?? target).title) {
+                                    ForEach(interactions.actions((heldTarget ?? target).rawValue)) { action in
+                                        Button { destination = nil; perform(.command(action)) } label: { Label(action.title, systemImage: action.symbol) }
+                                    }
+                                }
                                 Section("外观") {
                                     Button("调整当前背景") { destination = .background(heldTarget ?? target) }
                                     Button("页面与按键背景") { destination = .backgrounds }
                                 }
                                 Section("操作") {
-                                    Button("刷新当前页面") { perform(.play) }
+                                    Button("配置长按菜单") { destination = .menus }
                                     Button("手势说明") { destination = .guide }
                                 }
                             }.navigationTitle("更多操作")
@@ -350,14 +531,23 @@ private struct UniversalHoldScope: ViewModifier {
             }
     }
 
-    private func perform(_ action: QuickActionID) {
+    private func perform(_ action: RingAction) {
         menu = nil
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        switch action {
-        case .play: destination = nil; Task { await model.refresh(model.selectedTab) }
-        case .favorite: destination = .background(heldTarget ?? target)
-        case .library: destination = .backgrounds
-        case .share: destination = .guide
+        guard case .command(let command) = action else { return }
+        switch command {
+        case .background: destination = .background(heldTarget ?? target)
+        case .backgrounds: destination = .backgrounds
+        case .backgroundLibrary: destination = .backgroundLibrary
+        case .gestures: destination = .guide
+        case .menuSettings: destination = .menus
+        default:
+            let hadPanel = destination != nil
+            destination = nil
+            Task { @MainActor in
+                if hadPanel { try? await Task.sleep(nanoseconds: 350_000_000) }
+                model.send(command, context: (heldTarget ?? target).rawValue)
+            }
         }
     }
 
@@ -426,10 +616,19 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     func detach() { hold.view?.removeGestureRecognizer(hold); owner = nil }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard canBegin, owner?.presentedViewController == nil else { return false }
-        touchedView = touch.view; heldTarget = nil
+        touchedView = touch.view
+        heldTarget = window.flatMap { BackgroundHitRegistry.target(at: touch.location(in: $0), in: $0) }
         var ancestor = touch.view
         while let view = ancestor {
+            if let scroll = view as? UIScrollView {
+                scroll.delaysContentTouches = false
+                scroll.canCancelContentTouches = true
+                // A new touch during momentum belongs to the scroll view. Do
+                // not add a button/hold failure dependency to that new stroke.
+                if scroll.isDecelerating { return false }
+            }
             if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider { return false }
+            if let slider = view as? SlidingTabControl { heldTarget = .button(for: slider.tab(at: touch.location(in: slider))) }
             if let identifier = view.accessibilityIdentifier,
                identifier.hasPrefix("navigation-"),
                let tab = AppTab(rawValue: String(identifier.dropFirst("navigation-".count))) {
@@ -438,6 +637,10 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
             ancestor = view.superview
         }
         return true
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        otherGestureRecognizer is UIPanGestureRecognizer
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -472,21 +675,23 @@ private enum RootSheet: Identifiable {
     case composer(MediaEntry?)
     case quickActions(MediaEntry)
     case share(MediaEntry)
+    case destination(AppCommand)
     var id: String {
         switch self {
         case .composer(let entry): "composer-\(entry?.id ?? "new")"
         case .quickActions(let entry): "quick-actions-\(entry.id)"
         case .share(let entry): "share-\(entry.id)"
+        case .destination(let action): "destination-\(action.rawValue)"
         }
     }
 }
 
 private struct LongPressRingOverlay: View {
     let menu: ActiveLongPressMenu
-    let actions: [QuickActionID]
+    let actions: [RingAction]
     let style: LongPressStyle
     let selectionMode: LongPressSelectionMode
-    let onAction: (QuickActionID) -> Void
+    let onAction: (RingAction) -> Void
     let onMore: () -> Void
     let onDismiss: () -> Void
     @State private var ringAppeared = false
@@ -522,6 +727,7 @@ private struct LongPressRingOverlay: View {
                                 .accessibilityLabel("打开全部操作")
                         }
                         .buttonStyle(.plain)
+                        .allowsHitTesting(!menu.fingerDown)
                         .position(center)
                     }
                 }
@@ -550,20 +756,21 @@ private struct LongPressRingOverlay: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func ringButton(_ action: QuickActionID) -> some View {
+    private func ringButton(_ action: RingAction) -> some View {
         let isFavorite = menu.entry?.isFavorite ?? false
         return Button { onAction(action) } label: {
             VStack(spacing: 3) {
-                Image(systemName: menu.entry == nil ? globalSymbol(action) : action == .favorite && isFavorite ? "heart.slash.fill" : action.symbol)
+                Image(systemName: action.mediaAction == .favorite && isFavorite ? "heart.slash.fill" : action.symbol)
                     .font(.system(size: 16, weight: .semibold))
-                Text(menu.entry == nil ? globalTitle(action) : action == .favorite && isFavorite ? "取消收藏" : action == .play ? "打开" : action == .favorite ? "收藏" : action == .library ? "加入库" : "分享")
-                    .font(.system(size: 9, weight: .medium)).lineLimit(1).minimumScaleFactor(0.75)
+                Text(action.mediaAction == .favorite && isFavorite ? "取消收藏" : action.title)
+                    .font(.system(size: 9, weight: .medium)).lineLimit(2).multilineTextAlignment(.center).minimumScaleFactor(0.8)
             }
             .frame(width: 58, height: 58)
-            .moonGlassCircle(.ring(for: action))
+            .moonGlassCircle(action.background)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(menu.entry == nil ? globalTitle(action) : action.title)
+        .accessibilityLabel(action.title)
+        .allowsHitTesting(!menu.fingerDown)
     }
 
     private func globalTitle(_ action: QuickActionID) -> String {
@@ -585,7 +792,7 @@ private struct LongPressRingOverlay: View {
 
     private func clamped(_ point: CGPoint, to size: CGSize) -> CGPoint {
         CGPoint(x: min(max(point.x, 82), max(82, size.width - 82)),
-                y: min(max(point.y, 92), max(92, size.height - 92)))
+                y: min(max(point.y, 100), max(100, size.height - 150)))
     }
 
     private func isHighlighted(_ index: Int, center: CGPoint) -> Bool {
@@ -594,7 +801,7 @@ private struct LongPressRingOverlay: View {
         return selectionMode == .drag && hypot(menu.fingerLocation.x - center.x - offset.x, menu.fingerLocation.y - center.y - offset.y) < 36
     }
 
-    private func dragHighlightedAction(center: CGPoint) -> QuickActionID? {
+    private func dragHighlightedAction(center: CGPoint) -> RingAction? {
         guard selectionMode == .drag, menu.fingerDown,
               let index = hitAction(at: menu.fingerLocation, center: center, count: min(4, actions.count)) else { return nil }
         return actions[index]
@@ -608,7 +815,7 @@ private struct LongPressRingOverlay: View {
     }
 }
 
-private struct QuickActionsPanel: View {
+struct QuickActionsPanel: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let entry: MediaEntry
@@ -618,6 +825,26 @@ private struct QuickActionsPanel: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("已配置的更多操作") {
+                    ForEach(Array(InteractionPreferences.shared.actions("media").dropFirst(4))) { action in
+                        Button {
+                            if let media = action.mediaAction {
+                                switch media {
+                                case .play: onPlay()
+                                case .favorite: model.mediaStore.toggleFavorite(entry)
+                                case .library: model.mediaStore.appendToLibrary([entry])
+                                case .share: model.send(.shareMedia, context: "media")
+                                }
+                            } else {
+                                dismiss()
+                                Task { @MainActor in
+                                    try? await Task.sleep(nanoseconds: 350_000_000)
+                                    model.send(action, context: "media")
+                                }
+                            }
+                        } label: { Label(action.title, systemImage: action.symbol) }
+                    }
+                }
                 Section("播放与分享") {
                     Button(action: onPlay) { Label("播放 / 打开", systemImage: "play.fill") }
                     ShareLink(item: entry.remoteURL?.absoluteString ?? entry.title, preview: SharePreview(entry.title)) {
@@ -673,7 +900,7 @@ private struct HomeView: View {
     private let sizes = [10, 15, 20]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+            LazyVStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "月淡", subtitle: "为你留一段安静的时间", symbol: "moon.stars.fill")
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
@@ -691,7 +918,7 @@ private struct HomeView: View {
                 Button { Task { await model.mediaStore.addRandom(count: batchSize) } } label: {
                     Label("随机添加 \(batchSize) 条", systemImage: "sparkles")
                         .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
-                }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
+                }.buttonStyle(MoonGlassButtonStyle(prominent: true)).tint(MoonStyle.accent)
             }
             .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: MoonStyle.cardRadius))
             Text("最近内容").font(.title3.bold())
@@ -766,7 +993,7 @@ private struct DiscoverView: View {
             let results = query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults
             if results.isEmpty {
                 EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "打开内容源选择分类并查看加载状态。", symbol: "safari")
-                Button(action: onSources) { Label("查看内容源", systemImage: "slider.horizontal.3") }.buttonStyle(.bordered)
+                Button(action: onSources) { Label("查看内容源", systemImage: "slider.horizontal.3") }.buttonStyle(MoonGlassButtonStyle())
             } else {
                 LazyVGrid(columns: columns == 1 ? [GridItem(.flexible())] : grid, spacing: 14) {
                     ForEach(results) { entry in
@@ -776,7 +1003,7 @@ private struct DiscoverView: View {
                 }
             }
             if !query.isEmpty && model.mediaStore.hasMoreYouTubeResults {
-                Button("换一批") { Task { await model.mediaStore.searchDiscover(query, nextPage: true) } }.buttonStyle(.bordered)
+                Button("换一批") { Task { await model.mediaStore.searchDiscover(query, nextPage: true) } }.buttonStyle(MoonGlassButtonStyle())
             }
             if !query.isEmpty, !model.mediaStore.youtubeKeyConfigured,
                model.mediaStore.enabledSources.contains(where: { $0.kind == "youtube" && $0.enabled }) {
@@ -818,11 +1045,12 @@ private struct DiscoverTile: View {
 
 // Keep card interactions outside SwiftUI's drag arbitration. The enclosing
 // UIScrollView owns pans; this surface only recognizes taps and stationary holds.
-private struct CardGestureSurface: UIViewRepresentable {
+struct CardGestureSurface: UIViewRepresentable {
     var onTap: () -> Void
     var onHoldBegan: (CGPoint) -> Void
     var onHoldMoved: (CGPoint) -> Void
     var onHoldEnded: () -> Void
+    var onDoubleTap: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> CardGestureView {
         let view = CardGestureView()
@@ -835,6 +1063,7 @@ private struct CardGestureSurface: UIViewRepresentable {
         view.onHoldBegan = onHoldBegan
         view.onHoldMoved = onHoldMoved
         view.onHoldEnded = onHoldEnded
+        view.onDoubleTap = onDoubleTap
     }
 
     static func dismantleUIView(_ view: CardGestureView, coordinator: ()) {
@@ -842,14 +1071,16 @@ private struct CardGestureSurface: UIViewRepresentable {
     }
 }
 
-private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
+final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     var onTap: (() -> Void)?
     var onHoldBegan: ((CGPoint) -> Void)?
     var onHoldMoved: ((CGPoint) -> Void)?
     var onHoldEnded: (() -> Void)?
+    var onDoubleTap: (() -> Void)? { didSet { doubleTap.isEnabled = onDoubleTap != nil } }
     private var holdActive = false
     private let tap = UITapGestureRecognizer()
     private let hold = UILongPressGestureRecognizer()
+    private let doubleTap = UITapGestureRecognizer()
 
     init() {
         super.init(frame: .zero)
@@ -857,9 +1088,11 @@ private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         isAccessibilityElement = false
         tap.addTarget(self, action: #selector(tapped(_:)))
         hold.addTarget(self, action: #selector(held(_:)))
+        doubleTap.addTarget(self, action: #selector(doubleTapped))
+        doubleTap.numberOfTapsRequired = 2
         hold.minimumPressDuration = 0.48
         hold.allowableMovement = 7
-        for recognizer in [tap, hold] {
+        for recognizer in [tap, hold, doubleTap] {
             recognizer.delegate = self
             recognizer.cancelsTouchesInView = false
             recognizer.delaysTouchesBegan = false
@@ -867,6 +1100,9 @@ private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
             addGestureRecognizer(recognizer)
         }
         tap.require(toFail: hold)
+        tap.require(toFail: doubleTap)
+        doubleTap.require(toFail: hold)
+        doubleTap.isEnabled = false
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -890,6 +1126,11 @@ private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        otherGestureRecognizer is UIPanGestureRecognizer
+    }
+
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         !enclosingScrollViews.contains { $0.isDragging || $0.isDecelerating }
     }
@@ -898,6 +1139,7 @@ private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         guard recognizer.state == .ended, !holdActive else { return }
         onTap?()
     }
+    @objc private func doubleTapped() { onDoubleTap?() }
 
     @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
         switch recognizer.state {
@@ -925,6 +1167,10 @@ private final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil { cancelHold() }
+        for scroll in enclosingScrollViews {
+            scroll.delaysContentTouches = false
+            scroll.canCancelContentTouches = true
+        }
     }
 }
 
@@ -1139,8 +1385,9 @@ private struct MediaPlayerView: View {
     }
 }
 
-private struct WebEmbedView: UIViewRepresentable {
+struct WebEmbedView: UIViewRepresentable {
     let url: URL
+    var scrolling = true
 
     final class Coordinator { var requestedURL: URL? }
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -1150,17 +1397,22 @@ private struct WebEmbedView: UIViewRepresentable {
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         let view = WKWebView(frame: .zero, configuration: configuration)
-        view.scrollView.isScrollEnabled = true
+        view.scrollView.isScrollEnabled = scrolling
         context.coordinator.requestedURL = url
         view.load(URLRequest(url: url))
         return view
     }
 
     func updateUIView(_ view: WKWebView, context: Context) {
+        view.scrollView.isScrollEnabled = scrolling
         if context.coordinator.requestedURL != url {
             context.coordinator.requestedURL = url
             view.load(URLRequest(url: url))
         }
+    }
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        view.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(function(v){v.pause()})", completionHandler: nil)
+        view.stopLoading(); view.loadHTMLString("", baseURL: nil)
     }
 }
 
@@ -1178,7 +1430,7 @@ private struct YouTubeSearchFallback: View {
             if let searchURL {
                 Link(destination: searchURL) {
                     Label("在 YouTube 打开搜索", systemImage: "arrow.up.right.square")
-                }.buttonStyle(.bordered)
+                }.buttonStyle(MoonGlassButtonStyle())
                 Text("App 内的 YouTube 关键词结果需要在内容源中配置 API Key。").font(.caption).foregroundStyle(.secondary)
             } else {
                 EmptyPanel(title: "搜索链接无效", detail: "请检查搜索词后重试。", symbol: "exclamationmark.triangle")
@@ -1201,10 +1453,12 @@ private struct MomentsView: View {
     @State private var commentTargetID: String?
     @State private var commentDraft = ""
     @State private var showingCommentPrompt = false
+    @State private var deletingMoment: String?
 
     var body: some View {
+        GeometryReader { viewport in
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 18) {
                 ZStack(alignment: .bottomLeading) {
                     Button { coverPickerPresented = true } label: {
                         ProfileBackgroundMedia(target: .cover)
@@ -1266,6 +1520,10 @@ private struct MomentsView: View {
                                         if moment.isVirtual { Text("虚拟好友") }
                                     }.font(.caption).foregroundStyle(.secondary)
                                 }
+                                Spacer(minLength: 4)
+                                Button { deletingMoment = moment.id } label: {
+                                    Image(systemName: "trash").frame(width: 36, height: 36).moonGlassCircle()
+                                }.buttonStyle(.plain).accessibilityLabel("删除动态")
                             }
                             if !moment.text.isEmpty {
                                 Text(moment.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
@@ -1312,8 +1570,13 @@ private struct MomentsView: View {
                         .transition(.opacity)
                     }
                 }
-            }.padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 96)
+            }.frame(width: max(0, viewport.size.width - 36))
+                .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 96)
         }.scrollIndicators(.hidden).pageBackground(.moments)
+            .task(id: model.command?.id) {
+                if model.command?.action == .avatar { avatarPickerPresented = true }
+                if model.command?.action == .cover { coverPickerPresented = true }
+            }
             .task(id: avatarSelection) {
                 if let path = await saveProfileMedia(avatarSelection, name: "avatar") { avatarPath = path }
             }
@@ -1328,6 +1591,14 @@ private struct MomentsView: View {
                     commentDraft = ""
                 }.disabled(commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            .confirmationDialog("删除这条朋友圈动态？", isPresented: Binding(get: { deletingMoment != nil }, set: { if !$0 { deletingMoment = nil } }), titleVisibility: .visible) {
+                Button("删除动态", role: .destructive) {
+                    if let id = deletingMoment { model.deleteMoment(id) }
+                    deletingMoment = nil
+                }
+                Button("取消", role: .cancel) { deletingMoment = nil }
+            }
+        }
     }
 }
 
@@ -1342,15 +1613,15 @@ private func saveProfileMedia(_ item: PhotosPickerItem?, name: String) async -> 
 private struct MomentAttachmentPreview: View {
     let entry: MediaEntry
     var body: some View {
+        GeometryReader { bounds in
         ZStack(alignment: .bottomLeading) {
-            if entry.kind == .image, let url = entry.remoteURL, url.isFileURL,
-               let image = UIImage(contentsOfFile: url.path) {
-                Image(uiImage: image).resizable().scaledToFill().frame(height: 210).frame(maxWidth: .infinity).clipped()
+            if entry.kind == .image, let url = entry.remoteURL, url.isFileURL {
+                LocalMediaImage(url: url, fill: true).frame(width: bounds.size.width, height: 210).clipped()
             } else if entry.kind == .video, let url = entry.remoteURL, url.isFileURL {
-                LocalVideoPoster(url: url).frame(height: 210).frame(maxWidth: .infinity).clipped()
+                LocalVideoPoster(url: url).frame(width: bounds.size.width, height: 210).clipped()
             } else if let cover = entry.coverURL {
                 AsyncImage(url: cover) { image in image.resizable().scaledToFill() } placeholder: { attachmentFallback }
-                    .frame(height: 210).frame(maxWidth: .infinity).clipped()
+                    .frame(width: bounds.size.width, height: 210).clipped()
             } else { attachmentFallback.frame(height: 210) }
             LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 5) {
@@ -1363,6 +1634,8 @@ private struct MomentAttachmentPreview: View {
                 .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
+        .frame(width: bounds.size.width, height: 210).clipped()
+        }.frame(height: 210)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     private var attachmentFallback: some View {
@@ -1618,7 +1891,7 @@ private struct CameraView: View {
                     } label: {
                         Label("保存到库", systemImage: "square.and.arrow.down")
                             .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
-                    }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
+                    }.buttonStyle(MoonGlassButtonStyle(prominent: true)).tint(MoonStyle.accent)
                 } else {
                     EmptyPanel(title: "准备好记录此刻了吗？", detail: "拍摄或从照片图库导入，内容会保存到库。", symbol: "camera")
                     Button {
@@ -1628,7 +1901,7 @@ private struct CameraView: View {
                     } label: {
                         Label("打开相机", systemImage: "camera.fill")
                             .font(.headline).frame(maxWidth: .infinity, minHeight: 50)
-                    }.buttonStyle(.borderedProminent).tint(MoonStyle.accent)
+                    }.buttonStyle(MoonGlassButtonStyle(prominent: true)).tint(MoonStyle.accent)
                     Button {
                         captureVideo = true
                         if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
@@ -1636,11 +1909,11 @@ private struct CameraView: View {
                     } label: {
                         Label("录制视频", systemImage: "video.fill")
                             .frame(maxWidth: .infinity, minHeight: 48)
-                    }.buttonStyle(.bordered)
+                    }.buttonStyle(MoonGlassButtonStyle())
                     Button { showPicker = true } label: {
                         Label("从照片图库导入", systemImage: "photo.on.rectangle")
                             .frame(maxWidth: .infinity, minHeight: 48)
-                    }.buttonStyle(.bordered)
+                    }.buttonStyle(MoonGlassButtonStyle())
                 }
             }
             .padding(.horizontal, 18).padding(.top, 12)
@@ -1722,6 +1995,15 @@ private struct LibraryView: View {
 
     var body: some View {
         ScrollView { libraryContent }.scrollIndicators(.hidden).pageBackground(.library)
+            .navigationTitle("库")
+            .task(id: model.command?.id) {
+                switch model.command?.action {
+                case .selectAll: selectionMode = true; selectedIDs = Set(visibleItems.map(\.id))
+                case .favorites: filter = "收藏"
+                case .downloads: filter = "下载"
+                default: break
+                }
+            }
     }
 
     private var libraryContent: some View {
@@ -1798,6 +2080,9 @@ private struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("外观与媒体") {
+                    NavigationLink { ContextMenuSettingsView() } label: { Label("长按菜单与底栏", systemImage: "hand.point.up.left") }
+                        .accessibilityIdentifier("context-menu-settings-entry")
+                    NavigationLink { ButtonBackgroundLibraryView() } label: { Label("按键背景库", systemImage: "photo.stack") }
                     NavigationLink { BackgroundSettingsView() } label: {
                         Label("背景与按键", systemImage: "photo.on.rectangle.angled")
                     }
@@ -1835,14 +2120,8 @@ private struct SettingsView: View {
                         ForEach(LongPressSelectionMode.allCases) { mode in Text(mode.title).tag(mode) }
                     }
                 }
-                Section("圆环快捷键（最多 4 个）") {
-                    ForEach(QuickActionID.allCases) { action in
-                        Toggle(action.title, isOn: Binding(
-                            get: { model.longPressQuickActions.contains(action) },
-                            set: { model.setQuickAction(action, enabled: $0) }
-                        ))
-                        .disabled(model.longPressQuickActions.count >= 4 && !model.longPressQuickActions.contains(action))
-                    }
+                Section("圆环快捷键") {
+                    NavigationLink("按页面和按键自定义操作") { ContextMenuSettingsView() }
                     Text("松开只会保留圆环，不会误触。点按模式需再点圆环按钮；拖动模式可划到按钮上松开执行。“…”打开完整操作面板，删除只在面板中。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
@@ -1943,7 +2222,7 @@ private struct MenuRow: View {
             Text(title).font(.body.weight(.medium))
             Spacer()
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-        }.padding(.vertical, 13)
+        }.padding(.vertical, 13).padding(.horizontal, 8).moonGlassPanel()
     }
 }
 

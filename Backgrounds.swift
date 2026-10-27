@@ -6,6 +6,49 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+struct MoonGlassButtonStyle: ButtonStyle {
+    var prominent = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.padding(.horizontal, 12).padding(.vertical, 8)
+            .background { GlassCapsule(prominent: prominent) }
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+private struct GlassCapsule: View {
+    let prominent: Bool
+    var body: some View {
+        if #available(iOS 26.0, *) {
+            Capsule().fill(.clear).glassEffect(.regular.tint(prominent ? .accentColor.opacity(0.2) : .clear).interactive(), in: Capsule())
+        } else {
+            Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.7))
+        }
+    }
+}
+
+// Weak, live frames keep long-press context aligned with buttons after scrolling
+// and navigation. No full-screen hit-test layer is installed.
+@MainActor final class BackgroundHitRegistry {
+    static var markers = NSHashTable<BackgroundTargetMarker>.weakObjects()
+    static func target(at point: CGPoint, in window: UIWindow) -> BackgroundTarget? {
+        markers.allObjects.filter { $0.window === window && !$0.isHidden && $0.convert($0.bounds, to: window).contains(point) }
+            .min { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }?.target
+    }
+}
+
+final class BackgroundTargetMarker: UIView {
+    var target: BackgroundTarget = .allButtons
+    init() { super.init(frame: .zero); isUserInteractionEnabled = false; BackgroundHitRegistry.markers.add(self) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+struct BackgroundTargetAnchor: UIViewRepresentable {
+    let target: BackgroundTarget
+    func makeUIView(context: Context) -> BackgroundTargetMarker { BackgroundTargetMarker() }
+    func updateUIView(_ view: BackgroundTargetMarker, context: Context) { view.target = target }
+}
+
 enum BackgroundTarget: String, Codable, CaseIterable, Identifiable {
     case allPages = "page.all", home = "page.home", discover = "page.discover", camera = "page.camera"
     case moments = "page.moments", me = "page.me", library = "page.library", settings = "page.settings"
@@ -110,6 +153,18 @@ struct BackgroundConfiguration: Codable, Equatable {
 private struct BackgroundLibraryState: Codable {
     var assets: [BackgroundAsset]
     var configurations: [String: BackgroundConfiguration]
+    var playlists: [String: ButtonBackgroundPlaylist]? = nil
+}
+
+enum BackgroundPlaybackMode: String, Codable, CaseIterable, Identifiable {
+    case fixed, sequence, random, shuffle
+    var id: String { rawValue }
+    var title: String { switch self { case .fixed: "固定"; case .sequence: "顺序循环"; case .random: "随机"; case .shuffle: "洗牌循环" } }
+}
+struct ButtonBackgroundPlaylist: Codable, Equatable {
+    var assetIDs: [String] = []
+    var mode = BackgroundPlaybackMode.fixed
+    var interval = 12.0
 }
 
 private struct BackgroundMovieTransfer: Transferable, Sendable {
@@ -129,6 +184,7 @@ final class BackgroundStore: ObservableObject {
     static let shared = BackgroundStore()
     @Published private(set) var assets: [BackgroundAsset] = []
     @Published private(set) var configurations: [String: BackgroundConfiguration] = [:]
+    @Published private(set) var playlists: [String: ButtonBackgroundPlaylist] = [:]
     private let directory: URL
     private let manifest: URL
     private let imageCache = NSCache<NSString, UIImage>()
@@ -142,7 +198,7 @@ final class BackgroundStore: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         imageCache.totalCostLimit = 64 * 1024 * 1024
         if let data = try? Data(contentsOf: manifest), let saved = try? JSONDecoder().decode(BackgroundLibraryState.self, from: data) {
-            assets = saved.assets; configurations = saved.configurations
+            assets = saved.assets; configurations = saved.configurations; playlists = saved.playlists ?? [:]
         }
         for target in [BackgroundTarget.avatar, .cover] where configurations[target.rawValue] == nil {
             let key = target == .avatar ? "moonlight.profile.avatarPath" : "moonlight.profile.coverPath"
@@ -165,6 +221,21 @@ final class BackgroundStore: ObservableObject {
         guard let config else { return nil }
         return assets.first { $0.id == config.assetID }
     }
+
+    func playlist(for target: BackgroundTarget) -> ButtonBackgroundPlaylist? {
+        guard target.isButton else { return nil }
+        if let list = playlists[target.rawValue] { return list }
+        if let fallback = target.fallback { return playlist(for: fallback) }
+        return nil
+    }
+    func setPlaylist(_ playlist: ButtonBackgroundPlaylist, for target: BackgroundTarget) {
+        var value = playlist
+        var seen = Set<String>()
+        value.assetIDs = value.assetIDs.filter { id in assets.contains { $0.id == id } && seen.insert(id).inserted }
+        value.interval = min(120, max(3, value.interval))
+        playlists[target.rawValue] = value; persist()
+    }
+    func resetPlaylist(for target: BackgroundTarget) { playlists.removeValue(forKey: target.rawValue); persist() }
 
     func url(for asset: BackgroundAsset) -> URL {
         if asset.fileName.hasPrefix("/") {
@@ -211,7 +282,7 @@ final class BackgroundStore: ObservableObject {
     }
 
     @discardableResult
-    func importSelection(_ item: PhotosPickerItem, for target: BackgroundTarget) async throws -> BackgroundAsset {
+    func importSelection(_ item: PhotosPickerItem, for target: BackgroundTarget, apply: Bool = true) async throws -> BackgroundAsset {
         let id = UUID().uuidString
         let video = item.supportedContentTypes.contains { $0.conforms(to: .movie) }
         var asset: BackgroundAsset
@@ -250,14 +321,15 @@ final class BackgroundStore: ObservableObject {
             asset = BackgroundAsset(id: id, fileName: name, isVideo: false, createdAt: .now)
         }
         assets.insert(asset, at: 0)
-        use(asset, for: target)
+        if apply { use(asset, for: target) } else { persist() }
         return asset
     }
 
-    var unusedCount: Int { assets.filter { asset in !configurations.values.contains(where: { $0.assetID == asset.id }) }.count }
+    private var usedIDs: Set<String> { Set(configurations.values.map(\.assetID)).union(playlists.values.flatMap(\.assetIDs)) }
+    var unusedCount: Int { assets.filter { !usedIDs.contains($0.id) }.count }
     func cleanUnused() {
-        let unused = assets.filter { asset in !configurations.values.contains(where: { $0.assetID == asset.id }) }
-        let used = assets.filter { asset in configurations.values.contains(where: { $0.assetID == asset.id }) }
+        let unused = assets.filter { !usedIDs.contains($0.id) }
+        let used = assets.filter { usedIDs.contains($0.id) }
         var protected = Set(used.map { url(for: $0).standardizedFileURL.path })
         protected.formUnion(used.compactMap(\.posterName).map { directory.appendingPathComponent($0).standardizedFileURL.path })
         let profileDirectory = directory.deletingLastPathComponent().appendingPathComponent("profile").standardizedFileURL.path + "/"
@@ -276,7 +348,7 @@ final class BackgroundStore: ObservableObject {
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(BackgroundLibraryState(assets: assets, configurations: configurations)) { try? data.write(to: manifest, options: .atomic) }
+        if let data = try? JSONEncoder().encode(BackgroundLibraryState(assets: assets, configurations: configurations, playlists: playlists)) { try? data.write(to: manifest, options: .atomic) }
     }
 
     #if DEBUG
@@ -418,26 +490,79 @@ private final class BackgroundVideoView: UIView {
 struct MediaGlassCircle: ViewModifier {
     @EnvironmentObject private var store: BackgroundStore
     let target: BackgroundTarget
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var currentAssetID: String?
+    @State private var shuffled: [String] = []
     func body(content: Content) -> some View {
-        let configuration = store.resolved(target)
+        let playlist = store.playlist(for: target)
+        let configuration = resolvedConfiguration(playlist)
         let decorated = content.background {
+            BackgroundTargetAnchor(target: target)
             if let configuration { BackgroundMediaLayer(configuration: configuration).clipShape(Circle()) }
         }
         if #available(iOS 26.0, *) {
-            if let configuration { decorated.foregroundStyle(configuration.veil.foreground).glassEffect(.regular.interactive(), in: Circle()) }
-            else { decorated.glassEffect(.regular.interactive(), in: Circle()) }
+            if let configuration { decorated.foregroundStyle(configuration.veil.foreground).glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)) }
+            else { decorated.glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)) }
         } else {
             if let configuration {
-                decorated.foregroundStyle(configuration.veil.foreground).background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1))
+                decorated.foregroundStyle(configuration.veil.foreground).background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance))
             } else {
-                decorated.background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1))
+                decorated.background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance))
+            }
+        }
+    }
+    private func resolvedConfiguration(_ playlist: ButtonBackgroundPlaylist?) -> BackgroundConfiguration? {
+        guard let list = playlist, let id = currentAssetID.flatMap({ list.assetIDs.contains($0) ? $0 : nil }) ?? list.assetIDs.first,
+              store.assets.contains(where: { $0.id == id }) else { return store.resolved(target) }
+        var configuration = store.resolved(target) ?? BackgroundConfiguration(assetID: id)
+        configuration.assetID = id
+        return configuration
+    }
+    private func advance(_ first: Bool) {
+        guard let list = store.playlist(for: target), !list.assetIDs.isEmpty else { return }
+        if first || list.mode == .fixed { currentAssetID = list.assetIDs.first; shuffled = []; return }
+        switch list.mode {
+        case .fixed: break
+        case .sequence:
+            let index = currentAssetID.flatMap { list.assetIDs.firstIndex(of: $0) } ?? -1
+            currentAssetID = list.assetIDs[(index + 1) % list.assetIDs.count]
+        case .random: currentAssetID = list.assetIDs.filter { $0 != currentAssetID }.randomElement() ?? list.assetIDs.first
+        case .shuffle:
+            if shuffled.isEmpty {
+                shuffled = list.assetIDs.shuffled()
+                if shuffled.count > 1 && shuffled.last == currentAssetID { shuffled.swapAt(0, shuffled.count - 1) }
+            }
+            currentAssetID = shuffled.popLast()
+        }
+    }
+}
+
+private struct BackgroundClock: ViewModifier {
+    let list: ButtonBackgroundPlaylist?
+    let phase: ScenePhase
+    let reduceMotion: Bool
+    let advance: (Bool) -> Void
+    func body(content: Content) -> some View {
+        content.task(id: "\(list.map { String(describing: $0) } ?? "none")-\(phase)-\(reduceMotion)") {
+            advance(true)
+            guard let list, list.mode != .fixed, list.assetIDs.count > 1, phase == .active, !reduceMotion else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(max(3, list.interval) * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                advance(false)
             }
         }
     }
 }
 
 extension View {
+    @ViewBuilder func moonGlassPanel() -> some View {
+        if #available(iOS 26.0, *) { glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16)) }
+        else { background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16)) }
+    }
     func pageBackground(_ target: BackgroundTarget) -> some View {
-        background { PageBackground(target: target).ignoresSafeArea() }
+        background { PageBackground(target: target).ignoresSafeArea(); BackgroundTargetAnchor(target: target) }
     }
 }
+

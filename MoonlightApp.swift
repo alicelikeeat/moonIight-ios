@@ -34,7 +34,7 @@ enum LongPressSelectionMode: String, CaseIterable, Identifiable {
     var title: String { self == .tap ? "松手后点按" : "跟随拖动选择" }
 }
 
-enum QuickActionID: String, CaseIterable, Identifiable {
+enum QuickActionID: String, CaseIterable, Identifiable, Hashable {
     case play
     case favorite
     case library
@@ -70,6 +70,8 @@ struct ActiveLongPressMenu: Identifiable, Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    @Published var command: AppCommandRequest?
+    func send(_ action: AppCommand, context: String = "") { command = AppCommandRequest(action: action, context: context) }
     @Published var selectedTab: AppTab = .home
     @Published var mediaStore = MediaStore() {
         didSet { observeMediaChanges() }
@@ -137,6 +139,9 @@ final class AppModel: ObservableObject {
         }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") {
+            InteractionPreferences.shared.navigationMode = ProcessInfo.processInfo.arguments.contains("--slider-ui-tests") ? .slider : .circles
+            if !ProcessInfo.processInfo.arguments.contains("--keep-menu-settings") { InteractionPreferences.shared.resetForUITests() }
+            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") { UserDefaults.standard.set(false, forKey: "moonlight.reels.autoAdvance") }
             selectedTab = ProcessInfo.processInfo.arguments.contains("--test-discover") ? .discover : .home
             let columns = ProcessInfo.processInfo.arguments.contains("--single-column") ? 1 : 2
             UserDefaults.standard.set(columns, forKey: "discover_columns")
@@ -185,6 +190,10 @@ final class AppModel: ObservableObject {
         updated[index].likedByMe.toggle()
         updated[index].likes = max(0, updated[index].likes + (updated[index].likedByMe ? 1 : -1))
         moments = updated
+    }
+
+    func deleteMoment(_ id: String) {
+        withAnimation(.easeOut(duration: 0.22)) { moments.removeAll { $0.id == id } }
     }
 
     func addMomentComment(_ id: String, text: String) {
@@ -262,6 +271,106 @@ final class AppModel: ObservableObject {
         }
         moments = updated
     }
+}
+
+struct AppCommandRequest: Identifiable, Equatable {
+    let id = UUID()
+    let action: AppCommand
+    let context: String
+}
+
+enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
+    case home, discover, moments, me, library, settings, friends, messages, profile
+    case refresh, sources, layout, random10, random15, random20, importMedia
+    case photo, video, compose, avatar, cover, reelsLibrary, reelsSources
+    case background, backgrounds, backgroundLibrary, gestures, menuSettings
+    case playMedia, favoriteMedia, saveMedia, shareMedia
+    case portrait, virtualFriends, navigationMode, selectAll, favorites, downloads
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .home: "首页"; case .discover: "发现"; case .moments: "朋友圈"; case .me: "我"
+        case .library: "打开库"; case .settings: "设置"; case .friends: "朋友"; case .messages: "消息"; case .profile: "编辑资料"
+        case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
+        case .random10: "随机加入 10 条"; case .random15: "随机加入 15 条"; case .random20: "随机加入 20 条"
+        case .importMedia: "导入图片或视频"; case .photo: "拍照"; case .video: "录制视频"
+        case .compose: "发布动态"; case .avatar: "更换头像"; case .cover: "更换横幅"
+        case .reelsLibrary: "抖音模式 · 库"; case .reelsSources: "抖音模式 · 内容源"
+        case .background: "当前背景"; case .backgrounds: "全部背景"; case .backgroundLibrary: "按键背景库"
+        case .gestures: "手势说明"; case .menuSettings: "配置长按菜单"
+        case .playMedia: "打开播放"; case .favoriteMedia: "收藏 / 取消收藏"; case .saveMedia: "加入库"; case .shareMedia: "分享"
+        case .portrait: "切换竖屏锁定"; case .virtualFriends: "切换虚拟好友活动"; case .navigationMode: "切换底栏模式"
+        case .selectAll: "库 · 全选"; case .favorites: "库 · 收藏"; case .downloads: "库 · 下载"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .home: "moon.stars"; case .discover: "safari"; case .moments, .friends: "person.2"
+        case .me, .profile, .avatar: "person.crop.circle"; case .library, .saveMedia: "square.grid.2x2"
+        case .settings, .menuSettings: "gearshape"; case .messages: "bubble.left.and.bubble.right"
+        case .refresh: "arrow.clockwise"; case .sources: "line.3.horizontal.decrease"; case .layout: "rectangle.grid.2x2"
+        case .random10, .random15, .random20: "shuffle"; case .importMedia: "square.and.arrow.down"
+        case .photo: "camera"; case .video: "video"; case .compose: "square.and.pencil"; case .cover, .background: "photo"
+        case .reelsLibrary, .reelsSources: "play.rectangle.fill"; case .backgrounds, .backgroundLibrary: "photo.stack"
+        case .gestures: "hand.draw"; case .playMedia: "play.fill"; case .favoriteMedia, .favorites: "heart"
+        case .shareMedia: "square.and.arrow.up"; case .portrait: "lock.rotation"; case .virtualFriends: "person.2.wave.2"
+        case .navigationMode: "slider.horizontal.3"; case .selectAll: "checkmark.circle"; case .downloads: "arrow.down.circle"
+        }
+    }
+    var mediaAction: QuickActionID? {
+        switch self { case .playMedia: .play; case .favoriteMedia: .favorite; case .saveMedia: .library; case .shareMedia: .share; default: nil }
+    }
+}
+
+enum BottomNavigationMode: String, CaseIterable, Identifiable {
+    case circles, slider
+    var id: String { rawValue }
+    var title: String { self == .circles ? "独立圆形" : "原生滑块" }
+}
+
+@MainActor final class InteractionPreferences: ObservableObject {
+    static let shared = InteractionPreferences()
+    @Published var navigationMode: BottomNavigationMode {
+        didSet { UserDefaults.standard.set(navigationMode.rawValue, forKey: "moonlight.navigationMode") }
+    }
+    @Published private(set) var menus: [String: [AppCommand]] {
+        didSet { if let data = try? JSONEncoder().encode(menus) { UserDefaults.standard.set(data, forKey: "moonlight.contextMenus") } }
+    }
+    init() {
+        navigationMode = BottomNavigationMode(rawValue: UserDefaults.standard.string(forKey: "moonlight.navigationMode") ?? "circles") ?? .circles
+        menus = UserDefaults.standard.data(forKey: "moonlight.contextMenus").flatMap { try? JSONDecoder().decode([String: [AppCommand]].self, from: $0) } ?? [:]
+    }
+    func actions(_ context: String) -> [AppCommand] { menus[context] ?? defaults(context) }
+    func set(_ actions: [AppCommand], for context: String) { menus[context] = Array(NSOrderedSet(array: actions.map(\.rawValue)).array.compactMap { ($0 as? String).flatMap(AppCommand.init(rawValue:)) }) }
+    func reset(_ context: String) { menus.removeValue(forKey: context) }
+    #if DEBUG
+    func resetForUITests() { menus = [:] }
+    #endif
+    func defaults(_ context: String) -> [AppCommand] {
+        switch context {
+        case "media": [.playMedia, .favoriteMedia, .saveMedia, .shareMedia]
+        case "button.home": [.reelsLibrary, .reelsSources, .refresh, .background]
+        case "button.camera", "page.camera": [.photo, .video, .importMedia, .background]
+        case "page.home": [.random10, .reelsLibrary, .reelsSources, .importMedia]
+        case "page.discover", "button.discover": [.sources, .layout, .refresh, .background]
+        case "button.sources": [.sources, .refresh, .background, .menuSettings]
+        case "button.layout": [.layout, .sources, .background, .menuSettings]
+        case "page.moments", "button.moments": [.compose, .avatar, .cover, .background]
+        case "page.me", "button.me": [.library, .profile, .settings, .background]
+        case "page.library": [.selectAll, .favorites, .downloads, .importMedia]
+        case "page.settings": [.menuSettings, .backgroundLibrary, .navigationMode, .background]
+        default: [.background, .backgrounds, .gestures, .menuSettings]
+        }
+    }
+}
+
+enum RingAction: Identifiable, Hashable {
+    case media(QuickActionID), command(AppCommand)
+    var id: String { switch self { case .media(let a): "media-" + a.rawValue; case .command(let a): a.rawValue } }
+    var title: String { switch self { case .media(let a): a.title; case .command(let a): a.title } }
+    var symbol: String { switch self { case .media(let a): a.symbol; case .command(let a): a.symbol } }
+    var mediaAction: QuickActionID? { switch self { case .media(let a): a; case .command(let a): a.mediaAction } }
+    var background: BackgroundTarget { mediaAction.map(BackgroundTarget.ring(for:)) ?? .allRingButtons }
 }
 
 enum VirtualAIProvider: String, CaseIterable, Identifiable, Sendable {

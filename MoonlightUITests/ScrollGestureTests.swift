@@ -18,13 +18,14 @@ final class ScrollGestureTests: XCTestCase {
         if shown { dismiss.tap() }
     }
     @MainActor
-    private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false, asyncUpdates: Bool = false) -> XCUIApplication {
+    private func launch(discover: Bool, singleColumn: Bool = false, backgrounds: Bool = false, asyncUpdates: Bool = false, flags: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--scroll-ui-tests"]
         if discover { app.launchArguments.append("--test-discover") }
         if singleColumn { app.launchArguments.append("--single-column") }
         if backgrounds { app.launchArguments.append("--background-ui-tests") }
         if asyncUpdates { app.launchArguments.append("--async-discovery-ui-tests") }
+        app.launchArguments += flags
         app.launch()
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         let exists = card.waitForExistence(timeout: 15)
@@ -100,7 +101,7 @@ final class ScrollGestureTests: XCTestCase {
     func testHoldOnNavigationAndOrdinaryButtonDoesNotTapThrough() {
         let app = launch(discover: true)
         app.buttons["discover-sources"].press(forDuration: 0.7)
-        XCTAssertTrue(app.buttons["手势说明"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists)
         attach(app, name: "review-rotating-global-ring")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.6)).tap()
@@ -111,7 +112,7 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["我"].waitForExistence(timeout: 5), "The held tab must edit its own button background")
         app.buttons["完成"].firstMatch.tap()
         app.buttons["discover-sources"].press(forDuration: 0.7)
-        XCTAssertTrue(app.buttons["手势说明"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists, "A hold also opened the drawer")
         attach(app, name: "review-rotating-global-ring")
         app.buttons["navigation-home"].tap()
@@ -135,6 +136,151 @@ final class ScrollGestureTests: XCTestCase {
     }
 
     @MainActor func testHomeFastCardScroll() { assertCardScrolls(discover: false, velocity: .fast) }
+
+    @MainActor
+    func testConsecutiveCardFlicksKeepMoving() {
+        let app = launch(discover: true)
+        let viewport = app.frame.insetBy(dx: 10, dy: 100)
+        func snapshot() -> [String: CGRect] {
+            var result: [String: CGRect] = [:]
+            for card in app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).allElementsBoundByIndex {
+                if card.exists, card.isHittable, card.frame.intersects(viewport) { result[card.identifier] = card.frame }
+            }
+            return result
+        }
+        for _ in 0..<3 {
+            let before = snapshot()
+            guard let chosen = before.filter({ $0.value.midY > 300 && $0.value.midY < app.frame.maxY - 120 }).first else { return XCTFail("No visible card to start the next flick") }
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: chosen.value.midX, dy: chosen.value.midY))
+            start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -140)), withVelocity: .fast, thenHoldForDuration: 0)
+            let after = snapshot()
+            let moved = before.contains { id, frame in after[id].map { abs($0.minY - frame.minY) > 30 } ?? false }
+            XCTAssertTrue(moved || Set(before.keys) != Set(after.keys), "The next swipe stopped instead of scrolling")
+            XCTAssertFalse(app.buttons["打开全部操作"].exists)
+        }
+    }
+
+    @MainActor
+    func testBottomHoldAvoidsNavigationAndCameraOffersCaptureOptions() {
+        let app = launch(discover: false)
+        let home = app.buttons["navigation-home"]
+        home.press(forDuration: 0.7)
+        let reels = app.buttons["抖音模式 · 库"]
+        XCTAssertTrue(reels.waitForExistence(timeout: 3))
+        XCTAssertLessThan(reels.frame.maxY, home.frame.minY - 5)
+        XCTAssertLessThan(app.buttons["打开全部操作"].frame.maxY, home.frame.minY - 5)
+        attach(app, name: "review-bottom-ring-clearance")
+        app.buttons["navigation-camera"].tap()
+        // The simulator has no camera; the direct camera route must expose its
+        // device-availability message instead of switching to a blank page.
+        XCTAssertTrue(app.alerts["提示"].waitForExistence(timeout: 3))
+        app.alerts.buttons["好"].tap()
+        app.buttons["navigation-camera"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["拍照"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["录制视频"].exists)
+        app.buttons["导入图片或视频"].tap()
+        closeMediaPicker(app)
+    }
+
+    @MainActor
+    func testWideMomentStaysInsideScreenAndCanBeDeleted() {
+        let app = launch(discover: false, flags: ["--moments-width-ui-tests"])
+        let text = app.staticTexts["宽幅图片布局测试"]
+        XCTAssertTrue(text.waitForExistence(timeout: 8))
+        let viewport = app.frame
+        for identifier in ["navigation-home", "navigation-me"] {
+            let button = app.buttons[identifier]
+            XCTAssertGreaterThanOrEqual(button.frame.minX, viewport.minX)
+            XCTAssertLessThanOrEqual(button.frame.maxX, viewport.maxX)
+        }
+        XCTAssertGreaterThanOrEqual(text.frame.minX, viewport.minX)
+        XCTAssertLessThanOrEqual(text.frame.maxX, viewport.maxX)
+        attach(app, name: "review-wide-moment-fixed")
+        app.buttons["删除动态"].firstMatch.tap()
+        let confirmation = app.buttons.matching(NSPredicate(format: "label == %@", "删除动态")).allElementsBoundByIndex.last(where: { $0.isHittable })
+        XCTAssertNotNil(confirmation)
+        confirmation?.tap()
+        XCTAssertFalse(text.exists)
+        XCTAssertTrue(app.staticTexts["还没有动态"].exists)
+    }
+
+    @MainActor
+    func testReelsUsesVerticalPagesAndReturnsToHome() {
+        let app = launch(discover: false, flags: ["--reels-ui-tests"])
+        app.buttons["navigation-home"].press(forDuration: 0.7)
+        app.buttons["抖音模式 · 库"].tap()
+        XCTAssertTrue(app.buttons["关闭抖音模式"].waitForExistence(timeout: 8))
+        let position = app.staticTexts["reels-position"]
+        XCTAssertEqual(position.label, "1 / 24")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)))
+        XCTAssertTrue(NSPredicate(format: "label == %@", "2 / 24").evaluate(with: position) || position.waitForExistence(timeout: 3))
+        XCTAssertEqual(position.label, "2 / 24")
+        attach(app, name: "review-vertical-reels")
+        app.buttons["关闭抖音模式"].tap()
+        XCTAssertTrue(app.buttons["navigation-home"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testNativeSliderSwitchesPages() {
+        let app = launch(discover: false, flags: ["--slider-ui-tests"])
+        let bar = app.segmentedControls["navigation-slider"]
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        bar.buttons["发现"].tap()
+        XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 5))
+        bar.buttons["我"].tap()
+        XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5))
+        let start = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        start.press(forDuration: 0.01, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
+        attach(app, name: "review-native-sliding-tabs")
+    }
+
+    @MainActor
+    func testButtonBackgroundPlaylistPersists() {
+        let app = launch(discover: false, backgrounds: true)
+        XCTAssertTrue(app.staticTexts["背景测试就绪"].waitForExistence(timeout: 20))
+        func openLibrary() {
+            app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap(); app.buttons["按键背景库"].firstMatch.tap()
+        }
+        openLibrary()
+        for id in ["ui-test-background-image", "ui-test-background-video"] {
+            let asset = app.buttons["playlist-asset-\(id)"]
+            for _ in 0..<6 { if asset.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(asset.isHittable)
+            if asset.value as? String != "已选择" { asset.tap() }
+        }
+        let picker = app.descendants(matching: .any).matching(identifier: "background-playback-mode").firstMatch
+        for _ in 0..<6 { if picker.isHittable { break }; app.swipeDown() }
+        picker.tap(); app.buttons["顺序循环"].tap()
+        XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
+        attach(app, name: "review-button-background-playlist")
+        app.terminate(); app.launch(); openLibrary()
+        XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
+    }
+
+    @MainActor
+    func testConfiguredMenuPersistsAndShowsExtraActionInMore() {
+        let app = launch(discover: false, flags: ["--keep-menu-settings"])
+        func openEditor() {
+            app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
+            app.buttons["context-menu-settings-entry"].tap(); app.buttons["媒体卡片"].tap()
+        }
+        openEditor()
+        let photo = app.switches["menu-action-photo"]
+        for _ in 0..<10 { if photo.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(photo.isHittable)
+        if photo.value as? String == "1" { photo.tap() }
+        photo.tap()
+        app.terminate(); app.launch(); openEditor()
+        for _ in 0..<10 { if photo.isHittable { break }; app.swipeUp() }
+        XCTAssertEqual(photo.value as? String, "1")
+        app.buttons["navigation-home"].tap()
+        app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch.press(forDuration: 0.7)
+        app.buttons["打开全部操作"].tap()
+        XCTAssertTrue(app.buttons["拍照"].waitForExistence(timeout: 5))
+        attach(app, name: "review-configured-media-actions")
+    }
     @MainActor func testHomeSlowCardScroll() { assertCardScrolls(discover: false, velocity: .slow) }
     @MainActor func testDiscoverTwoColumnFastCardScroll() { assertCardScrolls(discover: true, velocity: .fast) }
     @MainActor func testDiscoverTwoColumnSlowCardScroll() { assertCardScrolls(discover: true, velocity: .slow) }
