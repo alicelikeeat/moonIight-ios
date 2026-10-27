@@ -288,7 +288,10 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
         attach(app, name: "review-button-background-playlist")
         app.terminate(); app.launch(); openBackgroundSettings()
-        XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
+        let persistedSummary = app.staticTexts["background-playback-summary"]
+        for _ in 0..<16 { if persistedSummary.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(persistedSummary.isHittable)
+        XCTAssertTrue(persistedSummary.label.contains("2 项 · 顺序循环"))
     }
 
     @MainActor
