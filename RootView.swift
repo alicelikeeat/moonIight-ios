@@ -334,25 +334,29 @@ struct RootView: View {
                 .frame(height: 58).padding(.horizontal, 18).padding(.bottom, 10)
         } else {
         GeometryReader { geometry in
-            let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
+            // Five independent, native-glass circles: a compact Telegram-like
+            // floating dock without a second bar or an enclosing glass plate.
+            let diameter = min(60, max(54, (geometry.size.width - 72) / 5))
+            let dockWidth = min(geometry.size.width - 36, 390)
             HStack(spacing: 0) {
                 ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
-                    if index > 0 { Spacer(minLength: 12) }
-                        VStack(spacing: 4) {
-                            Image(systemName: tab.symbol).font(.system(size: 16, weight: .semibold))
-                            Text(tab.title).font(.system(size: 9, weight: .medium))
-                        }
-                        .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? MoonStyle.accent : .secondary))
-                        .frame(width: diameter, height: diameter)
-                        .moonGlassCircle(.button(for: tab))
-                        .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.7) : .clear, lineWidth: 1.5).allowsHitTesting(false))
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 20, weight: .semibold))
+                            .frame(width: diameter, height: diameter)
+                            .moonGlassCircle(.button(for: tab))
+                            .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.52) : .clear, lineWidth: 1).allowsHitTesting(false))
+                        Text(tab.title).font(.system(size: 10, weight: model.selectedTab == tab ? .semibold : .medium))
+                    }
+                    .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? MoonStyle.accent : .secondary))
+                    .frame(maxWidth: .infinity)
                     .allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
-            .frame(maxWidth: 540)
+            .frame(width: dockWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
+        .frame(height: 78).padding(.horizontal, 18).padding(.bottom, 8)
         }
         }
     }
@@ -360,9 +364,8 @@ struct RootView: View {
     @ViewBuilder private var priorityNavigationLayer: some View {
         if interactions.navigationMode == .circles {
             GeometryReader { geometry in
-                let width = min(geometry.size.width, 540)
-                let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
-                let step = (width - diameter) / 4
+                let width = min(geometry.size.width - 36, 390)
+                let diameter = min(60, max(54, (geometry.size.width - 72) / 5))
                 ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
                     Button {
                         model.activeLongPressMenu = nil
@@ -371,15 +374,15 @@ struct RootView: View {
                         selectTab(tab)
                     } label: { Color.clear.contentShape(Circle()) }
                     .buttonStyle(.plain)
-                    .frame(width: max(48, diameter), height: max(48, diameter))
-                    .position(x: (geometry.size.width - width) / 2 + diameter / 2 + CGFloat(index) * step,
-                              y: geometry.size.height / 2)
+                    .frame(width: diameter + 4, height: diameter + 4)
+                    .position(x: (geometry.size.width - width) / 2 + width * (CGFloat(index) + 0.5) / 5,
+                              y: diameter / 2 + 1)
                     .accessibilityLabel(tab.title)
                     .accessibilityIdentifier("navigation-\(tab.rawValue)")
                 }
             }
-            .frame(height: 52)
-            .padding(.horizontal, 20)
+            .frame(height: 78)
+            .padding(.horizontal, 18)
             .padding(.bottom, 8)
         }
     }
