@@ -621,15 +621,22 @@ private struct UniversalHoldScope: ViewModifier {
     @State private var menu: ActiveLongPressMenu?
     @State private var heldTarget: BackgroundTarget?
     @State private var destination: HoldDestination?
+    @State private var globalSearch: GlobalSearchPresentation?
+    @State private var assistantLaunch: AssistantLaunch?
+    @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
 
     func body(content: Content) -> some View {
         content
             .background {
-                GlobalHoldObserver(enabled: menu == nil && model.activeLongPressMenu == nil,
+                GlobalHoldObserver(enabled: menu == nil && globalSearch == nil && model.activeLongPressMenu == nil,
                     onBegin: { point, buttonTarget in
                         heldTarget = buttonTarget ?? target
                         LongPressHapticFeedback.shared.menuOpened()
-                        menu = ActiveLongPressMenu(entry: nil, location: point, fingerLocation: point)
+                        if globalSearchEnabled {
+                            globalSearch = GlobalSearchPresentation(location: point)
+                        } else {
+                            menu = ActiveLongPressMenu(entry: nil, location: point, fingerLocation: point)
+                        }
                     }, onMove: { point in
                         guard var current = menu, current.fingerDown else { return }
                         current.fingerLocation = point
@@ -639,16 +646,37 @@ private struct UniversalHoldScope: ViewModifier {
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
             .overlay {
-                if let menu {
-                    LongPressRingOverlay(menu: menu, actions: interactions.actions((heldTarget ?? target).rawValue).map(RingAction.command),
-                        style: model.longPressStyle, selectionMode: model.longPressSelectionMode,
-                        onAction: perform, onMore: { self.menu = nil; destination = .more },
-                        onDismiss: { self.menu = nil })
-                        .accessibilityIdentifier("global-long-press-menu")
+                Group {
+                    if let search = globalSearch {
+                        GlobalAssistantSearchOverlay(
+                            presentation: search,
+                            onDismiss: { globalSearch = nil },
+                            onCommand: { command in
+                                globalSearch = nil
+                                model.send(command, context: "global-search")
+                            },
+                            onChat: { prompt in
+                                globalSearch = nil
+                                assistantLaunch = AssistantLaunch(prompt: prompt, deepThinking: false)
+                            }
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .zIndex(20)
+                    }
+                    if let menu {
+                        LongPressRingOverlay(menu: menu, actions: interactions.actions((heldTarget ?? target).rawValue).map(RingAction.command),
+                            style: model.longPressStyle, selectionMode: model.longPressSelectionMode,
+                            onAction: perform, onMore: { self.menu = nil; destination = .more },
+                            onDismiss: { self.menu = nil })
+                            .accessibilityIdentifier("global-long-press-menu")
+                    }
                 }
             }
-            .onChange(of: model.selectedTab) { _ in menu = nil }
-            .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationTapped"))) { _ in menu = nil }
+            .onChange(of: model.selectedTab) { _ in menu = nil; globalSearch = nil }
+            .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationTapped"))) { _ in menu = nil; globalSearch = nil }
+            .sheet(item: $assistantLaunch) { launch in
+                NavigationStack { AssistantChatView(initialPrompt: launch.prompt, deepThinking: launch.deepThinking) }
+            }
             .sheet(item: $destination) { item in
                 NavigationStack {
                     Group {
@@ -3037,6 +3065,113 @@ private struct SettingsView: View {
     }
 }
 
+
+private struct GlobalSearchPresentation: Identifiable {
+    let id = UUID()
+    let location: CGPoint
+}
+
+private struct GlobalAssistantSearchOverlay: View {
+    let presentation: GlobalSearchPresentation
+    let onDismiss: () -> Void
+    let onCommand: (AppCommand) -> Void
+    let onChat: (String) -> Void
+    @State private var query = ""
+    @FocusState private var focused: Bool
+
+    private var cleanQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var matches: [AppCommand] {
+        guard !cleanQuery.isEmpty else { return [] }
+        let needle = cleanQuery.lowercased()
+        return AppCommand.allCases.filter {
+            $0.title.lowercased().contains(needle) || $0.rawValue.lowercased().contains(needle)
+        }.prefix(4).map { $0 }
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.black.opacity(0.12).ignoresSafeArea().onTapGesture(perform: onDismiss)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles").foregroundStyle(MoonStyle.accent)
+                        TextField("搜索功能或询问 ChatGPT", text: $query, axis: .vertical)
+                            .lineLimit(1...3)
+                            .focused($focused)
+                            .submitLabel(.send)
+                            .onSubmit { if !cleanQuery.isEmpty { onChat(cleanQuery) } }
+                        Button(action: onDismiss) {
+                            Image(systemName: "xmark").font(.footnote.weight(.bold))
+                                .frame(width: 28, height: 28).background(.thinMaterial, in: Circle())
+                        }
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.34)))
+
+                    if !cleanQuery.isEmpty {
+                        FlowLayout(spacing: 9) {
+                            Button { onChat(cleanQuery) } label: {
+                                Label("问 ChatGPT", systemImage: "bubble.left.and.bubble.right.fill")
+                            }.globalSearchBubble(tint: MoonStyle.accent)
+
+                            ForEach(matches) { command in
+                                Button { onCommand(command) } label: {
+                                    Label(command.title, systemImage: command.symbol)
+                                }.globalSearchBubble(tint: .blue)
+                            }
+                        }
+                        .transition(.scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity))
+                    }
+                }
+                .padding(16)
+                .frame(width: min(proxy.size.width - 32, 430), alignment: .leading)
+                .position(x: proxy.size.width / 2,
+                          y: min(max(presentation.location.y, 138), max(138, proxy.size.height - 250)))
+                .animation(.spring(response: 0.34, dampingFraction: 0.78), value: matches.map(\.rawValue))
+            }
+        }
+        .onAppear { DispatchQueue.main.async { focused = true } }
+        .accessibilityIdentifier("global-assistant-search")
+    }
+}
+
+private extension View {
+    func globalSearchBubble(tint: Color) -> some View {
+        self.font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .foregroundStyle(.primary)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(tint.opacity(0.36)))
+            .shadow(color: tint.opacity(0.18), radius: 9, y: 4)
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0 && x + size.width > maxWidth { x = 0; y += rowHeight + spacing; rowHeight = 0 }
+            x += size.width + (x > 0 ? spacing : 0)
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth, height: y + rowHeight)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX && x + size.width > bounds.maxX { x = bounds.minX; y += rowHeight + spacing; rowHeight = 0 }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
 private struct AssistantLaunch: Identifiable {
     let id = UUID()
     let prompt: String
@@ -3173,8 +3308,12 @@ private struct AssistantChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             if messages.isEmpty {
-                ContentUnavailableView("ChatGPT", systemImage: "sparkles", description: Text("可向它提问、整理观看计划或解释内容。"))
-                    .frame(maxHeight: .infinity)
+                VStack(spacing: 12) {
+                    Image(systemName: "sparkles").font(.system(size: 34)).foregroundStyle(MoonStyle.accent)
+                    Text("ChatGPT").font(.title3.weight(.semibold))
+                    Text("可向它提问、整理观看计划或解释内容。").foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {

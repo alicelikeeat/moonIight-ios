@@ -31,6 +31,7 @@ struct LocalMediaImage: View {
 
 struct ContextMenuSettingsView: View {
     @ObservedObject private var preferences = InteractionPreferences.shared
+    @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
     var body: some View {
         List {
             Section("底部导航") {
@@ -40,8 +41,13 @@ struct ContextMenuSettingsView: View {
                 Text("独立圆形模式保留按钮之间的滚动区域；原生滑块模式可横向拖动切换页面；智能输入栏提供 ChatGPT 风格提问入口。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("全局长按搜索") {
+                Toggle("长按弹出智能搜索", isOn: $globalSearchEnabled)
+                Text("开启后，在任意页面静止长按会弹出玻璃搜索条。输入功能名会显示直达气泡；点“问 ChatGPT”或回车进入对话页。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("长按菜单") {
-                Text("可先设置页面或按键的通用菜单，再按需覆盖具体位置。前 4 项显示在圆环，其余放进中心 … 的面板。")
+                Text("关闭全局搜索时，可先设置页面或按键的通用菜单，再按需覆盖具体位置。前 4 项显示在圆环，其余放进中心 … 的面板。")
                     .font(.caption).foregroundStyle(.secondary)
                 NavigationLink("媒体卡片") { ContextActionEditor(context: "media", title: "媒体卡片") }
                 NavigationLink("页面长按菜单") { ContextTargetListView(section: "page.", common: .allPages) }
