@@ -1886,6 +1886,7 @@ private struct MomentsView: View {
                         .padding(16)
                         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
                         .contentShape(RoundedRectangle(cornerRadius: 22))
+                        .accessibilityElement(children: .contain)
                         .contextMenu {
                             Button(role: .destructive) {
                                 deletingMoment = moment.id
@@ -2435,7 +2436,7 @@ private struct LibraryView: View {
     }
 
     var body: some View {
-        ScrollView { libraryContent }.scrollIndicators(.hidden).pageBackground(.library)
+        ScrollView { libraryContent.padding(.top, 24) }.scrollIndicators(.hidden).pageBackground(.library)
             .navigationTitle("库")
             .alert("新建文件夹", isPresented: $showingCreateFolder) {
                 TextField("文件夹名称", text: $folderName)
