@@ -15,6 +15,7 @@ private enum MoonStyle {
 // Keep the generator alive between touch-down and recognition. Creating a
 // generator at the instant a long press begins is unreliable on device: the
 // Taptic Engine may not have time to prepare before the menu animation starts.
+@MainActor
 private final class LongPressHapticFeedback {
     static let shared = LongPressHapticFeedback()
     private let generator = UIImpactFeedbackGenerator(style: .medium)
@@ -2562,6 +2563,29 @@ private struct LibraryView: View {
                 PhotosPicker(selection: $folderImportSelection, matching: .any(of: [.images, .videos])) {
                     Label(selectedFolder == nil ? "导入" : "导入到文件夹", systemImage: "plus").font(.subheadline.weight(.semibold))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+            }
+            if selectedFolder == nil {
+                Button { showingTreasureMap = true } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles.rectangle.stack.fill")
+                            .font(.title3).foregroundStyle(.yellow)
+                            .frame(width: 42, height: 42)
+                            .background(.black.opacity(0.18), in: Circle())
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("月藏图").font(.headline)
+                            Text("把图片和视频堆进可拨动的月光宝库").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text("打开").font(.subheadline.weight(.semibold))
+                        Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                    }
+                    .padding(14)
+                    .foregroundStyle(.primary)
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.3)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library-treasure-map")
             }
             folderSection
             if let selectedFolder {
