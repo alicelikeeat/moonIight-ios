@@ -100,7 +100,16 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testHoldOnNavigationAndOrdinaryButtonDoesNotTapThrough() {
         let app = launch(discover: true)
-        app.buttons["discover-sources"].press(forDuration: 0.7)
+        let sources = app.buttons["discover-sources"]
+        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        // The discover feed may still be settling after fixture content is
+        // inserted. Put its native scroll view back at the header before
+        // asserting a stationary hold on the header action.
+        if !sources.isHittable {
+            app.scrollViews["feed-scroll-discover"].swipeDown()
+        }
+        XCTAssertTrue(sources.isHittable, "内容源按钮应在回到顶部后可长按")
+        sources.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists)
         attach(app, name: "review-rotating-global-ring")
@@ -114,7 +123,10 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.buttons["配置长按菜单"].waitForExistence(timeout: 3), "App-owned sheets must retain contextual long press")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.7)).tap()
         app.buttons["完成"].firstMatch.tap()
-        app.buttons["discover-sources"].press(forDuration: 0.7)
+        XCTAssertTrue(sources.waitForExistence(timeout: 5))
+        if !sources.isHittable { app.scrollViews["feed-scroll-discover"].swipeDown() }
+        XCTAssertTrue(sources.isHittable)
+        sources.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["当前背景"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.scrollViews["source-sidebar-scroll"].exists, "A hold also opened the drawer")
         attach(app, name: "review-rotating-global-ring")
