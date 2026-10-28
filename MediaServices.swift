@@ -187,7 +187,7 @@ enum PlatformResolver {
     }
 
     static func youtubeEmbedURL(videoID: String) -> URL? {
-        URL(string: "https://www.youtube.com/embed/\(videoID)?playsinline=1&rel=0")
+        URL(string: "https://www.youtube.com/embed/\(videoID)?playsinline=1&rel=0&enablejsapi=1")
     }
 
     static func resolve(_ text: String) -> MediaEntry? {

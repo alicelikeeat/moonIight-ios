@@ -1651,6 +1651,14 @@ struct MediaPlayerView: View {
                         .accessibilityIdentifier("player-close")
                     Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Spacer(minLength: 0)
+                    // Keep a first-party fallback when YouTube declines an
+                    // embedded WebView client (for example Error 153).
+                    if entry.platform == "youtube", let url = entry.remoteURL {
+                        Link(destination: url) {
+                            Image(systemName: "play.rectangle.fill")
+                        }
+                        .accessibilityLabel("在 YouTube 打开")
+                    }
                     if entry.kind != .embed, let url = entry.remoteURL,
                        ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
                         Button {
@@ -1761,10 +1769,40 @@ struct WebEmbedView: UIViewRepresentable {
     final class Coordinator { var requestedURL: URL? }
     func makeCoordinator() -> Coordinator { Coordinator() }
 
+    private func isYouTubeEmbed(_ value: URL) -> Bool {
+        let host = value.host?.lowercased() ?? ""
+        return (host == "youtube.com" || host.hasSuffix(".youtube.com") || host == "youtube-nocookie.com" || host.hasSuffix(".youtube-nocookie.com"))
+            && value.path.hasPrefix("/embed/")
+    }
+
+    private func escapedHTMLURL(_ value: URL) -> String {
+        value.absoluteString
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private func load(_ value: URL, in view: WKWebView) {
+        guard isYouTubeEmbed(value) else {
+            view.load(URLRequest(url: value))
+            return
+        }
+
+        // A direct /embed request from WKWebView has no document context and
+        // can be rejected by YouTube as Error 153. Use the documented iframe
+        // player in a page context while retaining inline playback.
+        let html = """
+        <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+        <style>html,body,iframe{margin:0;width:100%;height:100%;background:#000;border:0;overflow:hidden}</style></head>
+        <body><iframe src="\(escapedHTMLURL(value))" title="YouTube video player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></body></html>
+        """
+        view.loadHTMLString(html, baseURL: URL(string: "https://www.youtube.com/"))
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.applicationNameForUserAgent = "MoonDan/1.1"
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.isOpaque = false
         view.backgroundColor = .black
@@ -1772,7 +1810,7 @@ struct WebEmbedView: UIViewRepresentable {
         view.scrollView.backgroundColor = .black
         view.scrollView.isScrollEnabled = scrolling
         context.coordinator.requestedURL = url
-        view.load(URLRequest(url: url))
+        load(url, in: view)
         return view
     }
 
@@ -1780,7 +1818,7 @@ struct WebEmbedView: UIViewRepresentable {
         view.scrollView.isScrollEnabled = scrolling
         if context.coordinator.requestedURL != url {
             context.coordinator.requestedURL = url
-            view.load(URLRequest(url: url))
+            load(url, in: view)
         }
     }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
