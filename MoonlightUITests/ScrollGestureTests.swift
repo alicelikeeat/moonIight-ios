@@ -517,7 +517,10 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["background-target-page.home"].tap()
         attach(app, name: "review-background-editor")
         let video = app.buttons["使用这个视频背景"].firstMatch
-        for _ in 0..<5 { if video.isHittable { break }; app.swipeUp() }
+        // The background library may contain the user's imported assets before
+        // the fixture rows, so reach it deterministically rather than treating
+        // a long settings list as a five-swipe fixed layout.
+        for _ in 0..<18 { if video.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(video.isHittable)
         video.tap()
         let kind = app.staticTexts["background-media-kind"]
