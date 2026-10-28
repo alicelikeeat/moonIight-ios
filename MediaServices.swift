@@ -856,7 +856,11 @@ final class MediaStore: ObservableObject {
     func moveItems(_ ids: Set<String>, to folder: LibraryFolder?) {
         guard folder == nil || folders.contains(where: { $0.id == folder?.id }) else { return }
         let known = Set(items.map(\.id))
-        for id in ids where known.contains(id) { folderAssignments[id] = folder?.id }
+        var assignments = folderAssignments
+        for id in ids where known.contains(id) { assignments[id] = folder?.id }
+        // Assign the dictionary once so SwiftUI receives one reliable published
+        // update after imports and the folder card refreshes its item count.
+        folderAssignments = assignments
         persistFolders()
         notice = folder.map { "已移入“\($0.name)”。" } ?? "已移出文件夹。"
     }

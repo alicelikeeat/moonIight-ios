@@ -75,7 +75,9 @@ struct RootView: View {
         .coordinateSpace(name: "moonlight-root")
         .onChange(of: model.selectedTab) { _ in discoverySourcesPresented = false }
         .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
-        .buttonStyle(MoonGlassButtonStyle())
+        // Custom controls opt into one glass surface explicitly. A global
+        // button style would wrap circular/panel controls a second time.
+        .buttonStyle(.plain)
         .overlay {
             GeometryReader { geometry in
                 if let menu = model.activeLongPressMenu {
@@ -299,7 +301,7 @@ struct RootView: View {
         Group {
         if interactions.navigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
-                .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
+                .frame(height: 58).padding(.horizontal, 18).padding(.bottom, 10)
         } else {
         GeometryReader { geometry in
             let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
@@ -458,6 +460,12 @@ private final class SlidingTabControl: UISegmentedControl, UIGestureRecognizerDe
         addTarget(self, action: #selector(chosen), for: .valueChanged)
         pan.addTarget(self, action: #selector(slid(_:))); pan.delegate = self; addGestureRecognizer(pan)
         apportionsSegmentWidthsByContent = false
+        backgroundColor = .secondarySystemFill
+        selectedSegmentTintColor = UIColor(MoonStyle.accent).withAlphaComponent(0.88)
+        layer.cornerRadius = 18
+        layer.cornerCurve = .continuous
+        setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 14, weight: .semibold), .foregroundColor: UIColor.secondaryLabel], for: .normal)
+        setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: UIColor.white], for: .selected)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func tab(at point: CGPoint) -> AppTab {
@@ -2410,6 +2418,7 @@ private struct LibraryView: View {
     @State private var reelsFolder: LibraryFolder?
     @State private var reelsQueue = false
     @State private var showingTreasureMap = false
+    @State private var folderImportSelection: PhotosPickerItem?
 
     private var selectedFolder: LibraryFolder? {
         model.mediaStore.folders.first { $0.id == selectedFolderID }
@@ -2477,6 +2486,9 @@ private struct LibraryView: View {
                 default: break
                 }
             }
+            .task(id: folderImportSelection) {
+                await importIntoCurrentFolder()
+            }
     }
 
     private var libraryContent: some View {
@@ -2509,8 +2521,8 @@ private struct LibraryView: View {
                 } label: {
                     Image(systemName: "text.badge.play").font(.subheadline.weight(.semibold))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
-                PhotosPicker(selection: $selection, matching: .any(of: [.images, .videos])) {
-                    Label("导入", systemImage: "plus").font(.subheadline.weight(.semibold))
+                PhotosPicker(selection: $folderImportSelection, matching: .any(of: [.images, .videos])) {
+                    Label(selectedFolder == nil ? "导入" : "导入到文件夹", systemImage: "plus").font(.subheadline.weight(.semibold))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
             }
             folderSection
@@ -2707,6 +2719,18 @@ private struct LibraryView: View {
         model.mediaStore.moveItems(selectedIDs, to: folder)
         selectedIDs.removeAll()
         selectionMode = false
+    }
+
+    @MainActor private func importIntoCurrentFolder() async {
+        guard let picker = folderImportSelection,
+              let data = try? await picker.loadTransferable(type: Data.self) else { return }
+        let type = picker.supportedContentTypes.first
+        let kind: MediaKind = type?.conforms(to: .movie) == true ? .video : .image
+        let name = kind == .video ? "导入的视频" : "导入的照片"
+        let ext = type?.preferredFilenameExtension ?? (kind == .video ? "mov" : "jpg")
+        guard let entry = model.mediaStore.importMedia(data, title: name, kind: kind, fileExtension: ext) else { return }
+        if let selectedFolder { model.mediaStore.moveItems([entry.id], to: selectedFolder) }
+        folderImportSelection = nil
     }
 }
 
