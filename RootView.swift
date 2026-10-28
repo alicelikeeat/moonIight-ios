@@ -1621,6 +1621,7 @@ private struct MediaPlayerView: View {
             VStack {
                 HStack(spacing: 12) {
                     Button("关闭") { dismiss() }
+                        .accessibilityIdentifier("player-close")
                     Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Spacer(minLength: 0)
                     if entry.kind != .embed, let url = entry.remoteURL,

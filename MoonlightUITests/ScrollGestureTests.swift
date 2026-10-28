@@ -296,8 +296,14 @@ final class ScrollGestureTests: XCTestCase {
         // Long-press behavior has dedicated ring tests.  Here we specifically
         // verify that an ordinary card tap still opens and returns cleanly.
         card.tap()
-        XCTAssertTrue(app.buttons["关闭"].waitForExistence(timeout: 5))
-        app.buttons["关闭"].tap()
+        let close = app.buttons["player-close"]
+        if !close.waitForExistence(timeout: 2) {
+            // Player controls intentionally auto-hide. A single content tap
+            // must reveal them again before this navigation assertion.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.18)).tap()
+        }
+        XCTAssertTrue(close.waitForExistence(timeout: 3))
+        close.tap()
         app.buttons["navigation-home"].tap(); app.buttons["navigation-me"].tap()
         XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5), "A consumed menu command reopened the previous destination")
     }
