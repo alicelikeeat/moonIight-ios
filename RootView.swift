@@ -57,6 +57,9 @@ struct RootView: View {
     @State private var bottomRefreshing = false
     @State private var bottomRefreshCount = 0
     @State private var assistantLaunch: AssistantLaunch?
+    @AppStorage("moonlight.navigation.hideDelay") private var navigationHideDelay = 5.0
+    @State private var navigationVisible = true
+    @State private var navigationHideTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -100,7 +103,12 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .coordinateSpace(name: "moonlight-root")
-        .onChange(of: model.selectedTab) { _ in discoverySourcesPresented = false }
+        .onChange(of: model.selectedTab) { _ in
+            discoverySourcesPresented = false
+            revealNavigation()
+        }
+        .onChange(of: navigationHideDelay) { _ in scheduleNavigationHide() }
+        .task { scheduleNavigationHide() }
         .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
         // Custom controls opt into one glass surface explicitly. A global
         // button style would wrap circular/panel controls a second time.
@@ -136,11 +144,29 @@ struct RootView: View {
             .animation(.spring(response: 0.28, dampingFraction: 0.76), value: model.activeLongPressMenu != nil)
         }
         .universalLongPress(target: .page(for: model.selectedTab))
-        .overlay(alignment: .bottom) { tabBar.zIndex(100) }
+        .overlay(alignment: .bottom) {
+            tabBar.zIndex(100)
+                .opacity(navigationVisible ? 1 : 0)
+                .offset(y: navigationVisible ? 0 : 28)
+                .allowsHitTesting(navigationVisible)
+                .animation(.easeOut(duration: 0.28), value: navigationVisible)
+        }
         // The visible circles are deliberately decorative so their glass can
         // stay lightweight. This final transparent layer owns the real hit
         // targets and sits above the long-press scrim in every state.
-        .overlay(alignment: .bottom) { priorityNavigationLayer.zIndex(1_000) }
+        .overlay(alignment: .bottom) {
+            priorityNavigationLayer.zIndex(1_000)
+                .opacity(navigationVisible ? 1 : 0)
+                .allowsHitTesting(navigationVisible)
+                .animation(.easeOut(duration: 0.28), value: navigationVisible)
+        }
+        .overlay(alignment: .bottom) {
+            if !navigationVisible {
+                Color.clear.frame(height: 116).contentShape(Rectangle())
+                    .onTapGesture { revealNavigation() }
+                    .accessibilityLabel("显示底部导航")
+            }
+        }
         .photosPicker(isPresented: $rootImporter, selection: $selectedMedia, matching: .any(of: [.images, .videos]))
         .alert("提示", isPresented: Binding(get: { rootNotice != nil }, set: { if !$0 { rootNotice = nil } })) {
             Button("好", role: .cancel) { rootNotice = nil }
@@ -401,8 +427,28 @@ struct RootView: View {
     }
 
     private func selectTab(_ tab: AppTab) {
+        revealNavigation()
         if tab == .camera { openCamera(video: false) }
         else { withAnimation(.easeOut(duration: 0.16)) { model.selectedTab = tab } }
+    }
+
+    private func revealNavigation() {
+        navigationHideTask?.cancel()
+        withAnimation(.easeOut(duration: 0.2)) { navigationVisible = true }
+        scheduleNavigationHide()
+    }
+
+    private func scheduleNavigationHide() {
+        navigationHideTask?.cancel()
+        guard navigationHideDelay > 0 else {
+            navigationVisible = true
+            return
+        }
+        navigationHideTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(navigationHideDelay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.34)) { navigationVisible = false }
+        }
     }
 
     private func openCamera(video: Bool) {
@@ -623,6 +669,8 @@ private struct UniversalHoldScope: ViewModifier {
     @State private var destination: HoldDestination?
     @State private var globalSearch: GlobalSearchPresentation?
     @State private var assistantLaunch: AssistantLaunch?
+    @State private var confirmBottomSearch = false
+    @State private var pendingSearchLocation = CGPoint.zero
     @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
 
     func body(content: Content) -> some View {
@@ -633,7 +681,12 @@ private struct UniversalHoldScope: ViewModifier {
                         heldTarget = buttonTarget ?? target
                         LongPressHapticFeedback.shared.menuOpened()
                         if globalSearchEnabled {
-                            globalSearch = GlobalSearchPresentation(location: point)
+                            pendingSearchLocation = point
+                            if interactions.navigationMode == .assistant {
+                                confirmBottomSearch = true
+                            } else {
+                                globalSearch = GlobalSearchPresentation(location: point)
+                            }
                         } else {
                             menu = ActiveLongPressMenu(entry: nil, location: point, fingerLocation: point)
                         }
@@ -672,8 +725,19 @@ private struct UniversalHoldScope: ViewModifier {
                     }
                 }
             }
-            .onChange(of: model.selectedTab) { _ in menu = nil; globalSearch = nil }
-            .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationTapped"))) { _ in menu = nil; globalSearch = nil }
+            .onChange(of: model.selectedTab) { _ in menu = nil; globalSearch = nil; confirmBottomSearch = false }
+            .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationTapped"))) { _ in menu = nil; globalSearch = nil; confirmBottomSearch = false }
+            .confirmationDialog("直接使用底部输入栏？", isPresented: $confirmBottomSearch, titleVisibility: .visible) {
+                Button("直接使用下面") {
+                    NotificationCenter.default.post(name: .init("moonlight.assistantDockFocus"), object: nil)
+                }
+                Button("进入全局搜索") {
+                    globalSearch = GlobalSearchPresentation(location: pendingSearchLocation)
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("底部已经是 ChatGPT 输入栏，可直接继续输入；也可以打开悬浮搜索。")
+            }
             .sheet(item: $assistantLaunch) { launch in
                 NavigationStack { AssistantChatView(initialPrompt: launch.prompt, deepThinking: launch.deepThinking) }
             }
@@ -3181,6 +3245,7 @@ private struct AssistantLaunch: Identifiable {
 private struct AssistantDock: View {
     @State private var draft = ""
     @State private var deepThinking = false
+    @FocusState private var focused: Bool
     let onOpen: (String, Bool) -> Void
 
     var body: some View {
@@ -3197,6 +3262,7 @@ private struct AssistantDock: View {
                     .background(.thinMaterial, in: Circle())
             }
             TextField("询问 ChatGPT", text: $draft, axis: .vertical)
+                .focused($focused)
                 .lineLimit(1...4)
                 .textInputAutocapitalization(.sentences)
                 .submitLabel(.send)
@@ -3223,6 +3289,9 @@ private struct AssistantDock: View {
         .overlay(Capsule().strokeBorder(.white.opacity(0.28)))
         .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
         .accessibilityIdentifier("assistant-bottom-dock")
+        .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.assistantDockFocus"))) { _ in
+            DispatchQueue.main.async { focused = true }
+        }
     }
 }
 

@@ -32,6 +32,7 @@ struct LocalMediaImage: View {
 struct ContextMenuSettingsView: View {
     @ObservedObject private var preferences = InteractionPreferences.shared
     @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
+    @AppStorage("moonlight.navigation.hideDelay") private var navigationHideDelay = 5.0
     var body: some View {
         List {
             Section("底部导航") {
@@ -39,6 +40,14 @@ struct ContextMenuSettingsView: View {
                     ForEach(BottomNavigationMode.allCases) { Text($0.title).tag($0) }
                 }.accessibilityIdentifier("bottom-navigation-mode")
                 Text("独立圆形模式保留按钮之间的滚动区域；原生滑块模式可横向拖动切换页面；智能输入栏提供 ChatGPT 风格提问入口。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("自动隐藏", selection: $navigationHideDelay) {
+                    Text("关闭").tag(0.0)
+                    Text("5 秒").tag(5.0)
+                    Text("15 秒").tag(15.0)
+                    Text("30 秒").tag(30.0)
+                }
+                Text("无操作后淡出；轻点屏幕底部空白区会立即显示。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("全局长按搜索") {
