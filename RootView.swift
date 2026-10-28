@@ -2534,7 +2534,9 @@ private struct LibraryView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("library-filter-menu")
             }
             if selectionMode {
                 VStack(spacing: 10) {
