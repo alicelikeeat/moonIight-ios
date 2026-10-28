@@ -232,7 +232,13 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(text.frame.minX, viewport.minX)
         XCTAssertLessThanOrEqual(text.frame.maxX, viewport.maxX)
         attach(app, name: "review-wide-moment-fixed")
-        text.press(forDuration: 0.7)
+        // Delete is deliberately only exposed through the card's contextual hold
+        // menu; hold the actual card rather than its text subview.
+        let post = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "moment-post-card-"))
+            .firstMatch
+        XCTAssertTrue(post.waitForExistence(timeout: 3))
+        post.press(forDuration: 1.1)
         let delete = app.buttons["删除动态"].firstMatch
         XCTAssertTrue(delete.waitForExistence(timeout: 3))
         delete.tap()
@@ -306,7 +312,10 @@ final class ScrollGestureTests: XCTestCase {
         app.alerts.buttons["创建"].tap()
         XCTAssertTrue(app.staticTexts["文件夹还是空的"].waitForExistence(timeout: 3))
         app.buttons["全部内容"].tap()
-        app.buttons["选择"].tap()
+        let choose = app.buttons["选择"].firstMatch
+        XCTAssertTrue(choose.waitForExistence(timeout: 3))
+        XCTAssertTrue(choose.isHittable)
+        choose.tap()
         let first = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         XCTAssertTrue(first.waitForExistence(timeout: 3))
         first.tap()
@@ -337,10 +346,13 @@ final class ScrollGestureTests: XCTestCase {
         let app = launch(discover: false)
         app.buttons["navigation-me"].press(forDuration: 0.7)
         app.buttons["打开库"].tap()
-        let category = app.segmentedControls.firstMatch
-        XCTAssertTrue(category.waitForExistence(timeout: 5))
+        let filterMenu = app.buttons["全部"].firstMatch
+        XCTAssertTrue(filterMenu.waitForExistence(timeout: 5))
         for (name, cardID) in [("收藏", "media-card-scroll-fixture-0"), ("下载", "media-card-scroll-fixture-1")] {
-            category.buttons[name].tap()
+            filterMenu.tap()
+            let choice = app.buttons[name].firstMatch
+            XCTAssertTrue(choice.waitForExistence(timeout: 3))
+            choice.tap()
             let card = app.descendants(matching: .any).matching(identifier: cardID).firstMatch
             XCTAssertTrue(card.waitForExistence(timeout: 3), "\(name) should use the normal library card")
             app.buttons["选择"].tap()
