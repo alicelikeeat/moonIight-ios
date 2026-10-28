@@ -291,7 +291,10 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["打开全部操作"].waitForExistence(timeout: 3))
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.65)).tap()
+        // Dismiss the ring through an empty part of its full-screen scrim,
+        // rather than a coordinate that can still belong to this card.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20)).tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: card)], timeout: 3), .completed)
         card.tap()
         XCTAssertTrue(app.buttons["关闭"].waitForExistence(timeout: 5))
         app.buttons["关闭"].tap()
