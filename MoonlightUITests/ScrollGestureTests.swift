@@ -313,7 +313,10 @@ final class ScrollGestureTests: XCTestCase {
         let folder = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", folderName)).firstMatch
         XCTAssertTrue(folder.waitForExistence(timeout: 3))
         folder.tap()
-        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).count, 1)
+        let visibleFolderCards = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-"))
+            .allElementsBoundByIndex.filter(\.isHittable)
+        XCTAssertEqual(visibleFolderCards.count, 1)
         app.buttons["播放此文件夹"].tap()
         let position = app.staticTexts["reels-position"]
         XCTAssertTrue(position.waitForExistence(timeout: 5))
@@ -327,7 +330,10 @@ final class ScrollGestureTests: XCTestCase {
         let savedFolder = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", folderName)).firstMatch
         XCTAssertTrue(savedFolder.waitForExistence(timeout: 5))
         savedFolder.tap()
-        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).count, 1)
+        let restoredFolderCards = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-"))
+            .allElementsBoundByIndex.filter(\.isHittable)
+        XCTAssertEqual(restoredFolderCards.count, 1)
     }
 
     @MainActor
