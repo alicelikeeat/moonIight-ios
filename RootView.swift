@@ -363,7 +363,7 @@ struct RootView: View {
         Group {
         if interactions.navigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
-                .frame(height: 58).padding(.horizontal, 18).padding(.bottom, 10)
+                .frame(height: 64).padding(.horizontal, 8).padding(.bottom, 4)
         } else if interactions.navigationMode == .assistant {
             AssistantDock { prompt, deepThinking in
                 model.activeLongPressMenu = nil
@@ -546,65 +546,96 @@ private struct SlidingTabSurface: View {
     let selected: AppTab
     var onSelect: (AppTab) -> Void
     var body: some View {
-        SlidingTabNativeSurface(selected: selected, onSelect: onSelect)
+        NativeSlidingTabSurface(selected: selected, onSelect: onSelect)
     }
 }
 
-private struct SlidingTabNativeSurface: UIViewRepresentable {
+// Slider mode deliberately uses UITabBar instead of drawing a second glass
+// control. That gives the reference iOS spacing, accessibility, safe-area
+// behavior and larger native hit regions while a horizontal pan remains a
+// convenient way to switch tabs.
+private struct NativeSlidingTabSurface: UIViewRepresentable {
     let selected: AppTab
     var onSelect: (AppTab) -> Void
-    func makeUIView(context: Context) -> SlidingTabControl { SlidingTabControl() }
-    func updateUIView(_ view: SlidingTabControl, context: Context) {
+    func makeUIView(context: Context) -> NativeSlidingTabBar { NativeSlidingTabBar() }
+    func updateUIView(_ view: NativeSlidingTabBar, context: Context) {
         view.onSelect = onSelect
-        if view.pan.state != .changed { view.selectedSegmentIndex = AppTab.allCases.firstIndex(of: selected) ?? 0 }
+        view.setSelected(selected)
     }
 }
 
-private final class SlidingTabControl: UISegmentedControl, UIGestureRecognizerDelegate {
+private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRecognizerDelegate {
     var onSelect: ((AppTab) -> Void)?
-    let pan = UIPanGestureRecognizer()
-    init() {
-        super.init(items: AppTab.allCases.map(\.title))
+    private let slidePan = UIPanGestureRecognizer()
+    private var isApplyingSelection = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         accessibilityIdentifier = "navigation-slider"
-        accessibilityLabel = "底部滑块导航"
-        selectedSegmentIndex = 0
-        addTarget(self, action: #selector(chosen), for: .valueChanged)
-        pan.addTarget(self, action: #selector(slid(_:))); pan.delegate = self; addGestureRecognizer(pan)
-        apportionsSegmentWidthsByContent = false
-        backgroundColor = .secondarySystemFill
-        selectedSegmentTintColor = UIColor(MoonStyle.accent).withAlphaComponent(0.88)
-        layer.cornerRadius = 18
-        layer.cornerCurve = .continuous
-        setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 14, weight: .semibold), .foregroundColor: UIColor.secondaryLabel], for: .normal)
-        setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 14, weight: .bold), .foregroundColor: UIColor.white], for: .selected)
+        accessibilityLabel = "原生底部导航"
+        delegate = self
+        items = AppTab.allCases.enumerated().map { UITabBarItem(title: $0.element.title, image: UIImage(systemName: $0.element.symbol), tag: $0.offset) }
+        itemPositioning = .fill
+        itemWidth = 0
+        itemSpacing = 0
+        isTranslucent = true
+        let appearance = UITabBarAppearance()
+        appearance.configureWithDefaultBackground()
+        appearance.backgroundEffect = UIBlurEffect(style: .systemChromeMaterial)
+        appearance.backgroundColor = .clear
+        let selectedColor = UIColor(MoonStyle.accent)
+        appearance.stackedLayoutAppearance.selected.iconColor = selectedColor
+        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [.foregroundColor: selectedColor]
+        appearance.stackedLayoutAppearance.normal.iconColor = .secondaryLabel
+        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor.secondaryLabel]
+        standardAppearance = appearance
+        scrollEdgeAppearance = appearance
+        slidePan.addTarget(self, action: #selector(slid(_:)))
+        slidePan.delegate = self
+        addGestureRecognizer(slidePan)
+        setSelected(.home)
     }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func tab(at point: CGPoint) -> AppTab {
-        AppTab.allCases[min(4, max(0, Int(point.x / max(1, bounds.width / 5))))]
+
+    func setSelected(_ tab: AppTab) {
+        guard !isApplyingSelection else { return }
+        selectedItem = items?.first(where: { $0.tag == (AppTab.allCases.firstIndex(of: tab) ?? 0) })
     }
+
+    func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+        guard !isApplyingSelection, let tab = AppTab.allCases[safe: item.tag] else { return }
+        activate(tab)
+    }
+
     override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
-        guard recognizer === pan else { return true }
-        let velocity = pan.velocity(in: self)
+        guard recognizer === slidePan else { return true }
+        let velocity = slidePan.velocity(in: self)
         return abs(velocity.x) > abs(velocity.y)
     }
-    @objc private func chosen() {
-        guard AppTab.allCases.indices.contains(selectedSegmentIndex) else { return }
-        NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
-        onSelect?(AppTab.allCases[selectedSegmentIndex])
-    }
+
     @objc private func slid(_ recognizer: UIPanGestureRecognizer) {
-        let tab = tab(at: recognizer.location(in: self))
-        let index = AppTab.allCases.firstIndex(of: tab) ?? 0
-        switch recognizer.state {
-        case .began, .changed:
-            if selectedSegmentIndex != index {
-                selectedSegmentIndex = index
+        let width = max(1, bounds.width / CGFloat(AppTab.allCases.count))
+        let index = min(AppTab.allCases.count - 1, max(0, Int(recognizer.location(in: self).x / width)))
+        guard let tab = AppTab.allCases[safe: index] else { return }
+        if recognizer.state == .began || recognizer.state == .changed {
+            if selectedItem?.tag != (AppTab.allCases.firstIndex(of: tab) ?? 0) {
                 UISelectionFeedbackGenerator().selectionChanged()
-                if tab != .camera { chosen() }
+                setSelected(tab)
+                activate(tab)
             }
-        case .ended: selectedSegmentIndex = index; chosen()
-        default: break
         }
+    }
+
+    private func activate(_ tab: AppTab) {
+        NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
+        onSelect?(tab)
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
