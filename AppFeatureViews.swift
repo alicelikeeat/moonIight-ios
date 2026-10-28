@@ -140,7 +140,7 @@ struct GestureHelpView: View {
 }
 
 enum ReelsSource: Equatable {
-    case library, sources, folder(String), queue
+    case library, sources, folder(String), queue, smart(SmartPlaylistKind)
 }
 
 struct ReelsView: View {
@@ -207,6 +207,7 @@ struct ReelsView: View {
         case .sources: "内容源 · 抖音模式"
         case .folder(let id): "\(model.mediaStore.folders.first(where: { $0.id == id })?.name ?? "文件夹") · 抖音模式"
         case .queue: "播放队列"
+        case .smart(let kind): "\(kind.title) · 智能片单"
         }
     }
     private func next() {
@@ -220,6 +221,11 @@ struct ReelsView: View {
         if source == .library { entries = model.mediaStore.items; index = min(index, max(0, entries.count - 1)); return }
         if source == .queue {
             entries = model.mediaStore.queueItems
+            index = min(index, max(0, entries.count - 1))
+            return
+        }
+        if case .smart(let kind) = source {
+            entries = model.mediaStore.items(for: kind)
             index = min(index, max(0, entries.count - 1))
             return
         }

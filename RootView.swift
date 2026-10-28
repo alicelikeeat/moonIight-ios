@@ -2456,6 +2456,7 @@ private struct LibraryView: View {
     @State private var showingDeleteFolder = false
     @State private var reelsFolder: LibraryFolder?
     @State private var reelsQueue = false
+    @State private var reelsSmartPlaylist: SmartPlaylistKind?
     @State private var showingTreasureMap = false
     @State private var folderImportSelection: PhotosPickerItem?
 
@@ -2513,6 +2514,9 @@ private struct LibraryView: View {
             }
             .fullScreenCover(isPresented: $reelsQueue) {
                 ReelsView(source: .queue).environmentObject(model)
+            }
+            .fullScreenCover(item: $reelsSmartPlaylist) { playlist in
+                ReelsView(source: .smart(playlist)).environmentObject(model)
             }
             .sheet(isPresented: $showingTreasureMap) {
                 NavigationStack { MoonTreasureMapView().environmentObject(model) }
@@ -2586,6 +2590,7 @@ private struct LibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("library-treasure-map")
+                smartPlaylistSection
             }
             folderSection
             if let selectedFolder {
@@ -2725,6 +2730,43 @@ private struct LibraryView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("library-folder-\(folder.id)")
+                    }
+                }
+            }
+        }
+    }
+
+    private var smartPlaylistSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("智能片单").font(.headline)
+                Spacer()
+                Text("自动更新").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(SmartPlaylistKind.allCases) { playlist in
+                        let count = model.mediaStore.items(for: playlist).count
+                        Button { reelsSmartPlaylist = playlist } label: {
+                            VStack(alignment: .leading, spacing: 7) {
+                                HStack {
+                                    Image(systemName: playlist.symbol).font(.headline)
+                                    Spacer()
+                                    Text("\(count)").font(.caption.monospacedDigit().weight(.semibold))
+                                }
+                                Text(playlist.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Text(playlist.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            .frame(width: 142, height: 100, alignment: .leading)
+                            .padding(12)
+                            .foregroundStyle(.primary)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.32)))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(count == 0)
+                        .opacity(count == 0 ? 0.58 : 1)
+                        .accessibilityIdentifier("smart-playlist-\(playlist.id)")
                     }
                 }
             }

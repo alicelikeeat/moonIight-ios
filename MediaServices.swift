@@ -79,6 +79,44 @@ struct PlaybackProgress: Codable, Hashable, Sendable {
     }
 }
 
+/// 自动片单不保存条目副本；每次打开都会从当前库和观看进度重算，避免
+/// 收藏、下载、删除或移动文件夹后出现过期内容。
+enum SmartPlaylistKind: String, CaseIterable, Identifiable, Sendable {
+    case continueWatching, unwatched, favorites, downloads, recentlyAdded, videos
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .continueWatching: "继续观看"
+        case .unwatched: "还没看过"
+        case .favorites: "我的收藏"
+        case .downloads: "离线可看"
+        case .recentlyAdded: "最近加入"
+        case .videos: "只看视频"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .continueWatching: "play.circle.fill"
+        case .unwatched: "eye.slash.fill"
+        case .favorites: "heart.fill"
+        case .downloads: "arrow.down.circle.fill"
+        case .recentlyAdded: "clock.fill"
+        case .videos: "video.fill"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .continueWatching: "从上次停下的地方继续"
+        case .unwatched: "把还未打开的内容放在一起"
+        case .favorites: "只播放你标记喜欢的内容"
+        case .downloads: "无需重新寻找的离线内容"
+        case .recentlyAdded: "按加入时间倒序更新"
+        case .videos: "过滤图片，只连续播放视频"
+        }
+    }
+}
+
 private struct LibraryOrganization: Codable {
     var folders: [LibraryFolder]
     var assignments: [String: String]
@@ -817,6 +855,17 @@ final class MediaStore: ObservableObject {
         items.filter { entry in
             guard let progress = playback[entry.id] else { return true }
             return !progress.isFinished && progress.position == 0
+        }
+    }
+
+    func items(for playlist: SmartPlaylistKind) -> [MediaEntry] {
+        switch playlist {
+        case .continueWatching: continueWatching
+        case .unwatched: unwatchedItems
+        case .favorites: items.filter(\.isFavorite)
+        case .downloads: items.filter { $0.source == "download" }
+        case .recentlyAdded: items.sorted { $0.createdAt > $1.createdAt }
+        case .videos: items.filter { $0.kind == .video }
         }
     }
 

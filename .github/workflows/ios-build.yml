@@ -15,7 +15,13 @@ jobs:
         id: version
         shell: bash
         run: |
-          echo "marketing=2.0.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          # Public releases use the short, two-part format requested for 月淡.
+          # The monotonically increasing run remains the internal iOS build
+          # number, so an older IPA can never replace a newer one by mistake.
+          BASELINE_RUN=100
+          MINOR=$((GITHUB_RUN_NUMBER - BASELINE_RUN))
+          if [[ "$MINOR" -lt 1 ]]; then MINOR=1; fi
+          echo "marketing=1.${MINOR}" >> "$GITHUB_OUTPUT"
           echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Compile simulator build
         env:
@@ -201,7 +207,7 @@ jobs:
         shell: bash
         run: |
           TAG=$(tr -d '\r\n' < .github/RELEASE_UPDATE_TAG)
-          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+$ ]]
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file .github/RELEASE_UPDATE.md
 
