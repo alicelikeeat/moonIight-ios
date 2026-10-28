@@ -136,6 +136,10 @@ struct RootView: View {
         }
         .universalLongPress(target: .page(for: model.selectedTab))
         .overlay(alignment: .bottom) { tabBar.zIndex(100) }
+        // The visible circles are deliberately decorative so their glass can
+        // stay lightweight. This final transparent layer owns the real hit
+        // targets and sits above the long-press scrim in every state.
+        .overlay(alignment: .bottom) { priorityNavigationLayer.zIndex(1_000) }
         .photosPicker(isPresented: $rootImporter, selection: $selectedMedia, matching: .any(of: [.images, .videos]))
         .alert("提示", isPresented: Binding(get: { rootNotice != nil }, set: { if !$0 { rootNotice = nil } })) {
             Button("好", role: .cancel) { rootNotice = nil }
@@ -347,17 +351,36 @@ struct RootView: View {
             }
             .frame(maxWidth: 540)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay {
-                PriorityTabSurface { tab in
-                    model.activeLongPressMenu = nil
-                    NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    selectTab(tab)
-                }
-            }
         }
         .frame(height: 52).padding(.horizontal, 20).padding(.bottom, 8)
         }
+        }
+    }
+
+    @ViewBuilder private var priorityNavigationLayer: some View {
+        if interactions.navigationMode == .circles {
+            GeometryReader { geometry in
+                let width = min(geometry.size.width, 540)
+                let diameter = min(50, max(44, (geometry.size.width - 80) / 6))
+                let step = (width - diameter) / 4
+                ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
+                    Button {
+                        model.activeLongPressMenu = nil
+                        NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        selectTab(tab)
+                    } label: { Color.clear.contentShape(Circle()) }
+                    .buttonStyle(.plain)
+                    .frame(width: max(48, diameter), height: max(48, diameter))
+                    .position(x: (geometry.size.width - width) / 2 + diameter / 2 + CGFloat(index) * step,
+                              y: geometry.size.height / 2)
+                    .accessibilityLabel(tab.title)
+                    .accessibilityIdentifier("navigation-\(tab.rawValue)")
+                }
+            }
+            .frame(height: 52)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 8)
         }
     }
 
