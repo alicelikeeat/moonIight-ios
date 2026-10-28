@@ -1612,7 +1612,7 @@ private struct LocalVideoPoster: View {
     }
 }
 
-private struct MediaPlayerView: View {
+struct MediaPlayerView: View {
     let entry: MediaEntry
     let onShareToMoments: () -> Void
     let onQueueAdvance: (MediaEntry) -> Void

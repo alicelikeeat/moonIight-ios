@@ -1,5 +1,7 @@
 import SpriteKit
 import SwiftUI
+import UIKit
+import CoreMotion
 
 /// 月藏图：把库内条目投影成可触碰、可堆叠的“月光宝藏”。
 /// 只让当前可见的前 42 件参与物理演算，避免大媒体库拖慢界面。
@@ -7,6 +9,7 @@ struct MoonTreasureMapView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var selectedID: String?
+    @State private var activeEntry: MediaEntry?
     @State private var scope = TreasureScope.all
     @State private var scene = MoonTreasureScene()
 
@@ -42,7 +45,8 @@ struct MoonTreasureMapView: View {
                     .overlay(RoundedRectangle(cornerRadius: 30).strokeBorder(.white.opacity(0.22), lineWidth: 1))
                     .padding(.horizontal, 14)
                     .accessibilityIdentifier("moon-treasure-map")
-                    .onAppear { configureScene() }
+                    .onAppear { configureScene(); scene.startMotion() }
+                    .onDisappear { scene.stopMotion() }
                     .onChange(of: scope) { _ in configureScene() }
                     .onChange(of: model.mediaStore.items.map(\.id)) { _ in configureScene() }
                     .overlay(alignment: .bottom) {
@@ -53,7 +57,7 @@ struct MoonTreasureMapView: View {
                             .padding(14)
                     }
                 if let selected {
-                    TreasureDetail(entry: selected) { selectedID = nil }
+                    TreasureDetail(entry: selected, onOpen: { activeEntry = selected }, onClose: { selectedID = nil })
                         .padding(.horizontal, 18)
                 } else {
                     Text(items.isEmpty ? "宝库还是空的，先从发现或相册加入内容。" : "\(model.mediaStore.items.count) 件藏品 · \(model.mediaStore.folders.count) 个片单")
@@ -64,6 +68,10 @@ struct MoonTreasureMapView: View {
         .navigationTitle("月藏图")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } } }
+        .fullScreenCover(item: $activeEntry) { entry in
+            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 })
+                .environmentObject(model)
+        }
     }
 
     private var header: some View {
@@ -81,6 +89,7 @@ struct MoonTreasureMapView: View {
         scene.configure(with: items) { id in
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             selectedID = id
+            activeEntry = model.mediaStore.items.first { $0.id == id }
         }
     }
 }
@@ -93,6 +102,7 @@ private enum TreasureScope: String, CaseIterable, Identifiable {
 
 private struct TreasureDetail: View {
     let entry: MediaEntry
+    let onOpen: () -> Void
     let onClose: () -> Void
     var body: some View {
         HStack(spacing: 12) {
@@ -104,6 +114,9 @@ private struct TreasureDetail: View {
                 Text("\(entry.platform) · \(entry.isFavorite ? "已收藏" : "未收藏")").font(.caption).foregroundStyle(.white.opacity(0.7))
             }
             Spacer()
+            Button(action: onOpen) { Image(systemName: "play.fill").font(.subheadline.weight(.bold)) }
+                .frame(width: 36, height: 36).background(.white.opacity(0.18), in: Circle())
+                .accessibilityLabel("打开藏品")
             Button(action: onClose) { Image(systemName: "xmark.circle.fill").font(.title3) }
         }
         .foregroundStyle(.white).padding(12)
@@ -113,6 +126,13 @@ private struct TreasureDetail: View {
 
 private final class MoonTreasureScene: SKScene {
     private var select: ((String) -> Void)?
+    private let motionManager = CMMotionManager()
+    private var lastShake = Date.distantPast
+    private weak var draggedTreasure: SKShapeNode?
+    private var touchStart = CGPoint.zero
+    private var movedTreasure = false
+    private var fusionHalo: SKShapeNode?
+    private weak var fusedWith: SKShapeNode?
 
     override init() { super.init(size: CGSize(width: 390, height: 520)); scaleMode = .resizeFill; backgroundColor = .clear }
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -125,6 +145,39 @@ private final class MoonTreasureScene: SKScene {
         for (index, entry) in entries.enumerated() { addTreasure(entry, index: index) }
     }
 
+    /// The map has real physics: tilting the device redirects gravity and a
+    /// deliberate shake scatters the visible treasures without changing data.
+    func startMotion() {
+        guard motionManager.isDeviceMotionAvailable, !motionManager.isDeviceMotionActive else { return }
+        motionManager.deviceMotionUpdateInterval = 1.0 / 50.0
+        motionManager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
+            guard let self, let motion else { return }
+            let gravity = motion.gravity
+            self.physicsWorld.gravity = CGVector(dx: gravity.x * 8.4, dy: gravity.y * 8.4)
+            let acceleration = motion.userAcceleration
+            let strength = sqrt(acceleration.x * acceleration.x + acceleration.y * acceleration.y + acceleration.z * acceleration.z)
+            if strength > 1.35, Date().timeIntervalSince(self.lastShake) > 0.75 {
+                self.lastShake = Date()
+                self.scatterTreasures()
+            }
+        }
+    }
+
+    func stopMotion() {
+        motionManager.stopDeviceMotionUpdates()
+    }
+
+    private func scatterTreasures() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        for case let treasure as SKShapeNode in children where treasure.name != nil {
+            guard let body = treasure.physicsBody else { continue }
+            body.isDynamic = true
+            let direction = CGVector(dx: CGFloat.random(in: -1...1), dy: CGFloat.random(in: 0.3...1.25))
+            body.applyImpulse(CGVector(dx: direction.dx * 3.2, dy: direction.dy * 3.2))
+            treasure.run(.sequence([.scale(to: 1.06, duration: 0.08), .scale(to: 1, duration: 0.18)]))
+        }
+    }
+
     override func didChangeSize(_ oldSize: CGSize) {
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
     }
@@ -134,9 +187,11 @@ private final class MoonTreasureScene: SKScene {
         let height: CGFloat = entry.kind == .video ? 104 : 86
         let node = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 17)
         node.name = entry.id
-        node.fillColor = color(for: entry)
-        node.strokeColor = entry.isFavorite ? .yellow : .white.withAlphaComponent(0.42)
-        node.lineWidth = entry.isFavorite ? 2.5 : 1
+        // A translucent base plus a frosted metadata strip makes each physical
+        // node read as an individual glass treasure instead of a colored tile.
+        node.fillColor = .white.withAlphaComponent(0.16)
+        node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.92) : .white.withAlphaComponent(0.56)
+        node.lineWidth = entry.isFavorite ? 2.1 : 1.2
         node.position = CGPoint(x: CGFloat((index * 67) % max(Int(size.width - width), 1)) + width / 2,
                                 y: size.height + CGFloat(index / 4) * 38 + 35)
         node.zRotation = CGFloat((index % 7) - 3) * 0.055
@@ -147,16 +202,59 @@ private final class MoonTreasureScene: SKScene {
         node.physicsBody?.angularDamping = 0.58
         node.physicsBody?.allowsRotation = true
 
-        let icon = SKLabelNode(fontNamed: "SFProDisplay-Semibold")
-        icon.text = entry.kind == .video ? "▶" : "✦"
-        icon.fontSize = 25; icon.verticalAlignmentMode = .center; icon.position = CGPoint(x: 0, y: 16)
-        node.addChild(icon)
+        let previewHeight = height * 0.62
+        let crop = SKCropNode()
+        let mask = SKShapeNode(rectOf: CGSize(width: width - 8, height: previewHeight - 5), cornerRadius: 13)
+        mask.fillColor = .white
+        crop.maskNode = mask
+        crop.position = CGPoint(x: 0, y: height * 0.16)
+        let preview = SKSpriteNode(color: color(for: entry).withAlphaComponent(0.88), size: CGSize(width: width - 8, height: previewHeight - 5))
+        preview.name = "preview"
+        crop.addChild(preview)
+        node.addChild(crop)
+        loadPreview(for: entry, into: preview, fill: preview.size)
+
+        let glassStrip = SKShapeNode(rectOf: CGSize(width: width - 7, height: height * 0.30), cornerRadius: 12)
+        glassStrip.fillColor = SKColor(white: 0.03, alpha: 0.48)
+        glassStrip.strokeColor = .white.withAlphaComponent(0.16)
+        glassStrip.lineWidth = 0.8
+        glassStrip.position = CGPoint(x: 0, y: -height * 0.30)
+        node.addChild(glassStrip)
+
+        if entry.kind == .video {
+            let playGlass = SKShapeNode(circleOfRadius: 16)
+            playGlass.fillColor = .white.withAlphaComponent(0.76)
+            playGlass.strokeColor = .white.withAlphaComponent(0.9)
+            playGlass.lineWidth = 1
+            playGlass.position = CGPoint(x: 0, y: height * 0.16)
+            let icon = SKLabelNode(fontNamed: "SFProDisplay-Semibold")
+            icon.text = "▶"; icon.fontColor = .black; icon.fontSize = 15
+            icon.verticalAlignmentMode = .center; icon.horizontalAlignmentMode = .center; icon.position = CGPoint(x: 1.5, y: 0)
+            playGlass.addChild(icon)
+            node.addChild(playGlass)
+        } else {
+            let icon = SKLabelNode(fontNamed: "SFProDisplay-Semibold")
+            icon.text = "✦"; icon.fontColor = .white; icon.fontSize = 17
+            icon.verticalAlignmentMode = .center; icon.position = CGPoint(x: 0, y: height * 0.16)
+            node.addChild(icon)
+        }
         let title = SKLabelNode(fontNamed: "SFProText-Medium")
         title.text = String(entry.title.prefix(8))
-        title.fontSize = 9; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -22)
+        title.fontSize = 9; title.fontColor = .white; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -height * 0.31)
         title.preferredMaxLayoutWidth = width - 12; title.numberOfLines = 2
         node.addChild(title)
         addChild(node)
+    }
+
+    private func loadPreview(for entry: MediaEntry, into preview: SKSpriteNode, fill size: CGSize) {
+        guard let url = entry.coverURL ?? (entry.kind == .image ? entry.remoteURL : nil) else { return }
+        Task { @MainActor [weak preview] in
+            guard let preview, let image = await TreasurePreviewStore.shared.image(at: url) else { return }
+            let texture = SKTexture(image: image)
+            let ratio = max(size.width / max(image.size.width, 1), size.height / max(image.size.height, 1))
+            preview.texture = texture
+            preview.size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+        }
     }
 
     private func color(for entry: MediaEntry) -> SKColor {
@@ -169,9 +267,119 @@ private final class MoonTreasureScene: SKScene {
         }
     }
 
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first else { return }
+        touchStart = touch.location(in: self)
+        movedTreasure = false
+        guard let treasure = treasure(at: touchStart) else { return }
+        draggedTreasure = treasure
+        treasure.physicsBody?.isDynamic = false
+        treasure.zPosition = 50
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, let treasure = draggedTreasure else { return }
+        let location = touch.location(in: self)
+        movedTreasure = movedTreasure || hypot(location.x - touchStart.x, location.y - touchStart.y) > 4
+        let halfWidth = treasure.frame.width / 2 + 5
+        let halfHeight = treasure.frame.height / 2 + 5
+        treasure.position = CGPoint(
+            x: min(max(location.x, halfWidth), size.width - halfWidth),
+            y: min(max(location.y, halfHeight), size.height - halfHeight)
+        )
+        updateFusion(for: treasure)
+    }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let location = touches.first?.location(in: self), let id = nodes(at: location).compactMap(\.name).first else { return }
-        select?(id)
+        defer { finishDrag() }
+        guard let treasure = draggedTreasure else { return }
+        if !movedTreasure, let id = treasure.name { select?(id) }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        finishDrag()
+    }
+
+    private func treasure(at location: CGPoint) -> SKShapeNode? {
+        for node in nodes(at: location) {
+            var candidate: SKNode? = node
+            while let current = candidate {
+                if let treasure = current as? SKShapeNode, treasure.name != nil { return treasure }
+                candidate = current.parent
+            }
+        }
+        return nil
+    }
+
+    /// Two cards keep their own identities, while this temporary shared
+    /// capsule makes the close approach read like liquid-glass droplets.
+    private func updateFusion(for treasure: SKShapeNode) {
+        let nearest = children.compactMap { $0 as? SKShapeNode }
+            .filter { $0 !== treasure && $0.name != nil }
+            .min { hypot($0.position.x - treasure.position.x, $0.position.y - treasure.position.y) < hypot($1.position.x - treasure.position.x, $1.position.y - treasure.position.y) }
+        guard let other = nearest else { removeFusion(); return }
+        let distance = hypot(other.position.x - treasure.position.x, other.position.y - treasure.position.y)
+        let threshold = (treasure.frame.width + other.frame.width) * 0.42
+        guard distance < threshold else { removeFusion(); return }
+        if fusedWith !== other {
+            fusedWith = other
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.55)
+        }
+        let center = CGPoint(x: (treasure.position.x + other.position.x) / 2, y: (treasure.position.y + other.position.y) / 2)
+        let width = max(distance + min(treasure.frame.width, other.frame.width) * 0.72, 62)
+        let height = max(treasure.frame.height, other.frame.height) * 0.82
+        let angle = atan2(other.position.y - treasure.position.y, other.position.x - treasure.position.x)
+        let halo = fusionHalo ?? SKShapeNode()
+        halo.path = CGPath(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height), cornerWidth: height / 2, cornerHeight: height / 2, transform: nil)
+        halo.fillColor = .white.withAlphaComponent(0.14)
+        halo.strokeColor = .white.withAlphaComponent(0.62)
+        halo.lineWidth = 1.3
+        halo.position = center
+        halo.zRotation = angle
+        halo.zPosition = 4
+        if fusionHalo == nil {
+            halo.alpha = 0
+            addChild(halo)
+            halo.run(.fadeIn(withDuration: 0.13))
+            fusionHalo = halo
+        }
+    }
+
+    private func finishDrag() {
+        if let treasure = draggedTreasure {
+            treasure.zPosition = 0
+            treasure.physicsBody?.isDynamic = true
+        }
+        draggedTreasure = nil
+        removeFusion()
+    }
+
+    private func removeFusion() {
+        fusedWith = nil
+        guard let fusionHalo else { return }
+        self.fusionHalo = nil
+        fusionHalo.run(.sequence([.fadeOut(withDuration: 0.16), .removeFromParent()]))
+    }
+}
+
+@MainActor
+private final class TreasurePreviewStore {
+    static let shared = TreasurePreviewStore()
+    private let cache = NSCache<NSURL, UIImage>()
+    private init() {}
+
+    func image(at url: URL) async -> UIImage? {
+        if let cached = cache.object(forKey: url as NSURL) { return cached }
+        let image: UIImage?
+        if url.isFileURL {
+            image = UIImage(contentsOfFile: url.path)
+        } else if let (data, _) = try? await URLSession.shared.data(from: url) {
+            image = UIImage(data: data)
+        } else {
+            image = nil
+        }
+        if let image { cache.setObject(image, forKey: url as NSURL) }
+        return image
     }
 }
 
