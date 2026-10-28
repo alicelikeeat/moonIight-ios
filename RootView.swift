@@ -1728,6 +1728,9 @@ struct MediaPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var controlsVisible = true
+    @State private var currentTime = 0.0
+    @State private var duration = 1.0
+    @State private var isScrubbing = false
 
     var body: some View {
         ZStack {
@@ -1736,7 +1739,7 @@ struct MediaPlayerView: View {
                 if entry.kind == .embed, let url = entry.embedURL {
                     WebEmbedView(url: url)
                 } else if entry.kind == .video, let player {
-                    FillVideoPlayer(player: player, showsControls: controlsVisible)
+                    FillVideoPlayer(player: player, showsControls: false)
                 } else if entry.kind == .video {
                     ProgressView().tint(.white)
                 } else if entry.kind == .image, let url = entry.remoteURL {
@@ -1749,11 +1752,24 @@ struct MediaPlayerView: View {
                 }
             }
             .ignoresSafeArea()
+            // Exit remains available even when immersive controls fade.
+            VStack {
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").font(.headline.weight(.bold))
+                            .frame(width: 46, height: 46)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("退出播放")
+                    .accessibilityIdentifier("player-close")
+                    Spacer()
+                }
+                .padding(.horizontal, 16).padding(.top, 10)
+                Spacer()
+            }
             if controlsVisible {
             VStack {
                 HStack(spacing: 12) {
-                    Button("关闭") { dismiss() }
-                        .accessibilityIdentifier("player-close")
                     Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Spacer(minLength: 0)
                     // Keep a first-party fallback when YouTube declines an
@@ -1787,6 +1803,22 @@ struct MediaPlayerView: View {
                 .foregroundStyle(.white)
                 .background(LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom))
                 Spacer()
+                if entry.kind == .video, player != nil {
+                    VStack(spacing: 7) {
+                        HStack {
+                            Text(playerClock(currentTime)).monospacedDigit().font(.caption.weight(.semibold))
+                            Spacer()
+                            Text(playerClock(duration)).monospacedDigit().font(.caption.weight(.semibold))
+                        }
+                        PlayerTimeline(value: $currentTime, duration: max(1, duration), isScrubbing: $isScrubbing) { seconds in
+                            player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
+                        }
+                        .frame(height: 52)
+                        .accessibilityLabel("播放进度")
+                    }
+                    .padding(.horizontal, 20).padding(.bottom, 24)
+                    .background(LinearGradient(colors: [.clear, .black.opacity(0.82)], startPoint: .top, endPoint: .bottom))
+                }
             }
             }
         }
@@ -1801,6 +1833,17 @@ struct MediaPlayerView: View {
                 player?.play()
             } else {
                 model.mediaStore.markOpened(entry)
+            }
+        }
+        .task(id: "playback-clock-\(entry.id)") {
+            while !Task.isCancelled {
+                if !isScrubbing, let player {
+                    let itemDuration = player.currentItem?.duration.seconds ?? 0
+                    if itemDuration.isFinite && itemDuration > 0 { duration = itemDuration }
+                    let time = player.currentTime().seconds
+                    if time.isFinite && time >= 0 { currentTime = min(time, max(1, duration)) }
+                }
+                try? await Task.sleep(nanoseconds: 180_000_000)
             }
         }
         .task(id: "controls-\(entry.id)") {
@@ -1828,6 +1871,54 @@ struct MediaPlayerView: View {
             player?.pause(); player = nil
             MoonlightOrientationDelegate.playerAllowsLandscape = false
         }
+    }
+
+    private func playerClock(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        return "\(Int(seconds) / 60):\(String(format: "%02d", Int(seconds) % 60))"
+    }
+}
+
+private struct PlayerTimeline: UIViewRepresentable {
+    @Binding var value: Double
+    let duration: Double
+    @Binding var isScrubbing: Bool
+    let onSeek: (Double) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
+    func makeUIView(context: Context) -> ExpandedPlaybackSlider {
+        let slider = ExpandedPlaybackSlider()
+        slider.minimumTrackTintColor = .systemPink
+        slider.maximumTrackTintColor = .systemGray3
+        slider.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .valueChanged)
+        slider.addTarget(context.coordinator, action: #selector(Coordinator.touchDown(_:)), for: .touchDown)
+        slider.addTarget(context.coordinator, action: #selector(Coordinator.touchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        return slider
+    }
+    func updateUIView(_ slider: ExpandedPlaybackSlider, context: Context) {
+        context.coordinator.owner = self
+        slider.minimumValue = 0
+        slider.maximumValue = Float(max(1, duration))
+        if !isScrubbing { slider.value = Float(min(value, duration)) }
+    }
+    final class Coordinator: NSObject {
+        var owner: PlayerTimeline
+        init(owner: PlayerTimeline) { self.owner = owner }
+        @objc func touchDown(_ sender: UISlider) { owner.isScrubbing = true }
+        @objc func changed(_ sender: UISlider) {
+            owner.value = Double(sender.value)
+            owner.onSeek(Double(sender.value))
+        }
+        @objc func touchUp(_ sender: UISlider) {
+            owner.onSeek(Double(sender.value))
+            owner.isScrubbing = false
+        }
+    }
+}
+
+private final class ExpandedPlaybackSlider: UISlider {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -22).contains(point)
     }
 }
 
