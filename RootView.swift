@@ -1828,6 +1828,7 @@ private struct MomentsView: View {
     @State private var commentDraft = ""
     @State private var showingCommentPrompt = false
     @State private var deletingMoment: String?
+    @State private var momentActionsID: String?
     @State private var activeVideoID: String?
     @State private var timelineFilter = "全部"
     @AppStorage("moonlight.glass.bannerSize") private var bannerSizeRaw = GlassSurfaceSize.balanced.rawValue
@@ -1934,20 +1935,20 @@ private struct MomentsView: View {
                                 Button { model.toggleMomentLike(moment.id) } label: {
                                     Label("\(moment.likes)", systemImage: moment.likedByMe ? "heart.fill" : "heart")
                                 }
-                                .foregroundStyle(moment.likedByMe ? .pink : MoonStyle.accent)
+                                .foregroundStyle(moment.likedByMe ? .pink : MoonStyle.accent).accessibilityIdentifier("moment-like-\(moment.id)")
                                 if !moment.comments.isEmpty {
                                     Button {
                                         commentTargetID = moment.id
                                         showingCommentPrompt = true
                                     } label: {
                                         Label("\(moment.comments.count)", systemImage: "bubble.right")
-                                    }.foregroundStyle(.secondary)
+                                    }.foregroundStyle(.secondary).accessibilityIdentifier("moment-comment-\(moment.id)")
                                 } else {
                                     Button {
                                         commentTargetID = moment.id
                                         showingCommentPrompt = true
                                     } label: { Label("评论", systemImage: "bubble.right") }
-                                        .foregroundStyle(.secondary)
+                                        .foregroundStyle(.secondary).accessibilityIdentifier("moment-comment-\(moment.id)")
                                 }
                                 if moment.reposts > 0 {
                                     Label("\(moment.reposts)", systemImage: "arrow.2.squarepath")
@@ -1967,11 +1968,13 @@ private struct MomentsView: View {
                         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
                         .contentShape(RoundedRectangle(cornerRadius: 22))
                         .accessibilityElement(children: .contain)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                deletingMoment = moment.id
-                            } label: { Label("删除动态", systemImage: "trash") }
-                        }
+                        // This is deliberately simultaneous: a vertical drag
+                        // remains owned by the feed, while a stationary hold
+                        // opens actions that are specific to this post.
+                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.48, maximumDistance: 7).onEnded { _ in
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            momentActionsID = moment.id
+                        })
                         .accessibilityIdentifier("moment-post-card-\(moment.id)")
                         .transition(.opacity)
                     }
@@ -2003,6 +2006,19 @@ private struct MomentsView: View {
                     if let commentTargetID { model.addMomentComment(commentTargetID, text: commentDraft) }
                     commentDraft = ""
                 }.disabled(commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .confirmationDialog("动态操作", isPresented: Binding(get: { momentActionsID != nil }, set: { if !$0 { momentActionsID = nil } }), titleVisibility: .visible) {
+                if let id = momentActionsID, let moment = model.moments.first(where: { $0.id == id }) {
+                    Button(moment.likedByMe ? "取消点赞" : "点赞") { model.toggleMomentLike(id); momentActionsID = nil }
+                    Button("评论") { commentTargetID = id; commentDraft = ""; momentActionsID = nil; showingCommentPrompt = true }
+                    Button("转发") { model.repostMoment(id); momentActionsID = nil }
+                    if !moment.isVirtual {
+                        Button("删除动态", role: .destructive) { deletingMoment = id; momentActionsID = nil }
+                    }
+                }
+                Button("取消", role: .cancel) { momentActionsID = nil }
+            } message: {
+                Text("点赞、评论和转发会作用于当前这条动态；只有自己的动态可以删除。")
             }
             .confirmationDialog("删除这条朋友圈动态？", isPresented: Binding(get: { deletingMoment != nil }, set: { if !$0 { deletingMoment = nil } }), titleVisibility: .visible) {
                 Button("删除动态", role: .destructive) {
@@ -2058,14 +2074,18 @@ private struct MomentAttachmentPreview: View {
                     .font(.caption.weight(.semibold))
                 Text(entry.title).font(.subheadline.weight(.semibold)).lineLimit(2)
             }.foregroundStyle(.white).padding(12)
-            Image(systemName: entry.kind == .image ? "photo" : "play.fill")
-                .font(.title3.weight(.bold)).foregroundStyle(.white)
-                .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            if entry.kind == .image || !isPlaying {
+                Image(systemName: entry.kind == .image ? "photo" : "play.fill")
+                    .font(.title3.weight(.bold)).foregroundStyle(.white)
+                    .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .transition(.opacity)
+            }
         }
         .frame(width: bounds.size.width, height: 210).clipped()
         }.frame(height: 210)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .animation(.easeOut(duration: 0.16), value: isPlaying)
     }
     private var attachmentFallback: some View {
         LinearGradient(colors: [MoonStyle.accent.opacity(0.72), .indigo.opacity(0.34)], startPoint: .topLeading, endPoint: .bottomTrailing)

@@ -155,6 +155,10 @@ struct ReelsView: View {
     @AppStorage("moonlight.reels.photos.seconds") private var photoSeconds = 6.0
     @AppStorage("moonlight.reels.autoAdvance") private var autoAdvance = true
     @AppStorage("moonlight.reels.muted") private var muted = false
+    @AppStorage("moonlight.reels.hideChrome") private var hideChrome = false
+    @State private var chromeTemporarilyVisible = true
+    private var isVideo: Bool { entries.indices.contains(index) && entries[index].kind == .video }
+    private var showsChrome: Bool { !hideChrome || !isVideo || chromeTemporarilyVisible }
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
@@ -167,7 +171,7 @@ struct ReelsView: View {
                     Button("重新加载") { Task { await load() } }
                 }.frame(maxHeight: .infinity)
             } else {
-                VerticalReelsPager(entries: entries, favoriteIDs: Set(model.mediaStore.items.filter(\.isFavorite).map(\.id)), index: $index, scenePhase: actionEntry == nil ? scenePhase : .inactive, muted: muted, autoAdvance: autoAdvance, photoSeconds: photoSeconds,
+                VerticalReelsPager(entries: entries, favoriteIDs: Set(model.mediaStore.items.filter(\.isFavorite).map(\.id)), index: $index, scenePhase: actionEntry == nil ? scenePhase : .inactive, muted: muted, autoAdvance: autoAdvance, photoSeconds: photoSeconds, showsChrome: showsChrome,
                     onOptions: { actionEntry = $0 }, onFavorite: { model.mediaStore.toggleFavorite($0) }, onNext: next)
                     .ignoresSafeArea()
                     .accessibilityIdentifier("vertical-reels-pager")
@@ -184,6 +188,7 @@ struct ReelsView: View {
                     .accessibilityIdentifier("reels-mute")
                 Menu {
                     Toggle("自动播放下一条", isOn: $autoAdvance)
+                    Toggle("视频时隐藏全部按键", isOn: $hideChrome)
                     Picker("图片停留", selection: $photoSeconds) { ForEach([3.0, 6, 10, 15], id: \.self) { Text("\(Int($0)) 秒").tag($0) } }
                 } label: { Image(systemName: "slider.horizontal.3") }
                 .accessibilityLabel("抖音播放选项")
@@ -193,9 +198,25 @@ struct ReelsView: View {
             .padding(12)
             .contentShape(Rectangle())
             .zIndex(10)
-            .simultaneousGesture(TapGesture().onEnded { })
-        }.buttonStyle(MoonGlassButtonStyle()).task { await load() }
-        .onChange(of: index) { value in if source == .sources && value >= entries.count - 3 { Task { await load(append: true) } } }
+            .opacity(showsChrome ? 1 : 0)
+            .allowsHitTesting(showsChrome)
+        }
+        .contentShape(Rectangle())
+        .simultaneousGesture(TapGesture().onEnded {
+            guard hideChrome && isVideo else { return }
+            chromeTemporarilyVisible.toggle()
+        })
+        .buttonStyle(MoonGlassButtonStyle()).task { await load() }
+        .onChange(of: index) { value in
+            chromeTemporarilyVisible = true
+            if source == .sources && value >= entries.count - 3 { Task { await load(append: true) } }
+        }
+        .task(id: "chrome-\(index)-\(hideChrome)-\(isVideo)") {
+            guard hideChrome, isVideo else { return }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled, hideChrome, isVideo else { return }
+            chromeTemporarilyVisible = false
+        }
         .sheet(item: $actionEntry) { entry in
             QuickActionsPanel(entry: entry, onPlay: { actionEntry = nil }).environmentObject(model)
                 .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
@@ -251,6 +272,7 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
     let muted: Bool
     let autoAdvance: Bool
     let photoSeconds: Double
+    let showsChrome: Bool
     let onOptions: (MediaEntry) -> Void
     let onFavorite: (MediaEntry) -> Void
     let onNext: () -> Void
@@ -295,7 +317,7 @@ private struct VerticalReelsPager: UIViewControllerRepresentable {
             var entry = parent.entries[min(max(0, value), parent.entries.count - 1)]
             entry.isFavorite = parent.favoriteIDs.contains(entry.id)
             return ReelPage(entry: entry, active: value == parent.index, scenePhase: parent.scenePhase,
-                     muted: parent.muted, autoAdvance: parent.autoAdvance, photoSeconds: parent.photoSeconds,
+                     muted: parent.muted, autoAdvance: parent.autoAdvance, photoSeconds: parent.photoSeconds, showsChrome: parent.showsChrome,
                      loopsCurrentPage: parent.entries.count == 1,
                      onOptions: parent.onOptions, onFavorite: parent.onFavorite, onNext: parent.onNext)
         }
@@ -329,6 +351,7 @@ private struct ReelPage: View {
     let muted: Bool
     let autoAdvance: Bool
     let photoSeconds: Double
+    let showsChrome: Bool
     let loopsCurrentPage: Bool
     let onOptions: (MediaEntry) -> Void
     let onFavorite: (MediaEntry) -> Void
@@ -358,6 +381,7 @@ private struct ReelPage: View {
                     onDoubleTap: { if !entry.isFavorite { onFavorite(entry) } })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            if showsChrome {
             VStack(alignment: .leading, spacing: 8) {
                 Text(entry.title).font(.headline).lineLimit(3)
                 Text(entry.author.isEmpty ? entry.platform : entry.author).font(.caption)
@@ -372,7 +396,10 @@ private struct ReelPage: View {
                 }
             }.foregroundStyle(.white).padding(18).padding(.bottom, 28)
                 .background(LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom))
+                .transition(.opacity)
+            }
         }.buttonStyle(MoonGlassButtonStyle())
+        .animation(.easeOut(duration: 0.18), value: showsChrome)
         .onChange(of: active) { _ in updatePlayer() }.onChange(of: muted) { value in player?.isMuted = value }
         .onChange(of: scenePhase) { _ in updatePlayer() }.onDisappear { player?.pause(); player = nil }
         .task(id: "\(active)-\(paused)-\(autoAdvance)-\(photoSeconds)-\(scenePhase)") {
