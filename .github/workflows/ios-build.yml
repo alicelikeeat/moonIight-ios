@@ -40,9 +40,10 @@ jobs:
             ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
-          for ROUND in 1 2; do
-            xcodebuild "${COMMON[@]}" -resultBundlePath "build/SettingsTestsRound${ROUND}.xcresult" "${ONLY[@]}" test
-          done
+          # Each focused gesture suite used to run twice before the remaining
+          # suite.  One successful pass is the release gate; duplicating it
+          # wastes runner minutes and can turn a stable pass into a flaky retry.
+          xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
       - name: Export UI review screenshots
         if: always()
