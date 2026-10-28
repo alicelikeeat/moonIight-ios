@@ -12,6 +12,31 @@ private enum MoonStyle {
     static let cardRadius: CGFloat = 24
 }
 
+// Keep the generator alive between touch-down and recognition. Creating a
+// generator at the instant a long press begins is unreliable on device: the
+// Taptic Engine may not have time to prepare before the menu animation starts.
+private final class LongPressHapticFeedback {
+    static let shared = LongPressHapticFeedback()
+    private let generator = UIImpactFeedbackGenerator(style: .medium)
+    private var lastImpact = Date.distantPast
+
+    private init() {}
+
+    func prepare() {
+        generator.prepare()
+    }
+
+    func menuOpened() {
+        let now = Date()
+        // A card and its enclosing global observer can recognize the same
+        // stationary hold. Coalesce that edge case into one deliberate tap.
+        guard now.timeIntervalSince(lastImpact) > 0.18 else { return }
+        generator.impactOccurred(intensity: 0.82)
+        lastImpact = now
+        generator.prepare()
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @EnvironmentObject private var backgroundStore: BackgroundStore
@@ -563,7 +588,7 @@ private struct UniversalHoldScope: ViewModifier {
                 GlobalHoldObserver(enabled: menu == nil && model.activeLongPressMenu == nil,
                     onBegin: { point, buttonTarget in
                         heldTarget = buttonTarget ?? target
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        LongPressHapticFeedback.shared.menuOpened()
                         menu = ActiveLongPressMenu(entry: nil, location: point, fingerLocation: point)
                     }, onMove: { point in
                         guard var current = menu, current.fingerDown else { return }
@@ -770,6 +795,7 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     func detach() { hold.view?.removeGestureRecognizer(hold); owner = nil }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard canBegin, owner?.presentedViewController == nil else { return false }
+        LongPressHapticFeedback.shared.prepare()
         touchedView = touch.view
         heldTarget = window.flatMap { BackgroundHitRegistry.target(at: touch.location(in: $0), in: $0) }
         var ancestor = touch.view
@@ -822,7 +848,9 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
         let point = recognizer.location(in: self)
         switch recognizer.state {
-        case .began: onBegin?(point, heldTarget)
+        case .began:
+            LongPressHapticFeedback.shared.menuOpened()
+            onBegin?(point, heldTarget)
         case .changed: onMove?(point)
         case .ended: onMove?(point); onEnd?()
         case .cancelled: onEnd?()
@@ -1300,6 +1328,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     private let tap = UITapGestureRecognizer()
     private let hold = UILongPressGestureRecognizer()
     private let doubleTap = UITapGestureRecognizer()
+    private var observedPanIDs: Set<ObjectIdentifier> = []
 
     init() {
         super.init(frame: .zero)
@@ -1337,19 +1366,14 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Every card recognizer gives the enclosing native scroll pan first
-        // refusal. This matters for repeated flicks: a second stroke can begin
-        // before the previous deceleration ends, and it must never wait for a
-        // card tap or hold to resolve.
-        enclosingScrollViews.contains {
-            otherGestureRecognizer === $0.panGestureRecognizer
-        }
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        otherGestureRecognizer is UIPanGestureRecognizer
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        otherGestureRecognizer is UIPanGestureRecognizer
+                           shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === hold { LongPressHapticFeedback.shared.prepare() }
+        return true
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1366,6 +1390,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         switch recognizer.state {
         case .began:
             holdActive = true
+            LongPressHapticFeedback.shared.menuOpened()
             onHoldBegan?(recognizer.location(in: self))
         case .changed:
             if holdActive { onHoldMoved?(recognizer.location(in: self)) }
@@ -1392,6 +1417,22 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
             scroll.delaysContentTouches = false
             scroll.canCancelContentTouches = true
             scroll.panGestureRecognizer.cancelsTouchesInView = true
+            let identifier = ObjectIdentifier(scroll.panGestureRecognizer)
+            if observedPanIDs.insert(identifier).inserted {
+                // Do not make the pan wait for tap/hold failure. Instead it
+                // cancels a pending card hold the moment scrolling begins.
+                // This keeps a second flick responsive during deceleration.
+                scroll.panGestureRecognizer.addTarget(self, action: #selector(scrollPanned(_:)))
+            }
+        }
+    }
+
+    @objc private func scrollPanned(_ recognizer: UIPanGestureRecognizer) {
+        guard recognizer.state == .began || recognizer.state == .changed else { return }
+        if holdActive { cancelHold() }
+        if hold.state == .possible {
+            hold.isEnabled = false
+            hold.isEnabled = true
         }
     }
 }
@@ -1468,9 +1509,6 @@ private struct MediaEntryCard: View {
     }
 
     private func activateLongPress(at location: CGPoint) {
-        let feedback = UIImpactFeedbackGenerator(style: .medium)
-        feedback.prepare()
-        feedback.impactOccurred()
         lastFingerPoint = location
         lastFingerTime = Date.timeIntervalSinceReferenceDate
         model.activeLongPressMenu = ActiveLongPressMenu(entry: entry, location: location, fingerLocation: location)
