@@ -56,6 +56,7 @@ struct RootView: View {
     @State private var deleteCoverConfirmation = false
     @State private var bottomRefreshing = false
     @State private var bottomRefreshCount = 0
+    @State private var assistantLaunch: AssistantLaunch?
 
     var body: some View {
         ZStack {
@@ -158,6 +159,11 @@ struct RootView: View {
             }, onCaptureVideo: { model.mediaStore.importVideoFile($0, title: "拍摄的视频") }).ignoresSafeArea()
         }
         .fullScreenCover(item: $reelsRequest) { request in ReelsView(source: request.source) }
+        .sheet(item: $assistantLaunch) { launch in
+            NavigationStack {
+                AssistantChatView(initialPrompt: launch.prompt, deepThinking: launch.deepThinking)
+            }
+        }
         .fullScreenCover(item: $activePlayer) { entry in
             MediaPlayerView(entry: entry, onShareToMoments: {
                 activePlayer = nil
@@ -332,6 +338,13 @@ struct RootView: View {
         if interactions.navigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
                 .frame(height: 58).padding(.horizontal, 18).padding(.bottom, 10)
+        } else if interactions.navigationMode == .assistant {
+            AssistantDock { prompt, deepThinking in
+                model.activeLongPressMenu = nil
+                assistantLaunch = AssistantLaunch(prompt: prompt, deepThinking: deepThinking)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
         } else {
         GeometryReader { geometry in
             // Five independent, native-glass circles: a compact Telegram-like
@@ -2956,6 +2969,13 @@ private struct SettingsView: View {
                         ))
                     }
                 }
+                Section("智能对话") {
+                    NavigationLink { AssistantSettingsView() } label: {
+                        Label("ChatGPT 接入", systemImage: "sparkles")
+                    }
+                    Text("输入栏模式可在“长按菜单与底栏”中切换。API Key 仅保存到本机钥匙串；建议使用项目密钥并设置额度限制。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("YouTube 搜索") {
                     SecureField("YouTube API Key", text: $model.mediaStore.youtubeAPIKeyDraft)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -3014,6 +3034,244 @@ private struct SettingsView: View {
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.large)
             .toolbar(.visible, for: .navigationBar)
+    }
+}
+
+private struct AssistantLaunch: Identifiable {
+    let id = UUID()
+    let prompt: String
+    let deepThinking: Bool
+}
+
+private struct AssistantDock: View {
+    @State private var draft = ""
+    @State private var deepThinking = false
+    let onOpen: (String, Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Menu {
+                Button { onOpen("我想拍摄一张照片后提问。", deepThinking) } label: { Label("相机", systemImage: "camera") }
+                Button { onOpen("我想选择照片后提问。", deepThinking) } label: { Label("照片", systemImage: "photo") }
+                Button { onOpen("我想添加一个文件后提问。", deepThinking) } label: { Label("文件", systemImage: "paperclip") }
+                Divider()
+                Toggle("深入思考", isOn: $deepThinking)
+            } label: {
+                Image(systemName: "plus").font(.title3.weight(.semibold))
+                    .frame(width: 38, height: 38)
+                    .background(.thinMaterial, in: Circle())
+            }
+            TextField("询问 ChatGPT", text: $draft, axis: .vertical)
+                .lineLimit(1...4)
+                .textInputAutocapitalization(.sentences)
+                .submitLabel(.send)
+                .onSubmit {
+                    let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !prompt.isEmpty else { return }
+                    onOpen(prompt, deepThinking); draft = ""
+                }
+            Button {
+                let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !prompt.isEmpty else { return }
+                onOpen(prompt, deepThinking); draft = ""
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(MoonStyle.accent, in: Circle())
+            }
+            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(8)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.28)))
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .accessibilityIdentifier("assistant-bottom-dock")
+    }
+}
+
+private struct AssistantMessage: Identifiable, Codable {
+    enum Role: String, Codable { case user, assistant }
+    var id = UUID().uuidString
+    var role: Role
+    var text: String
+}
+
+private enum AssistantAPIError: LocalizedError {
+    case missingKey, disabled, server(String), invalidResponse
+    var errorDescription: String? {
+        switch self {
+        case .missingKey: "请先在设置中保存 OpenAI API Key。"
+        case .disabled: "请先在设置中启用 API 对话。"
+        case .server(let reason): reason
+        case .invalidResponse: "服务没有返回可显示的回答。"
+        }
+    }
+}
+
+private enum AssistantAPI {
+    static func answer(history: [AssistantMessage], model: String, apiKey: String, deepThinking: Bool) async throws -> String {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { throw AssistantAPIError.missingKey }
+        guard let endpoint = URL(string: "https://api.openai.com/v1/responses") else { throw AssistantAPIError.invalidResponse }
+        let transcript = history.suffix(16).map {
+            let role = $0.role == .user ? "用户" : "助手"
+            return "\(role)：\($0.text)"
+        }.joined(separator: "\n\n")
+        let instruction = deepThinking
+            ? "你是月淡中的 ChatGPT 助手。请先仔细推理，再给出清晰、准确、可执行的中文回答。"
+            : "你是月淡中的 ChatGPT 助手。请用清晰、简洁、友好的中文回答。"
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60
+        let body: [String: Any] = [
+            "model": model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "gpt-4.1-mini" : model,
+            "instructions": instruction,
+            "input": transcript,
+            "store": false
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(status) else {
+            let message = (json?["error"] as? [String: Any])?["message"] as? String ?? "请求失败（\(status)）"
+            throw AssistantAPIError.server(message)
+        }
+        if let text = json?["output_text"] as? String, !text.isEmpty { return text }
+        if let output = json?["output"] as? [[String: Any]] {
+            let text = output.flatMap { ($0["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String } }.joined(separator: "\n")
+            if !text.isEmpty { return text }
+        }
+        throw AssistantAPIError.invalidResponse
+    }
+}
+
+private struct AssistantChatView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("moonlight.assistant.enabled") private var enabled = false
+    @AppStorage("moonlight.assistant.model") private var modelName = "gpt-4.1-mini"
+    let initialPrompt: String
+    let initialDeepThinking: Bool
+    @State private var messages: [AssistantMessage] = []
+    @State private var draft = ""
+    @State private var deepThinking = false
+    @State private var sending = false
+    @State private var errorText: String?
+    @State private var didSeed = false
+    @State private var settingsPresented = false
+
+    init(initialPrompt: String, deepThinking: Bool) {
+        self.initialPrompt = initialPrompt
+        self.initialDeepThinking = deepThinking
+        _deepThinking = State(initialValue: deepThinking)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if messages.isEmpty {
+                ContentUnavailableView("ChatGPT", systemImage: "sparkles", description: Text("可向它提问、整理观看计划或解释内容。"))
+                    .frame(maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(messages) { message in
+                                HStack {
+                                    if message.role == .assistant {
+                                        Text(message.text).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                        Spacer(minLength: 42)
+                                    } else {
+                                        Spacer(minLength: 42)
+                                        Text(message.text).foregroundStyle(.white).padding(12).background(MoonStyle.accent, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    }
+                                }.id(message.id)
+                            }
+                            if sending { HStack { ProgressView(); Text("正在思考…").foregroundStyle(.secondary); Spacer() } }
+                        }.padding()
+                    }
+                    .onChange(of: messages.count) { _ in if let id = messages.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } } }
+                }
+            }
+            if let errorText {
+                HStack { Image(systemName: "exclamationmark.triangle.fill"); Text(errorText).font(.footnote); Spacer(); Button("配置") { settingsPresented = true } }
+                    .padding(.horizontal).padding(.vertical, 8).foregroundStyle(.orange)
+            }
+            HStack(spacing: 10) {
+                Menu {
+                    Toggle("深入思考", isOn: $deepThinking)
+                    Button("清除本次对话", role: .destructive) { messages.removeAll() }
+                } label: { Image(systemName: "plus").frame(width: 38, height: 38).background(.thinMaterial, in: Circle()) }
+                TextField("询问 ChatGPT", text: $draft, axis: .vertical)
+                    .lineLimit(1...5).submitLabel(.send).onSubmit { Task { await send() } }
+                Button { Task { await send() } } label: {
+                    Image(systemName: "arrow.up").foregroundStyle(.white).frame(width: 38, height: 38).background(MoonStyle.accent, in: Circle())
+                }.disabled(sending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding(10).background(.regularMaterial, in: Capsule()).padding()
+        }
+        .navigationTitle("ChatGPT")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+        .task {
+            guard !didSeed else { return }; didSeed = true
+            draft = initialPrompt
+            if !initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { await send() }
+        }
+        .sheet(isPresented: $settingsPresented) { NavigationStack { AssistantSettingsView() } }
+    }
+
+    @MainActor private func send() async {
+        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !sending else { return }
+        guard enabled else { errorText = AssistantAPIError.disabled.errorDescription; return }
+        let key = SecureSettings.read("moonlight_openai_chat") ?? ""
+        guard !key.isEmpty else { errorText = AssistantAPIError.missingKey.errorDescription; return }
+        errorText = nil; draft = ""; sending = true
+        messages.append(AssistantMessage(role: .user, text: question))
+        do {
+            let answer = try await AssistantAPI.answer(history: messages, model: modelName, apiKey: key, deepThinking: deepThinking)
+            messages.append(AssistantMessage(role: .assistant, text: answer))
+        } catch {
+            errorText = error.localizedDescription
+        }
+        sending = false
+    }
+}
+
+private struct AssistantSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("moonlight.assistant.enabled") private var enabled = false
+    @AppStorage("moonlight.assistant.model") private var modelName = "gpt-4.1-mini"
+    @State private var keyDraft = SecureSettings.read("moonlight_openai_chat") ?? ""
+
+    var body: some View {
+        Form {
+            Section("OpenAI API") {
+                Toggle("启用 API 对话", isOn: $enabled)
+                SecureField("OpenAI API Key", text: $keyDraft)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                TextField("模型", text: $modelName)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("安全保存 API Key") {
+                    let value = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if value.isEmpty { SecureSettings.delete("moonlight_openai_chat") }
+                    else { SecureSettings.write(value, account: "moonlight_openai_chat") }
+                    keyDraft = value
+                }
+            }
+            Section("使用说明") {
+                Label("底栏布局选择“智能输入栏”后显示 ChatGPT 风格输入框。", systemImage: "rectangle.and.pencil.and.ellipsis")
+                Label("密钥只保存在此设备的钥匙串，不会提交到 GitHub 或写入 IPA。", systemImage: "key.fill")
+                Label("建议创建权限受限、额度受限的项目 API Key；公开发布时应改用自己的服务端代理。", systemImage: "lock.shield")
+                Label("“深入思考”会要求模型更仔细地回答，可能增加响应时间与费用。", systemImage: "brain")
+            }
+        }
+        .navigationTitle("ChatGPT 接入")
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
     }
 }
 

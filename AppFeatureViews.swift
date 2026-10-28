@@ -37,7 +37,7 @@ struct ContextMenuSettingsView: View {
                 Picker("布局", selection: $preferences.navigationMode) {
                     ForEach(BottomNavigationMode.allCases) { Text($0.title).tag($0) }
                 }.accessibilityIdentifier("bottom-navigation-mode")
-                Text("独立圆形模式保留按钮之间的滚动区域；原生滑块模式可横向拖动切换页面，停在拍摄位置后松手打开相机。")
+                Text("独立圆形模式保留按钮之间的滚动区域；原生滑块模式可横向拖动切换页面；智能输入栏提供 ChatGPT 风格提问入口。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("长按菜单") {

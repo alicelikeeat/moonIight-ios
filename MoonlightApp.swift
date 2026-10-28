@@ -329,9 +329,15 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
 }
 
 enum BottomNavigationMode: String, CaseIterable, Identifiable {
-    case circles, slider
+    case circles, slider, assistant
     var id: String { rawValue }
-    var title: String { self == .circles ? "独立圆形" : "原生滑块" }
+    var title: String {
+        switch self {
+        case .circles: "独立圆形"
+        case .slider: "原生滑块"
+        case .assistant: "智能输入栏"
+        }
+    }
 }
 
 @MainActor final class InteractionPreferences: ObservableObject {
