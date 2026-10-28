@@ -1342,39 +1342,26 @@ struct CardGestureSurface: UIViewRepresentable {
     }
 }
 
-final class CardGestureView: UIView, UIGestureRecognizerDelegate {
+final class CardGestureView: UIControl {
     var onTap: (() -> Void)?
     var onHoldBegan: ((CGPoint) -> Void)?
     var onHoldMoved: ((CGPoint) -> Void)?
     var onHoldEnded: (() -> Void)?
-    var onDoubleTap: (() -> Void)? { didSet { doubleTap.isEnabled = onDoubleTap != nil } }
+    var onDoubleTap: (() -> Void)?
     private var holdActive = false
-    private let tap = UITapGestureRecognizer()
-    private let hold = UILongPressGestureRecognizer()
-    private let doubleTap = UITapGestureRecognizer()
-    private var observedPanIDs: Set<ObjectIdentifier> = []
+    private var startPoint = CGPoint.zero
+    private var movedBeyondTapThreshold = false
+    private var holdWorkItem: DispatchWorkItem?
+    private var delayedTapWorkItem: DispatchWorkItem?
 
     init() {
         super.init(frame: .zero)
         backgroundColor = .clear
         isAccessibilityElement = false
-        tap.addTarget(self, action: #selector(tapped(_:)))
-        hold.addTarget(self, action: #selector(held(_:)))
-        doubleTap.addTarget(self, action: #selector(doubleTapped))
-        doubleTap.numberOfTapsRequired = 2
-        hold.minimumPressDuration = 0.48
-        hold.allowableMovement = 7
-        for recognizer in [tap, hold, doubleTap] {
-            recognizer.delegate = self
-            recognizer.cancelsTouchesInView = false
-            recognizer.delaysTouchesBegan = false
-            recognizer.delaysTouchesEnded = false
-            addGestureRecognizer(recognizer)
-        }
-        tap.require(toFail: hold)
-        tap.require(toFail: doubleTap)
-        doubleTap.require(toFail: hold)
-        doubleTap.isEnabled = false
+        // UIControl participates in UIScrollView's standard touch-cancel
+        // path. Unlike a tap/long-press recognizer overlay it never asks the
+        // scroll pan to wait before a drag can begin.
+        isExclusiveTouch = false
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -1389,46 +1376,76 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         return result
     }
 
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        otherGestureRecognizer is UIPanGestureRecognizer
-    }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldReceive touch: UITouch) -> Bool {
-        if gestureRecognizer === hold { LongPressHapticFeedback.shared.prepare() }
+    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        guard !enclosingScrollViews.contains(where: { $0.isDragging || $0.isDecelerating }) else { return false }
+        startPoint = touch.location(in: self)
+        movedBeyondTapThreshold = false
+        LongPressHapticFeedback.shared.prepare()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isTracking, !self.movedBeyondTapThreshold else { return }
+            self.holdActive = true
+            LongPressHapticFeedback.shared.menuOpened()
+            self.onHoldBegan?(self.startPoint)
+        }
+        holdWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48, execute: work)
         return true
     }
 
-    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        !enclosingScrollViews.contains { $0.isDragging || $0.isDecelerating }
-    }
-
-    @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended, !holdActive else { return }
-        onTap?()
-    }
-    @objc private func doubleTapped() { onDoubleTap?() }
-
-    @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
-        switch recognizer.state {
-        case .began:
-            holdActive = true
-            LongPressHapticFeedback.shared.menuOpened()
-            onHoldBegan?(recognizer.location(in: self))
-        case .changed:
-            if holdActive { onHoldMoved?(recognizer.location(in: self)) }
-        case .ended:
-            if holdActive { onHoldMoved?(recognizer.location(in: self)) }
-            cancelHold()
-        case .cancelled, .failed:
-            cancelHold()
-        default:
-            break
+    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        let point = touch.location(in: self)
+        if hypot(point.x - startPoint.x, point.y - startPoint.y) > 7 {
+            movedBeyondTapThreshold = true
+            holdWorkItem?.cancel()
+            holdWorkItem = nil
+            if holdActive { cancelHold() }
+            // Returning false hands the same touch back to the enclosing
+            // ScrollView immediately; no card recognizer remains in flight.
+            return false
         }
+        if holdActive { onHoldMoved?(point) }
+        return true
+    }
+
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        holdWorkItem?.cancel()
+        holdWorkItem = nil
+        let point = touch?.location(in: self) ?? startPoint
+        if holdActive {
+            onHoldMoved?(point)
+            cancelHold()
+        } else if !movedBeyondTapThreshold {
+            triggerTap()
+        }
+        super.endTracking(touch, with: event)
+    }
+
+    override func cancelTracking(with event: UIEvent?) {
+        holdWorkItem?.cancel()
+        holdWorkItem = nil
+        if holdActive { cancelHold() }
+        super.cancelTracking(with: event)
+    }
+
+    private func triggerTap() {
+        guard onDoubleTap != nil else { onTap?(); return }
+        if delayedTapWorkItem != nil {
+            delayedTapWorkItem?.cancel()
+            delayedTapWorkItem = nil
+            onDoubleTap?()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.onTap?()
+            self?.delayedTapWorkItem = nil
+        }
+        delayedTapWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: work)
     }
 
     func cancelHold() {
+        holdWorkItem?.cancel()
+        holdWorkItem = nil
         guard holdActive else { return }
         holdActive = false
         onHoldEnded?()
@@ -1441,22 +1458,6 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
             scroll.delaysContentTouches = false
             scroll.canCancelContentTouches = true
             scroll.panGestureRecognizer.cancelsTouchesInView = true
-            let identifier = ObjectIdentifier(scroll.panGestureRecognizer)
-            if observedPanIDs.insert(identifier).inserted {
-                // Do not make the pan wait for tap/hold failure. Instead it
-                // cancels a pending card hold the moment scrolling begins.
-                // This keeps a second flick responsive during deceleration.
-                scroll.panGestureRecognizer.addTarget(self, action: #selector(scrollPanned(_:)))
-            }
-        }
-    }
-
-    @objc private func scrollPanned(_ recognizer: UIPanGestureRecognizer) {
-        guard recognizer.state == .began || recognizer.state == .changed else { return }
-        if holdActive { cancelHold() }
-        if hold.state == .possible {
-            hold.isEnabled = false
-            hold.isEnabled = true
         }
     }
 }
