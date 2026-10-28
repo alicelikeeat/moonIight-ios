@@ -113,9 +113,8 @@ private struct TreasureDetail: View {
 
 private final class MoonTreasureScene: SKScene {
     private var select: ((String) -> Void)?
-    private let floor = SKShapeNode()
 
-    init() { super.init(size: CGSize(width: 390, height: 520)); scaleMode = .resizeFill; backgroundColor = .clear }
+    override init() { super.init(size: CGSize(width: 390, height: 520)); scaleMode = .resizeFill; backgroundColor = .clear }
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(with entries: [MediaEntry], onSelect: @escaping (String) -> Void) {
