@@ -2409,6 +2409,7 @@ private struct LibraryView: View {
     @State private var showingDeleteFolder = false
     @State private var reelsFolder: LibraryFolder?
     @State private var reelsQueue = false
+    @State private var showingTreasureMap = false
 
     private var selectedFolder: LibraryFolder? {
         model.mediaStore.folders.first { $0.id == selectedFolderID }
@@ -2465,6 +2466,9 @@ private struct LibraryView: View {
             .fullScreenCover(isPresented: $reelsQueue) {
                 ReelsView(source: .queue).environmentObject(model)
             }
+            .sheet(isPresented: $showingTreasureMap) {
+                NavigationStack { MoonTreasureMapView().environmentObject(model) }
+            }
             .task(id: model.command?.id) {
                 switch initialAction ?? model.command?.action {
                 case .selectAll: selectionMode = true; selectedIDs = Set(visibleItems.map(\.id))
@@ -2495,6 +2499,7 @@ private struct LibraryView: View {
                 Text("库").font(.title2.bold())
                 Spacer()
                 Menu {
+                    Button("打开月藏图") { showingTreasureMap = true }
                     Button("将当前列表加入队列") { model.mediaStore.enqueue(visibleItems) }
                     Button("替换播放队列") { model.mediaStore.enqueue(visibleItems, replacing: true) }
                     if !model.mediaStore.queueItems.isEmpty {
