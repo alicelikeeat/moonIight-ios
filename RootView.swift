@@ -1579,7 +1579,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         return result
     }
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard !enclosingScrollViews.contains(where: { $0.isDragging || $0.isDecelerating }) else { return false }
         return true
     }
