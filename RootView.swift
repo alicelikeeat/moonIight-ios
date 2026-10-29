@@ -1541,8 +1541,8 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     private var holdActive = false
     private var delayedTapWorkItem: DispatchWorkItem?
 
-    init() {
-        super.init(frame: .zero)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         backgroundColor = .clear
         isAccessibilityElement = false
         isUserInteractionEnabled = true
