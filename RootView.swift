@@ -3705,7 +3705,8 @@ private struct AssistantDock: View {
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.82), value: matches.map(\.rawValue))
         .animation(.easeOut(duration: 0.2), value: focused)
-        .accessibilityIdentifier("assistant-bottom-dock")
+        // Keep the input and command bubbles as separate accessibility elements.
+        .accessibilityElement(children: .contain)
         .onChange(of: focused) { onFocusChange($0) }
         .onDisappear { onFocusChange(false) }
         .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.assistantDockFocus"))) { _ in
