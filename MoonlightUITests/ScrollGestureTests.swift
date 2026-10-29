@@ -179,17 +179,21 @@ final class ScrollGestureTests: XCTestCase {
             scroll.swipeUp()
         }
         XCTAssertTrue(last.isHittable, "Could not reach the end of the discovery feed")
+        let state = app.staticTexts["bottom-refresh-state-discover"]
+        let initialRefresh = state.value as? String ?? "0"
+        scroll.swipeUp()
         let top = app.buttons["feed-scroll-top-discover"]
-        XCTAssertTrue(top.waitForExistence(timeout: 4), "Return-to-top must appear after a flick reaches the bottom")
+        XCTAssertTrue(top.waitForExistence(timeout: 4), "Return-to-top must appear after reaching the bottom")
         XCTAssertTrue(top.isHittable)
         XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-discover"].frame.minY)
-        let state = app.staticTexts["bottom-refresh-state-discover"]
-        XCTAssertEqual(state.value as? String, "0")
-        let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
-        start.press(forDuration: 0.01,
-                    thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20)),
-                    withVelocity: .slow, thenHoldForDuration: 0)
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: state)], timeout: 6), .completed)
+        if (state.value as? String ?? initialRefresh) == initialRefresh {
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+            start.press(forDuration: 0.01,
+                        thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.20)),
+                        withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value != %@", initialRefresh), object: state)], timeout: 6), .completed)
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
     }
 

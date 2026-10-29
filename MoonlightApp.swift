@@ -154,6 +154,7 @@ final class AppModel: ObservableObject {
             if ProcessInfo.processInfo.arguments.contains("--assistant-dock-ui-tests") {
                 InteractionPreferences.shared.navigationMode = .assistant
                 UserDefaults.standard.set("openAI", forKey: "moonlight.assistant.provider")
+                UserDefaults.standard.set(0.0, forKey: "moonlight.navigation.hideDelay")
             }
             if ProcessInfo.processInfo.arguments.contains("--hidden-dock-ui-tests") {
                 UserDefaults.standard.set(0.4, forKey: "moonlight.navigation.hideDelay")

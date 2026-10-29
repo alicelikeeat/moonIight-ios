@@ -10,7 +10,10 @@ struct MoonTreasureMapView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedID: String?
     @State private var activeEntry: MediaEntry?
+    @State private var actionEntry: MediaEntry?
     @State private var scope = TreasureScope.all
+    @State private var dropCount = 20
+    @State private var interactionMode = TreasureInteractionMode.drag
     @State private var scene = MoonTreasureScene()
 
     private var items: [MediaEntry] {
@@ -20,7 +23,7 @@ struct MoonTreasureMapView: View {
         case .favorites: source = model.mediaStore.items.filter(\.isFavorite)
         case .videos: source = model.mediaStore.items.filter { $0.kind == .video }
         }
-        return Array(source.prefix(42))
+        return Array(source.prefix(dropCount))
     }
 
     private var selected: MediaEntry? {
@@ -48,9 +51,13 @@ struct MoonTreasureMapView: View {
                     .onAppear { configureScene(); scene.startMotion() }
                     .onDisappear { scene.stopMotion() }
                     .onChange(of: scope) { _ in configureScene() }
+                    .onChange(of: dropCount) { _ in configureScene() }
+                    .onChange(of: interactionMode) { mode in scene.interactionMode = mode }
                     .onChange(of: model.mediaStore.items.map(\.id)) { _ in configureScene() }
                     .overlay(alignment: .bottom) {
-                        Text("轻拨宝藏，点按一件查看；只让前 \(items.count) 件参与碰撞")
+                        Text(interactionMode == .drag
+                             ? "拖拽模式 · \(items.count) 张卡片参与重力与碰撞"
+                             : "操作模式 · 点按打开，长按显示操作菜单")
                             .font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.78))
                             .padding(.horizontal, 13).padding(.vertical, 9)
                             .background(.black.opacity(0.28), in: Capsule())
@@ -72,6 +79,24 @@ struct MoonTreasureMapView: View {
             MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 })
                 .environmentObject(model)
         }
+        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(
+            get: { actionEntry != nil },
+            set: { if !$0 { actionEntry = nil } }
+        ), titleVisibility: .visible) {
+            Button("打开播放") {
+                activeEntry = actionEntry
+                actionEntry = nil
+            }
+            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") {
+                if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }
+                actionEntry = nil
+            }
+            Button("加入播放队列") {
+                if let entry = actionEntry { model.mediaStore.enqueue([entry]) }
+                actionEntry = nil
+            }
+            Button("取消", role: .cancel) { actionEntry = nil }
+        }
     }
 
     private var header: some View {
@@ -81,17 +106,62 @@ struct MoonTreasureMapView: View {
                 Text("像巨龙宝库一样堆放你的图片与视频").font(.subheadline).foregroundStyle(.white.opacity(0.72))
             }
             Spacer()
-            Image(systemName: "sparkles").font(.title2.weight(.bold)).foregroundStyle(.yellow)
+            Menu {
+                Picker("掉落数量", selection: $dropCount) {
+                    ForEach([10, 20, 30, 42], id: \.self) { count in
+                        Text("\(count) 张").tag(count)
+                    }
+                }
+            } label: {
+                VStack(spacing: 1) {
+                    Text("\(min(dropCount, items.count))").font(.subheadline.bold())
+                    Text("数量").font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityIdentifier("treasure-drop-count")
+            Menu {
+                Picker("交互模式", selection: $interactionMode) {
+                    ForEach(TreasureInteractionMode.allCases) { mode in
+                        Label(mode.title, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+            } label: {
+                Image(systemName: interactionMode.symbol)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityIdentifier("treasure-interaction-mode")
         }.padding(.horizontal, 22).padding(.top, 8)
     }
 
     private func configureScene() {
-        scene.configure(with: items) { id in
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            selectedID = id
-            activeEntry = model.mediaStore.items.first { $0.id == id }
-        }
+        scene.configure(
+            with: items,
+            interactionMode: interactionMode,
+            onSelect: { id in
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                selectedID = id
+                activeEntry = model.mediaStore.items.first { $0.id == id }
+            },
+            onLongPress: { id in
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                actionEntry = model.mediaStore.items.first { $0.id == id }
+            }
+        )
     }
+}
+
+private enum TreasureInteractionMode: String, CaseIterable, Identifiable {
+    case drag
+    case actions
+    var id: Self { self }
+    var title: String { self == .drag ? "拖拽碰撞" : "长按操作" }
+    var symbol: String { self == .drag ? "hand.draw.fill" : "ellipsis.circle.fill" }
 }
 
 private enum TreasureScope: String, CaseIterable, Identifiable {
@@ -125,7 +195,11 @@ private struct TreasureDetail: View {
 }
 
 private final class MoonTreasureScene: SKScene {
+    var interactionMode = TreasureInteractionMode.drag
     private var select: ((String) -> Void)?
+    private var longPress: ((String) -> Void)?
+    private var longPressWorkItem: DispatchWorkItem?
+    private var longPressTriggered = false
     private let motionManager = CMMotionManager()
     private var lastShake = Date.distantPast
     private weak var draggedTreasure: SKShapeNode?
@@ -137,8 +211,14 @@ private final class MoonTreasureScene: SKScene {
     override init() { super.init(size: CGSize(width: 390, height: 520)); scaleMode = .resizeFill; backgroundColor = .clear }
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(with entries: [MediaEntry], onSelect: @escaping (String) -> Void) {
+    func configure(with entries: [MediaEntry],
+                   interactionMode: TreasureInteractionMode,
+                   onSelect: @escaping (String) -> Void,
+                   onLongPress: @escaping (String) -> Void) {
+        self.interactionMode = interactionMode
         select = onSelect
+        longPress = onLongPress
+        longPressWorkItem?.cancel()
         removeAllChildren()
         physicsWorld.gravity = CGVector(dx: 0, dy: -4.6)
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
@@ -192,8 +272,10 @@ private final class MoonTreasureScene: SKScene {
         node.fillColor = .white.withAlphaComponent(0.16)
         node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.92) : .white.withAlphaComponent(0.56)
         node.lineWidth = entry.isFavorite ? 2.1 : 1.2
-        node.position = CGPoint(x: CGFloat((index * 67) % max(Int(size.width - width), 1)) + width / 2,
-                                y: size.height + CGFloat(index / 4) * 38 + 35)
+        node.position = CGPoint(
+            x: CGFloat((index * 67) % max(Int(size.width - width), 1)) + width / 2,
+            y: size.height - height / 2 - 14 - CGFloat(index / 6) * 3
+        )
         node.zRotation = CGFloat((index % 7) - 3) * 0.055
         node.physicsBody = SKPhysicsBody(rectangleOf: CGSize(width: width, height: height), center: .zero)
         node.physicsBody?.restitution = 0.28
@@ -208,11 +290,21 @@ private final class MoonTreasureScene: SKScene {
         mask.fillColor = .white
         crop.maskNode = mask
         crop.position = CGPoint(x: 0, y: height * 0.16)
-        let preview = SKSpriteNode(color: color(for: entry).withAlphaComponent(0.88), size: CGSize(width: width - 8, height: previewHeight - 5))
-        preview.name = "preview"
-        crop.addChild(preview)
+        let previewSize = CGSize(width: width - 8, height: previewHeight - 5)
+        if entry.kind == .video, let url = entry.remoteURL, url.isFileURL {
+            let video = SKVideoNode(url: url)
+            video.name = "video-preview"
+            video.size = previewSize
+            video.position = .zero
+            crop.addChild(video)
+            video.play()
+        } else {
+            let preview = SKSpriteNode(color: color(for: entry).withAlphaComponent(0.88), size: previewSize)
+            preview.name = "preview"
+            crop.addChild(preview)
+            loadPreview(for: entry, into: preview, fill: preview.size)
+        }
         node.addChild(crop)
-        loadPreview(for: entry, into: preview, fill: preview.size)
 
         let glassStrip = SKShapeNode(rectOf: CGSize(width: width - 7, height: height * 0.30), cornerRadius: 12)
         glassStrip.fillColor = SKColor(white: 0.03, alpha: 0.48)
@@ -243,7 +335,19 @@ private final class MoonTreasureScene: SKScene {
         title.fontSize = 9; title.fontColor = .white; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -height * 0.31)
         title.preferredMaxLayoutWidth = width - 12; title.numberOfLines = 2
         node.addChild(title)
+
+        // Spawn every requested card inside the edge loop. The old positions
+        // started above the top physics boundary, so part of the requested
+        // batch could never enter the visible scene.
+        node.alpha = 0
+        node.setScale(0.82)
+        node.physicsBody?.isDynamic = false
         addChild(node)
+        node.run(.sequence([
+            .wait(forDuration: min(Double(index) * 0.035, 0.9)),
+            .group([.fadeIn(withDuration: 0.16), .scale(to: 1, duration: 0.18)]),
+            .run { [weak node] in node?.physicsBody?.isDynamic = true }
+        ]))
     }
 
     private func loadPreview(for entry: MediaEntry, into preview: SKSpriteNode, fill size: CGSize) {
@@ -269,18 +373,37 @@ private final class MoonTreasureScene: SKScene {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
+        longPressWorkItem?.cancel()
+        longPressTriggered = false
         touchStart = touch.location(in: self)
         movedTreasure = false
         guard let treasure = treasure(at: touchStart) else { return }
         draggedTreasure = treasure
-        treasure.physicsBody?.isDynamic = false
         treasure.zPosition = 50
+
+        if interactionMode == .drag {
+            treasure.physicsBody?.isDynamic = false
+        } else if let id = treasure.name {
+            let work = DispatchWorkItem { [weak self, weak treasure] in
+                guard let self, self.draggedTreasure === treasure, !self.movedTreasure else { return }
+                self.longPressTriggered = true
+                self.longPress?(id)
+            }
+            longPressWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let treasure = draggedTreasure else { return }
         let location = touch.location(in: self)
-        movedTreasure = movedTreasure || hypot(location.x - touchStart.x, location.y - touchStart.y) > 4
+        let distance = hypot(location.x - touchStart.x, location.y - touchStart.y)
+        movedTreasure = movedTreasure || distance > (interactionMode == .drag ? 4 : 10)
+
+        guard interactionMode == .drag else {
+            if movedTreasure { longPressWorkItem?.cancel() }
+            return
+        }
         let halfWidth = treasure.frame.width / 2 + 5
         let halfHeight = treasure.frame.height / 2 + 5
         treasure.position = CGPoint(
@@ -291,12 +414,14 @@ private final class MoonTreasureScene: SKScene {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
         defer { finishDrag() }
         guard let treasure = draggedTreasure else { return }
-        if !movedTreasure, let id = treasure.name { select?(id) }
+        if !movedTreasure, !longPressTriggered, let id = treasure.name { select?(id) }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        longPressWorkItem?.cancel()
         finishDrag()
     }
 
@@ -346,11 +471,13 @@ private final class MoonTreasureScene: SKScene {
     }
 
     private func finishDrag() {
+        longPressWorkItem?.cancel()
         if let treasure = draggedTreasure {
             treasure.zPosition = 0
             treasure.physicsBody?.isDynamic = true
         }
         draggedTreasure = nil
+        longPressTriggered = false
         removeFusion()
     }
 
