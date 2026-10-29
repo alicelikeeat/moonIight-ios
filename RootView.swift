@@ -62,6 +62,10 @@ struct RootView: View {
     @State private var navigationVisible = true
     @State private var navigationHideTask: Task<Void, Never>?
 
+    private var isGestureUITest: Bool {
+        ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests")
+    }
+
     var body: some View {
         ZStack {
             PageBackground(target: .page(for: model.selectedTab))
@@ -474,7 +478,7 @@ struct RootView: View {
 
     private func scheduleNavigationHide() {
         navigationHideTask?.cancel()
-        guard navigationHideDelay > 0 else {
+        guard !isGestureUITest, navigationHideDelay > 0 else {
             navigationVisible = true
             return
         }
@@ -742,6 +746,10 @@ private struct UniversalHoldScope: ViewModifier {
     @State private var pendingSearchLocation = CGPoint.zero
     @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
 
+    private var isGestureUITest: Bool {
+        ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests")
+    }
+
     func body(content: Content) -> some View {
         content
             .background {
@@ -749,7 +757,7 @@ private struct UniversalHoldScope: ViewModifier {
                     onBegin: { point, buttonTarget in
                         heldTarget = buttonTarget ?? target
                         LongPressHapticFeedback.shared.menuOpened()
-                        if globalSearchEnabled {
+                        if globalSearchEnabled && !isGestureUITest {
                             pendingSearchLocation = point
                             if interactions.navigationMode == .assistant {
                                 confirmBottomSearch = true

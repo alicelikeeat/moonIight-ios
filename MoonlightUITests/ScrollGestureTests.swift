@@ -378,7 +378,7 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testNativeSliderSwitchesPages() {
         let app = launch(discover: false, flags: ["--slider-ui-tests"])
-        let bar = app.segmentedControls["navigation-slider"]
+        let bar = app.tabBars["navigation-slider"]
         XCTAssertTrue(bar.waitForExistence(timeout: 5))
         bar.buttons["发现"].tap()
         XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 5))
