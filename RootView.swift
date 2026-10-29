@@ -603,6 +603,12 @@ private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRe
         selectedItem = items?.first(where: { $0.tag == (AppTab.allCases.firstIndex(of: tab) ?? 0) })
     }
 
+    func tab(at point: CGPoint) -> AppTab {
+        let width = max(1, bounds.width / CGFloat(AppTab.allCases.count))
+        let index = min(AppTab.allCases.count - 1, max(0, Int(point.x / width)))
+        return AppTab.allCases[index]
+    }
+
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
         guard !isApplyingSelection, let tab = AppTab.allCases[safe: item.tag] else { return }
         activate(tab)
@@ -615,9 +621,7 @@ private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRe
     }
 
     @objc private func slid(_ recognizer: UIPanGestureRecognizer) {
-        let width = max(1, bounds.width / CGFloat(AppTab.allCases.count))
-        let index = min(AppTab.allCases.count - 1, max(0, Int(recognizer.location(in: self).x / width)))
-        guard let tab = AppTab.allCases[safe: index] else { return }
+        let tab = tab(at: recognizer.location(in: self))
         if recognizer.state == .began || recognizer.state == .changed {
             if selectedItem?.tag != (AppTab.allCases.firstIndex(of: tab) ?? 0) {
                 UISelectionFeedbackGenerator().selectionChanged()
@@ -975,7 +979,7 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
             // on some devices, while ordinary buttons and page backgrounds
             // continue to participate in the contextual hold menu.
             if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider || view is UISwitch { return false }
-            if let slider = view as? SlidingTabControl { heldTarget = .button(for: slider.tab(at: touch.location(in: slider))) }
+            if let slider = view as? NativeSlidingTabBar { heldTarget = .button(for: slider.tab(at: touch.location(in: slider))) }
             if let identifier = view.accessibilityIdentifier,
                identifier.hasPrefix("moment-post-card-") { return false }
             if let identifier = view.accessibilityIdentifier,
