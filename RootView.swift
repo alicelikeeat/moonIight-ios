@@ -56,6 +56,7 @@ struct RootView: View {
     @State private var deleteCoverConfirmation = false
     @State private var bottomRefreshing = false
     @State private var bottomRefreshCount = 0
+    @State private var bottomFeedTab: AppTab?
     @State private var assistantLaunch: AssistantLaunch?
     @AppStorage("moonlight.navigation.hideDelay") private var navigationHideDelay = 5.0
     @State private var navigationVisible = true
@@ -297,41 +298,74 @@ struct RootView: View {
 
     private func refreshable<Content: View>(_ tab: AppTab, @ViewBuilder content: @escaping () -> Content) -> some View {
         GeometryReader { geometry in
-            ScrollView(.vertical) {
-                VStack(spacing: 0) {
-                    content()
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: geometry.size.height, alignment: .topLeading)
-                    HStack(spacing: 6) {
-                        if bottomRefreshing { ProgressView() }
-                        else { Image(systemName: "arrow.up") }
-                        Text(bottomRefreshing ? "正在刷新" : "继续上拉刷新")
-                            .accessibilityIdentifier("bottom-refresh-state-\(tab.rawValue)")
-                            .accessibilityValue("\(bottomRefreshCount)")
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: 1).id("feed-top-\(tab.rawValue)")
+                        content()
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: geometry.size.height, alignment: .topLeading)
+                        HStack(spacing: 6) {
+                            if bottomRefreshing { ProgressView() }
+                            else { Image(systemName: "arrow.up") }
+                            Text(bottomRefreshing ? "正在刷新" : "继续上拉刷新")
+                                .accessibilityIdentifier("bottom-refresh-state-\(tab.rawValue)")
+                                .accessibilityValue("\(bottomRefreshCount)")
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity).frame(height: 76)
                     }
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity).frame(height: 76)
-                }
-                .background {
-                    BottomRefreshObserver {
-                        guard !bottomRefreshing else { return }
-                        bottomRefreshing = true
-                        bottomRefreshCount += 1
-                        defer { bottomRefreshing = false }
-                        await refreshFeed(tab)
+                    .background {
+                        BottomRefreshObserver(
+                            onRefresh: {
+                                guard !bottomRefreshing else { return }
+                                bottomRefreshing = true
+                                bottomRefreshCount += 1
+                                defer { bottomRefreshing = false }
+                                await refreshFeed(tab)
+                            },
+                            onNearBottom: { nearBottom in
+                                guard !bottomRefreshing else { return }
+                                if nearBottom { bottomFeedTab = tab }
+                                else if bottomFeedTab == tab { bottomFeedTab = nil }
+                            }
+                        )
+                        .frame(width: 0, height: 0)
                     }
-                    .frame(width: 0, height: 0)
                 }
-            }
-            .scrollIndicators(.hidden)
-            .accessibilityIdentifier("feed-scroll-\(tab.rawValue)")
-            .refreshable { await refreshFeed(tab) }
-            .overlay(alignment: .bottom) {
-                if bottomRefreshing {
-                    ProgressView().padding(10)
-                        .background(.regularMaterial, in: Circle())
-                        .padding(.bottom, 82)
-                        .allowsHitTesting(false)
+                .scrollIndicators(.hidden)
+                .accessibilityIdentifier("feed-scroll-\(tab.rawValue)")
+                .refreshable { await refreshFeed(tab) }
+                .overlay(alignment: .bottomTrailing) {
+                    if bottomFeedTab == tab && !bottomRefreshing {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.28)) {
+                                proxy.scrollTo("feed-top-\(tab.rawValue)", anchor: .top)
+                                bottomFeedTab = nil
+                            }
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 14, weight: .bold))
+                                .frame(width: 38, height: 38)
+                                .background(.regularMaterial, in: Circle())
+                                .overlay(Circle().strokeBorder(.white.opacity(0.32)))
+                                .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+                        }
+                        .accessibilityLabel("返回顶部")
+                        .accessibilityIdentifier("feed-scroll-top-\(tab.rawValue)")
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 94)
+                        .transition(.scale(scale: 0.75).combined(with: .opacity))
+                    }
+                }
+                .overlay(alignment: .bottom) {
+                    if bottomRefreshing {
+                        ProgressView().padding(10)
+                            .background(.regularMaterial, in: Circle())
+                            .padding(.bottom, 82)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
             .clipped()
@@ -845,9 +879,11 @@ private struct UniversalHoldScope: ViewModifier {
 // recognizer does not compete with card taps, holds, or scroll deceleration.
 private struct BottomRefreshObserver: UIViewRepresentable {
     let onRefresh: () async -> Void
+    let onNearBottom: (Bool) -> Void
     func makeUIView(context: Context) -> BottomRefreshMarker { BottomRefreshMarker() }
     func updateUIView(_ view: BottomRefreshMarker, context: Context) {
         view.onRefresh = onRefresh
+        view.onNearBottom = onNearBottom
         view.installIfNeeded()
     }
     static func dismantleUIView(_ view: BottomRefreshMarker, coordinator: ()) { view.detach() }
@@ -855,8 +891,10 @@ private struct BottomRefreshObserver: UIViewRepresentable {
 
 private final class BottomRefreshMarker: UIView {
     var onRefresh: (() async -> Void)?
+    var onNearBottom: ((Bool) -> Void)?
     private weak var scrollView: UIScrollView?
     private var armed = false
+    private var nearBottom = false
     private var refreshing = false
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -883,12 +921,18 @@ private final class BottomRefreshMarker: UIView {
         scrollView?.panGestureRecognizer.removeTarget(self, action: #selector(panChanged(_:)))
         scrollView = nil
         armed = false
+        nearBottom = false
     }
     @objc private func panChanged(_ pan: UIPanGestureRecognizer) {
         guard let scroll = scrollView, !refreshing else { return }
         let bottom = max(-scroll.adjustedContentInset.top,
                          scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
         let overscroll = scroll.contentOffset.y - bottom
+        let isNearBottom = scroll.contentOffset.y >= bottom - 48
+        if isNearBottom != nearBottom {
+            nearBottom = isNearBottom
+            onNearBottom?(isNearBottom)
+        }
         switch pan.state {
         case .changed:
             if overscroll > 65 { armed = true }
