@@ -36,8 +36,8 @@ final class ScrollGestureTests: XCTestCase {
 
     @MainActor
     private func assertCardScrolls(discover: Bool, singleColumn: Bool = false,
-                                   velocity: XCUIGestureVelocity) {
-        let app = launch(discover: discover, singleColumn: singleColumn)
+                                   velocity: XCUIGestureVelocity, flags: [String] = []) {
+        let app = launch(discover: discover, singleColumn: singleColumn, flags: flags)
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         XCTAssertTrue(card.isHittable)
         let before = card.frame.minY
@@ -165,6 +165,11 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor func testHomeFastCardScroll() { assertCardScrolls(discover: false, velocity: .fast) }
 
     @MainActor
+    func testCardScrollsWithLongPressDisabled() {
+        assertCardScrolls(discover: true, velocity: .slow, flags: ["--disable-card-hold-ui-tests"])
+    }
+
+    @MainActor
     func testBottomPullRefreshUsesFeedPan() {
         let app = launch(discover: true)
         let scroll = app.scrollViews["feed-scroll-discover"]
@@ -174,12 +179,10 @@ final class ScrollGestureTests: XCTestCase {
             scroll.swipeUp()
         }
         XCTAssertTrue(last.isHittable, "Could not reach the end of the discovery feed")
-        scroll.swipeUp()
         let top = app.buttons["feed-scroll-top-discover"]
         XCTAssertTrue(top.waitForExistence(timeout: 4), "Return-to-top must appear after a flick reaches the bottom")
         XCTAssertTrue(top.isHittable)
         XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-discover"].frame.minY)
-        scroll.swipeUp()
         let state = app.staticTexts["bottom-refresh-state-discover"]
         XCTAssertEqual(state.value as? String, "0")
         let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))

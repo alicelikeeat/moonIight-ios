@@ -1537,6 +1537,7 @@ private struct DiscoverTile: View {
 // Keep card interactions outside SwiftUI's drag arbitration. The enclosing
 // UIScrollView owns pans; this surface only recognizes taps and stationary holds.
 struct CardGestureSurface: UIViewRepresentable {
+    var holdEnabled = true
     var onTap: () -> Void
     var onHoldBegan: (CGPoint) -> Void
     var onHoldMoved: (CGPoint) -> Void
@@ -1550,6 +1551,7 @@ struct CardGestureSurface: UIViewRepresentable {
     }
 
     func updateUIView(_ view: CardGestureView, context: Context) {
+        view.holdEnabled = holdEnabled
         view.onTap = onTap
         view.onHoldBegan = onHoldBegan
         view.onHoldMoved = onHoldMoved
@@ -1574,6 +1576,13 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     private var holdActive = false
     private var delayedTapWorkItem: DispatchWorkItem?
     private weak var observedScroll: UIScrollView?
+    var holdEnabled = true {
+        didSet {
+            guard hold.isEnabled != holdEnabled else { return }
+            if !holdEnabled { finishHold() }
+            hold.isEnabled = holdEnabled
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1589,8 +1598,8 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         tap.addTarget(self, action: #selector(tapped(_:)))
 
         hold.delegate = self
-        hold.minimumPressDuration = 0.48
-        hold.allowableMovement = 7
+        hold.minimumPressDuration = 0.50
+        hold.allowableMovement = 10
         hold.cancelsTouchesInView = false
         hold.delaysTouchesBegan = false
         hold.addTarget(self, action: #selector(held(_:)))
@@ -1627,6 +1636,15 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         guard pan.state == .began || pan.state == .changed else { return }
         delayedTapWorkItem?.cancel()
         delayedTapWorkItem = nil
+
+        // Once the feed pan has won, fail any still-pending card hold
+        // immediately. Toggling only the recognizer does not remove the card
+        // surface or its tap accessibility, and the outer scroll keeps the
+        // entire touch sequence, including rapid follow-up flicks.
+        if holdEnabled, hold.state == .possible {
+            hold.isEnabled = false
+            hold.isEnabled = true
+        }
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1772,6 +1790,7 @@ private struct MediaEntryCard: View {
             GeometryReader { geometry in
                 let frame = geometry.frame(in: .named("moonlight-root"))
                 CardGestureSurface(
+                    holdEnabled: model.cardLongPressEnabled,
                     onTap: onSelect,
                     onHoldBegan: { point in
                         activateLongPress(at: CGPoint(x: frame.minX + point.x, y: frame.minY + point.y))
@@ -3318,6 +3337,10 @@ private struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("长按菜单") {
+                    Toggle("卡片长按交互", isOn: $model.cardLongPressEnabled)
+                        .accessibilityIdentifier("card-long-press-toggle")
+                    Text("关闭后卡片只保留点按和滚动，可用于判断实机停顿是否来自长按手势竞争。")
+                        .font(.footnote).foregroundStyle(.secondary)
                     Picker("菜单样式", selection: $model.longPressStyle) {
                         ForEach(LongPressStyle.allCases) { style in Text(style.title).tag(style) }
                     }

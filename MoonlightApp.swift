@@ -86,6 +86,14 @@ final class AppModel: ObservableObject {
     @Published var longPressQuickActions: [QuickActionID] = [.play, .favorite, .library, .share] {
         didSet { UserDefaults.standard.set(longPressQuickActions.map(\.rawValue), forKey: "moonlight.longPressQuickActions") }
     }
+    @Published var cardLongPressEnabled: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: "moonlight.cardLongPressEnabled") == nil
+            ? true
+            : defaults.bool(forKey: "moonlight.cardLongPressEnabled")
+    }() {
+        didSet { UserDefaults.standard.set(cardLongPressEnabled, forKey: "moonlight.cardLongPressEnabled") }
+    }
     @Published var activeLongPressMenu: ActiveLongPressMenu?
     @Published var portraitPlaybackOnly = true {
         didSet { UserDefaults.standard.set(portraitPlaybackOnly, forKey: "moonlight.portraitPlaybackOnly") }
@@ -139,6 +147,9 @@ final class AppModel: ObservableObject {
         }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") {
+            if !ProcessInfo.processInfo.arguments.contains("--keep-menu-settings") {
+                InteractionPreferences.shared.resetForUITests()
+            }
             InteractionPreferences.shared.navigationMode = ProcessInfo.processInfo.arguments.contains("--slider-ui-tests") ? .slider : .circles
             if ProcessInfo.processInfo.arguments.contains("--assistant-dock-ui-tests") {
                 InteractionPreferences.shared.navigationMode = .assistant
@@ -147,7 +158,7 @@ final class AppModel: ObservableObject {
             if ProcessInfo.processInfo.arguments.contains("--hidden-dock-ui-tests") {
                 UserDefaults.standard.set(0.4, forKey: "moonlight.navigation.hideDelay")
             }
-            if !ProcessInfo.processInfo.arguments.contains("--keep-menu-settings") { InteractionPreferences.shared.resetForUITests() }
+            cardLongPressEnabled = !ProcessInfo.processInfo.arguments.contains("--disable-card-hold-ui-tests")
             if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") { UserDefaults.standard.set(false, forKey: "moonlight.reels.autoAdvance") }
             selectedTab = ProcessInfo.processInfo.arguments.contains("--test-discover") ? .discover : .home
             let columns = ProcessInfo.processInfo.arguments.contains("--single-column") ? 1 : 2
