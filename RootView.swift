@@ -680,8 +680,8 @@ private extension Array {
 private final class PriorityTabView: UIView {
     var onSelect: ((AppTab) -> Void)?
     private var buttons: [UIButton] = []
-    init() {
-        super.init(frame: .zero)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
         backgroundColor = .clear
         for (index, tab) in AppTab.allCases.enumerated() {
             let button = UIButton(type: .custom)
