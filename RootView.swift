@@ -1555,9 +1555,8 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         isAccessibilityElement = false
         isUserInteractionEnabled = true
 
-        // A card never owns a pan. Its tap and hold recognizers explicitly
-        // wait for any enclosing scroll pan to fail, so the first 7+ pt
-        // movement belongs to the feed without a stop between flicks.
+        // A card never owns a pan. Taps defer to the enclosing feed;
+        // stationary holds fail when movement exceeds their tolerance.
         tap.delegate = self
         tap.cancelsTouchesInView = false
         tap.delaysTouchesBegan = false
@@ -1570,9 +1569,9 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         hold.delaysTouchesBegan = false
         hold.addTarget(self, action: #selector(held(_:)))
 
-        // UIKit cancels the short tap automatically once the hold reaches .began.
-        // Do not make taps wait for the 0.48 s hold timeout: that delayed or
-        // dropped a normal card open after scroll deceleration.
+        // A short release immediately fails the hold; a recognized hold
+        // suppresses the tap from that same touch sequence.
+        tap.require(toFail: hold)
         addGestureRecognizer(tap)
         addGestureRecognizer(hold)
     }
@@ -1595,15 +1594,21 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        otherGestureRecognizer is UIPanGestureRecognizer
+                           shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Only taps wait for the enclosing feed pan. A stationary hold must
+        // be able to begin before finger-up while the pan is still possible.
+        gestureRecognizer === tap && enclosingScrollViews.contains {
+            $0.panGestureRecognizer === otherGestureRecognizer
+        }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // The scroll view wins every moving gesture. Tap / hold only ever run
-        // after the pan recognizer has failed on a stationary touch.
-        !(otherGestureRecognizer is UIPanGestureRecognizer)
+        // A card must not prevent the feed from starting another scroll.
+        // Movement beyond allowableMovement cancels an unrecognized hold.
+        enclosingScrollViews.contains {
+            $0.panGestureRecognizer === otherGestureRecognizer
+        }
     }
 
     @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
