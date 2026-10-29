@@ -778,7 +778,7 @@ private struct UniversalHoldScope: ViewModifier {
                         LongPressHapticFeedback.shared.menuOpened()
                         if globalSearchEnabled && !isGestureUITest {
                             pendingSearchLocation = point
-                            if effectiveNavigationMode == .assistant {
+                            if interactions.navigationMode == .assistant {
                                 confirmBottomSearch = true
                             } else {
                                 globalSearch = GlobalSearchPresentation(location: point)
