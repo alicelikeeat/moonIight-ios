@@ -67,6 +67,19 @@ struct RootView: View {
         ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests")
     }
 
+    // UI tests launch in a fresh process where @AppStorage and the shared
+    // preferences object can be initialized in either order. Keep this
+    // test-only override at the rendering boundary so the assistant dock is
+    // deterministic without changing production preference behavior.
+    private var effectiveNavigationMode: BottomNavigationMode {
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--assistant-dock-ui-tests") {
+            return .assistant
+        }
+#endif
+        return interactions.navigationMode
+    }
+
     var body: some View {
         ZStack {
             PageBackground(target: .page(for: model.selectedTab))
@@ -400,10 +413,10 @@ struct RootView: View {
 
     private var tabBar: some View {
         Group {
-        if interactions.navigationMode == .slider {
+        if effectiveNavigationMode == .slider {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
                 .frame(height: 64).padding(.horizontal, 8).padding(.bottom, 4)
-        } else if interactions.navigationMode == .assistant {
+        } else if effectiveNavigationMode == .assistant {
             AssistantDock(onFocusChange: { focused in
                 assistantFocused = focused
                 if focused { navigationHideTask?.cancel(); navigationVisible = true }
@@ -444,7 +457,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var priorityNavigationLayer: some View {
-        if interactions.navigationMode == .circles {
+        if effectiveNavigationMode == .circles {
             GeometryReader { geometry in
                 let width = min(geometry.size.width - 36, 390)
                 let diameter = min(60, max(54, (geometry.size.width - 72) / 5))
@@ -765,7 +778,7 @@ private struct UniversalHoldScope: ViewModifier {
                         LongPressHapticFeedback.shared.menuOpened()
                         if globalSearchEnabled && !isGestureUITest {
                             pendingSearchLocation = point
-                            if interactions.navigationMode == .assistant {
+                            if effectiveNavigationMode == .assistant {
                                 confirmBottomSearch = true
                             } else {
                                 globalSearch = GlobalSearchPresentation(location: point)
