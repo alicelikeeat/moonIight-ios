@@ -140,6 +140,13 @@ final class AppModel: ObservableObject {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") {
             InteractionPreferences.shared.navigationMode = ProcessInfo.processInfo.arguments.contains("--slider-ui-tests") ? .slider : .circles
+            if ProcessInfo.processInfo.arguments.contains("--assistant-dock-ui-tests") {
+                InteractionPreferences.shared.navigationMode = .assistant
+                UserDefaults.standard.set("openAI", forKey: "moonlight.assistant.provider")
+            }
+            if ProcessInfo.processInfo.arguments.contains("--hidden-dock-ui-tests") {
+                UserDefaults.standard.set(0.4, forKey: "moonlight.navigation.hideDelay")
+            }
             if !ProcessInfo.processInfo.arguments.contains("--keep-menu-settings") { InteractionPreferences.shared.resetForUITests() }
             if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") { UserDefaults.standard.set(false, forKey: "moonlight.reels.autoAdvance") }
             selectedTab = ProcessInfo.processInfo.arguments.contains("--test-discover") ? .discover : .home

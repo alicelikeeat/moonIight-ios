@@ -58,6 +58,7 @@ struct RootView: View {
     @State private var bottomRefreshCount = 0
     @State private var bottomFeedTab: AppTab?
     @State private var assistantLaunch: AssistantLaunch?
+    @State private var assistantFocused = false
     @AppStorage("moonlight.navigation.hideDelay") private var navigationHideDelay = 5.0
     @State private var navigationVisible = true
     @State private var navigationHideTask: Task<Void, Never>?
@@ -165,13 +166,14 @@ struct RootView: View {
                 .allowsHitTesting(navigationVisible)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
-        .overlay(alignment: .bottom) {
-            if !navigationVisible {
-                Color.clear.frame(height: 116).contentShape(Rectangle())
-                    .onTapGesture { revealNavigation() }
-                    .accessibilityLabel("显示底部导航")
-            }
+        // Observe taps without covering the feed with an invisible hit target.
+        .background {
+            PageTapObserver {
+                NotificationCenter.default.post(name: .init("moonlight.assistantDockDismiss"), object: nil)
+                if !navigationVisible { revealNavigation() }
+            }.allowsHitTesting(false)
         }
+        .edgeToEdgeScrolling()
         .photosPicker(isPresented: $rootImporter, selection: $selectedMedia, matching: .any(of: [.images, .videos]))
         .alert("提示", isPresented: Binding(get: { rootNotice != nil }, set: { if !$0 { rootNotice = nil } })) {
             Button("好", role: .cancel) { rootNotice = nil }
@@ -359,7 +361,7 @@ struct RootView: View {
                         .accessibilityLabel("返回顶部")
                         .accessibilityIdentifier("feed-scroll-top-\(tab.rawValue)")
                         .padding(.trailing, 16)
-                        .padding(.bottom, 94)
+                        .padding(.bottom, navigationVisible ? 104 : 16)
                         .transition(.scale(scale: 0.75).combined(with: .opacity))
                     }
                 }
@@ -372,7 +374,6 @@ struct RootView: View {
                     }
                 }
             }
-            .clipped()
         }
     }
 
@@ -403,7 +404,11 @@ struct RootView: View {
             SlidingTabSurface(selected: model.selectedTab, onSelect: selectTab)
                 .frame(height: 64).padding(.horizontal, 8).padding(.bottom, 4)
         } else if interactions.navigationMode == .assistant {
-            AssistantDock { prompt, deepThinking in
+            AssistantDock(onFocusChange: { focused in
+                assistantFocused = focused
+                if focused { navigationHideTask?.cancel(); navigationVisible = true }
+                else { scheduleNavigationHide() }
+            }) { prompt, deepThinking in
                 model.activeLongPressMenu = nil
                 assistantLaunch = AssistantLaunch(prompt: prompt, deepThinking: deepThinking)
             }
@@ -478,7 +483,8 @@ struct RootView: View {
 
     private func scheduleNavigationHide() {
         navigationHideTask?.cancel()
-        guard !isGestureUITest, navigationHideDelay > 0 else {
+        guard (!isGestureUITest || ProcessInfo.processInfo.arguments.contains("--hidden-dock-ui-tests")),
+              !assistantFocused, navigationHideDelay > 0 else {
             navigationVisible = true
             return
         }
@@ -813,7 +819,7 @@ private struct UniversalHoldScope: ViewModifier {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("底部已经是 ChatGPT 输入栏，可直接继续输入；也可以打开悬浮搜索。")
+                Text("底部已经是智能输入栏，可直接继续输入；也可以打开悬浮搜索。")
             }
             .sheet(item: $assistantLaunch) { launch in
                 NavigationStack { AssistantChatView(initialPrompt: launch.prompt, deepThinking: launch.deepThinking) }
@@ -904,6 +910,7 @@ private final class BottomRefreshMarker: UIView {
     private var armed = false
     private var nearBottom = false
     private var refreshing = false
+    private var observations: [NSKeyValueObservation] = []
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
@@ -919,28 +926,48 @@ private final class BottomRefreshMarker: UIView {
                 detach()
                 scrollView = scroll
                 scroll.alwaysBounceVertical = true
+                scroll.canCancelContentTouches = true
+                scroll.clipsToBounds = false
                 scroll.panGestureRecognizer.addTarget(self, action: #selector(panChanged(_:)))
+                observations = [
+                    scroll.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.updateBottomVisibility() }
+                    },
+                    scroll.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.updateBottomVisibility() }
+                    },
+                    scroll.observe(\.bounds, options: [.new]) { [weak self] _, _ in
+                        Task { @MainActor [weak self] in self?.updateBottomVisibility() }
+                    }
+                ]
                 return
             }
             ancestor = view.superview
         }
     }
     func detach() {
+        observations.forEach { $0.invalidate() }
+        observations.removeAll()
         scrollView?.panGestureRecognizer.removeTarget(self, action: #selector(panChanged(_:)))
         scrollView = nil
         armed = false
         nearBottom = false
+    }
+    private func updateBottomVisibility() {
+        guard let scroll = scrollView, window != nil else { return }
+        let bottom = max(-scroll.adjustedContentInset.top,
+                         scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        let visible = bottom > 80 && scroll.contentOffset.y >= bottom - 56
+        guard visible != nearBottom else { return }
+        nearBottom = visible
+        onNearBottom?(visible)
     }
     @objc private func panChanged(_ pan: UIPanGestureRecognizer) {
         guard let scroll = scrollView, !refreshing else { return }
         let bottom = max(-scroll.adjustedContentInset.top,
                          scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
         let overscroll = scroll.contentOffset.y - bottom
-        let isNearBottom = scroll.contentOffset.y >= bottom - 48
-        if isNearBottom != nearBottom {
-            nearBottom = isNearBottom
-            onNearBottom?(isNearBottom)
-        }
+        updateBottomVisibility()
         switch pan.state {
         case .changed:
             if overscroll > 65 { armed = true }
@@ -1368,26 +1395,24 @@ private struct HomeView: View {
     var body: some View {
             LazyVStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "月淡", subtitle: "为你留一段安静的时间", symbol: "moon.stars.fill")
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("随便看看").font(.title3.bold())
-                        Text("从已启用的内容源随机加入内容").font(.subheadline).foregroundStyle(.secondary)
+            HStack {
+                Text("最近内容").font(.title3.bold())
+                Spacer()
+                Menu {
+                    ForEach(sizes, id: \.self) { count in
+                        Button {
+                            batchSize = count
+                            Task { await model.mediaStore.addRandom(count: count) }
+                        } label: { Label("随机添加 \(count) 条", systemImage: "shuffle") }
                     }
-                    Spacer()
-                    Image(systemName: "shuffle").font(.title3.weight(.semibold)).foregroundStyle(MoonStyle.accent)
-                        .frame(width: 44, height: 44).background(MoonStyle.accent.opacity(0.1), in: Circle())
+                } label: {
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 44, height: 44).moonGlassCircle()
                 }
-                Picker("加入数量", selection: $batchSize) {
-                    ForEach(sizes, id: \.self) { Text("\($0) 条").tag($0) }
-                }.pickerStyle(.segmented)
-                Button { Task { await model.mediaStore.addRandom(count: batchSize) } } label: {
-                    Label("随机添加 \(batchSize) 条", systemImage: "sparkles")
-                        .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
-                }.buttonStyle(MoonGlassButtonStyle(prominent: true)).tint(MoonStyle.accent)
+                .accessibilityLabel("随便看看")
+                .accessibilityIdentifier("home-random-menu")
             }
-            .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: MoonStyle.cardRadius))
-            Text("最近内容").font(.title3.bold())
             if model.mediaStore.items.isEmpty {
                 EmptyPanel(title: "内容会出现在这里", detail: "下拉刷新，或从内容源随机添加内容。", symbol: "play.rectangle")
             } else {
@@ -1548,6 +1573,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     private let hold = UILongPressGestureRecognizer()
     private var holdActive = false
     private var delayedTapWorkItem: DispatchWorkItem?
+    private weak var observedScroll: UIScrollView?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1586,6 +1612,21 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
             ancestor = view.superview
         }
         return result
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if enclosingScrollViews.contains(where: { $0.isDragging || $0.isDecelerating }) {
+            delayedTapWorkItem?.cancel()
+            delayedTapWorkItem = nil
+            return false
+        }
+        return true
+    }
+
+    @objc private func feedPanChanged(_ pan: UIPanGestureRecognizer) {
+        guard pan.state == .began || pan.state == .changed else { return }
+        delayedTapWorkItem?.cancel()
+        delayedTapWorkItem = nil
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1666,7 +1707,11 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { cancelHold() }
+        observedScroll?.panGestureRecognizer.removeTarget(self, action: #selector(feedPanChanged(_:)))
+        observedScroll = nil
+        if window == nil { cancelHold(); return }
+        observedScroll = enclosingScrollViews.first
+        observedScroll?.panGestureRecognizer.addTarget(self, action: #selector(feedPanChanged(_:)))
         for scroll in enclosingScrollViews {
             scroll.delaysContentTouches = false
             scroll.canCancelContentTouches = true
@@ -3258,7 +3303,7 @@ private struct SettingsView: View {
                 }
                 Section("智能对话") {
                     NavigationLink { AssistantSettingsView() } label: {
-                        Label("ChatGPT 接入", systemImage: "sparkles")
+                        Label("智能体与 API", systemImage: "sparkles")
                     }
                     Text("输入栏模式可在“长按菜单与底栏”中切换。API Key 仅保存到本机钥匙串；建议使用项目密钥并设置额度限制。")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -3339,13 +3384,9 @@ private struct GlobalAssistantSearchOverlay: View {
     @FocusState private var focused: Bool
 
     private var cleanQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var matches: [AppCommand] {
-        guard !cleanQuery.isEmpty else { return [] }
-        let needle = cleanQuery.lowercased()
-        return AppCommand.allCases.filter {
-            $0.title.lowercased().contains(needle) || $0.rawValue.lowercased().contains(needle)
-        }.prefix(4).map { $0 }
-    }
+    @AppStorage("moonlight.assistant.provider") private var providerRaw = AssistantProvider.openAI.rawValue
+    private var provider: AssistantProvider { AssistantProvider(rawValue: providerRaw) ?? .openAI }
+    private var matches: [AppCommand] { AssistantCommands.matching(query) }
 
     var body: some View {
         GeometryReader { proxy in
@@ -3353,8 +3394,8 @@ private struct GlobalAssistantSearchOverlay: View {
                 Color.black.opacity(0.12).ignoresSafeArea().onTapGesture(perform: onDismiss)
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 10) {
-                        Image(systemName: "sparkles").foregroundStyle(MoonStyle.accent)
-                        TextField("搜索功能或询问 ChatGPT", text: $query, axis: .vertical)
+                        AssistantProviderPicker()
+                        TextField("搜索功能或询问 \(provider.title)", text: $query, axis: .vertical)
                             .lineLimit(1...3)
                             .focused($focused)
                             .submitLabel(.send)
@@ -3371,7 +3412,7 @@ private struct GlobalAssistantSearchOverlay: View {
                     if !cleanQuery.isEmpty {
                         FlowLayout(spacing: 9) {
                             Button { onChat(cleanQuery) } label: {
-                                Label("问 ChatGPT", systemImage: "bubble.left.and.bubble.right.fill")
+                                Label("问 \(provider.title)", systemImage: "bubble.left.and.bubble.right.fill")
                             }.globalSearchBubble(tint: MoonStyle.accent)
 
                             ForEach(matches) { command in
@@ -3431,6 +3472,123 @@ private struct FlowLayout: Layout {
     }
 }
 
+
+// A recognizer on the existing host sees completed taps, but never owns a
+// full-screen transparent view or delays/cancels scrolling and controls.
+private struct PageTapObserver: UIViewRepresentable {
+    var onTap: () -> Void
+    func makeUIView(context: Context) -> PageTapMarker { PageTapMarker() }
+    func updateUIView(_ view: PageTapMarker, context: Context) {
+        view.onTap = onTap
+        view.install()
+    }
+    static func dismantleUIView(_ view: PageTapMarker, coordinator: ()) { view.detach() }
+}
+
+private final class PageTapMarker: UIView, UIGestureRecognizerDelegate {
+    var onTap: (() -> Void)?
+    private let tap = UITapGestureRecognizer()
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        tap.delaysTouchesEnded = false
+        tap.delegate = self
+        tap.addTarget(self, action: #selector(tapped))
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func didMoveToWindow() { super.didMoveToWindow(); install() }
+    func install() {
+        guard window != nil else { detach(); return }
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let controller = current as? UIViewController {
+                if tap.view !== controller.view { detach(); controller.view.addGestureRecognizer(tap) }
+                return
+            }
+            responder = current.next
+        }
+    }
+    func detach() { tap.view?.removeGestureRecognizer(tap) }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var ancestor = touch.view
+        while let view = ancestor {
+            if view is UITextField || view is UITextView || view is UIControl { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    @objc private func tapped() { onTap?() }
+}
+
+private enum AssistantProvider: String, CaseIterable, Identifiable, Sendable {
+    case openAI, doubao, gemini, grok
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .openAI: "GPT"
+        case .doubao: "豆包"
+        case .gemini: "Gemini"
+        case .grok: "Grok"
+        }
+    }
+    var endpoint: String {
+        switch self {
+        case .openAI: "https://api.openai.com/v1/responses"
+        case .doubao: "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        case .gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        case .grok: "https://api.x.ai/v1/chat/completions"
+        }
+    }
+    var keyAccount: String { self == .openAI ? "moonlight_openai_chat" : "moonlight_assistant_" + rawValue }
+    var modelKey: String { self == .openAI ? "moonlight.assistant.model" : "moonlight.assistant.model." + rawValue }
+    var configuredModel: String {
+        UserDefaults.standard.string(forKey: modelKey) ?? (self == .openAI ? "gpt-4.1-mini" : "")
+    }
+    var modelHint: String { self == .doubao ? "豆包模型 ID 或 ep- 推理接入点" : "填写此账户已开通的模型 ID" }
+}
+
+private struct AssistantProviderPicker: View {
+    @AppStorage("moonlight.assistant.provider") private var providerRaw = AssistantProvider.openAI.rawValue
+    var body: some View {
+        Menu {
+            Picker("选择智能体", selection: $providerRaw) {
+                ForEach(AssistantProvider.allCases) { provider in
+                    Text(provider.title).tag(provider.rawValue)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text((AssistantProvider(rawValue: providerRaw) ?? .openAI).title)
+                Image(systemName: "chevron.down").font(.caption2)
+            }.font(.caption.weight(.semibold))
+                .padding(.horizontal, 10).frame(minHeight: 36)
+                .background(.thinMaterial, in: Capsule())
+        }
+        .accessibilityLabel("选择智能体")
+        .accessibilityIdentifier("assistant-provider")
+    }
+}
+
+private enum AssistantCommands {
+    static func matching(_ query: String) -> [AppCommand] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return [] }
+        // Media-specific commands require a selected item; showing them in
+        // page search would produce inert buttons.
+        let available = AppCommand.allCases.filter { $0.mediaAction == nil }
+        return Array(available.filter {
+            $0.title.lowercased().contains(needle) || $0.rawValue.lowercased().contains(needle)
+        }.sorted { lhs, rhs in
+            if (lhs.title == needle) != (rhs.title == needle) { return lhs.title == needle }
+            return lhs.title.count < rhs.title.count
+        }.prefix(6))
+    }
+}
+
 private struct AssistantLaunch: Identifiable {
     let id = UUID()
     let prompt: String
@@ -3438,55 +3596,96 @@ private struct AssistantLaunch: Identifiable {
 }
 
 private struct AssistantDock: View {
+    @EnvironmentObject private var model: AppModel
+    @AppStorage("moonlight.assistant.provider") private var providerRaw = AssistantProvider.openAI.rawValue
     @State private var draft = ""
     @State private var deepThinking = false
     @FocusState private var focused: Bool
+    var onFocusChange: (Bool) -> Void
     let onOpen: (String, Bool) -> Void
+    private var provider: AssistantProvider { AssistantProvider(rawValue: providerRaw) ?? .openAI }
+    private var matches: [AppCommand] { focused ? AssistantCommands.matching(draft) : [] }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Menu {
-                Button { onOpen("我想拍摄一张照片后提问。", deepThinking) } label: { Label("相机", systemImage: "camera") }
-                Button { onOpen("我想选择照片后提问。", deepThinking) } label: { Label("照片", systemImage: "photo") }
-                Button { onOpen("我想添加一个文件后提问。", deepThinking) } label: { Label("文件", systemImage: "paperclip") }
-                Divider()
-                Toggle("深入思考", isOn: $deepThinking)
-            } label: {
-                Image(systemName: "plus").font(.title3.weight(.semibold))
-                    .frame(width: 38, height: 38)
-                    .background(.thinMaterial, in: Circle())
-            }
-            TextField("询问 ChatGPT", text: $draft, axis: .vertical)
-                .focused($focused)
-                .lineLimit(1...4)
-                .textInputAutocapitalization(.sentences)
-                .submitLabel(.send)
-                .onSubmit {
-                    let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !prompt.isEmpty else { return }
-                    onOpen(prompt, deepThinking); draft = ""
+        VStack(alignment: .leading, spacing: 10) {
+            if focused {
+                HStack {
+                    AssistantProviderPicker()
+                    Spacer()
+                    Button {
+                        focused = false
+                    } label: {
+                        Image(systemName: "chevron.down").frame(width: 36, height: 36)
+                            .background(.regularMaterial, in: Circle())
+                    }.accessibilityLabel("收起输入栏")
                 }
-            Button {
-                let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !prompt.isEmpty else { return }
-                onOpen(prompt, deepThinking); draft = ""
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .background(MoonStyle.accent, in: Circle())
             }
-            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if !matches.isEmpty {
+                FlowLayout(spacing: 9) {
+                    ForEach(matches) { command in
+                        Button {
+                            focused = false
+                            draft = ""
+                            model.send(command, context: "assistant-search")
+                        } label: {
+                            Label(command.title, systemImage: command.symbol)
+                        }
+                        .globalSearchBubble(tint: MoonStyle.accent)
+                        .accessibilityIdentifier("assistant-command-" + command.rawValue)
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+            HStack(spacing: 10) {
+                Menu {
+                    Button { model.send(.photo) } label: { Label("相机", systemImage: "camera") }
+                    Button { model.send(.importMedia) } label: { Label("照片或视频", systemImage: "photo") }
+                    Divider()
+                    Picker("智能体", selection: $providerRaw) {
+                        ForEach(AssistantProvider.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                    Toggle("深入思考", isOn: $deepThinking)
+                } label: {
+                    Image(systemName: "plus").font(.title3.weight(.semibold))
+                        .frame(width: 38, height: 38)
+                        .background(.thinMaterial, in: Circle())
+                }
+                TextField("搜索功能或询问 \(provider.title)", text: $draft, axis: .vertical)
+                    .focused($focused).lineLimit(1...4)
+                    .textInputAutocapitalization(.sentences)
+                    .submitLabel(.send).onSubmit(submit)
+                    .accessibilityIdentifier("assistant-input")
+                Button(action: submit) {
+                    Image(systemName: "arrow.up").font(.headline.weight(.bold))
+                        .foregroundStyle(.white).frame(width: 38, height: 38)
+                        .background(MoonStyle.accent, in: Circle())
+                }
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("发送给 " + provider.title)
+            }
+            .padding(8).background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.28)))
+            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
         }
-        .padding(8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.28)))
-        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: matches.map(\.rawValue))
+        .animation(.easeOut(duration: 0.2), value: focused)
         .accessibilityIdentifier("assistant-bottom-dock")
+        .onChange(of: focused) { onFocusChange($0) }
+        .onDisappear { onFocusChange(false) }
         .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.assistantDockFocus"))) { _ in
             DispatchQueue.main.async { focused = true }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.assistantDockDismiss"))) { _ in
+            focused = false
+        }
+    }
+
+    private func submit() {
+        let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return }
+        focused = false
+        onOpen(prompt, deepThinking)
+        draft = ""
     }
 }
 
@@ -3501,7 +3700,7 @@ private enum AssistantAPIError: LocalizedError {
     case missingKey, disabled, server(String), invalidResponse
     var errorDescription: String? {
         switch self {
-        case .missingKey: "请先在设置中保存 OpenAI API Key。"
+        case .missingKey: "请先在智能体设置中保存当前服务的 API Key。"
         case .disabled: "请先在设置中启用 API 对话。"
         case .server(let reason): reason
         case .invalidResponse: "服务没有返回可显示的回答。"
@@ -3510,36 +3709,44 @@ private enum AssistantAPIError: LocalizedError {
 }
 
 private enum AssistantAPI {
-    static func answer(history: [AssistantMessage], model: String, apiKey: String, deepThinking: Bool) async throws -> String {
+    static func answer(history: [AssistantMessage], provider: AssistantProvider,
+                       model: String, apiKey: String, deepThinking: Bool) async throws -> String {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { throw AssistantAPIError.missingKey }
-        guard let endpoint = URL(string: "https://api.openai.com/v1/responses") else { throw AssistantAPIError.invalidResponse }
-        let transcript = history.suffix(16).map {
-            let role = $0.role == .user ? "用户" : "助手"
-            return "\(role)：\($0.text)"
-        }.joined(separator: "\n\n")
+        guard !modelID.isEmpty else {
+            throw AssistantAPIError.server("请在设置中填写 \(provider.title) 的模型 ID；豆包也可填写 ep- 推理接入点。")
+        }
+        guard let endpoint = URL(string: provider.endpoint) else { throw AssistantAPIError.invalidResponse }
         let instruction = deepThinking
-            ? "你是月淡中的 ChatGPT 助手。请先仔细推理，再给出清晰、准确、可执行的中文回答。"
-            : "你是月淡中的 ChatGPT 助手。请用清晰、简洁、友好的中文回答。"
+            ? "你是月淡中的智能助手。请仔细分析，再给出清晰、准确、可执行的中文回答。"
+            : "你是月淡中的智能助手。请用清晰、简洁、友好的中文回答。"
+        let messages = history.suffix(16).map { ["role": $0.role.rawValue, "content": $0.text] }
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 60
-        let body: [String: Any] = [
-            "model": model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "gpt-4.1-mini" : model,
-            "instructions": instruction,
-            "input": transcript,
-            "store": false
-        ]
+        request.timeoutInterval = 90
+        let body: [String: Any]
+        if provider == .openAI {
+            body = ["model": modelID, "instructions": instruction, "input": messages, "store": false]
+        } else {
+            body = ["model": modelID,
+                    "messages": [["role": "system", "content": instruction]] + messages,
+                    "stream": false]
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, response) = try await URLSession.shared.data(for: request)
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            let message = (json?["error"] as? [String: Any])?["message"] as? String ?? "请求失败（\(status)）"
-            throw AssistantAPIError.server(message)
+            let reason = (json?["error"] as? [String: Any])?["message"] as? String ?? "请检查密钥、模型权限及网络连接。"
+            throw AssistantAPIError.server("\(provider.title) 请求失败（\(status)）：\(reason)")
         }
+        if provider != .openAI,
+           let choices = json?["choices"] as? [[String: Any]],
+           let message = choices.first?["message"] as? [String: Any],
+           let text = message["content"] as? String, !text.isEmpty { return text }
         if let text = json?["output_text"] as? String, !text.isEmpty { return text }
         if let output = json?["output"] as? [[String: Any]] {
             let text = output.flatMap { ($0["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String } }.joined(separator: "\n")
@@ -3552,7 +3759,8 @@ private enum AssistantAPI {
 private struct AssistantChatView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("moonlight.assistant.enabled") private var enabled = false
-    @AppStorage("moonlight.assistant.model") private var modelName = "gpt-4.1-mini"
+    @AppStorage("moonlight.assistant.provider") private var providerRaw = AssistantProvider.openAI.rawValue
+    private var provider: AssistantProvider { AssistantProvider(rawValue: providerRaw) ?? .openAI }
     let initialPrompt: String
     let initialDeepThinking: Bool
     @State private var messages: [AssistantMessage] = []
@@ -3574,7 +3782,7 @@ private struct AssistantChatView: View {
             if messages.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "sparkles").font(.system(size: 34)).foregroundStyle(MoonStyle.accent)
-                    Text("ChatGPT").font(.title3.weight(.semibold))
+                    Text(provider.title).font(.title3.weight(.semibold))
                     Text("可向它提问、整理观看计划或解释内容。").foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -3608,7 +3816,7 @@ private struct AssistantChatView: View {
                     Toggle("深入思考", isOn: $deepThinking)
                     Button("清除本次对话", role: .destructive) { messages.removeAll() }
                 } label: { Image(systemName: "plus").frame(width: 38, height: 38).background(.thinMaterial, in: Circle()) }
-                TextField("询问 ChatGPT", text: $draft, axis: .vertical)
+                TextField("询问 \(provider.title)", text: $draft, axis: .vertical)
                     .lineLimit(1...5).submitLabel(.send).onSubmit { Task { await send() } }
                 Button { Task { await send() } } label: {
                     Image(systemName: "arrow.up").foregroundStyle(.white).frame(width: 38, height: 38).background(MoonStyle.accent, in: Circle())
@@ -3616,9 +3824,18 @@ private struct AssistantChatView: View {
             }
             .padding(10).background(.regularMaterial, in: Capsule()).padding()
         }
-        .navigationTitle("ChatGPT")
+        .navigationTitle(provider.title)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { AssistantProviderPicker().disabled(sending) }
+            ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
+        }
+        .onChange(of: providerRaw) { _ in
+            // Start a fresh conversation rather than silently forwarding one
+            // provider's existing conversation to a different company.
+            messages.removeAll()
+            errorText = nil
+        }
         .task {
             guard !didSeed else { return }; didSeed = true
             draft = initialPrompt
@@ -3631,12 +3848,14 @@ private struct AssistantChatView: View {
         let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !sending else { return }
         guard enabled else { errorText = AssistantAPIError.disabled.errorDescription; return }
-        let key = SecureSettings.read("moonlight_openai_chat") ?? ""
+        let selectedProvider = provider
+        let selectedModel = selectedProvider.configuredModel
+        let key = SecureSettings.read(selectedProvider.keyAccount) ?? ""
         guard !key.isEmpty else { errorText = AssistantAPIError.missingKey.errorDescription; return }
         errorText = nil; draft = ""; sending = true
         messages.append(AssistantMessage(role: .user, text: question))
         do {
-            let answer = try await AssistantAPI.answer(history: messages, model: modelName, apiKey: key, deepThinking: deepThinking)
+            let answer = try await AssistantAPI.answer(history: messages, provider: selectedProvider, model: selectedModel, apiKey: key, deepThinking: deepThinking)
             messages.append(AssistantMessage(role: .assistant, text: answer))
         } catch {
             errorText = error.localizedDescription
@@ -3648,33 +3867,57 @@ private struct AssistantChatView: View {
 private struct AssistantSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("moonlight.assistant.enabled") private var enabled = false
-    @AppStorage("moonlight.assistant.model") private var modelName = "gpt-4.1-mini"
-    @State private var keyDraft = SecureSettings.read("moonlight_openai_chat") ?? ""
+    @AppStorage("moonlight.assistant.provider") private var providerRaw = AssistantProvider.openAI.rawValue
+    @State private var modelDraft = ""
+    @State private var keyDraft = ""
+    @State private var saved = false
+    private var provider: AssistantProvider { AssistantProvider(rawValue: providerRaw) ?? .openAI }
 
     var body: some View {
         Form {
-            Section("OpenAI API") {
+            Section("智能体") {
                 Toggle("启用 API 对话", isOn: $enabled)
-                SecureField("OpenAI API Key", text: $keyDraft)
+                Picker("当前服务", selection: $providerRaw) {
+                    ForEach(AssistantProvider.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+            }
+            Section(provider.title + " API") {
+                SecureField("API Key", text: $keyDraft)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("模型", text: $modelName)
+                TextField(provider.modelHint, text: $modelDraft)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                Button("安全保存 API Key") {
-                    let value = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if value.isEmpty { SecureSettings.delete("moonlight_openai_chat") }
-                    else { SecureSettings.write(value, account: "moonlight_openai_chat") }
-                    keyDraft = value
+                Text(provider.endpoint).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Button(saved ? "已保存" : "保存当前服务配置") {
+                    let key = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if key.isEmpty { SecureSettings.delete(provider.keyAccount) }
+                    else { SecureSettings.write(key, account: provider.keyAccount) }
+                    UserDefaults.standard.set(modelDraft.trimmingCharacters(in: .whitespacesAndNewlines), forKey: provider.modelKey)
+                    saved = true
+                }
+                if provider == .doubao {
+                    Text("使用火山方舟 API Key 和已开通的豆包模型 ID，或 ep- 开头的推理接入点 ID。豆包 App 登录信息不能代替 API Key。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             Section("使用说明") {
-                Label("底栏布局选择“智能输入栏”后显示 ChatGPT 风格输入框。", systemImage: "rectangle.and.pencil.and.ellipsis")
-                Label("密钥只保存在此设备的钥匙串，不会提交到 GitHub 或写入 IPA。", systemImage: "key.fill")
-                Label("建议创建权限受限、额度受限的项目 API Key；公开发布时应改用自己的服务端代理。", systemImage: "lock.shield")
-                Label("“深入思考”会要求模型更仔细地回答，可能增加响应时间与费用。", systemImage: "brain")
+                Text("在底部输入栏或长按搜索条选择智能体。输入功能名称会出现直达气泡，点击气泡执行功能；发送文字则进入 AI 对话。")
+                Text("每个服务独立保存模型和密钥。切换服务前请保存；切换聊天服务将开始新对话。")
+                Label("密钥只保存在此设备的钥匙串，不会写入 IPA 或 GitHub。", systemImage: "key.fill")
+                Text("API 按各服务的账户单独计费。“深入思考”是更仔细回答的提示，不会擅自切换模型。")
             }
         }
-        .navigationTitle("ChatGPT 接入")
+        .navigationTitle("智能体与 API")
+        .onAppear(perform: loadConfiguration)
+        .onChange(of: providerRaw) { _ in loadConfiguration() }
+        .onChange(of: keyDraft) { _ in saved = false }
+        .onChange(of: modelDraft) { _ in saved = false }
         .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+    }
+
+    private func loadConfiguration() {
+        keyDraft = SecureSettings.read(provider.keyAccount) ?? ""
+        modelDraft = provider.configuredModel
+        saved = false
     }
 }
 

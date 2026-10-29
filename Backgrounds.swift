@@ -593,7 +593,17 @@ extension View {
         modifier(GlassPanelSizing())
     }
     func pageBackground(_ target: BackgroundTarget) -> some View {
-        background { PageBackground(target: target).ignoresSafeArea(); BackgroundTargetAnchor(target: target).allowsHitTesting(false).accessibilityHidden(true) }
+        edgeToEdgeScrolling().background { PageBackground(target: target).ignoresSafeArea(); BackgroundTargetAnchor(target: target).allowsHitTesting(false).accessibilityHidden(true) }
     }
 }
 
+
+extension View {
+    @ViewBuilder func edgeToEdgeScrolling() -> some View {
+        if #available(iOS 17.0, *) {
+            self.scrollClipDisabled()
+        } else {
+            self
+        }
+    }
+}

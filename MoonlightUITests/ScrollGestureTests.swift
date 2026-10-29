@@ -175,6 +175,11 @@ final class ScrollGestureTests: XCTestCase {
         }
         XCTAssertTrue(last.isHittable, "Could not reach the end of the discovery feed")
         scroll.swipeUp()
+        let top = app.buttons["feed-scroll-top-discover"]
+        XCTAssertTrue(top.waitForExistence(timeout: 4), "Return-to-top must appear after a flick reaches the bottom")
+        XCTAssertTrue(top.isHittable)
+        XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-discover"].frame.minY)
+        scroll.swipeUp()
         let state = app.staticTexts["bottom-refresh-state-discover"]
         XCTAssertEqual(state.value as? String, "0")
         let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
@@ -562,5 +567,59 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["simulate-data-update"].tap()
         XCTAssertTrue(incoming.waitForExistence(timeout: 8), "MediaStore updates did not invalidate the discovery view")
     }
+    @MainActor
+    func testAssistantDockFindsFunctionsAndDismissesOnBlankTap() {
+        let app = launch(discover: false, flags: ["--assistant-dock-ui-tests"])
+        let input = app.descendants(matching: .any).matching(identifier: "assistant-input").firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("discover")
+        let direct = app.buttons["assistant-command-discover"]
+        XCTAssertTrue(direct.waitForExistence(timeout: 3))
+        direct.tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-discover"].waitForExistence(timeout: 5))
+        input.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 3))
+        app.staticTexts["page-title-发现"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)], timeout: 4), .completed)
+        XCTAssertFalse(app.buttons["收起输入栏"].exists)
+        attach(app, name: "review-assistant-dock-collapsed")
+    }
+
+    @MainActor
+    func testHiddenDockDoesNotCoverCardSwipe() {
+        let app = launch(discover: true, singleColumn: true, flags: ["--hidden-dock-ui-tests"])
+        let navigation = app.buttons["navigation-home"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == false"), object: navigation)], timeout: 5), .completed)
+        let cards = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-"))
+        let before = cards.allElementsBoundByIndex.map { ($0.identifier, $0.frame.minY) }
+        // This lands in the former full-width, invisible 116pt wake-up layer.
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.89))
+        start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -180)),
+                    withVelocity: .slow, thenHoldForDuration: 0)
+        XCTAssertTrue(before.contains { id, y in
+            let card = cards.matching(identifier: id).firstMatch
+            return !card.exists || abs(card.frame.minY - y) > 40
+        }, "The hidden bottom bar swallowed a feed swipe")
+        XCTAssertFalse(app.buttons["player-close"].exists)
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
+    }
+
+    @MainActor
+    func testHomeRandomPanelIsCompact() {
+        let app = launch(discover: false)
+        let menu = app.buttons["home-random-menu"]
+        XCTAssertTrue(menu.isHittable)
+        XCTAssertLessThanOrEqual(menu.frame.height, 50)
+        XCTAssertFalse(app.buttons["随机添加 10 条"].exists)
+        menu.tap()
+        for count in [10, 15, 20] {
+            XCTAssertTrue(app.buttons["随机添加 \(count) 条"].waitForExistence(timeout: 3))
+        }
+    }
+
 }
 
