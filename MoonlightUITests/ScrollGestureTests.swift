@@ -26,6 +26,9 @@ final class ScrollGestureTests: XCTestCase {
         if backgrounds { app.launchArguments.append("--background-ui-tests") }
         if asyncUpdates { app.launchArguments.append("--async-discovery-ui-tests") }
         app.launchArguments += flags
+        if flags.contains("--assistant-dock-ui-tests") {
+            app.launchEnvironment["MOONLIGHT_ASSISTANT_DOCK_UI_TESTS"] = "1"
+        }
         app.launch()
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         let exists = flags.contains("--moments-width-ui-tests") ? app.staticTexts["宽幅图片布局测试"].waitForExistence(timeout: 15) : card.waitForExistence(timeout: 15)

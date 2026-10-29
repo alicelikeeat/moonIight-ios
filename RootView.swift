@@ -68,15 +68,15 @@ struct RootView: View {
     }
 
     // UI tests launch in a fresh process where @AppStorage and the shared
-    // preferences object can be initialized in either order. Keep this
-    // test-only override at the rendering boundary so the assistant dock is
-    // deterministic without changing production preference behavior.
+    // preferences object can be initialized in either order. An environment
+    // marker is deterministic across the XCTest/app process boundary, while
+    // remaining unreachable from normal App Store launches.
     private var effectiveNavigationMode: BottomNavigationMode {
-#if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--assistant-dock-ui-tests") {
+        let process = ProcessInfo.processInfo
+        if process.environment["MOONLIGHT_ASSISTANT_DOCK_UI_TESTS"] == "1"
+            || process.arguments.contains("--assistant-dock-ui-tests") {
             return .assistant
         }
-#endif
         return interactions.navigationMode
     }
 
