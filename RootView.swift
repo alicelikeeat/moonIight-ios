@@ -1529,26 +1529,42 @@ struct CardGestureSurface: UIViewRepresentable {
     }
 }
 
-final class CardGestureView: UIControl {
+final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     var onTap: (() -> Void)?
     var onHoldBegan: ((CGPoint) -> Void)?
     var onHoldMoved: ((CGPoint) -> Void)?
     var onHoldEnded: (() -> Void)?
     var onDoubleTap: (() -> Void)?
+
+    private let tap = UITapGestureRecognizer()
+    private let hold = UILongPressGestureRecognizer()
     private var holdActive = false
-    private var startPoint = CGPoint.zero
-    private var movedBeyondTapThreshold = false
-    private var holdWorkItem: DispatchWorkItem?
     private var delayedTapWorkItem: DispatchWorkItem?
 
     init() {
         super.init(frame: .zero)
         backgroundColor = .clear
         isAccessibilityElement = false
-        // UIControl participates in UIScrollView's standard touch-cancel
-        // path. Unlike a tap/long-press recognizer overlay it never asks the
-        // scroll pan to wait before a drag can begin.
-        isExclusiveTouch = false
+        isUserInteractionEnabled = true
+
+        // A card never owns a pan. Its tap and hold recognizers explicitly
+        // wait for any enclosing scroll pan to fail, so the first 7+ pt
+        // movement belongs to the feed without a stop between flicks.
+        tap.delegate = self
+        tap.cancelsTouchesInView = false
+        tap.delaysTouchesBegan = false
+        tap.addTarget(self, action: #selector(tapped(_:)))
+
+        hold.delegate = self
+        hold.minimumPressDuration = 0.48
+        hold.allowableMovement = 7
+        hold.cancelsTouchesInView = false
+        hold.delaysTouchesBegan = false
+        hold.addTarget(self, action: #selector(held(_:)))
+
+        tap.require(toFail: hold)
+        addGestureRecognizer(tap)
+        addGestureRecognizer(hold)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -1563,55 +1579,44 @@ final class CardGestureView: UIControl {
         return result
     }
 
-    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard !enclosingScrollViews.contains(where: { $0.isDragging || $0.isDecelerating }) else { return false }
-        startPoint = touch.location(in: self)
-        movedBeyondTapThreshold = false
-        LongPressHapticFeedback.shared.prepare()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.isTracking, !self.movedBeyondTapThreshold else { return }
-            self.holdActive = true
+        return true
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        otherGestureRecognizer is UIPanGestureRecognizer
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // The scroll view wins every moving gesture. Tap / hold only ever run
+        // after the pan recognizer has failed on a stationary touch.
+        !(otherGestureRecognizer is UIPanGestureRecognizer)
+    }
+
+    @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
+        triggerTap()
+    }
+
+    @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
+        let point = recognizer.location(in: self)
+        switch recognizer.state {
+        case .began:
+            holdActive = true
             LongPressHapticFeedback.shared.menuOpened()
-            self.onHoldBegan?(self.startPoint)
+            onHoldBegan?(point)
+        case .changed:
+            if holdActive { onHoldMoved?(point) }
+        case .ended:
+            if holdActive { onHoldMoved?(point); finishHold() }
+        case .cancelled, .failed:
+            finishHold()
+        default:
+            break
         }
-        holdWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.48, execute: work)
-        return true
-    }
-
-    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
-        let point = touch.location(in: self)
-        if hypot(point.x - startPoint.x, point.y - startPoint.y) > 7 {
-            movedBeyondTapThreshold = true
-            holdWorkItem?.cancel()
-            holdWorkItem = nil
-            if holdActive { cancelHold() }
-            // Returning false hands the same touch back to the enclosing
-            // ScrollView immediately; no card recognizer remains in flight.
-            return false
-        }
-        if holdActive { onHoldMoved?(point) }
-        return true
-    }
-
-    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
-        holdWorkItem?.cancel()
-        holdWorkItem = nil
-        let point = touch?.location(in: self) ?? startPoint
-        if holdActive {
-            onHoldMoved?(point)
-            cancelHold()
-        } else if !movedBeyondTapThreshold {
-            triggerTap()
-        }
-        super.endTracking(touch, with: event)
-    }
-
-    override func cancelTracking(with event: UIEvent?) {
-        holdWorkItem?.cancel()
-        holdWorkItem = nil
-        if holdActive { cancelHold() }
-        super.cancelTracking(with: event)
     }
 
     private func triggerTap() {
@@ -1630,12 +1635,18 @@ final class CardGestureView: UIControl {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: work)
     }
 
-    func cancelHold() {
-        holdWorkItem?.cancel()
-        holdWorkItem = nil
+    private func finishHold() {
         guard holdActive else { return }
         holdActive = false
         onHoldEnded?()
+    }
+
+    func cancelHold() {
+        delayedTapWorkItem?.cancel()
+        delayedTapWorkItem = nil
+        hold.isEnabled = false
+        hold.isEnabled = true
+        finishHold()
     }
 
     override func didMoveToWindow() {
@@ -1644,7 +1655,6 @@ final class CardGestureView: UIControl {
         for scroll in enclosingScrollViews {
             scroll.delaysContentTouches = false
             scroll.canCancelContentTouches = true
-            scroll.panGestureRecognizer.cancelsTouchesInView = true
         }
     }
 }
