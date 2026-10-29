@@ -271,12 +271,21 @@ struct BackgroundEditorView: View {
                                     BackgroundAssetThumbnail(asset: asset).frame(width: 76, height: 76)
                                         .clipShape(RoundedRectangle(cornerRadius: 14))
                                         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(draft?.assetID == asset.id ? Color.accentColor : .clear, lineWidth: 3))
-                                }.buttonStyle(.plain).accessibilityLabel(asset.isVideo ? "使用这个视频背景" : "使用这个图片背景")
+                                }
+                    .buttonStyle(.plain)
+                    .contentShape(RoundedRectangle(cornerRadius: 14))
+                    .frame(minWidth: 76, minHeight: 76)
+                    .accessibilityLabel(asset.isVideo ? "使用这个视频背景" : "使用这个图片背景")
                             }
-                        }.padding(.vertical, 4)
-                    }
+                        }
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("background-assets-scroll")
                 }
             }
+        }
+        // Floating navigation must never cover the final reusable asset row.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 104).allowsHitTesting(false)
         }
         .navigationTitle(target.title).navigationBarTitleDisplayMode(.inline)
         .scrollContentBackground(.hidden).pageBackground(.settings)

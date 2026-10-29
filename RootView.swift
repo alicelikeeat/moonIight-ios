@@ -1570,7 +1570,9 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         hold.delaysTouchesBegan = false
         hold.addTarget(self, action: #selector(held(_:)))
 
-        tap.require(toFail: hold)
+        // UIKit cancels the short tap automatically once the hold reaches .began.
+        // Do not make taps wait for the 0.48 s hold timeout: that delayed or
+        // dropped a normal card open after scroll deceleration.
         addGestureRecognizer(tap)
         addGestureRecognizer(hold)
     }
