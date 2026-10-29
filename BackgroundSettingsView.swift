@@ -283,6 +283,7 @@ struct BackgroundEditorView: View {
                 }
             }
         }
+        }
         // Floating navigation must never cover the final reusable asset row.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear.frame(height: 104).allowsHitTesting(false)
