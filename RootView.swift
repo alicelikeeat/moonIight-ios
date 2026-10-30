@@ -1130,6 +1130,12 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     func detach() { hold.view?.removeGestureRecognizer(hold); owner = nil }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard canBegin, owner?.presentedViewController == nil else { return false }
+        if let window, MediaCardHitRegistry.contains(touch.location(in: window), in: window) {
+            // Media cards own their native SwiftUI tap/hold. Keeping the root
+            // hold out of this touch removes a second recognizer from the
+            // scroll view's arbitration graph.
+            return false
+        }
         LongPressHapticFeedback.shared.prepare()
         touchedView = touch.view
         heldTarget = window.flatMap { BackgroundHitRegistry.target(at: touch.location(in: $0), in: $0) }
@@ -1166,14 +1172,6 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         otherGestureRecognizer is UIPanGestureRecognizer
-    }
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // SwiftUI's press recognizer can begin before a stationary hold. Make
-        // those button gestures wait for the hold to fail, never native pans.
-        // Quick releases fail immediately; movement > 7 pt also fails the hold.
-        !(otherGestureRecognizer is UIPanGestureRecognizer)
-            && !(otherGestureRecognizer is UILongPressGestureRecognizer)
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard canBegin else { return false }
@@ -1641,8 +1639,59 @@ private struct MoonInteractiveButtonStyle: ButtonStyle {
     }
 }
 
-// Keep card interactions outside SwiftUI's drag arbitration. The enclosing
-// UIScrollView owns pans; this surface only recognizes taps and stationary holds.
+// Feed cards register only their geometry. These markers never participate in
+// hit testing, so UIScrollView receives a drag without an intervening UIView.
+@MainActor private final class MediaCardHitRegistry {
+    static var markers = NSHashTable<MediaCardHitMarker>.weakObjects()
+
+    static func contains(_ point: CGPoint, in window: UIWindow) -> Bool {
+        markers.allObjects.contains {
+            $0.window === window && !$0.isHidden && $0.convert($0.bounds, to: window).contains(point)
+        }
+    }
+
+    static func center(for id: String) -> CGPoint? {
+        guard let marker = markers.allObjects.first(where: { $0.entryID == id }), let window = marker.window else { return nil }
+        let frame = marker.convert(marker.bounds, to: window)
+        return CGPoint(x: frame.midX, y: frame.midY)
+    }
+}
+
+private final class MediaCardHitMarker: UIView {
+    var entryID = ""
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        MediaCardHitRegistry.markers.add(self)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+}
+
+private struct MediaCardHitAnchor: UIViewRepresentable {
+    let entryID: String
+    func makeUIView(context: Context) -> MediaCardHitMarker { MediaCardHitMarker() }
+    func updateUIView(_ view: MediaCardHitMarker, context: Context) { view.entryID = entryID }
+}
+
+private struct NativeMediaCardInteractions: ViewModifier {
+    let holdEnabled: Bool
+    let onTap: () -> Void
+    let onHold: () -> Void
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if holdEnabled {
+            content
+                .onTapGesture(perform: onTap)
+                .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 10, perform: onHold)
+        } else {
+            content.onTapGesture(perform: onTap)
+        }
+    }
+}
+
+// Used only by full-screen experiences such as Reels. Feed cards deliberately
+// avoid this UIView surface so their enclosing UIScrollView receives pans
+// directly, including a follow-up touch during deceleration.
 struct CardGestureSurface: UIViewRepresentable {
     var holdEnabled = true
     var onTap: () -> Void
@@ -1864,8 +1913,6 @@ private struct MediaEntryCard: View {
     let height: CGFloat
     var isSelected = false
     let onSelect: () -> Void
-    @State private var lastFingerPoint: CGPoint?
-    @State private var lastFingerTime: TimeInterval?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1907,22 +1954,17 @@ private struct MediaEntryCard: View {
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
         .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            GeometryReader { geometry in
-                let frame = geometry.frame(in: .named("moonlight-root"))
-                CardGestureSurface(
-                    holdEnabled: model.cardLongPressEnabled,
-                    onTap: onSelect,
-                    onHoldBegan: { point in
-                        activateLongPress(at: CGPoint(x: frame.minX + point.x, y: frame.minY + point.y))
-                    },
-                    onHoldMoved: { point in
-                        updateLongPressLocation(CGPoint(x: frame.minX + point.x, y: frame.minY + point.y))
-                    },
-                    onHoldEnded: finishLongPress
-                )
+        .background { MediaCardHitAnchor(entryID: entry.id).allowsHitTesting(false).accessibilityHidden(true) }
+        .modifier(NativeMediaCardInteractions(
+            holdEnabled: model.cardLongPressEnabled,
+            onTap: onSelect,
+            onHold: {
+                LongPressHapticFeedback.shared.menuOpened()
+                let location = MediaCardHitRegistry.center(for: entry.id) ?? CGPoint(x: 180, y: 360)
+                activateLongPress(at: location)
+                finishLongPress()
             }
-        }
+        ))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.title)
         .accessibilityIdentifier("media-card-\(entry.id)")
@@ -1931,8 +1973,6 @@ private struct MediaEntryCard: View {
     }
 
     private func activateLongPress(at location: CGPoint) {
-        lastFingerPoint = location
-        lastFingerTime = Date.timeIntervalSinceReferenceDate
         model.activeLongPressMenu = ActiveLongPressMenu(entry: entry, location: location, fingerLocation: location)
     }
 
@@ -1941,25 +1981,6 @@ private struct MediaEntryCard: View {
             menu.fingerDown = false
             model.activeLongPressMenu = menu
         }
-        lastFingerPoint = nil
-        lastFingerTime = nil
-    }
-
-    private func updateLongPressLocation(_ location: CGPoint) {
-        let now = Date.timeIntervalSinceReferenceDate
-        guard var menu = model.activeLongPressMenu, menu.entry?.id == entry.id else { return }
-        menu.fingerLocation = location
-        if model.longPressStyle != .popover { menu.location = location }
-        if model.longPressStyle == .droplet, let previous = lastFingerPoint, let previousTime = lastFingerTime {
-            let elapsed = max(0.01, now - previousTime)
-            let speed = hypot(location.x - previous.x, location.y - previous.y) / elapsed
-            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.58)) {
-                menu.dropletScale = min(1.32, max(0.78, 1 + speed / 1500))
-            }
-        }
-        lastFingerPoint = location
-        lastFingerTime = now
-        model.activeLongPressMenu = menu
     }
 
     @ViewBuilder
@@ -4149,6 +4170,7 @@ private extension View {
         modifier(MediaGlassCircle(target: target))
     }
 }
+
 
 
 

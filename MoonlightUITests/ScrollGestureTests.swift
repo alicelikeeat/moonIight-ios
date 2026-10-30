@@ -218,16 +218,29 @@ final class ScrollGestureTests: XCTestCase {
             }
             return result
         }
-        for _ in 0..<3 {
-            let before = snapshot()
-            guard let chosen = before.filter({ $0.value.midY > 300 && $0.value.midY < app.frame.maxY - 120 }).first else { return XCTFail("No visible card to start the next flick") }
-            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: chosen.value.midX, dy: chosen.value.midY))
-            start.press(forDuration: 0.01, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -140)), withVelocity: .fast, thenHoldForDuration: 0)
-            let after = snapshot()
-            let moved = before.contains { id, frame in after[id].map { abs($0.minY - frame.minY) > 30 } ?? false }
-            XCTAssertTrue(moved || Set(before.keys) != Set(after.keys), "The next swipe stopped instead of scrolling")
-            XCTAssertFalse(app.buttons["打开全部操作"].exists)
+        let before = snapshot()
+        guard let chosen = before.filter({ $0.value.midY > 300 && $0.value.midY < app.frame.maxY - 180 }).first else {
+            return XCTFail("No visible card to start the first flick")
         }
+        let firstStart = app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: chosen.value.midX, dy: chosen.value.midY))
+        let followStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.64))
+        let followEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.40))
+
+        // Do not query the accessibility tree between gestures: the second
+        // touch must land on a banner while the previous flick is still
+        // decelerating. This reproduces the real two-flick failure window.
+        firstStart.press(forDuration: 0.01,
+                         thenDragTo: firstStart.withOffset(CGVector(dx: 0, dy: -150)),
+                         withVelocity: .fast, thenHoldForDuration: 0)
+        followStart.press(forDuration: 0.01, thenDragTo: followEnd, withVelocity: .fast, thenHoldForDuration: 0)
+        followStart.press(forDuration: 0.01, thenDragTo: followEnd, withVelocity: .fast, thenHoldForDuration: 0)
+
+        let after = snapshot()
+        let moved = before.contains { id, frame in after[id].map { abs($0.minY - frame.minY) > 120 } ?? false }
+        XCTAssertTrue(moved || Set(before.keys) != Set(after.keys),
+                      "A follow-up flick during deceleration was swallowed by a content banner")
+        XCTAssertFalse(app.buttons["打开全部操作"].exists)
     }
 
     @MainActor
@@ -659,4 +672,5 @@ final class ScrollGestureTests: XCTestCase {
     }
 
 }
+
 
