@@ -1192,7 +1192,6 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     
     // 3. 卡片区域等其他长按手势继续等待全局仲裁，避免手势冲突
     return true
-}
 
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
