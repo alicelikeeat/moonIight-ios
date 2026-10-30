@@ -1175,25 +1175,7 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         otherGestureRecognizer is UIPanGestureRecognizer
     }
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-    // 1. 滑动/拖拽手势永远不等待全局长按，保证连续滑动流畅
-    if otherGestureRecognizer is UIPanGestureRecognizer {
-        return false
-    }
-    
-    // 2. 底部导航栏按钮（带有 navigation 标识）的长按菜单不等待全局长按，防止长按时误触切页
-    var current: UIView? = otherGestureRecognizer.view
-    while let v = current {
-        if let id = v.accessibilityIdentifier, id.contains("navigation") {
-            return false
-        }
-        current = v.superview
-    }
-    
-    // 3. 卡片区域等其他长按手势继续等待全局仲裁，避免手势冲突
-    return true
-
-    }
+   
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard canBegin else { return false }
         var ancestor = touchedView
