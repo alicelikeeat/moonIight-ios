@@ -1031,8 +1031,10 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     init() {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
-        hold.minimumPressDuration = 0.48; hold.allowableMovement = 7
-        hold.cancelsTouchesInView = true
+        hold.minimumPressDuration = 0.48; hold.allowableMovement = 10
+        // Observe the global hold without cancelling the underlying title/button
+        // touch sequence; ScrollView and native controls must keep receiving it.
+        hold.cancelsTouchesInView = false
         hold.delaysTouchesBegan = false; hold.delaysTouchesEnded = false
         hold.delegate = self; hold.addTarget(self, action: #selector(held(_:)))
     }
