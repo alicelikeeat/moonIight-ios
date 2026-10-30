@@ -63,6 +63,8 @@ struct RootView: View {
     @AppStorage("moonlight.blindMode") private var blindMode = false
     @State private var navigationVisible = true
     @State private var navigationHideTask: Task<Void, Never>?
+    @State private var blindExitVisible = false
+    @AppStorage("moonlight.button.tint") private var buttonTint = "moon"
 
     private var isGestureUITest: Bool {
         ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests")
@@ -72,6 +74,16 @@ struct RootView: View {
     // preferences object can be initialized in either order. An environment
     // marker is deterministic across the XCTest/app process boundary, while
     // remaining unreachable from normal App Store launches.
+    private var activeButtonTint: Color {
+        switch buttonTint {
+        case "blue": return .blue
+        case "pink": return .pink
+        case "mint": return .mint
+        case "orange": return .orange
+        default: return MoonStyle.accent
+        }
+    }
+
     private var effectiveNavigationMode: BottomNavigationMode {
         let process = ProcessInfo.processInfo
         if process.environment["MOONLIGHT_ASSISTANT_DOCK_UI_TESTS"] == "1"
@@ -125,15 +137,31 @@ struct RootView: View {
         .coordinateSpace(name: "moonlight-root")
         .overlay(alignment: .topTrailing) {
             if blindMode {
-                Color.clear.frame(width: 86, height: 86)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 3) {
-                        withAnimation(.easeOut(duration: 0.22)) { blindMode = false }
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Group {
+                    if blindExitVisible {
+                        Button("退出盲盒") {
+                            withAnimation(.easeOut(duration: 0.22)) {
+                                blindMode = false
+                                blindExitVisible = false
+                            }
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 13).padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.35)))
+                    } else {
+                        Color.clear.frame(width: 86, height: 86)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 3) {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { blindExitVisible = true }
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            }
                     }
-                    .accessibilityLabel("退出盲盒模式")
-                    .accessibilityIdentifier("blind-mode-exit")
-                    .padding(.top, 8).padding(.trailing, 8)
+                }
+                .accessibilityLabel("退出盲盒模式")
+                .accessibilityIdentifier("blind-mode-exit")
+                .padding(.top, 8).padding(.trailing, 8)
             }
         }
         .onChange(of: model.selectedTab) { _ in
@@ -452,14 +480,17 @@ struct RootView: View {
                     VStack(spacing: 4) {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 20, weight: .semibold))
+                            .scaleEffect(model.selectedTab == tab ? 1.10 : 1)
+                            .rotationEffect(.degrees(model.selectedTab == tab ? 3 : 0))
                             .opacity(blindMode ? 0.01 : 1)
+                            .animation(.spring(response: 0.28, dampingFraction: 0.62), value: model.selectedTab)
                             .frame(width: diameter, height: diameter)
                             .moonGlassCircle(.button(for: tab))
-                            .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.52) : .clear, lineWidth: 1).allowsHitTesting(false))
+                            .overlay(Circle().strokeBorder(model.selectedTab == tab ? activeButtonTint.opacity(0.62) : .clear, lineWidth: 1).allowsHitTesting(false))
                         Text(tab.title).font(.system(size: 10, weight: model.selectedTab == tab ? .semibold : .medium))
                             .opacity(blindMode ? 0.01 : 1)
                     }
-                    .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? MoonStyle.accent : .secondary))
+                    .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? activeButtonTint : .secondary))
                     .frame(maxWidth: .infinity)
                     .allowsHitTesting(false).accessibilityHidden(true)
                 }

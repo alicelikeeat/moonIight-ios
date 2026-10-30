@@ -15,6 +15,7 @@ struct MoonTreasureMapView: View {
     @State private var dropCount = 20
     @State private var interactionMode = TreasureInteractionMode.drag
     @State private var scene = MoonTreasureScene()
+    @State private var controlsVisible = true
 
     private var items: [MediaEntry] {
         let source: [MediaEntry]
@@ -37,11 +38,15 @@ struct MoonTreasureMapView: View {
                 .ignoresSafeArea()
             VStack(spacing: 12) {
                 header
+                    .opacity(controlsVisible ? 1 : 0)
+                    .allowsHitTesting(controlsVisible)
                 Picker("藏宝范围", selection: $scope) {
                     ForEach(TreasureScope.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 18)
+                .opacity(controlsVisible ? 1 : 0)
+                .allowsHitTesting(controlsVisible)
 
                 SpriteView(scene: scene, options: [.allowsTransparency])
                     .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
@@ -54,6 +59,15 @@ struct MoonTreasureMapView: View {
                     .onChange(of: dropCount) { _ in configureScene() }
                     .onChange(of: interactionMode) { mode in scene.interactionMode = mode }
                     .onChange(of: model.mediaStore.items.map(\.id)) { _ in configureScene() }
+                    .overlay(alignment: .topTrailing) {
+                        if !controlsVisible {
+                            Button { withAnimation(.easeOut(duration: 0.2)) { controlsVisible = true } } label: {
+                                Image(systemName: "slider.horizontal.3")
+                                    .frame(width: 38, height: 38)
+                                    .background(.ultraThinMaterial, in: Circle())
+                            }.padding(12)
+                        }
+                    }
                     .overlay(alignment: .bottom) {
                         Text(interactionMode == .drag
                              ? "拖拽模式 · \(items.count) 张卡片参与重力与碰撞"
@@ -146,6 +160,7 @@ struct MoonTreasureMapView: View {
             onSelect: { id in
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 selectedID = id
+                controlsVisible = false
                 activeEntry = model.mediaStore.items.first { $0.id == id }
             },
             onLongPress: { id in
@@ -202,9 +217,9 @@ private final class MoonTreasureScene: SKScene {
     private var longPressTriggered = false
     private let motionManager = CMMotionManager()
     private var lastShake = Date.distantPast
-    private weak var draggedTreasure: SKShapeNode?
-    private var touchStart = CGPoint.zero
-    private var movedTreasure = false
+    private var draggedTreasures: [ObjectIdentifier: SKShapeNode] = [:]
+    private var touchStarts: [ObjectIdentifier: CGPoint] = [:]
+    private var movedTouches = Set<ObjectIdentifier>()
     private var fusionHalo: SKShapeNode?
     private weak var fusedWith: SKShapeNode?
 
@@ -372,59 +387,64 @@ private final class MoonTreasureScene: SKScene {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
         longPressWorkItem?.cancel()
         longPressTriggered = false
-        touchStart = touch.location(in: self)
-        movedTreasure = false
-        guard let treasure = treasure(at: touchStart) else { return }
-        draggedTreasure = treasure
-        treasure.zPosition = 50
-
-        if interactionMode == .drag {
-            // Manual dragging must temporarily win over device gravity.
-            treasure.physicsBody?.affectedByGravity = false
-            treasure.physicsBody?.isDynamic = false
-        } else if let id = treasure.name {
-            let work = DispatchWorkItem { [weak self, weak treasure] in
-                guard let self, self.draggedTreasure === treasure, !self.movedTreasure else { return }
-                self.longPressTriggered = true
-                self.longPress?(id)
+        for touch in touches {
+            let key = ObjectIdentifier(touch)
+            let location = touch.location(in: self)
+            guard let treasure = treasure(at: location) else { continue }
+            draggedTreasures[key] = treasure
+            touchStarts[key] = location
+            treasure.zPosition = 50 + CGFloat(draggedTreasures.count)
+            if interactionMode == .drag {
+                // Each finger owns its card; gravity cannot pull it away mid-drag.
+                treasure.physicsBody?.affectedByGravity = false
+                treasure.physicsBody?.isDynamic = false
+            } else if draggedTreasures.count == 1, let id = treasure.name {
+                let work = DispatchWorkItem { [weak self, weak treasure] in
+                    guard let self, self.draggedTreasures.values.contains(where: { $0 === treasure }),
+                          !self.movedTouches.contains(key) else { return }
+                    self.longPressTriggered = true
+                    self.longPress?(id)
+                }
+                longPressWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
             }
-            longPressWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, let treasure = draggedTreasure else { return }
-        let location = touch.location(in: self)
-        let distance = hypot(location.x - touchStart.x, location.y - touchStart.y)
-        movedTreasure = movedTreasure || distance > (interactionMode == .drag ? 4 : 10)
-
-        guard interactionMode == .drag else {
-            if movedTreasure { longPressWorkItem?.cancel() }
-            return
+        for touch in touches {
+            let key = ObjectIdentifier(touch)
+            guard let treasure = draggedTreasures[key], let start = touchStarts[key] else { continue }
+            let location = touch.location(in: self)
+            let distance = hypot(location.x - start.x, location.y - start.y)
+            if distance > (interactionMode == .drag ? 4 : 10) { movedTouches.insert(key) }
+            guard interactionMode == .drag else {
+                if movedTouches.contains(key) { longPressWorkItem?.cancel() }
+                continue
+            }
+            let halfWidth = treasure.frame.width / 2 + 5
+            let halfHeight = treasure.frame.height / 2 + 5
+            treasure.position = CGPoint(x: min(max(location.x, halfWidth), size.width - halfWidth),
+                                        y: min(max(location.y, halfHeight), size.height - halfHeight))
+            updateFusion(for: treasure)
         }
-        let halfWidth = treasure.frame.width / 2 + 5
-        let halfHeight = treasure.frame.height / 2 + 5
-        treasure.position = CGPoint(
-            x: min(max(location.x, halfWidth), size.width - halfWidth),
-            y: min(max(location.y, halfHeight), size.height - halfHeight)
-        )
-        updateFusion(for: treasure)
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         longPressWorkItem?.cancel()
-        defer { finishDrag() }
-        guard let treasure = draggedTreasure else { return }
-        if !movedTreasure, !longPressTriggered, let id = treasure.name { select?(id) }
+        for touch in touches {
+            let key = ObjectIdentifier(touch)
+            guard let treasure = draggedTreasures[key] else { continue }
+            if !movedTouches.contains(key), !longPressTriggered, let id = treasure.name { select?(id) }
+            finishDrag(for: key)
+        }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         longPressWorkItem?.cancel()
-        finishDrag()
+        for touch in touches { finishDrag(for: ObjectIdentifier(touch)) }
     }
 
     private func treasure(at location: CGPoint) -> SKShapeNode? {
@@ -458,8 +478,10 @@ private final class MoonTreasureScene: SKScene {
         let angle = atan2(other.position.y - treasure.position.y, other.position.x - treasure.position.x)
         let halo = fusionHalo ?? SKShapeNode()
         halo.path = CGPath(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height), cornerWidth: height / 2, cornerHeight: height / 2, transform: nil)
-        halo.fillColor = SKColor(red: 0.95, green: 0.68, blue: 0.16, alpha: 0.22)
-        halo.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.26, alpha: 0.88)
+        halo.fillColor = SKColor(red: 0.95, green: 0.68, blue: 0.16, alpha: 0.34)
+        halo.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.26, alpha: 0.96)
+        treasure.fillColor = SKColor(red: 0.92, green: 0.63, blue: 0.14, alpha: 0.34)
+        other.fillColor = SKColor(red: 0.92, green: 0.63, blue: 0.14, alpha: 0.34)
         halo.lineWidth = 1.3
         halo.position = center
         halo.zRotation = angle
@@ -472,16 +494,17 @@ private final class MoonTreasureScene: SKScene {
         }
     }
 
-    private func finishDrag() {
-        longPressWorkItem?.cancel()
-        if let treasure = draggedTreasure {
-            treasure.zPosition = 0
-            treasure.physicsBody?.affectedByGravity = true
-            treasure.physicsBody?.isDynamic = true
+    private func finishDrag(for key: ObjectIdentifier) {
+        guard let treasure = draggedTreasures.removeValue(forKey: key) else { return }
+        treasure.zPosition = 0
+        treasure.physicsBody?.affectedByGravity = true
+        treasure.physicsBody?.isDynamic = true
+        touchStarts[key] = nil
+        movedTouches.remove(key)
+        if draggedTreasures.isEmpty {
+            longPressTriggered = false
+            removeFusion()
         }
-        draggedTreasure = nil
-        longPressTriggered = false
-        removeFusion()
     }
 
     private func removeFusion() {

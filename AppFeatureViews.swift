@@ -170,10 +170,10 @@ struct ReelsView: View {
     @AppStorage("moonlight.reels.photos.seconds") private var photoSeconds = 6.0
     @AppStorage("moonlight.reels.autoAdvance") private var autoAdvance = true
     @AppStorage("moonlight.reels.muted") private var muted = false
-    @AppStorage("moonlight.reels.hideChrome") private var hideChrome = false
+    @AppStorage("moonlight.reels.hideChrome") private var hideChrome = true
     @State private var chromeTemporarilyVisible = true
     private var isVideo: Bool { entries.indices.contains(index) && entries[index].kind == .video }
-    private var showsChrome: Bool { !hideChrome || !isVideo || chromeTemporarilyVisible }
+    private var showsChrome: Bool { !hideChrome || chromeTemporarilyVisible }
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
@@ -218,7 +218,7 @@ struct ReelsView: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
-            guard hideChrome && isVideo else { return }
+            guard hideChrome else { return }
             chromeTemporarilyVisible.toggle()
         })
         .buttonStyle(MoonGlassButtonStyle()).task { await load() }

@@ -13,6 +13,7 @@ struct BackgroundSettingsView: View {
     @AppStorage("moonlight.glass.bannerSize") private var glassBannerSize = GlassSurfaceSize.balanced.rawValue
     @AppStorage("moonlight.glass.panelSize") private var glassPanelSize = GlassSurfaceSize.balanced.rawValue
     @AppStorage("moonlight.blindMode") private var blindMode = false
+    @AppStorage("moonlight.button.tint") private var buttonTint = "moon"
     var body: some View {
         List {
             Section {
@@ -23,7 +24,18 @@ struct BackgroundSettingsView: View {
             }
             Section("盲盒模式") {
                 Toggle("隐藏按键内容", isOn: blindModeBinding)
-                Text("开启后隐藏底栏图标与文字，保留原有触控区域。连续点击右上角三次退出。")
+                Text("开启后，底栏按键的图标、文字和选中提示都会隐去；右上角连续点击三次才会出现退出按钮。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("按键互动颜色") {
+                Picker("主色", selection: $buttonTint) {
+                    Text("月光金").tag("moon")
+                    Text("蓝色").tag("blue")
+                    Text("粉色").tag("pink")
+                    Text("薄荷").tag("mint")
+                    Text("橙色").tag("orange")
+                }
+                Text("底栏图标会在切换时产生轻微缩放和转动，并采用此颜色。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("玻璃尺寸") {
