@@ -158,6 +158,8 @@ struct RootView: View {
                         .background(.regularMaterial, in: Capsule())
                         .overlay(Capsule().strokeBorder(.white.opacity(0.35)))
                         .buttonStyle(.plain)
+                        .accessibilityLabel("退出盲盒")
+                        .accessibilityIdentifier("blind-mode-exit-button")
                     } else {
                         Color.clear.frame(width: 86, height: 86)
                             .contentShape(Rectangle())
@@ -165,10 +167,10 @@ struct RootView: View {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) { blindExitVisible = true }
                                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             }
+                            .accessibilityLabel("显示退出盲盒")
+                            .accessibilityIdentifier("blind-mode-exit-trigger")
                     }
                 }
-                .accessibilityLabel("退出盲盒模式")
-                .accessibilityIdentifier("blind-mode-exit")
                 .padding(.top, 8).padding(.trailing, 8)
             }
         }

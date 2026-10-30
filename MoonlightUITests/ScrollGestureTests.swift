@@ -33,7 +33,7 @@ final class ScrollGestureTests: XCTestCase {
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         let exists: Bool
         if flags.contains("--blind-ui-tests") {
-            exists = app.descendants(matching: .any).matching(identifier: "blind-mode-exit").firstMatch.waitForExistence(timeout: 15)
+            exists = app.descendants(matching: .any).matching(identifier: "blind-mode-exit-trigger").firstMatch.waitForExistence(timeout: 15)
         } else if flags.contains("--moments-width-ui-tests") {
             exists = app.staticTexts["宽幅图片布局测试"].waitForExistence(timeout: 15)
         } else {
@@ -235,17 +235,18 @@ final class ScrollGestureTests: XCTestCase {
         let app = launch(discover: true, flags: ["--blind-ui-tests"])
         let card = app.descendants(matching: .any).matching(identifier: "media-card-scroll-fixture-0").firstMatch
         XCTAssertFalse(card.exists, "Content banners must not remain exposed in full-blind mode")
-        XCTAssertFalse(app.buttons["navigation-home"].exists, "Bottom navigation must be hidden in full-blind mode")
+        XCTAssertFalse(app.buttons["navigation-home"].isHittable, "Bottom navigation must be hidden and untouchable in full-blind mode")
 
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.50, dy: 0.50)).press(forDuration: 0.7)
         XCTAssertTrue(app.textFields.matching(NSPredicate(format: "placeholderValue CONTAINS %@", "搜索功能")).firstMatch.waitForExistence(timeout: 3),
                       "A stationary hold must still reveal global search")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.32)).tap()
 
-        let exitTarget = app.descendants(matching: .any).matching(identifier: "blind-mode-exit").firstMatch
+        let exitTarget = app.descendants(matching: .any).matching(identifier: "blind-mode-exit-trigger").firstMatch
         exitTarget.tap(withNumberOfTaps: 3, numberOfTouches: 1)
-        XCTAssertTrue(app.buttons["退出盲盒"].waitForExistence(timeout: 3))
-        app.buttons["退出盲盒"].tap()
+        let exitButton = app.buttons["blind-mode-exit-button"]
+        XCTAssertTrue(exitButton.waitForExistence(timeout: 3))
+        exitButton.tap()
         XCTAssertTrue(card.waitForExistence(timeout: 3), "Exiting blind mode must restore page content")
     }
 
