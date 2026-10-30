@@ -1181,7 +1181,7 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
         // enter their arbitration graph. Elsewhere, SwiftUI button presses must
         // wait for the global hold so a stationary hold cannot tap through.
         !(otherGestureRecognizer is UIPanGestureRecognizer)
-            && !(otherGestureRecognizer is UILongPressGestureRecognizer)
+            
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard canBegin else { return false }
