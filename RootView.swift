@@ -1175,6 +1175,14 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         otherGestureRecognizer is UIPanGestureRecognizer
     }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Feed-card touches are rejected in shouldReceive before this hold can
+        // enter their arbitration graph. Elsewhere, SwiftUI button presses must
+        // wait for the global hold so a stationary hold cannot tap through.
+        !(otherGestureRecognizer is UIPanGestureRecognizer)
+            && !(otherGestureRecognizer is UILongPressGestureRecognizer)
+    }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard canBegin else { return false }
         var ancestor = touchedView
