@@ -12,12 +12,18 @@ struct BackgroundSettingsView: View {
     @AppStorage("moonlight.glass.buttonSize") private var glassButtonSize = GlassSurfaceSize.balanced.rawValue
     @AppStorage("moonlight.glass.bannerSize") private var glassBannerSize = GlassSurfaceSize.balanced.rawValue
     @AppStorage("moonlight.glass.panelSize") private var glassPanelSize = GlassSurfaceSize.balanced.rawValue
+    @AppStorage("moonlight.blindMode") private var blindMode = false
     var body: some View {
         List {
             Section {
                 Label("图片和视频都可用于页面、玻璃按键与个人资料。", systemImage: "photo.on.rectangle.angled")
                     .font(.subheadline)
                 Text("页面背景、玻璃按键和播放顺序在这里统一管理。通用背景会应用到未单独设置的位置，每个位置仍可覆盖通用设置或恢复跟随。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("盲盒模式") {
+                Toggle("隐藏按键内容", isOn: blindModeBinding)
+                Text("开启后隐藏底栏图标与文字，保留原有触控区域。连续点击右上角三次退出。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("玻璃尺寸") {
@@ -172,6 +178,9 @@ struct BackgroundSettingsView: View {
     }
     private func buttonThumbnail(_ asset: BackgroundAsset) -> some View {
         BackgroundAssetThumbnail(asset: asset).frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    private var blindModeBinding: Binding<Bool> {
+        Binding(get: { blindMode }, set: { blindMode = $0 })
     }
     private var buttonDraftBinding: Binding<ButtonBackgroundPlaylist> {
         Binding(get: { buttonDraft }, set: { value in buttonDraft = value; store.setPlaylist(value, for: buttonTarget) })

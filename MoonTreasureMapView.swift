@@ -382,6 +382,8 @@ private final class MoonTreasureScene: SKScene {
         treasure.zPosition = 50
 
         if interactionMode == .drag {
+            // Manual dragging must temporarily win over device gravity.
+            treasure.physicsBody?.affectedByGravity = false
             treasure.physicsBody?.isDynamic = false
         } else if let id = treasure.name {
             let work = DispatchWorkItem { [weak self, weak treasure] in
@@ -456,8 +458,8 @@ private final class MoonTreasureScene: SKScene {
         let angle = atan2(other.position.y - treasure.position.y, other.position.x - treasure.position.x)
         let halo = fusionHalo ?? SKShapeNode()
         halo.path = CGPath(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height), cornerWidth: height / 2, cornerHeight: height / 2, transform: nil)
-        halo.fillColor = .white.withAlphaComponent(0.14)
-        halo.strokeColor = .white.withAlphaComponent(0.62)
+        halo.fillColor = SKColor(red: 0.95, green: 0.68, blue: 0.16, alpha: 0.22)
+        halo.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.26, alpha: 0.88)
         halo.lineWidth = 1.3
         halo.position = center
         halo.zRotation = angle
@@ -474,6 +476,7 @@ private final class MoonTreasureScene: SKScene {
         longPressWorkItem?.cancel()
         if let treasure = draggedTreasure {
             treasure.zPosition = 0
+            treasure.physicsBody?.affectedByGravity = true
             treasure.physicsBody?.isDynamic = true
         }
         draggedTreasure = nil

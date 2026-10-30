@@ -60,6 +60,7 @@ struct RootView: View {
     @State private var assistantLaunch: AssistantLaunch?
     @State private var assistantFocused = false
     @AppStorage("moonlight.navigation.hideDelay") private var navigationHideDelay = 5.0
+    @AppStorage("moonlight.blindMode") private var blindMode = false
     @State private var navigationVisible = true
     @State private var navigationHideTask: Task<Void, Never>?
 
@@ -122,6 +123,19 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .coordinateSpace(name: "moonlight-root")
+        .overlay(alignment: .topTrailing) {
+            if blindMode {
+                Color.clear.frame(width: 86, height: 86)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 3) {
+                        withAnimation(.easeOut(duration: 0.22)) { blindMode = false }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                    .accessibilityLabel("退出盲盒模式")
+                    .accessibilityIdentifier("blind-mode-exit")
+                    .padding(.top, 8).padding(.trailing, 8)
+            }
+        }
         .onChange(of: model.selectedTab) { _ in
             discoverySourcesPresented = false
             revealNavigation()
@@ -438,10 +452,12 @@ struct RootView: View {
                     VStack(spacing: 4) {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 20, weight: .semibold))
+                            .opacity(blindMode ? 0.01 : 1)
                             .frame(width: diameter, height: diameter)
                             .moonGlassCircle(.button(for: tab))
                             .overlay(Circle().strokeBorder(model.selectedTab == tab ? MoonStyle.accent.opacity(0.52) : .clear, lineWidth: 1).allowsHitTesting(false))
                         Text(tab.title).font(.system(size: 10, weight: model.selectedTab == tab ? .semibold : .medium))
+                            .opacity(blindMode ? 0.01 : 1)
                     }
                     .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? MoonStyle.accent : .secondary))
                     .frame(maxWidth: .infinity)
@@ -3686,7 +3702,7 @@ private struct AssistantDock: View {
                 } label: {
                     Image(systemName: "plus").font(.title3.weight(.semibold))
                         .frame(width: 38, height: 38)
-                        .background(.thinMaterial, in: Circle())
+                        .background(Color.clear, in: Circle())
                 }
                 TextField("搜索功能或询问 \(provider.title)", text: $draft, axis: .vertical)
                     .focused($focused).lineLimit(1...4)
