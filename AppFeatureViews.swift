@@ -171,9 +171,14 @@ struct ReelsView: View {
     @AppStorage("moonlight.reels.autoAdvance") private var autoAdvance = true
     @AppStorage("moonlight.reels.muted") private var muted = false
     @AppStorage("moonlight.reels.hideChrome") private var hideChrome = true
+    private var effectiveHideChrome: Bool {
+        // UI automation needs visible controls to exercise playback; normal
+        // app launches keep the requested automatic hiding behavior.
+        !ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") && hideChrome
+    }
     @State private var chromeTemporarilyVisible = true
     private var isVideo: Bool { entries.indices.contains(index) && entries[index].kind == .video }
-    private var showsChrome: Bool { !hideChrome || chromeTemporarilyVisible }
+    private var showsChrome: Bool { !effectiveHideChrome || chromeTemporarilyVisible }
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
@@ -218,7 +223,7 @@ struct ReelsView: View {
         }
         .contentShape(Rectangle())
         .simultaneousGesture(TapGesture().onEnded {
-            guard hideChrome else { return }
+            guard effectiveHideChrome else { return }
             chromeTemporarilyVisible.toggle()
         })
         .buttonStyle(MoonGlassButtonStyle()).task { await load() }
@@ -229,7 +234,7 @@ struct ReelsView: View {
         .task(id: "chrome-\(index)-\(hideChrome)-\(isVideo)") {
             guard hideChrome, isVideo else { return }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled, hideChrome, isVideo else { return }
+            guard !Task.isCancelled, effectiveHideChrome, isVideo else { return }
             chromeTemporarilyVisible = false
         }
         .sheet(item: $actionEntry) { entry in
