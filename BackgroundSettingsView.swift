@@ -14,6 +14,9 @@ struct BackgroundSettingsView: View {
     @AppStorage("moonlight.glass.panelSize") private var glassPanelSize = GlassSurfaceSize.balanced.rawValue
     @AppStorage("moonlight.blindMode") private var blindMode = false
     @AppStorage("moonlight.button.tint") private var buttonTint = "moon"
+    @AppStorage("moonlight.button.tint.red") private var customTintRed = 0.55
+    @AppStorage("moonlight.button.tint.green") private var customTintGreen = 0.50
+    @AppStorage("moonlight.button.tint.blue") private var customTintBlue = 0.27
     var body: some View {
         List {
             Section {
@@ -34,8 +37,12 @@ struct BackgroundSettingsView: View {
                     Text("粉色").tag("pink")
                     Text("薄荷").tag("mint")
                     Text("橙色").tag("orange")
+                    Text("自定义").tag("custom")
                 }
-                Text("底栏图标会在切换时产生轻微缩放和转动，并采用此颜色。")
+                if buttonTint == "custom" {
+                    ColorPicker("自定义颜色", selection: customTintBinding, supportsOpacity: false)
+                }
+                Text("应用自有按键会在互动时缩放、提亮，并采用此颜色。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("玻璃尺寸") {
@@ -193,6 +200,18 @@ struct BackgroundSettingsView: View {
     }
     private var blindModeBinding: Binding<Bool> {
         Binding(get: { blindMode }, set: { blindMode = $0 })
+    }
+    private var customTintBinding: Binding<Color> {
+        Binding {
+            Color(red: customTintRed, green: customTintGreen, blue: customTintBlue)
+        } set: { color in
+            let value = UIColor(color)
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            if value.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+                customTintRed = Double(red); customTintGreen = Double(green); customTintBlue = Double(blue)
+                buttonTint = "custom"
+            }
+        }
     }
     private var buttonDraftBinding: Binding<ButtonBackgroundPlaylist> {
         Binding(get: { buttonDraft }, set: { value in buttonDraft = value; store.setPlaylist(value, for: buttonTarget) })

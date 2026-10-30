@@ -33,6 +33,11 @@ struct ContextMenuSettingsView: View {
     @ObservedObject private var preferences = InteractionPreferences.shared
     @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
     @AppStorage("moonlight.navigation.hideDelay") private var navigationHideDelay = 5.0
+    @AppStorage("moonlight.blindMode") private var blindMode = false
+    @AppStorage("moonlight.button.tint") private var buttonTint = "moon"
+    @AppStorage("moonlight.button.tint.red") private var customTintRed = 0.55
+    @AppStorage("moonlight.button.tint.green") private var customTintGreen = 0.50
+    @AppStorage("moonlight.button.tint.blue") private var customTintBlue = 0.27
     var body: some View {
         List {
             Section("底部导航") {
@@ -48,6 +53,24 @@ struct ContextMenuSettingsView: View {
                     Text("30 秒").tag(30.0)
                 }
                 Text("无操作后淡出；轻点屏幕底部空白区会立即显示。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("盲盒与按键互动") {
+                Toggle("全盲模式", isOn: $blindMode)
+                Text("全盲模式会隐藏应用自有按键的图标、文字与外形，但保留原触控位置。连续点击右上角三次才会显示退出按钮。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Picker("互动主色", selection: $buttonTint) {
+                    Text("月光金").tag("moon")
+                    Text("蓝色").tag("blue")
+                    Text("粉色").tag("pink")
+                    Text("薄荷").tag("mint")
+                    Text("橙色").tag("orange")
+                    Text("自定义").tag("custom")
+                }
+                if buttonTint == "custom" {
+                    ColorPicker("自定义颜色", selection: customTintBinding, supportsOpacity: false)
+                }
+                Text("点按时按键会缩放、提亮并使用所选颜色；页面内的系统按键也会继承此主色。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("全局长按搜索") {
@@ -67,6 +90,19 @@ struct ContextMenuSettingsView: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }.navigationTitle("长按与底栏").pageBackground(.settings)
+    }
+
+    private var customTintBinding: Binding<Color> {
+        Binding {
+            Color(red: customTintRed, green: customTintGreen, blue: customTintBlue)
+        } set: { color in
+            let value = UIColor(color)
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            if value.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+                customTintRed = Double(red); customTintGreen = Double(green); customTintBlue = Double(blue)
+                buttonTint = "custom"
+            }
+        }
     }
 }
 

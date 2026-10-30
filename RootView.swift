@@ -65,6 +65,9 @@ struct RootView: View {
     @State private var navigationHideTask: Task<Void, Never>?
     @State private var blindExitVisible = false
     @AppStorage("moonlight.button.tint") private var buttonTint = "moon"
+    @AppStorage("moonlight.button.tint.red") private var customTintRed = 0.55
+    @AppStorage("moonlight.button.tint.green") private var customTintGreen = 0.50
+    @AppStorage("moonlight.button.tint.blue") private var customTintBlue = 0.27
 
     private var isGestureUITest: Bool {
         ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests")
@@ -80,6 +83,7 @@ struct RootView: View {
         case "pink": return .pink
         case "mint": return .mint
         case "orange": return .orange
+        case "custom": return Color(red: customTintRed, green: customTintGreen, blue: customTintBlue)
         default: return MoonStyle.accent
         }
     }
@@ -150,6 +154,7 @@ struct RootView: View {
                         .padding(.horizontal, 13).padding(.vertical, 10)
                         .background(.regularMaterial, in: Capsule())
                         .overlay(Capsule().strokeBorder(.white.opacity(0.35)))
+                        .buttonStyle(.plain)
                     } else {
                         Color.clear.frame(width: 86, height: 86)
                             .contentShape(Rectangle())
@@ -173,7 +178,8 @@ struct RootView: View {
         .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
         // Custom controls opt into one glass surface explicitly. A global
         // button style would wrap circular/panel controls a second time.
-        .buttonStyle(.plain)
+        .buttonStyle(MoonInteractiveButtonStyle(blind: blindMode))
+        .tint(activeButtonTint)
         .overlay {
             GeometryReader { geometry in
                 if let menu = model.activeLongPressMenu {
@@ -207,7 +213,7 @@ struct RootView: View {
         .universalLongPress(target: .page(for: model.selectedTab))
         .overlay(alignment: .bottom) {
             tabBar.zIndex(100)
-                .opacity(navigationVisible ? 1 : 0)
+                .opacity(navigationVisible ? (blindMode ? 0.01 : 1) : 0)
                 .offset(y: navigationVisible ? 0 : 28)
                 .allowsHitTesting(navigationVisible)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
@@ -1596,6 +1602,20 @@ private struct DiscoverTile: View {
     }
 }
 
+/// One root-level interaction style keeps button feedback consistent without
+/// adding another material layer. In full blind mode only the rendered label
+/// disappears; layout and hit testing stay intact.
+private struct MoonInteractiveButtonStyle: ButtonStyle {
+    let blind: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(blind ? 0.01 : 1)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .brightness(configuration.isPressed ? 0.08 : 0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.68), value: configuration.isPressed)
+    }
+}
+
 // Keep card interactions outside SwiftUI's drag arbitration. The enclosing
 // UIScrollView owns pans; this surface only recognizes taps and stationary holds.
 struct CardGestureSurface: UIViewRepresentable {
@@ -1636,13 +1656,19 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     private let tap = UITapGestureRecognizer()
     private let hold = UILongPressGestureRecognizer()
     private var holdActive = false
+    private var suppressTapFromHold = false
     private var delayedTapWorkItem: DispatchWorkItem?
     private weak var observedScroll: UIScrollView?
     var holdEnabled = true {
         didSet {
-            guard hold.isEnabled != holdEnabled else { return }
-            if !holdEnabled { finishHold() }
-            hold.isEnabled = holdEnabled
+            if holdEnabled {
+                if hold.view == nil { addGestureRecognizer(hold) }
+                hold.isEnabled = true
+            } else {
+                finishHold()
+                hold.isEnabled = false
+                if hold.view != nil { removeGestureRecognizer(hold) }
+            }
         }
     }
 
@@ -1666,9 +1692,6 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         hold.delaysTouchesBegan = false
         hold.addTarget(self, action: #selector(held(_:)))
 
-        // A short release immediately fails the hold; a recognized hold
-        // suppresses the tap from that same touch sequence.
-        tap.require(toFail: hold)
         addGestureRecognizer(tap)
         addGestureRecognizer(hold)
     }
@@ -1734,6 +1757,10 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
 
     @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended else { return }
+        if suppressTapFromHold {
+            suppressTapFromHold = false
+            return
+        }
         triggerTap()
     }
 
@@ -1742,6 +1769,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         switch recognizer.state {
         case .began:
             holdActive = true
+            suppressTapFromHold = true
             LongPressHapticFeedback.shared.menuOpened()
             onHoldBegan?(point)
         case .changed:
@@ -1775,6 +1803,7 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         guard holdActive else { return }
         holdActive = false
         onHoldEnded?()
+        DispatchQueue.main.async { [weak self] in self?.suppressTapFromHold = false }
     }
 
     func cancelHold() {
@@ -3707,7 +3736,6 @@ private struct AssistantDock: View {
                         focused = false
                     } label: {
                         Image(systemName: "chevron.down").frame(width: 36, height: 36)
-                            .background(.regularMaterial, in: Circle())
                     }.accessibilityLabel("收起输入栏")
                 }
             }
@@ -3748,8 +3776,7 @@ private struct AssistantDock: View {
                     .accessibilityIdentifier("assistant-input")
                 Button(action: submit) {
                     Image(systemName: "arrow.up").font(.headline.weight(.bold))
-                        .foregroundStyle(.white).frame(width: 38, height: 38)
-                        .background(MoonStyle.accent, in: Circle())
+                        .foregroundStyle(MoonStyle.accent).frame(width: 38, height: 38)
                 }
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("发送给 " + provider.title)

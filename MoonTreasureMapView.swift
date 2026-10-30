@@ -76,6 +76,7 @@ struct MoonTreasureMapView: View {
                             .padding(.horizontal, 13).padding(.vertical, 9)
                             .background(.black.opacity(0.28), in: Capsule())
                             .padding(14)
+                            .opacity(controlsVisible ? 1 : 0)
                     }
                 if let selected {
                     TreasureDetail(entry: selected, onOpen: { activeEntry = selected }, onClose: { selectedID = nil })
@@ -222,9 +223,18 @@ private final class MoonTreasureScene: SKScene {
     private var movedTouches = Set<ObjectIdentifier>()
     private var fusionHalo: SKShapeNode?
     private weak var fusedWith: SKShapeNode?
+    private weak var fusionSource: SKShapeNode?
+    private var originalFillColors: [ObjectIdentifier: SKColor] = [:]
 
     override init() { super.init(size: CGSize(width: 390, height: 520)); scaleMode = .resizeFill; backgroundColor = .clear }
     required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func didMove(to view: SKView) {
+        super.didMove(to: view)
+        // SpriteKit views do not reliably forward two simultaneous fingers
+        // unless this is enabled at the hosting SKView level.
+        view.isMultipleTouchEnabled = true
+    }
 
     func configure(with entries: [MediaEntry],
                    interactionMode: TreasureInteractionMode,
@@ -235,6 +245,7 @@ private final class MoonTreasureScene: SKScene {
         longPress = onLongPress
         longPressWorkItem?.cancel()
         removeAllChildren()
+        originalFillColors.removeAll()
         physicsWorld.gravity = CGVector(dx: 0, dy: -4.6)
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
         for (index, entry) in entries.enumerated() { addTreasure(entry, index: index) }
@@ -285,6 +296,7 @@ private final class MoonTreasureScene: SKScene {
         // A translucent base plus a frosted metadata strip makes each physical
         // node read as an individual glass treasure instead of a colored tile.
         node.fillColor = .white.withAlphaComponent(0.16)
+        originalFillColors[ObjectIdentifier(node)] = node.fillColor
         node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.92) : .white.withAlphaComponent(0.56)
         node.lineWidth = entry.isFavorite ? 2.1 : 1.2
         node.position = CGPoint(
@@ -470,6 +482,7 @@ private final class MoonTreasureScene: SKScene {
         guard distance < threshold else { removeFusion(); return }
         if fusedWith !== other {
             fusedWith = other
+            fusionSource = treasure
             UIImpactFeedbackGenerator(style: .soft).impactOccurred(intensity: 0.55)
         }
         let center = CGPoint(x: (treasure.position.x + other.position.x) / 2, y: (treasure.position.y + other.position.y) / 2)
@@ -508,6 +521,13 @@ private final class MoonTreasureScene: SKScene {
     }
 
     private func removeFusion() {
+        if let source = fusionSource {
+            source.fillColor = originalFillColors[ObjectIdentifier(source)] ?? .white.withAlphaComponent(0.16)
+        }
+        if let other = fusedWith {
+            other.fillColor = originalFillColors[ObjectIdentifier(other)] ?? .white.withAlphaComponent(0.16)
+        }
+        fusionSource = nil
         fusedWith = nil
         guard let fusionHalo else { return }
         self.fusionHalo = nil
