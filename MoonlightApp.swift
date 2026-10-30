@@ -147,6 +147,11 @@ final class AppModel: ObservableObject {
         }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") {
+            let blindUITest = ProcessInfo.processInfo.arguments.contains("--blind-ui-tests")
+            UserDefaults.standard.set(blindUITest, forKey: "moonlight.blindMode")
+            if blindUITest {
+                UserDefaults.standard.set(true, forKey: "moonlight.globalSearch.enabled")
+            }
             if !ProcessInfo.processInfo.arguments.contains("--keep-menu-settings") {
                 InteractionPreferences.shared.resetForUITests()
             }

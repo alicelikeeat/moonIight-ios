@@ -135,6 +135,9 @@ struct RootView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .opacity(blindMode ? 0 : 1)
+                .allowsHitTesting(!blindMode)
+                .accessibilityHidden(blindMode)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -173,12 +176,27 @@ struct RootView: View {
             discoverySourcesPresented = false
             revealNavigation()
         }
+        .onChange(of: blindMode) { enabled in
+            blindExitVisible = false
+            if enabled {
+                activeSheet = nil
+                activePlayer = nil
+                discoverySourcesPresented = false
+                model.activeLongPressMenu = nil
+                navigationHideTask?.cancel()
+                navigationVisible = false
+            } else {
+                revealNavigation()
+            }
+        }
         .onChange(of: navigationHideDelay) { _ in scheduleNavigationHide() }
         .task { scheduleNavigationHide() }
         .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
         // Custom controls opt into one glass surface explicitly. A global
         // button style would wrap circular/panel controls a second time.
-        .buttonStyle(MoonInteractiveButtonStyle(blind: blindMode))
+        // Full-blind mode hides the page layer itself. Search and the explicit
+        // exit control remain readable when they are intentionally revealed.
+        .buttonStyle(MoonInteractiveButtonStyle(blind: false))
         .tint(activeButtonTint)
         .overlay {
             GeometryReader { geometry in
@@ -213,9 +231,9 @@ struct RootView: View {
         .universalLongPress(target: .page(for: model.selectedTab))
         .overlay(alignment: .bottom) {
             tabBar.zIndex(100)
-                .opacity(navigationVisible ? (blindMode ? 0.01 : 1) : 0)
+                .opacity(navigationVisible && !blindMode ? 1 : 0)
                 .offset(y: navigationVisible ? 0 : 28)
-                .allowsHitTesting(navigationVisible)
+                .allowsHitTesting(navigationVisible && !blindMode)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
         // The visible circles are deliberately decorative so their glass can
@@ -223,8 +241,8 @@ struct RootView: View {
         // targets and sits above the long-press scrim in every state.
         .overlay(alignment: .bottom) {
             priorityNavigationLayer.zIndex(1_000)
-                .opacity(navigationVisible ? 1 : 0)
-                .allowsHitTesting(navigationVisible)
+                .opacity(navigationVisible && !blindMode ? 1 : 0)
+                .allowsHitTesting(navigationVisible && !blindMode)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
         // Observe taps without covering the feed with an invisible hit target.
@@ -817,6 +835,7 @@ private struct UniversalHoldScope: ViewModifier {
     @State private var confirmBottomSearch = false
     @State private var pendingSearchLocation = CGPoint.zero
     @AppStorage("moonlight.globalSearch.enabled") private var globalSearchEnabled = false
+    @AppStorage("moonlight.blindMode") private var blindMode = false
 
     private var isGestureUITest: Bool {
         ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests")
@@ -829,9 +848,9 @@ private struct UniversalHoldScope: ViewModifier {
                     onBegin: { point, buttonTarget in
                         heldTarget = buttonTarget ?? target
                         LongPressHapticFeedback.shared.menuOpened()
-                        if globalSearchEnabled && !isGestureUITest {
+                        if (globalSearchEnabled || blindMode) && (!isGestureUITest || blindMode) {
                             pendingSearchLocation = point
-                            if interactions.navigationMode == .assistant {
+                            if interactions.navigationMode == .assistant && !blindMode {
                                 confirmBottomSearch = true
                             } else {
                                 globalSearch = GlobalSearchPresentation(location: point)
@@ -1115,7 +1134,11 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
         var ancestor = touch.view
         while let view = ancestor {
             if let scroll = view as? UIScrollView {
-                scroll.delaysContentTouches = false
+                // Preserve UIScrollView's native arbitration. Setting this to
+                // false is sticky: one hold attempt on a header used to make
+                // every later card receive touches before the feed pan, which
+                // is why a follow-up flick could stop on a content banner.
+                scroll.delaysContentTouches = true
                 scroll.canCancelContentTouches = true
                 // A new touch during momentum belongs to the scroll view. Do
                 // not add a button/hold failure dependency to that new stroke.
@@ -1653,12 +1676,12 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
     var onHoldEnded: (() -> Void)?
     var onDoubleTap: (() -> Void)?
 
-    private let tap = UITapGestureRecognizer()
     private let hold = UILongPressGestureRecognizer()
     private var holdActive = false
     private var suppressTapFromHold = false
     private var delayedTapWorkItem: DispatchWorkItem?
-    private weak var observedScroll: UIScrollView?
+    private var touchOrigin: CGPoint?
+    private var touchMoved = false
     var holdEnabled = true {
         didSet {
             if holdEnabled {
@@ -1678,13 +1701,11 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         isAccessibilityElement = false
         isUserInteractionEnabled = true
 
-        // A card never owns a pan. Taps defer to the enclosing feed;
-        // stationary holds fail when movement exceeds their tolerance.
-        tap.delegate = self
-        tap.cancelsTouchesInView = false
-        tap.delaysTouchesBegan = false
-        tap.addTarget(self, action: #selector(tapped(_:)))
-
+        // Do not install a tap recognizer over the whole card. A recognizer on
+        // every row remains in UIKit's arbitration graph while a second flick
+        // starts and can turn that flick into a mere deceleration stop. Plain
+        // UIView touch delivery is cancelled natively as soon as UIScrollView's
+        // pan wins, while a stationary touch still opens the card on release.
         hold.delegate = self
         hold.minimumPressDuration = 0.50
         hold.allowableMovement = 10
@@ -1692,7 +1713,6 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         hold.delaysTouchesBegan = false
         hold.addTarget(self, action: #selector(held(_:)))
 
-        addGestureRecognizer(tap)
         addGestureRecognizer(hold)
     }
 
@@ -1717,33 +1737,9 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         return true
     }
 
-    @objc private func feedPanChanged(_ pan: UIPanGestureRecognizer) {
-        guard pan.state == .began || pan.state == .changed else { return }
-        delayedTapWorkItem?.cancel()
-        delayedTapWorkItem = nil
-
-        // Once the feed pan has won, fail any still-pending card hold
-        // immediately. Toggling only the recognizer does not remove the card
-        // surface or its tap accessibility, and the outer scroll keeps the
-        // entire touch sequence, including rapid follow-up flicks.
-        if holdEnabled, hold.state == .possible {
-            hold.isEnabled = false
-            hold.isEnabled = true
-        }
-    }
-
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard !enclosingScrollViews.contains(where: { $0.isDragging || $0.isDecelerating }) else { return false }
         return true
-    }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Only taps wait for the enclosing feed pan. A stationary hold must
-        // be able to begin before finger-up while the pan is still possible.
-        gestureRecognizer === tap && enclosingScrollViews.contains {
-            $0.panGestureRecognizer === otherGestureRecognizer
-        }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
@@ -1755,13 +1751,46 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         }
     }
 
-    @objc private func tapped(_ recognizer: UITapGestureRecognizer) {
-        guard recognizer.state == .ended else { return }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        guard let touch = touches.first else { return }
+        touchOrigin = touch.location(in: self)
+        touchMoved = false
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        guard let touch = touches.first, let origin = touchOrigin else { return }
+        let point = touch.location(in: self)
+        if hypot(point.x - origin.x, point.y - origin.y) > 7 {
+            touchMoved = true
+            delayedTapWorkItem?.cancel()
+            delayedTapWorkItem = nil
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        defer { resetTouchTracking() }
+        guard !touchMoved, !holdActive,
+              !enclosingScrollViews.contains(where: { $0.isDragging || $0.isDecelerating }) else { return }
         if suppressTapFromHold {
             suppressTapFromHold = false
             return
         }
         triggerTap()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        delayedTapWorkItem?.cancel()
+        delayedTapWorkItem = nil
+        resetTouchTracking()
+    }
+
+    private func resetTouchTracking() {
+        touchOrigin = nil
+        touchMoved = false
     }
 
     @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
@@ -1812,23 +1841,16 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         hold.isEnabled = false
         hold.isEnabled = true
         finishHold()
+        resetTouchTracking()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        observedScroll?.panGestureRecognizer.removeTarget(self, action: #selector(feedPanChanged(_:)))
-        observedScroll = nil
         if window == nil { cancelHold(); return }
-        observedScroll = enclosingScrollViews.first
-        if let pan = observedScroll?.panGestureRecognizer {
-            pan.addTarget(self, action: #selector(feedPanChanged(_:)))
-            // A vertical pan always has priority. This hard dependency is
-            // needed on device because delegate arbitration alone can still
-            // leave a short tap recognizer pending between two quick flicks.
-            tap.require(toFail: pan)
-        }
         for scroll in enclosingScrollViews {
-            scroll.delaysContentTouches = false
+            // Keep the native delay so the scroll view decides whether this is
+            // a pan before delivering a stationary tap to card content.
+            scroll.delaysContentTouches = true
             scroll.canCancelContentTouches = true
         }
     }
