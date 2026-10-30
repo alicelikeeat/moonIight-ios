@@ -1791,7 +1791,13 @@ final class CardGestureView: UIView, UIGestureRecognizerDelegate {
         observedScroll = nil
         if window == nil { cancelHold(); return }
         observedScroll = enclosingScrollViews.first
-        observedScroll?.panGestureRecognizer.addTarget(self, action: #selector(feedPanChanged(_:)))
+        if let pan = observedScroll?.panGestureRecognizer {
+            pan.addTarget(self, action: #selector(feedPanChanged(_:)))
+            // A vertical pan always has priority. This hard dependency is
+            // needed on device because delegate arbitration alone can still
+            // leave a short tap recognizer pending between two quick flicks.
+            tap.require(toFail: pan)
+        }
         for scroll in enclosingScrollViews {
             scroll.delaysContentTouches = false
             scroll.canCancelContentTouches = true
