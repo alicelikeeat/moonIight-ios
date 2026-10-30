@@ -1106,9 +1106,11 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         hold.minimumPressDuration = 0.48; hold.allowableMovement = 10
-        // Observe the global hold without cancelling the underlying title/button
-        // touch sequence; ScrollView and native controls must keep receiving it.
-        hold.cancelsTouchesInView = false
+        // A completed global hold owns the stationary touch and must prevent
+        // the underlying button from also firing on release. A moving touch
+        // exceeds allowableMovement before recognition, so ScrollView keeps
+        // its native pan without a failure dependency.
+        hold.cancelsTouchesInView = true
         hold.delaysTouchesBegan = false; hold.delaysTouchesEnded = false
         hold.delegate = self; hold.addTarget(self, action: #selector(held(_:)))
     }
@@ -1681,8 +1683,18 @@ private struct NativeMediaCardInteractions: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         if holdEnabled {
             content
-                .onTapGesture(perform: onTap)
-                .onLongPressGesture(minimumDuration: 0.5, maximumDistance: 10, perform: onHold)
+                .gesture(
+                    LongPressGesture(minimumDuration: 0.5, maximumDistance: 10)
+                        .exclusively(before: TapGesture())
+                        .onEnded { result in
+                            switch result {
+                            case .first:
+                                onHold()
+                            case .second:
+                                onTap()
+                            }
+                        }
+                )
         } else {
             content.onTapGesture(perform: onTap)
         }
