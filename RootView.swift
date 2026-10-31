@@ -535,18 +535,36 @@ struct RootView: View {
                 let width = min(geometry.size.width - 36, 390)
                 let diameter = min(60, max(54, (geometry.size.width - 72) / 5))
                 ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
-                    Button {
-                        model.activeLongPressMenu = nil
-                        NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
-                        UISelectionFeedbackGenerator().selectionChanged()
-                        selectTab(tab)
-                    } label: { Color.clear.contentShape(Circle()) }
-                    .buttonStyle(.plain)
+                    GeometryReader { proxy in
+                        Color.clear
+                            .contentShape(Circle())
+                            .gesture(
+                                LongPressGesture(minimumDuration: 0.48, maximumDistance: 12)
+                                    .exclusively(before: TapGesture())
+                                    .onEnded { result in
+                                        switch result {
+                                        case .first:
+                                            let frame = proxy.frame(in: .global)
+                                            NotificationCenter.default.post(
+                                                name: .init("moonlight.navigationHeld"),
+                                                object: nil,
+                                                userInfo: ["tab": tab.rawValue, "x": frame.midX, "y": frame.midY]
+                                            )
+                                        case .second:
+                                            model.activeLongPressMenu = nil
+                                            NotificationCenter.default.post(name: .init("moonlight.navigationTapped"), object: nil)
+                                            UISelectionFeedbackGenerator().selectionChanged()
+                                            selectTab(tab)
+                                        }
+                                    }
+                            )
+                    }
                     .frame(width: diameter + 4, height: diameter + 4)
                     .position(x: (geometry.size.width - width) / 2 + width * (CGFloat(index) + 0.5) / 5,
                               y: diameter / 2 + 1)
                     .accessibilityLabel(tab.title)
                     .accessibilityIdentifier("navigation-\(tab.rawValue)")
+                    .accessibilityAddTraits(.isButton)
                 }
             }
             .frame(height: 78)
@@ -697,6 +715,8 @@ private struct NativeSlidingTabSurface: UIViewRepresentable {
 private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRecognizerDelegate {
     var onSelect: ((AppTab) -> Void)?
     private let slidePan = UIPanGestureRecognizer()
+    private let stationaryHold = UILongPressGestureRecognizer()
+    private var holdOwnsTouch = false
     private var isApplyingSelection = false
 
     override init(frame: CGRect) {
@@ -723,6 +743,12 @@ private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRe
         slidePan.addTarget(self, action: #selector(slid(_:)))
         slidePan.delegate = self
         addGestureRecognizer(slidePan)
+        stationaryHold.minimumPressDuration = 0.48
+        stationaryHold.allowableMovement = 12
+        stationaryHold.cancelsTouchesInView = false
+        stationaryHold.delegate = self
+        stationaryHold.addTarget(self, action: #selector(heldTab(_:)))
+        addGestureRecognizer(stationaryHold)
         setSelected(.home)
     }
 
@@ -740,8 +766,31 @@ private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRe
     }
 
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-        guard !isApplyingSelection, let tab = AppTab.allCases[safe: item.tag] else { return }
+        guard !isApplyingSelection, !holdOwnsTouch, let tab = AppTab.allCases[safe: item.tag] else { return }
         activate(tab)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === slidePan || otherGestureRecognizer === slidePan
+    }
+
+    @objc private func heldTab(_ recognizer: UILongPressGestureRecognizer) {
+        switch recognizer.state {
+        case .began:
+            holdOwnsTouch = true
+            let tab = tab(at: recognizer.location(in: self))
+            let point = window.map { recognizer.location(in: $0) } ?? recognizer.location(in: self)
+            NotificationCenter.default.post(
+                name: .init("moonlight.navigationHeld"),
+                object: nil,
+                userInfo: ["tab": tab.rawValue, "x": point.x, "y": point.y]
+            )
+        case .ended, .cancelled, .failed:
+            DispatchQueue.main.async { [weak self] in self?.holdOwnsTouch = false }
+        default:
+            break
+        }
     }
 
     override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
@@ -897,6 +946,21 @@ private struct UniversalHoldScope: ViewModifier {
             }
             .onChange(of: model.selectedTab) { _ in menu = nil; globalSearch = nil; confirmBottomSearch = false }
             .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationTapped"))) { _ in menu = nil; globalSearch = nil; confirmBottomSearch = false }
+            .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.navigationHeld"))) { note in
+                let raw = note.userInfo?["tab"] as? String
+                if let raw, let tab = AppTab(rawValue: raw) { heldTarget = .button(for: tab) }
+                func coordinate(_ key: String) -> CGFloat? {
+                    if let value = note.userInfo?[key] as? CGFloat { return value }
+                    if let value = note.userInfo?[key] as? Double { return CGFloat(value) }
+                    if let value = note.userInfo?[key] as? NSNumber { return CGFloat(truncating: value) }
+                    return nil
+                }
+                let point = CGPoint(x: coordinate("x") ?? 200, y: coordinate("y") ?? 640)
+                LongPressHapticFeedback.shared.menuOpened()
+                var opened = ActiveLongPressMenu(entry: nil, location: point, fingerLocation: point)
+                opened.fingerDown = false
+                menu = opened
+            }
             .confirmationDialog("直接使用底部输入栏？", isPresented: $confirmBottomSearch, titleVisibility: .visible) {
                 Button("直接使用下面") {
                     NotificationCenter.default.post(name: .init("moonlight.assistantDockFocus"), object: nil)
@@ -1132,6 +1196,9 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     func detach() { hold.view?.removeGestureRecognizer(hold); owner = nil }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard canBegin, owner?.presentedViewController == nil else { return false }
+        // The tab controls own tap versus long-press. Leaving this recognizer
+        // out of that touch keeps a hold from being cancelled or turned into a tab switch.
+        if touchHitsNavigationChrome(touch) { return false }
         if let window, MediaCardHitRegistry.contains(touch.location(in: window), in: window),
            !touchHitsNavigationChrome(touch) {
             // Media cards own their native SwiftUI tap/hold. Keeping the root
