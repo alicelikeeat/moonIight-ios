@@ -1,7 +1,10 @@
 name: iOS build
 on:
   push:
-    branches: [main]
+    # The cursor branch is included so the hold fix can be verified before it
+    # is merged. Version tags are the only publishes: v1.43 builds the IPA.
+    branches: [main, cursor/fix-tab-hold-card-overlap-3131]
+    tags: ['v*']
   workflow_dispatch:
 permissions:
   contents: write
@@ -15,15 +18,24 @@ jobs:
         id: version
         shell: bash
         run: |
-          # Public releases use the short, two-part format requested for 月淡.
-          # The monotonically increasing run remains the internal iOS build
-          # number, so an older IPA can never replace a newer one by mistake.
-          BASELINE_RUN=100
-          MINOR=$((GITHUB_RUN_NUMBER - BASELINE_RUN))
-          if [[ "$MINOR" -lt 1 ]]; then MINOR=1; fi
-          echo "marketing=1.${MINOR}" >> "$GITHUB_OUTPUT"
-          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          # A version tag is the public release (v1.43 -> marketing 1.43, build 143).
+          # Other pushes only exercise the simulator and do not publish an IPA.
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            MARKETING="${GITHUB_REF#refs/tags/v}"
+            BUILD="$(printf '%s' "$MARKETING" | tr -d '.')"
+            echo "marketing=${MARKETING}" >> "$GITHUB_OUTPUT"
+            echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            BASELINE_RUN=100
+            MINOR=$((GITHUB_RUN_NUMBER - BASELINE_RUN))
+            if [[ "$MINOR" -lt 1 ]]; then MINOR=1; fi
+            echo "marketing=1.${MINOR}" >> "$GITHUB_OUTPUT"
+            echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Compile simulator build
+        if: steps.version.outputs.release != 'true'
         env:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
@@ -34,6 +46,7 @@ jobs:
           python3 scripts/check_sources.py
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
       - name: Run card scrolling UI tests
+        if: steps.version.outputs.release != 'true'
         timeout-minutes: 35
         shell: bash
         run: |
@@ -63,7 +76,7 @@ jobs:
           fi
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
       - name: Export UI review screenshots
-        if: always()
+        if: always() && steps.version.outputs.release != 'true'
         shell: bash
         run: |
           for RESULT in build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
@@ -73,14 +86,14 @@ jobs:
           done
           python3 scripts/export_review_images.py
       - name: Upload UI review screenshots
-        if: always()
+        if: always() && steps.version.outputs.release != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: UI-Review-v${{ steps.version.outputs.marketing }}
           path: build/ui-review
           if-no-files-found: ignore
       - name: Upload gesture test results
-        if: always()
+        if: always() && steps.version.outputs.release != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ScrollGestureTests-v${{ steps.version.outputs.marketing }}
@@ -90,6 +103,7 @@ jobs:
           if-no-files-found: ignore
       - name: Import Ad Hoc signing
         id: signing
+        if: steps.version.outputs.release == 'true'
         shell: bash
         env:
           CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
@@ -121,7 +135,7 @@ jobs:
           echo "keychain_path=$KEYCHAIN_PATH" >> "$GITHUB_OUTPUT"
           echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
       - name: Archive and export IPA
-        if: steps.signing.outputs.ready == 'true'
+        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready == 'true'
         shell: bash
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
@@ -145,7 +159,7 @@ jobs:
           test -n "$IPA_PATH"
           mv "$IPA_PATH" "build/ipa/Moonlight-v${APP_VERSION}.ipa"
       - name: Archive and package unsigned iOS IPA
-        if: steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
         shell: bash
         env:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
@@ -156,20 +170,21 @@ jobs:
           cp -R build/Moonlight-Unsigned.xcarchive/Products/Applications/Moonlight.app build/unsigned-ipa/Payload/Moonlight.app
           (cd build/unsigned-ipa && /usr/bin/zip -qry "Moonlight-v${APP_VERSION}.ipa" Payload)
       - name: Upload unsigned IPA
-        if: steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-Unsigned-IPA-v${{ steps.version.outputs.marketing }}
           path: build/unsigned-ipa/Moonlight-v${{ steps.version.outputs.marketing }}.ipa
           if-no-files-found: error
       - name: Upload signed IPA
-        if: steps.signing.outputs.ready == 'true'
+        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-IPA-v${{ steps.version.outputs.marketing }}
           path: build/ipa/Moonlight-v${{ steps.version.outputs.marketing }}.ipa
           if-no-files-found: error
       - name: Publish versioned IPA download
+        if: steps.version.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.version.outputs.marketing }}
@@ -198,7 +213,7 @@ jobs:
             gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           fi
       - name: Upload simulator app when signing is absent
-        if: steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-Simulator
