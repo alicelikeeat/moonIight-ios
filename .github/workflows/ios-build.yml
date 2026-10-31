@@ -46,35 +46,46 @@ jobs:
           mkdir -p build
           python3 scripts/check_sources.py
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Boot iOS simulator
+        id: simulator
+        if: steps.version.outputs.release != 'true'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          echo "id=$SIMULATOR_ID" >> "$GITHUB_OUTPUT"
+          # xcodebuild's first launch can sit for many minutes when the
+          # simulator service hub is not ready yet. Boot it here so that
+          # wait is not charged against the gesture-suite deadline.
+          xcrun simctl boot "$SIMULATOR_ID" || true
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+      - name: Run focused visual diagnostics
+        if: steps.version.outputs.release != 'true'
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
+          COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
+          ONLY=()
+          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
+            ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
+          done
+          # These four cases stay diagnostic. An accessibility miss under the
+          # floating dock must not hide a gesture failure, and it must not
+          # consume the gate suite's time limit.
+          xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
       - name: Run card scrolling UI tests
         if: steps.version.outputs.release != 'true'
         timeout-minutes: 35
         shell: bash
         run: |
-          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
           COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
-          FOCUS=(testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn)
-          ONLY=()
           SKIP=()
-          for TEST_NAME in "${FOCUS[@]}"; do
-            ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
+          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
-          # Each focused gesture suite used to run twice before the remaining
-          # suite.  One successful pass is the release gate; duplicating it
-          # wastes runner minutes and can turn a stable pass into a flaky retry.
-          # The background-editor fixture is intentionally diagnostic: it
-          # still exports its screenshots and result bundle, but an occasional
-          # simulator accessibility hit-test under the floating dock must not
-          # suppress a device IPA after compilation and the remaining suite
-          # have passed. The second command remains the release gate.
-          set +e
-          xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
-          SETTINGS_STATUS=$?
-          set -e
-          if [[ "$SETTINGS_STATUS" -ne 0 ]]; then
-            echo "::warning::Focused visual diagnostics failed; screenshots were retained and the full gesture suite will decide the release gate."
-          fi
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
       - name: Export UI review screenshots
         if: always() && steps.version.outputs.release != 'true'
