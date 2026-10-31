@@ -1678,9 +1678,33 @@ private struct MoonInteractiveButtonStyle: ButtonStyle {
     static var markers = NSHashTable<MediaCardHitMarker>.weakObjects()
 
     static func contains(_ point: CGPoint, in window: UIWindow) -> Bool {
-        markers.allObjects.contains {
-            $0.window === window && !$0.isHidden && $0.convert($0.bounds, to: window).contains(point)
+        // A card rectangle can extend underneath the floating tab bar. Only a
+        // touch whose frontmost view actually belongs to that card should
+        // keep the global hold out of the scroll view's arbitration.
+        let hit = window.hitTest(point, with: nil)
+        return markers.allObjects.contains { marker in
+            guard marker.window === window, !marker.isHidden else { return false }
+            let frame = marker.convert(marker.bounds, to: window)
+            guard frame.width > 1, frame.height > 1, frame.contains(point) else { return false }
+            guard let hit else { return true }
+            return hitIsOnCard(hit, marker: marker)
         }
+    }
+
+    private static func hitIsOnCard(_ hit: UIView, marker: UIView) -> Bool {
+        if hit === marker || hit.isDescendant(of: marker) || marker.isDescendant(of: hit) { return true }
+        var host: UIView? = marker.superview
+        while let view = host, !(view is UIWindow) {
+            if hit === view || hit.isDescendant(of: view) {
+                guard let window = view.window else { return false }
+                let hostArea = view.convert(view.bounds, to: window).width * view.convert(view.bounds, to: window).height
+                let markerFrame = marker.convert(marker.bounds, to: window)
+                let markerArea = max(1, markerFrame.width * markerFrame.height)
+                return hostArea <= markerArea * 2.2
+            }
+            host = view.superview
+        }
+        return false
     }
 
     static func center(for id: String) -> CGPoint? {
