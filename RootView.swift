@@ -1130,9 +1130,14 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
         }
     }
     func detach() { hold.view?.removeGestureRecognizer(hold); owner = nil }
-   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         guard canBegin, owner?.presentedViewController == nil else { return false }
-        if let window, MediaCardHitRegistry.contains(touch.location(in: window), in: window) {
+        if let window, MediaCardHitRegistry.contains(touch.location(in: window), in: window),
+           !touchHitsNavigationChrome(touch) {
+            // Media cards own their native SwiftUI tap/hold. Keeping the root
+            // hold out of this touch removes a second recognizer from the
+            // scroll view's arbitration graph. A card rect can extend under
+            // the floating tab bar; that finger still belongs to the bar.
             return false
         }
         LongPressHapticFeedback.shared.prepare()
@@ -1141,25 +1146,69 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
         var ancestor = touch.view
         while let view = ancestor {
             if let scroll = view as? UIScrollView {
+                // Preserve UIScrollView's native arbitration. Setting this to
+                // false is sticky: one hold attempt on a header used to make
+                // every later card receive touches before the feed pan, which
+                // is why a follow-up flick could stop on a content banner.
                 scroll.delaysContentTouches = true
                 scroll.canCancelContentTouches = true
+                // A new touch during momentum belongs to the scroll view. Do
+                // not add a button/hold failure dependency to that new stroke.
                 if scroll.isDecelerating { return false }
             }
+            // Keep Apple's value controls in charge of their own short taps.
+            // A global hold on a switch delays or cancels the state transition
+            // on some devices, while ordinary buttons and page backgrounds
+            // continue to participate in the contextual hold menu.
             if view is CardGestureView || view is UITextField || view is UITextView || view is UISlider || view is UISwitch { return false }
             if let slider = view as? NativeSlidingTabBar { heldTarget = .button(for: slider.tab(at: touch.location(in: slider))) }
             if let identifier = view.accessibilityIdentifier,
                identifier.hasPrefix("moment-post-card-") { return false }
-            // 注意：这里绝不能有 identifier.hasPrefix("navigation") 或类似 return false 的代码！
+            if let identifier = view.accessibilityIdentifier,
+               identifier.hasPrefix("navigation-"),
+               let tab = AppTab(rawValue: String(identifier.dropFirst("navigation-".count))) {
+                heldTarget = .button(for: tab)
+            }
             ancestor = view.superview
         }
         return true
     }
-   func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+    /// The feed draws underneath the dock, so a card's window rect often
+    /// contains a tab-bar point. The touch view is the control that was
+    /// actually hit; only that control decides whether this is a card.
+    private func touchHitsNavigationChrome(_ touch: UITouch) -> Bool {
+        var view = touch.view
+        while let current = view {
+            if current is NativeSlidingTabBar || current is PriorityTabView { return true }
+            if let identifier = current.accessibilityIdentifier,
+               identifier == "navigation-slider" || identifier.hasPrefix("navigation-") {
+                return true
+            }
+            view = current.superview
+        }
+        return false
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        otherGestureRecognizer is UIPanGestureRecognizer
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         // Feed-card touches are rejected in shouldReceive before this hold can
         // enter their arbitration graph. Elsewhere, SwiftUI button presses must
         // wait for the global hold so a stationary hold cannot tap through.
+        // Pans, including the tab bar's drag-to-switch, must never wait.
         !(otherGestureRecognizer is UIPanGestureRecognizer)
-        && !(otherGestureRecognizer is UILongPressGestureRecognizer)
+            && !(otherGestureRecognizer is UILongPressGestureRecognizer)
+    }
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard canBegin else { return false }
+        var ancestor = touchedView
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView, scroll.isDragging || scroll.isDecelerating { return false }
+            ancestor = view.superview
+        }
+        return true
     }
     @objc private func held(_ recognizer: UILongPressGestureRecognizer) {
         let point = recognizer.location(in: self)
