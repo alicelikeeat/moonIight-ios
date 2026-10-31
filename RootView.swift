@@ -1177,14 +1177,19 @@ private final class GlobalHoldMarker: UIView, UIGestureRecognizerDelegate {
     /// contains a tab-bar point. The touch view is the control that was
     /// actually hit; only that control decides whether this is a card.
     private func touchHitsNavigationChrome(_ touch: UITouch) -> Bool {
-        var view = touch.view
-        while let current = view {
-            if current is NativeSlidingTabBar || current is PriorityTabView { return true }
-            if let identifier = current.accessibilityIdentifier,
+        if navigationChrome(touch.view) { return true }
+        guard let window = touch.window ?? self.window else { return false }
+        return navigationChrome(window.hitTest(touch.location(in: window), with: nil))
+    }
+    private func navigationChrome(_ view: UIView?) -> Bool {
+        var current = view
+        while let candidate = current {
+            if candidate is NativeSlidingTabBar || candidate is PriorityTabView { return true }
+            if let identifier = candidate.accessibilityIdentifier,
                identifier == "navigation-slider" || identifier.hasPrefix("navigation-") {
                 return true
             }
-            view = current.superview
+            current = candidate.superview
         }
         return false
     }
