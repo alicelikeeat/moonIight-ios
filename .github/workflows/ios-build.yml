@@ -43,6 +43,7 @@ jobs:
           xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO build
       - name: Check public discovery source APIs
         run: |
+          mkdir -p build
           python3 scripts/check_sources.py
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
       - name: Run card scrolling UI tests
