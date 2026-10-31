@@ -715,8 +715,6 @@ private struct NativeSlidingTabSurface: UIViewRepresentable {
 private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRecognizerDelegate {
     var onSelect: ((AppTab) -> Void)?
     private let slidePan = UIPanGestureRecognizer()
-    private let stationaryHold = UILongPressGestureRecognizer()
-    private var holdOwnsTouch = false
     private var isApplyingSelection = false
 
     override init(frame: CGRect) {
@@ -743,12 +741,6 @@ private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRe
         slidePan.addTarget(self, action: #selector(slid(_:)))
         slidePan.delegate = self
         addGestureRecognizer(slidePan)
-        stationaryHold.minimumPressDuration = 0.48
-        stationaryHold.allowableMovement = 12
-        stationaryHold.cancelsTouchesInView = false
-        stationaryHold.delegate = self
-        stationaryHold.addTarget(self, action: #selector(heldTab(_:)))
-        addGestureRecognizer(stationaryHold)
         setSelected(.home)
     }
 
@@ -766,31 +758,8 @@ private final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRe
     }
 
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-        guard !isApplyingSelection, !holdOwnsTouch, let tab = AppTab.allCases[safe: item.tag] else { return }
+        guard !isApplyingSelection, let tab = AppTab.allCases[safe: item.tag] else { return }
         activate(tab)
-    }
-
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        gestureRecognizer === slidePan || otherGestureRecognizer === slidePan
-    }
-
-    @objc private func heldTab(_ recognizer: UILongPressGestureRecognizer) {
-        switch recognizer.state {
-        case .began:
-            holdOwnsTouch = true
-            let tab = tab(at: recognizer.location(in: self))
-            let point = window.map { recognizer.location(in: $0) } ?? recognizer.location(in: self)
-            NotificationCenter.default.post(
-                name: .init("moonlight.navigationHeld"),
-                object: nil,
-                userInfo: ["tab": tab.rawValue, "x": point.x, "y": point.y]
-            )
-        case .ended, .cancelled, .failed:
-            DispatchQueue.main.async { [weak self] in self?.holdOwnsTouch = false }
-        default:
-            break
-        }
     }
 
     override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
