@@ -153,6 +153,7 @@ private final class TreasureSequenceSession: ObservableObject {
     @Published var playing = false
     @Published var index = 0
     @Published var message = ""
+    @Published var waitingForImage = false
     private var ids: [String] = []
     private var options = TreasurePlaybackOptions()
     private var lookup: ((String) -> MediaEntry?)?
@@ -188,7 +189,7 @@ private final class TreasureSequenceSession: ObservableObject {
         current = entry; message = ""; wantsPlaying = true
         guard let url = entry.remoteURL, entry.kind != .embed else { message = "当前目标不可播放，请重新选择。"; return }
         if entry.kind == .image {
-            remaining = options.imageSeconds; playing = true; scheduleImage()
+            remaining = options.imageSeconds; waitingForImage = true
         } else {
             let expectedID = entry.id
             loadTask = Task { @MainActor [weak self] in
@@ -224,6 +225,17 @@ private final class TreasureSequenceSession: ObservableObject {
                 if self.playing { player.play() }
             }
         }
+    }
+    func imageLoaded(id: String, success: Bool) {
+        guard waitingForImage, current?.id == id else { return }
+        waitingForImage = false
+        guard success else {
+            wantsPlaying = false
+            message = "图片加载失败，请关闭后重新选择。"
+            return
+        }
+        playing = wantsPlaying
+        if playing { scheduleImage() }
     }
     private func scheduleImage() {
         imageTask?.cancel(); imageStarted = .now
@@ -271,6 +283,7 @@ private final class TreasureSequenceSession: ObservableObject {
         endObserver = nil
         player?.pause(); player?.replaceCurrentItem(with: nil); player = nil
         playing = false
+        waitingForImage = false
         if audioOwned {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             audioOwned = false
@@ -295,13 +308,26 @@ struct TreasureDirectedPlayer: View {
                 .font(.headline).accessibilityIdentifier("treasure-sequence-position")
             if let player = session.player { FillVideoPlayer(player: player, showsControls: false) }
             else if let entry = session.current, entry.kind == .image, let url = entry.remoteURL {
-                if url.isFileURL { LocalMediaImage(url: url) }
-                else { AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { ProgressView() } }
+                if url.isFileURL {
+                    LocalMediaImage(url: url, onLoad: { session.imageLoaded(id: entry.id, success: $0) })
+                } else {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image.resizable().scaledToFit()
+                                .onAppear { session.imageLoaded(id: entry.id, success: true) }
+                        case .failure:
+                            Text("图片加载失败，请关闭后重新选择。")
+                                .onAppear { session.imageLoaded(id: entry.id, success: false) }
+                        default: ProgressView()
+                        }
+                    }
+                }
             } else { Text(session.message.isEmpty ? "正在准备播放" : session.message).frame(maxWidth: .infinity, maxHeight: .infinity) }
             if !session.message.isEmpty { Text(session.message).font(.caption).accessibilityIdentifier("treasure-sequence-message") }
             HStack {
                 Button(session.playing ? "暂停" : "继续") { session.togglePause() }
-                    .disabled(session.current == nil || (session.current?.kind == .video && session.player == nil)).accessibilityIdentifier("treasure-sequence-pause")
+                    .disabled(session.current == nil || session.waitingForImage || (session.current?.kind == .video && session.player == nil)).accessibilityIdentifier("treasure-sequence-pause")
                 Button("下一条") { session.next() }.disabled(session.current == nil)
                     .accessibilityIdentifier("treasure-sequence-next")
                 Button("停止") { session.stop() }.accessibilityIdentifier("treasure-sequence-stop")

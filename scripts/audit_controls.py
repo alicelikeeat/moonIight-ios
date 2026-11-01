@@ -3,7 +3,11 @@ import re
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
-pattern = re.compile(r'\b(Button|NavigationLink|Menu|ToolbarItem|PhotosPicker|ColorPicker|Toggle|Slider|Stepper|TextField|SecureField|UIButton)\s*(?:\(|\{)|\.(onTapGesture|onSubmit|addTarget)\s*(?:\(|\{)')
+pattern = re.compile(
+    r'\b(Button|NavigationLink|Menu|ToolbarItem|PhotosPicker|ColorPicker|Toggle|Slider|Stepper|TextField|SecureField|UIButton|UITapGestureRecognizer|UILongPressGestureRecognizer|UIPanGestureRecognizer)\s*(?:\(|\{)'
+    r'|\.(onTapGesture|onLongPressGesture|onSubmit|addTarget|gesture|highPriorityGesture|simultaneousGesture)\s*(?:\(|\{)'
+    r'|\boverride\s+func\s+(touchesBegan|touchesMoved|touchesEnded|touchesCancelled)\s*\('
+)
 rows = []
 for path in sorted(root.glob('*.swift')):
     scope = ''
@@ -13,7 +17,7 @@ for path in sorted(root.glob('*.swift')):
         if declaration:
             scope = declaration[1]
         for match in pattern.finditer(line):
-            kind = match[1] or match[2]
+            kind = match[1] or match[2] or match[3]
             snippet = ' '.join(lines[number - 1:number + 3]).strip()
             snippet = snippet.replace('|', '\\|').replace('`', "'")[:240]
             rows.append(f'| [{path.name}:{number}](../{path.name}#L{number}) | {scope} | {kind} | `{snippet}` | 已定位声明；运行验证见主审计表 |')

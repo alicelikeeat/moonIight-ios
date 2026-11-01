@@ -8,12 +8,14 @@ import Combine
 struct LocalMediaImage: View {
     let url: URL
     var fill = false
+    var onLoad: ((Bool) -> Void)? = nil
     @State private var image: UIImage?
     var body: some View {
         Group {
             if let image { Image(uiImage: image).resizable().aspectRatio(contentMode: fill ? .fill : .fit) }
             else { Color.secondary.opacity(0.12).overlay(ProgressView()) }
         }.task(id: url) {
+            image = nil
             let file = url
             let data = await Task.detached(priority: .userInitiated) { () -> Data? in
                 guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
@@ -24,7 +26,9 @@ struct LocalMediaImage: View {
                 guard CGImageDestinationFinalize(destination) else { return nil }
                 return Data(referencing: bytes)
             }.value
-            if !Task.isCancelled, let data { image = UIImage(data: data) }
+            guard !Task.isCancelled else { return }
+            image = data.flatMap(UIImage.init(data:))
+            onLoad?(image != nil)
         }
     }
 }
