@@ -70,7 +70,7 @@ struct MoonTreasureMapView: View {
                                         TreasureThumbnail(entry: entry, player: videoPreviews.players[entry.id]).frame(height: 100)
                                         Text(entry.title).lineLimit(2)
                                     }.frame(maxWidth: .infinity).padding(8)
-                                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                                        .background { MoonGlassBackdrop(radius: 16) }
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityIdentifier("treasure-grid-" + entry.id)
@@ -162,7 +162,7 @@ struct MoonTreasureMapView: View {
                         showingDirectedSettings = true
                     }
                 }
-                if !openDirectedSettings && directedOptions.confirmed && directedOptions.autoPlay && directedOptions.autoPlayOnReturn {
+                if !openDirectedSettings && directedOptions.confirmed && directedOptions.autoPlayOnReturn {
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 400_000_000)
                         guard pageVisible, !showingDirectedSettings, directedRequest == nil else { return }

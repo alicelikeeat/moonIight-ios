@@ -136,6 +136,9 @@ struct TreasureDirectedSettings: View {
             }
         }
         .searchable(text: $query, prompt: "搜索标题或来源")
+        .onChange(of: options.startID) { _ in options.confirmed = false }
+        .onChange(of: options.target) { _ in options.confirmed = false }
+        .onChange(of: options.folderID) { _ in options.confirmed = false }
         .navigationTitle("定向播放与背景")
         .toolbar { ToolbarItem(placement: .cancellationAction) {
             Button("完成") { dismiss() }.accessibilityIdentifier("treasure-settings-close")
