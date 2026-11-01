@@ -555,7 +555,7 @@ private final class MoonTreasureScene: SKScene {
         guard now - lastDiagnosticsTime >= 0.1 else { return }
         lastDiagnosticsTime = now
         let point = view.convert(convertPoint(toView: card.position), to: nil)
-        let origin = view.convert(.zero, to: nil)
+        let origin = view.convert(CGPoint.zero, to: nil)
         let values: [String: Double] = [
             "x": Double(point.x), "y": Double(point.y),
             "width": Double(view.bounds.width), "height": Double(view.bounds.height),
