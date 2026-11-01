@@ -5,7 +5,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 pattern = re.compile(
     r'\b(Button|NavigationLink|Menu|ToolbarItem|PhotosPicker|ColorPicker|Toggle|Slider|Stepper|TextField|SecureField|UIButton|UITapGestureRecognizer|UILongPressGestureRecognizer|UIPanGestureRecognizer)\s*(?:\(|\{)'
-    r'|\.(onTapGesture|onLongPressGesture|onSubmit|addTarget|gesture|highPriorityGesture|simultaneousGesture)\s*(?:\(|\{)'
+    r'|\.(onTapGesture|onLongPressGesture|onSubmit|accessibilityAction|addTarget|gesture|highPriorityGesture|simultaneousGesture)\s*(?:\(|\{)'
     r'|\boverride\s+func\s+(touchesBegan|touchesMoved|touchesEnded|touchesCancelled)\s*\('
 )
 rows = []

@@ -1804,7 +1804,7 @@ private struct MediaCardHitAnchor: UIViewRepresentable {
     func updateUIView(_ view: MediaCardHitMarker, context: Context) { view.entryID = entryID }
 }
 
-private struct NativeMediaCardInteractions: ViewModifier {
+struct NativeMediaCardInteractions: ViewModifier {
     let holdEnabled: Bool
     let onTap: () -> Void
     let onHold: () -> Void

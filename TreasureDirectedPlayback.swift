@@ -309,7 +309,7 @@ struct TreasureDirectedPlayer: View {
             if let player = session.player { FillVideoPlayer(player: player, showsControls: false) }
             else if let entry = session.current, entry.kind == .image, let url = entry.remoteURL {
                 if url.isFileURL {
-                    LocalMediaImage(url: url, onLoad: { session.imageLoaded(id: entry.id, success: $0) })
+                    LocalMediaImage(url: url, onLoad: { session.imageLoaded(id: entry.id, success: $0) }).id(entry.id)
                 } else {
                     AsyncImage(url: url) { phase in
                         switch phase {
@@ -321,7 +321,7 @@ struct TreasureDirectedPlayer: View {
                                 .onAppear { session.imageLoaded(id: entry.id, success: false) }
                         default: ProgressView()
                         }
-                    }
+                    }.id(entry.id)
                 }
             } else { Text(session.message.isEmpty ? "正在准备播放" : session.message).frame(maxWidth: .infinity, maxHeight: .infinity) }
             if !session.message.isEmpty { Text(session.message).font(.caption).accessibilityIdentifier("treasure-sequence-message") }

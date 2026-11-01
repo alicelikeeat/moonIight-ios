@@ -209,7 +209,10 @@ final class ScrollGestureTests: XCTestCase {
         let card = app.buttons["treasure-grid-scroll-fixture-0"]
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.press(forDuration: 0.7)
-        XCTAssertTrue(app.buttons["加入播放队列"].waitForExistence(timeout: 3))
+        guard app.buttons["加入播放队列"].waitForExistence(timeout: 5) else {
+            print(app.debugDescription); attach(app, name: "review-grid-hold-failure")
+            XCTFail("Long press did not open the treasure actions menu"); return
+        }
         XCTAssertFalse(app.buttons["player-close"].exists)
         app.buttons["加入播放队列"].tap()
         card.tap()

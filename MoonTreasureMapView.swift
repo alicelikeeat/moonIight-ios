@@ -65,24 +65,23 @@ struct MoonTreasureMapView: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))]) {
                             ForEach(filteredItems) { entry in
-                                Button { activeEntry = entry } label: {
-                                    VStack {
+                                VStack {
                                         TreasureThumbnail(entry: entry, player: videoPreviews.players[entry.id]).frame(height: 100)
                                         Text(entry.title).lineLimit(2)
                                     }.frame(maxWidth: .infinity).padding(8)
                                         .background { MoonGlassBackdrop(radius: 16) }
-                                }
-                                .buttonStyle(.plain)
+                                .modifier(NativeMediaCardInteractions(holdEnabled: true,
+                                    onTap: { activeEntry = entry }, onHold: { actionEntry = entry }))
+                                .accessibilityElement(children: .combine)
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityLabel(entry.title)
+                                .accessibilityAction { activeEntry = entry }
+                                .accessibilityAction(named: Text("藏品操作")) { actionEntry = entry }
                                 .accessibilityIdentifier("treasure-grid-" + entry.id)
                                 .onAppear {
                                     if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() }
                                 }
                                 .onDisappear { visibleGridVideos.remove(entry.id); refreshVideoPreviews() }
-                                .contextMenu {
-                                    Button("打开播放") { activeEntry = entry }
-                                    Button(entry.isFavorite ? "取消收藏" : "收藏") { model.mediaStore.toggleFavorite(entry) }
-                                    Button("加入播放队列") { model.mediaStore.enqueue([entry]) }
-                                }
                             }
                         }.padding(14)
                     }.accessibilityIdentifier("treasure-grid")
