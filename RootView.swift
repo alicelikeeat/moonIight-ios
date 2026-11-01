@@ -269,7 +269,7 @@ struct RootView: View {
             Text("只移除当前横幅设置，媒体文件仍保留在背景库中。")
         }
         .fullScreenCover(item: $treasureRoute, onDismiss: { revealNavigation() }) { command in
-            NavigationStack { MoonTreasureMapView(openDirectedSettings: command == .treasurePlayback) }
+            NavigationStack { MoonTreasureMapView(openVideoWall: command == .treasurePlayback) }
         }
         .fullScreenCover(item: $captureRequest) { request in
             CameraCaptureView(captureVideo: request.video, onCapture: { image in
@@ -327,13 +327,13 @@ struct RootView: View {
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
-            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-directed-ui-tests") {
-                await backgroundStore.prepareUITestMedia(applyBackgrounds: !ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") && !ProcessInfo.processInfo.arguments.contains("--treasure-directed-ui-tests"))
+            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
+                await backgroundStore.prepareUITestMedia(applyBackgrounds: !ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") && !ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests"))
                 if let video = backgroundStore.assets.first(where: { $0.id == "ui-test-background-video" }),
                    let image = backgroundStore.assets.first(where: { $0.id == "ui-test-background-image" }) {
                     model.mediaStore.prepareReelsUITest(videoURL: backgroundStore.url(for: video), imageURL: backgroundStore.url(for: image))
-                    if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
-                        model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video))
+                    if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
+                        model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video), count: ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") ? 11 : 5)
                     }
                 }
             }
@@ -353,7 +353,7 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-directed-ui-tests") {
+            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
                 Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
                     .font(.caption2).foregroundStyle(.secondary).allowsHitTesting(false)
                     .accessibilityIdentifier("background-test-state")
@@ -668,7 +668,7 @@ struct RootView: View {
 
     @ViewBuilder private func commandDestination(_ action: AppCommand) -> some View {
         switch action {
-        case .treasureMap, .treasurePlayback: MoonTreasureMapView(openDirectedSettings: action == .treasurePlayback)
+        case .treasureMap, .treasurePlayback: MoonTreasureMapView(openVideoWall: action == .treasurePlayback)
         case .searchMedia: Text("请返回发现页搜索媒体。")
         case .settings: SettingsView()
         case .menuSettings: ContextMenuSettingsView()
@@ -2893,6 +2893,7 @@ private struct MeView: View {
     @Binding var selection: PhotosPickerItem?
     let onSelect: (MediaEntry) -> Void
     @State private var commandPath = NavigationPath()
+    @State private var showingTreasureMap = false
     var body: some View {
         NavigationStack(path: $commandPath) {
             ScrollView {
@@ -2930,6 +2931,9 @@ private struct MeView: View {
                         NavigationLink(value: AppCommand.library) { MenuRow(symbol: "square.grid.2x2.fill", title: "库", color: .orange) }
                             .accessibilityIdentifier("me-library")
                         Divider().padding(.leading, 56)
+                        Button { showingTreasureMap = true } label: { MenuRow(symbol: "sparkles.rectangle.stack", title: "月藏图", color: .purple) }
+                            .accessibilityIdentifier("me-treasure-map")
+                        Divider().padding(.leading, 56)
                         NavigationLink(value: AppCommand.friends) { MenuRow(symbol: "person.2.fill", title: "朋友", color: .green) }
                         Divider().padding(.leading, 56)
                         NavigationLink(value: AppCommand.messages) { MenuRow(symbol: "bubble.left.and.bubble.right.fill", title: "消息", color: .purple) }
@@ -2950,6 +2954,9 @@ private struct MeView: View {
                 default: LibraryView(selectedImage: selectedImage, selection: $selection, onPlay: onSelect, initialAction: action)
                 }
             }
+        }
+        .fullScreenCover(isPresented: $showingTreasureMap) {
+            NavigationStack { MoonTreasureMapView().environmentObject(model) }
         }
         .task(id: model.command?.id) {
             guard let action = model.command?.action,
@@ -3197,7 +3204,6 @@ private struct LibraryView: View {
     @State private var reelsFolder: LibraryFolder?
     @State private var reelsQueue = false
     @State private var reelsSmartPlaylist: SmartPlaylistKind?
-    @State private var showingTreasureMap = false
     @State private var folderImportSelection: PhotosPickerItem?
 
     private var selectedFolder: LibraryFolder? {
@@ -3258,9 +3264,6 @@ private struct LibraryView: View {
             .fullScreenCover(item: $reelsSmartPlaylist) { playlist in
                 ReelsView(source: .smart(playlist)).environmentObject(model)
             }
-            .fullScreenCover(isPresented: $showingTreasureMap) {
-                NavigationStack { MoonTreasureMapView().environmentObject(model) }
-            }
             .task(id: model.command?.id) {
                 switch initialAction ?? model.command?.action {
                 case .selectAll: selectionMode = true; selectedIDs = Set(visibleItems.map(\.id))
@@ -3294,7 +3297,6 @@ private struct LibraryView: View {
                 Text("库").font(.title2.bold())
                 Spacer()
                 Menu {
-                    Button("打开月藏图") { showingTreasureMap = true }
                     Button("将当前列表加入队列") { model.mediaStore.enqueue(visibleItems) }
                     Button("替换播放队列") { model.mediaStore.enqueue(visibleItems, replacing: true) }
                     if !model.mediaStore.queueItems.isEmpty {
@@ -3308,30 +3310,7 @@ private struct LibraryView: View {
                     Label(selectedFolder == nil ? "导入" : "导入到文件夹", systemImage: "plus").font(.subheadline.weight(.semibold))
                 }.buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
             }
-            if selectedFolder == nil {
-                Button { showingTreasureMap = true } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "sparkles.rectangle.stack.fill")
-                            .font(.title3).foregroundStyle(.yellow)
-                            .frame(width: 42, height: 42)
-                            .background(.black.opacity(0.18), in: Circle())
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("月藏图").font(.headline)
-                            Text("把图片和视频堆进可拨动的月光宝库").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text("打开").font(.subheadline.weight(.semibold))
-                        Image(systemName: "chevron.right").font(.caption.weight(.bold))
-                    }
-                    .padding(14)
-                    .foregroundStyle(.primary)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.3)))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("library-treasure-map")
-                smartPlaylistSection
-            }
+
             folderSection
             if let selectedFolder {
                 HStack(spacing: 10) {

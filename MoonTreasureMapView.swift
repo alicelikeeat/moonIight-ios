@@ -5,34 +5,32 @@ import CoreMotion
 import ImageIO
 import AVFoundation
 
-/// 月藏图：把库内条目投影成可触碰、可堆叠的“月光宝藏”。
-/// 只让当前可见的前 42 件参与物理演算，避免大媒体库拖慢界面。
+/// Separate experiences share media, never their playback state.
 struct MoonTreasureMapView: View {
-    var openDirectedSettings = false
+    var openVideoWall = false
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    @State private var wall = false
+    @State private var initialized = false
     @State private var activeEntry: MediaEntry?
     @State private var actionEntry: MediaEntry?
     @State private var scope = TreasureScope.all
     @AppStorage("treasure-count") private var dropCount = 12
     @AppStorage("treasure-organized") private var organized = false
     @AppStorage("treasure-video-autoplay") private var videoAutoplay = false
+    @AppStorage("treasure-appearance-v23") private var appearanceData = Data()
+    @AppStorage("treasure-directed-v21") private var legacyAppearance = Data()
+    @State private var appearance = TreasureAppearance()
+    @State private var showingAppearance = false
     @StateObject private var videoPreviews = TreasureVideoPreviews()
     @State private var visibleGridVideos = Set<String>()
     @State private var scene = MoonTreasureScene()
-    @State private var controlsVisible = true
+    @State private var sceneDirty = false
     @State private var dragDiagnostics = ""
     @State private var videoDiagnostics = ""
     @State private var pageVisible = false
-    @AppStorage("treasure-directed-v21") private var directedData = Data()
-    @State private var directedOptions = TreasurePlaybackOptions()
-    @State private var showingDirectedSettings = false
-    @State private var directedRequest: TreasurePlaybackRequest?
-    @State private var pendingDirectedRequest: TreasurePlaybackRequest?
-    @State private var initialized = false
-    @State private var targetNotice = ""
 
     private var filteredItems: [MediaEntry] {
         let source: [MediaEntry]
@@ -43,309 +41,167 @@ struct MoonTreasureMapView: View {
         }
         return TreasureRules.unique(source, id: \.id)
     }
-
     private var items: [MediaEntry] { Array(filteredItems.prefix(TreasureRules.count(selected: dropCount, available: filteredItems.count))) }
-
+    private var darkCards: Bool { appearance.isDark(system: colorScheme) }
     var body: some View {
-        ZStack {
-            treasureBackground.ignoresSafeArea()
-            VStack(spacing: 12) {
-                header
-                    .opacity(controlsVisible ? 1 : 0)
-                    .allowsHitTesting(controlsVisible)
-                Picker("藏宝范围", selection: $scope) {
-                    ForEach(TreasureScope.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 18)
-                .opacity(controlsVisible ? 1 : 0)
-                .allowsHitTesting(controlsVisible)
-
-                if organized {
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))]) {
-                            ForEach(filteredItems) { entry in
-                                TreasureOrganizedCard(entry: entry, player: videoPreviews.players[entry.id],
-                                    onOpen: { activeEntry = entry }, onHold: { actionEntry = entry })
-                                .onAppear {
-                                    if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() }
-                                }
-                                .onDisappear { visibleGridVideos.remove(entry.id); refreshVideoPreviews() }
-                            }
-                        }.padding(14)
-                    }.accessibilityIdentifier("treasure-grid")
-                } else {
-                SpriteView(scene: scene, options: [.allowsTransparency])
-                    .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 30).strokeBorder(treasureForeground.opacity(0.22), lineWidth: 1))
-                    .padding(.horizontal, 14)
-                    .accessibilityIdentifier("moon-treasure-map")
-                    .onAppear { configureScene(); scene.startMotion() }
-                    .onDisappear { scene.stopMotion() }
-                    .onChange(of: scope) { _ in configureScene() }
-                    .onChange(of: dropCount) { _ in configureScene() }
-                    .onChange(of: model.mediaStore.items) { _ in configureScene() }
-                    .overlay(alignment: .topTrailing) {
-                        if !controlsVisible {
-                            Button { withAnimation(.easeOut(duration: 0.2)) { controlsVisible = true } } label: {
-                                Image(systemName: "slider.horizontal.3")
-                                    .frame(width: 38, height: 38)
-                                    .background { MoonGlassBackdrop(radius: 22) }
-                            }.padding(12)
-                        }
-                    }
-                }
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests") {
-                    Text("物理拖拽测试状态")
-                        .font(.system(size: 1)).frame(height: 1).opacity(0.01)
-                        .allowsHitTesting(false)
-                        .accessibilityIdentifier("treasure-physics-probe")
-                        .accessibilityValue(dragDiagnostics)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
-                    Text("视频预览测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01)
-                        .allowsHitTesting(false).accessibilityIdentifier("treasure-video-probe")
-                        .accessibilityValue(videoDiagnostics)
-                }
-                #endif
-                VStack(spacing: 4) {
-                HStack {
-                    Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张")
-                        .accessibilityIdentifier("treasure-actual-count")
-                    Spacer()
-                    Button(organized ? "自由" : "整理") {
-                        withAnimation(.easeInOut(duration: 0.15)) { organized.toggle() }
-                    }
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("treasure-layout")
-                    Button("重新散落") { scene.scatterTreasures() }.frame(minHeight: 44).disabled(organized)
-                    Button("重置") { configureScene() }.frame(minHeight: 44).disabled(organized)
-                }.font(.caption).frame(minHeight: 44)
-                HStack {
-                    Button("定向播放") { showingDirectedSettings = true }
-                        .accessibilityIdentifier("treasure-directed-settings")
-                    Spacer()
-                    Button("播放已选目标") { requestDirectedPlayback() }
-                        .disabled(directedOptions.plan(in: model.mediaStore).isEmpty)
-                        .accessibilityIdentifier("treasure-directed-start")
-                }.frame(minHeight: 44)
-                }.buttonStyle(.plain).padding(.horizontal, 12).moonSingleGlass().padding(.horizontal, 14)
-                if !targetNotice.isEmpty { Text(targetNotice).font(.caption).foregroundStyle(.secondary) }
-                if filteredItems.isEmpty {
-                    Text("宝库还是空的，先从发现或相册加入内容。")
-                        .font(.footnote).foregroundStyle(treasureForeground.opacity(0.75)).padding(.bottom, 12)
-                }
+        VStack(spacing: 10) {
+            Picker("月藏图模式", selection: $wall) {
+                Text("自由散落").tag(false)
+                Text("视频墙").tag(true)
+            }.pickerStyle(.segmented).padding(.horizontal, 14).accessibilityIdentifier("treasure-experience")
+            ZStack {
+                // Keep the SKView mounted so switching experiences preserves
+                // positions, velocities, camera and independently chosen count.
+                freeContent.opacity(wall ? 0 : 1).allowsHitTesting(!wall).accessibilityHidden(wall)
+                if wall { TreasureVideoWallView().environmentObject(model) }
+            }
+        }
+        .background { TreasureBackgroundSurface(options: appearance).ignoresSafeArea() }
+        .preferredColorScheme(appearance.background == .system ? nil : (darkCards ? .dark : .light))
+        .navigationTitle("月藏图").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() }.accessibilityIdentifier("treasure-map-close") }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showingAppearance = true } label: { Image(systemName: "paintpalette").frame(width: 44, height: 44) }
+                    .accessibilityLabel("月藏图背景").accessibilityIdentifier("treasure-appearance")
+            }
+        }
+        .sheet(isPresented: $showingAppearance) {
+            NavigationStack {
+                TreasureAppearanceSettings(options: $appearance)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showingAppearance = false } } }
             }
         }
         .onAppear {
             pageVisible = true
             if !initialized {
-                directedOptions = TreasurePlaybackOptions.load(directedData)
-                initialized = true
-                if openDirectedSettings {
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 500_000_000)
-                        guard pageVisible else { return }
-                        showingDirectedSettings = true
-                    }
-                }
-                if !openDirectedSettings && directedOptions.confirmed && directedOptions.autoPlayOnReturn {
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                        guard pageVisible, !showingDirectedSettings, directedRequest == nil else { return }
-                        requestDirectedPlayback()
-                    }
-                }
+                appearance = TreasureAppearance.load(appearanceData, legacy: legacyAppearance)
+                wall = openVideoWall; initialized = true
             }
-            scene.setCardContrast(dark: darkTreasureBackground)
-            refreshVideoPreviews()
-        }
-        .onChange(of: directedOptions) { value in
-            directedData = (try? JSONEncoder().encode(value)) ?? Data()
-            scene.setCardContrast(dark: darkTreasureBackground)
-        }
-        .onChange(of: colorScheme) { _ in scene.setCardContrast(dark: darkTreasureBackground) }
-        .onChange(of: directedRequest?.id) { _ in
-            refreshVideoPreviews()
-            if directedRequest != nil { scene.stopMotion() }
-            else if pageVisible && !organized { scene.startMotion() }
-        }
-        .sheet(isPresented: $showingDirectedSettings, onDismiss: {
-            if let request = pendingDirectedRequest { directedRequest = request; pendingDirectedRequest = nil }
-        }) {
-            NavigationStack {
-                TreasureDirectedSettings(options: $directedOptions) { start in
-                    if start {
-                        let ids = directedOptions.plan(in: model.mediaStore)
-                        if !ids.isEmpty { pendingDirectedRequest = TreasurePlaybackRequest(ids: ids, options: directedOptions) }
-                    }
-                }.environmentObject(model)
-            }.presentationDetents([.medium, .large])
-        }
-        .fullScreenCover(item: $directedRequest) { request in
-            TreasureDirectedPlayer(request: request).environmentObject(model)
-        }
-        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized ? [:] : $0) }
-        .onChange(of: videoAutoplay) { _ in refreshVideoPreviews() }
-        .onChange(of: organized) { _ in
-            videoPreviews.stopAll()
-            scene.setVideoPreviews([:])
-            if !organized { visibleGridVideos.removeAll() }
-            refreshVideoPreviews()
-        }
-        .onChange(of: scope) { _ in refreshVideoPreviews() }
-        .onChange(of: model.mediaStore.items) { _ in refreshVideoPreviews() }
-        .onChange(of: scenePhase) { phase in
-            refreshVideoPreviews()
-            if phase == .active, !organized, activeEntry == nil { scene.startMotion() }
-            else { scene.stopMotion() }
+            syncFreeState()
         }
         .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion() }
-        .task {
-            #if DEBUG
-            guard ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") else { return }
-            while !Task.isCancelled {
-                let values: [String: Int] = [
-                    "players": videoPreviews.players.count,
-                    "advancing": videoPreviews.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count,
-                    "muted": videoPreviews.players.values.allSatisfy(\.isMuted) ? 1 : 0,
-                    "nodes": scene.videoPreviewCount,
-                    "centerIcons": scene.centerPlayIconCount,
-                    "auto": videoAutoplay ? 1 : 0
-                ]
-                if let data = try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys), let text = String(data: data, encoding: .utf8) {
-                    if videoDiagnostics != text { videoDiagnostics = text }
-                }
-                try? await Task.sleep(nanoseconds: 200_000_000)
-            }
-            #endif
+        .onChange(of: wall) { _ in
+            if !wall && sceneDirty { configureScene() }
+            syncFreeState()
         }
-        .onChange(of: activeEntry?.id) { id in
-            refreshVideoPreviews()
-            if id != nil { scene.stopMotion() }
-            else if !organized { scene.startMotion() }
+        .onChange(of: appearance) { value in
+            appearanceData = (try? JSONEncoder().encode(value)) ?? Data()
+            scene.setCardContrast(dark: darkCards)
         }
-        .preferredColorScheme(directedOptions.background == .system ? nil : (darkTreasureBackground ? .dark : .light))
-        .navigationTitle("月藏图")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() }.accessibilityIdentifier("treasure-map-close") } }
+        .onChange(of: colorScheme) { _ in scene.setCardContrast(dark: darkCards) }
+        .onChange(of: scenePhase) { _ in syncFreeState() }
+        .onChange(of: activeEntry?.id) { _ in syncFreeState() }
+        .onChange(of: scope) { _ in configureScene() }
+        .onChange(of: dropCount) { _ in configureScene() }
+        .onChange(of: model.mediaStore.items) { _ in
+            if wall { sceneDirty = true } else { configureScene() }
+        }
+        .onChange(of: videoAutoplay) { _ in refreshVideoPreviews() }
+        .onChange(of: organized) { _ in
+            videoPreviews.stopAll(); scene.setVideoPreviews([:]); refreshVideoPreviews()
+        }
+        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized || wall ? [:] : $0) }
         .fullScreenCover(item: $activeEntry) { entry in
-            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 })
-                .environmentObject(model)
+            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 }).environmentObject(model)
         }
-        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(
-            get: { actionEntry != nil },
-            set: { if !$0 { actionEntry = nil } }
-        ), titleVisibility: .visible) {
-            Button("打开播放") {
-                activeEntry = actionEntry
-                actionEntry = nil
-            }
-            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") {
-                if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }
-                actionEntry = nil
-            }
-            Button("加入播放队列") {
-                if let entry = actionEntry { model.mediaStore.enqueue([entry]) }
-                actionEntry = nil
-            }
+        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(get: { actionEntry != nil }, set: { if !$0 { actionEntry = nil } }), titleVisibility: .visible) {
+            Button("打开播放") { activeEntry = actionEntry; actionEntry = nil }
+            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") { if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }; actionEntry = nil }
+            Button("加入播放队列") { if let entry = actionEntry { model.mediaStore.enqueue([entry]) }; actionEntry = nil }
             Button("取消", role: .cancel) { actionEntry = nil }
         }
+        .overlay(alignment: .bottomTrailing) { debugLabels }
+        .task { await updateDiagnostics() }
     }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("月藏图").font(.title.bold()).foregroundStyle(treasureForeground)
-                Text("像巨龙宝库一样堆放你的图片与视频").font(.subheadline).foregroundStyle(treasureForeground.opacity(0.72))
-            }
-            Spacer()
-            Menu {
-                Picker("掉落数量", selection: $dropCount) {
-                    ForEach([6, 12, 20, 30, 42], id: \.self) { count in
-                        Text("\(count) 张").tag(count)
+    private var freeContent: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Picker("藏宝范围", selection: $scope) { ForEach(TreasureScope.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
+                Menu {
+                    Picker("掉落数量", selection: $dropCount) { ForEach([6, 12, 20, 30, 42], id: \.self) { Text("\($0) 张").tag($0) } }
+                } label: { Text("\(dropCount) 张").frame(minWidth: 44, minHeight: 44) }
+                    .accessibilityIdentifier("treasure-drop-count")
+                Menu {
+                    Picker("视频预览", selection: $videoAutoplay) {
+                        Text("静止封面").tag(false); Text("自动播放（最多3张）").tag(true)
                     }
-                }
-            } label: {
-                VStack(spacing: 1) {
-                    Text("\(min(dropCount, items.count))").font(.subheadline.bold())
-                    Text("数量").font(.system(size: 9, weight: .medium))
-                }
-                .foregroundStyle(treasureForeground)
-                .frame(width: 44, height: 44)
-                .background { MoonGlassBackdrop(radius: 22) }
-            }
-            .accessibilityIdentifier("treasure-drop-count").buttonStyle(.plain)
-            Menu {
-                Picker("视频预览", selection: $videoAutoplay) {
-                    Text("静止封面").tag(false)
-                    Text("自动播放（最多3张）").tag(true)
-                }
-            } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "video")
-                    Text(videoAutoplay ? "自动" : "静止").font(.system(size: 9, weight: .medium))
-                }.foregroundStyle(treasureForeground).frame(width: 44, height: 44)
-                    .background { MoonGlassBackdrop(radius: 22) }
-            }
-            .accessibilityLabel("视频预览")
-            .accessibilityValue(videoAutoplay ? "自动播放" : "静止封面")
-            .accessibilityIdentifier("treasure-video-mode").buttonStyle(.plain)
-        }.padding(.horizontal, 22).padding(.top, 8)
-    }
-
-    private var darkTreasureBackground: Bool {
-        switch directedOptions.background {
-        case .system: return colorScheme == .dark
-        case .purple: return true
-        case .solid: return directedOptions.red * 0.2126 + directedOptions.green * 0.7152 + directedOptions.blue * 0.0722 < 0.5
+                } label: { Image(systemName: videoAutoplay ? "video.fill" : "video.slash").frame(width: 44, height: 44) }
+                    .accessibilityLabel("视频预览").accessibilityValue(videoAutoplay ? "自动播放" : "静止封面").accessibilityIdentifier("treasure-video-mode")
+            }.buttonStyle(MoonGlassButtonStyle()).padding(8).moonSingleGlass().padding(.horizontal, 14)
+            freeStage
+            HStack {
+                Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张").font(.caption).accessibilityIdentifier("treasure-actual-count")
+                Spacer()
+                Button(organized ? "自由" : "整理") { organized.toggle() }.accessibilityIdentifier("treasure-layout")
+                Button("重新散落") { scene.scatterTreasures() }.disabled(organized).accessibilityIdentifier("treasure-scatter")
+                Button("重置") { configureScene() }.disabled(organized).accessibilityIdentifier("treasure-reset")
+            }.frame(minHeight: 44).buttonStyle(MoonGlassButtonStyle()).padding(10).moonSingleGlass().padding(.horizontal, 14)
+            if filteredItems.isEmpty { Text("宝库还是空的，请从库中导入图片或视频。").font(.caption).foregroundStyle(.secondary) }
         }
     }
-    private var treasureForeground: Color { darkTreasureBackground ? .white : .black }
-    @ViewBuilder private var treasureBackground: some View {
-        switch directedOptions.background {
-        case .system: Color(uiColor: .systemBackground)
-        case .solid: Color(red: directedOptions.red, green: directedOptions.green, blue: directedOptions.blue)
-        case .purple:
-            LinearGradient(colors: [.black, Color(red: 0.05, green: 0.07, blue: 0.13), Color(red: 0.15, green: 0.11, blue: 0.25)], startPoint: .top, endPoint: .bottom)
+    @ViewBuilder private var freeStage: some View {
+        if organized {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))]) {
+                    ForEach(filteredItems) { entry in
+                        TreasureOrganizedCard(entry: entry, player: videoPreviews.players[entry.id], onOpen: { activeEntry = entry }, onHold: { actionEntry = entry })
+                            .onAppear { if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() } }
+                            .onDisappear { visibleGridVideos.remove(entry.id); refreshVideoPreviews() }
+                    }
+                }.padding(14)
+            }.accessibilityIdentifier("treasure-grid")
+        } else {
+            SpriteView(scene: scene, options: [.allowsTransparency])
+                .clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14)
+                .accessibilityIdentifier("moon-treasure-map")
+                .onAppear { if scene.children.isEmpty || !scene.hasCallbacks { configureScene() }; syncFreeState() }
         }
     }
-    private func requestDirectedPlayback() {
-        let ids = directedOptions.plan(in: model.mediaStore)
-        guard !ids.isEmpty else { targetNotice = "目标不存在或不在当前播放列表，请重新选择。"; return }
-        targetNotice = ids.count < directedOptions.count ? "实际可播放 \(ids.count) 项，到列表末尾停止。" : ""
-        directedRequest = TreasurePlaybackRequest(ids: ids, options: directedOptions)
-    }
-
-    private func refreshVideoPreviews() {
-        let candidates = organized ? filteredItems.filter { visibleGridVideos.contains($0.id) } : items
-        videoPreviews.configure(entries: candidates,
-                                enabled: pageVisible && videoAutoplay && scenePhase == .active && activeEntry == nil && directedRequest == nil)
-        scene.setVideoPreviews(organized ? [:] : videoPreviews.players)
-    }
-
     private func configureScene() {
+        sceneDirty = false
         #if DEBUG
         scene.onDragDiagnostics = { dragDiagnostics = $0 }
         #endif
-        scene.configure(
-            with: items,
-            onSelect: { id in
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                controlsVisible = true
-                activeEntry = model.mediaStore.items.first { $0.id == id }
-            },
-            onLongPress: { id in
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                actionEntry = model.mediaStore.items.first { $0.id == id }
-            }
-        )
-        scene.setCardContrast(dark: darkTreasureBackground)
+        scene.configure(with: items, onSelect: { id in activeEntry = model.mediaStore.items.first { $0.id == id } }, onLongPress: { id in actionEntry = model.mediaStore.items.first { $0.id == id } })
+        scene.setCardContrast(dark: darkCards); syncFreeState()
+    }
+    private func syncFreeState() {
+        if pageVisible && !wall && !organized && scenePhase == .active && activeEntry == nil { scene.startMotion() }
+        else { scene.stopMotion() }
         refreshVideoPreviews()
     }
+    private func refreshVideoPreviews() {
+        let candidates = organized ? filteredItems.filter { visibleGridVideos.contains($0.id) } : items
+        videoPreviews.configure(entries: candidates, enabled: pageVisible && !wall && videoAutoplay && scenePhase == .active && activeEntry == nil)
+        scene.setVideoPreviews(organized || wall ? [:] : videoPreviews.players)
+    }
+    @ViewBuilder private var debugLabels: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests") {
+            Text("物理拖拽测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01).allowsHitTesting(false)
+                .accessibilityIdentifier("treasure-physics-probe").accessibilityValue(dragDiagnostics)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
+            Text("视频预览测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01).allowsHitTesting(false)
+                .accessibilityIdentifier("treasure-video-probe").accessibilityValue(videoDiagnostics)
+        }
+        #endif
+    }
+    private func updateDiagnostics() async {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") else { return }
+        while !Task.isCancelled {
+            let values: [String: Int] = ["players": videoPreviews.players.count,
+                "advancing": videoPreviews.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count,
+                "muted": videoPreviews.players.values.allSatisfy(\.isMuted) ? 1 : 0,
+                "nodes": scene.videoPreviewCount, "centerIcons": scene.centerPlayIconCount, "auto": videoAutoplay ? 1 : 0]
+            videoDiagnostics = String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        #endif
+    }
 }
-
 private enum TreasureScope: String, CaseIterable, Identifiable {
     case all, favorites, videos
     var id: String { rawValue }
@@ -353,6 +209,7 @@ private enum TreasureScope: String, CaseIterable, Identifiable {
 }
 
 private final class MoonTreasureScene: SKScene {
+    var hasCallbacks: Bool { select != nil && longPress != nil }
     var onDragDiagnostics: ((String) -> Void)?
     private var darkCards = true
     private var videoBindings: [String: AVQueuePlayer] = [:]
