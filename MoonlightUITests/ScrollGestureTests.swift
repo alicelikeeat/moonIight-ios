@@ -2,6 +2,37 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testTreasureGridCanOpenHoldAndSwitchTwentyTimes() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        let entry = app.buttons["library-treasure-map"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        let layout = app.buttons["treasure-layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        if layout.label == "自由" { layout.tap() }
+        for _ in 0..<20 {
+            layout.tap()
+            XCTAssertTrue(app.scrollViews["treasure-grid"].waitForExistence(timeout: 3))
+            layout.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["moon-treasure-map"].waitForExistence(timeout: 3))
+        }
+        layout.tap()
+        let card = app.buttons["treasure-grid-scroll-fixture-0"]
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["加入播放队列"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["player-close"].exists)
+        app.buttons["加入播放队列"].tap()
+        card.tap()
+        XCTAssertTrue(app.buttons["player-close"].waitForExistence(timeout: 5))
+        app.buttons["player-close"].tap()
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        attach(app, name: "review-treasure-organized")
+    }
+
+    @MainActor
     private func attach(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways
@@ -672,5 +703,6 @@ final class ScrollGestureTests: XCTestCase {
     }
 
 }
+
 
 
