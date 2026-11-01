@@ -2,6 +2,96 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testDirectedPlaybackConfirmsStableTailAndDoesNotAutoReturn() {
+        let app = launch(discover: false, flags: ["--treasure-directed-ui-tests"])
+        func openMap() {
+            let ready = app.staticTexts["background-test-state"]
+            XCTAssertTrue(ready.waitForExistence(timeout: 10))
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 10), .completed)
+            app.buttons["navigation-me"].tap()
+            let library = app.buttons["me-library"]
+            XCTAssertTrue(library.waitForExistence(timeout: 5)); library.tap()
+            let map = app.buttons["library-treasure-map"]
+            XCTAssertTrue(map.waitForExistence(timeout: 8)); map.tap()
+            XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
+        }
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<10 { if element.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(element.isHittable)
+        }
+        openMap()
+        app.buttons["treasure-directed-settings"].tap()
+        let count = app.steppers["treasure-sequence-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        for _ in 0..<4 { count.buttons.element(boundBy: 1).tap() }
+        let returnToggle = app.switches["treasure-auto-return"]
+        XCTAssertEqual(returnToggle.value as? String, "0")
+        let reset = app.buttons["treasure-background-reset"]
+        reveal(reset); reset.tap()
+        let target = app.buttons["treasure-target-scroll-fixture-0"]
+        reveal(target); target.tap()
+        XCTAssertFalse(app.buttons["treasure-sequence-close"].exists, "Selection started without confirmation")
+        let confirm = app.buttons["treasure-confirm-target"]
+        reveal(confirm)
+        XCTAssertTrue(app.staticTexts["treasure-planned-count"].label.contains("2"), "Only one video and one image have valid fixture URLs")
+        confirm.tap()
+        let close = app.buttons["treasure-sequence-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 8))
+        let pause = app.buttons["treasure-sequence-pause"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: pause)], timeout: 5), .completed)
+        pause.tap()
+        let position = app.staticTexts["treasure-sequence-position"].label
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(app.staticTexts["treasure-sequence-position"].label, position)
+        pause.tap()
+        XCTAssertTrue(app.staticTexts["本次播放完成"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["treasure-sequence-position"].label.contains("2/2"))
+        close.tap()
+        app.buttons["treasure-directed-start"].tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 8))
+        app.buttons["treasure-sequence-next"].tap()
+        app.buttons["treasure-sequence-stop"].tap()
+        XCTAssertTrue(app.staticTexts["已停止"].firstMatch.waitForExistence(timeout: 5))
+        close.tap()
+        app.terminate(); app.launch(); openMap()
+        XCTAssertFalse(app.buttons["treasure-sequence-close"].exists)
+        app.buttons["treasure-directed-settings"].tap()
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        XCTAssertTrue(count.label.contains("5"), "Continuous count did not persist")
+        attach(app, name: "review-v21-directed-settings")
+    }
+
+    @MainActor
+    func testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI() {
+        let app = launch(discover: false, flags: ["--assistant-dock-ui-tests"])
+        let input = app.textFields["assistant-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("月藏图")
+        let command = app.buttons["assistant-command-treasureMap"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
+        XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
+        app.buttons["treasure-map-close"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("定向播放")
+        let settingsCommand = app.buttons["assistant-command-treasurePlayback"]
+        XCTAssertTrue(settingsCommand.waitForExistence(timeout: 5)); settingsCommand.tap()
+        XCTAssertTrue(app.steppers["treasure-sequence-count"].waitForExistence(timeout: 8))
+        app.buttons["treasure-settings-close"].tap()
+        app.buttons["treasure-map-close"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("搜索图片 猫\n")
+        let field = app.textFields["discover-search-input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "猫")
+        XCTAssertTrue(app.segmentedControls["discover-kind-filter"].buttons["图片"].isSelected)
+        XCTAssertFalse(app.navigationBars["智能对话"].exists)
+        let clear = app.buttons["discover-search-clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5)); clear.tap()
+        XCTAssertNotEqual(field.value as? String, "猫")
+        attach(app, name: "review-v21-search-routing")
+    }
+
+    @MainActor
     func testTreasureVideoPreviewCanPlayFreezeAndRememberPreference() {
         let app = launch(discover: false, flags: ["--treasure-video-ui-tests"])
         func openMap() {
@@ -30,7 +120,12 @@ final class ScrollGestureTests: XCTestCase {
                       let snapshot = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
                 return predicate(snapshot)
             }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12), .completed)
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12)
+            if result != .completed {
+                print("PREVIEW_TIMEOUT_SNAPSHOT: \(probe.value as? String ?? "missing")")
+                attach(app, name: "review-preview-timeout")
+            }
+            XCTAssertEqual(result, .completed)
         }
         openMap()
         let layout = app.buttons["treasure-layout"]
@@ -120,7 +215,10 @@ final class ScrollGestureTests: XCTestCase {
         let card = app.buttons["treasure-grid-scroll-fixture-0"]
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         card.press(forDuration: 0.7)
-        XCTAssertTrue(app.buttons["加入播放队列"].waitForExistence(timeout: 3))
+        guard app.buttons["加入播放队列"].waitForExistence(timeout: 5) else {
+            print(app.debugDescription); attach(app, name: "review-grid-hold-failure")
+            XCTFail("Long press did not open the treasure actions menu"); return
+        }
         XCTAssertFalse(app.buttons["player-close"].exists)
         app.buttons["加入播放队列"].tap()
         card.tap()
@@ -135,6 +233,28 @@ final class ScrollGestureTests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    /// Keep list targets above the floating navigation dock. A row may be
+    /// accessible while its center still belongs to the dock's hit region.
+    @MainActor
+    private func revealListControl(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        let bounds = app.frame
+        for _ in 0..<30 {
+            var moveDown = false
+            if element.exists {
+                let frame = element.frame
+                if element.isHittable && frame.minY >= bounds.minY + 90 && frame.maxY <= bounds.maxY - 110 { return true }
+                moveDown = frame.height > 0 && frame.minY < bounds.minY + 90
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.35 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.55 : 0.45))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        print(app.debugDescription)
+        attach(app, name: "review-list-control-not-visible")
+        XCTFail("List target is not safely visible above navigation: \(element)")
+        return false
     }
 
     @MainActor
@@ -588,8 +708,7 @@ final class ScrollGestureTests: XCTestCase {
         openBackgroundSettings()
         for id in ["ui-test-background-image", "ui-test-background-video"] {
             let asset = app.buttons["playlist-asset-\(id)"]
-            for _ in 0..<16 { if asset.isHittable { break }; app.swipeUp() }
-            XCTAssertTrue(asset.isHittable)
+            guard revealListControl(asset, in: app) else { return }
             if asset.value as? String != "已选择" { asset.tap() }
             XCTAssertEqual(asset.value as? String, "已选择", "The background row did not accept selection")
         }
@@ -611,6 +730,8 @@ final class ScrollGestureTests: XCTestCase {
         func openEditor() {
             app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
             app.buttons["context-menu-settings-entry"].tap()
+            XCTAssertTrue(app.navigationBars["长按与底栏"].waitForExistence(timeout: 5))
+            guard revealListControl(app.buttons["媒体卡片"], in: app) else { return }
             XCTAssertTrue(app.buttons["页面长按菜单"].exists)
             XCTAssertTrue(app.buttons["按键长按菜单"].exists)
             XCTAssertFalse(app.buttons["页面背景 · 首页"].exists)
@@ -698,7 +819,9 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["我"].tap()
         app.buttons["settings-entry"].tap()
         app.buttons["backgrounds-entry"].tap()
-        app.buttons["background-target-page.home"].tap()
+        let homeBackground = app.buttons["background-target-page.home"]
+        guard revealListControl(homeBackground, in: app) else { return }
+        homeBackground.tap()
         attach(app, name: "review-background-editor")
         let video = app.buttons["使用这个视频背景"].firstMatch
         // The background library may contain the user's imported assets before
