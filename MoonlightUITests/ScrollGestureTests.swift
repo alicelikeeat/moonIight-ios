@@ -235,6 +235,28 @@ final class ScrollGestureTests: XCTestCase {
         add(attachment)
     }
 
+    /// Keep list targets above the floating navigation dock. A row may be
+    /// accessible while its center still belongs to the dock's hit region.
+    @MainActor
+    private func revealListControl(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        let bounds = app.frame
+        for _ in 0..<30 {
+            var moveDown = false
+            if element.exists {
+                let frame = element.frame
+                if element.isHittable && frame.minY >= bounds.minY + 90 && frame.maxY <= bounds.maxY - 110 { return true }
+                moveDown = frame.height > 0 && frame.minY < bounds.minY + 90
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.35 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.55 : 0.45))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        print(app.debugDescription)
+        attach(app, name: "review-list-control-not-visible")
+        XCTFail("List target is not safely visible above navigation: \(element)")
+        return false
+    }
+
     @MainActor
     private func closeMediaPicker(_ app: XCUIApplication) {
         let labels = ["Cancel", "取消", "Close", "关闭", "Dismiss"]
@@ -686,8 +708,7 @@ final class ScrollGestureTests: XCTestCase {
         openBackgroundSettings()
         for id in ["ui-test-background-image", "ui-test-background-video"] {
             let asset = app.buttons["playlist-asset-\(id)"]
-            for _ in 0..<16 { if asset.isHittable { break }; app.swipeUp() }
-            XCTAssertTrue(asset.isHittable)
+            guard revealListControl(asset, in: app) else { return }
             if asset.value as? String != "已选择" { asset.tap() }
             XCTAssertEqual(asset.value as? String, "已选择", "The background row did not accept selection")
         }
@@ -709,6 +730,8 @@ final class ScrollGestureTests: XCTestCase {
         func openEditor() {
             app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
             app.buttons["context-menu-settings-entry"].tap()
+            XCTAssertTrue(app.navigationBars["长按与底栏"].waitForExistence(timeout: 5))
+            guard revealListControl(app.buttons["媒体卡片"], in: app) else { return }
             XCTAssertTrue(app.buttons["页面长按菜单"].exists)
             XCTAssertTrue(app.buttons["按键长按菜单"].exists)
             XCTAssertFalse(app.buttons["页面背景 · 首页"].exists)
@@ -796,7 +819,9 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["我"].tap()
         app.buttons["settings-entry"].tap()
         app.buttons["backgrounds-entry"].tap()
-        app.buttons["background-target-page.home"].tap()
+        let homeBackground = app.buttons["background-target-page.home"]
+        guard revealListControl(homeBackground, in: app) else { return }
+        homeBackground.tap()
         attach(app, name: "review-background-editor")
         let video = app.buttons["使用这个视频背景"].firstMatch
         // The background library may contain the user's imported assets before
