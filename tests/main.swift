@@ -19,4 +19,6 @@ for _ in 0..<30 {
     check(!TreasureRules.shouldDrag(distance: 10), "threshold inclusive")
     check(TreasureRules.shouldDrag(distance: 10.1), "drag threshold")
 }
+check(TreasureRules.unique(["b", "a", "b", "c", "a"], id: \.self) == ["b", "a", "c"], "unique stable order")
+check(TreasureRules.unique([String](), id: \.self).isEmpty, "empty identity set")
 print("Treasure policy: \(checks) checks passed")

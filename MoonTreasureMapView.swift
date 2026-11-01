@@ -25,8 +25,7 @@ struct MoonTreasureMapView: View {
         case .favorites: source = model.mediaStore.items.filter(\.isFavorite)
         case .videos: source = model.mediaStore.items.filter { $0.kind == .video }
         }
-        var seen = Set<String>()
-        return source.filter { seen.insert($0.id).inserted }
+        return TreasureRules.unique(source, id: \.id)
     }
 
     private var items: [MediaEntry] { Array(filteredItems.prefix(TreasureRules.count(selected: dropCount, available: filteredItems.count))) }
@@ -54,11 +53,7 @@ struct MoonTreasureMapView: View {
                             ForEach(filteredItems) { entry in
                                 Button { activeEntry = entry } label: {
                                     VStack {
-                                        AsyncImage(url: entry.coverURL ?? (entry.kind == .image ? entry.remoteURL : nil)) { image in
-                                            image.resizable().scaledToFit()
-                                        } placeholder: {
-                                            Image(systemName: entry.kind == .video ? "play.rectangle.fill" : "photo")
-                                        }.frame(height: 100)
+                                        TreasureThumbnail(entry: entry).frame(height: 100)
                                         Text(entry.title).lineLimit(2)
                                     }.frame(maxWidth: .infinity).padding(8)
                                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -231,8 +226,7 @@ private final class MoonTreasureScene: SKScene {
         originalFillColors.removeAll()
         physicsWorld.gravity = CGVector(dx: 0, dy: -4.6)
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
-        var ids = Set<String>()
-        for (index, entry) in entries.prefix(42).enumerated() where ids.insert(entry.id).inserted { addTreasure(entry, index: index) }
+        for (index, entry) in TreasureRules.unique(entries, id: \.id).prefix(42).enumerated() { addTreasure(entry, index: index) }
         startMotion()
     }
 
@@ -391,6 +385,8 @@ private final class MoonTreasureScene: SKScene {
             touchStarts[key] = point
             offsets[key] = CGPoint(x: node.position.x - point.x, y: node.position.y - point.y)
             samples[key] = [(point, touch.timestamp)]
+            node.physicsBody?.velocity = .zero
+            node.physicsBody?.angularVelocity = 0
             let work = DispatchWorkItem { [weak self] in
                 guard let self, !self.movedTouches.contains(key), let node = self.draggedTreasures[key], let id = node.name else { return }
                 self.heldTouches.insert(key)
@@ -451,6 +447,8 @@ private final class MoonTreasureScene: SKScene {
         stopMotion()
         previewTasks.forEach { $0.cancel() }
         previewTasks.removeAll()
+        select = nil
+        longPress = nil
     }
 
     private func clamped(_ point: CGPoint, node: SKNode) -> CGPoint {
@@ -501,7 +499,7 @@ private final class MoonTreasureScene: SKScene {
         let halo = fusionHalo ?? SKShapeNode()
         halo.path = CGPath(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height), cornerWidth: height / 2, cornerHeight: height / 2, transform: nil)
         halo.fillColor = SKColor(red: 0.95, green: 0.68, blue: 0.16, alpha: 0.16)
-        halo.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.26, alpha: 0.96)
+        halo.strokeColor = SKColor(red: 1.0, green: 0.78, blue: 0.26, alpha: 0.4)
         treasure.fillColor = SKColor(red: 0.92, green: 0.63, blue: 0.14, alpha: 0.16)
         other.fillColor = SKColor(red: 0.92, green: 0.63, blue: 0.14, alpha: 0.16)
         halo.lineWidth = 1.3
@@ -545,6 +543,29 @@ private final class MoonTreasureScene: SKScene {
         guard let fusionHalo else { return }
         self.fusionHalo = nil
         fusionHalo.run(.sequence([.fadeOut(withDuration: 0.16), .removeFromParent()]))
+    }
+}
+
+private struct TreasureThumbnail: View {
+    let entry: MediaEntry
+    @State private var image: UIImage?
+    private var url: URL? { entry.coverURL ?? entry.remoteURL }
+
+    var body: some View {
+        ZStack {
+            if let image { Image(uiImage: image).resizable().scaledToFit() }
+            else { Image(systemName: entry.kind == .video ? "play.rectangle.fill" : "photo") }
+            if entry.kind == .video {
+                Image(systemName: "play.circle.fill").font(.title).foregroundStyle(.white)
+            }
+        }
+        .task(id: url) {
+            image = nil
+            guard let url else { return }
+            let loaded = await TreasurePreviewStore.shared.image(at: url, video: entry.kind == .video && entry.coverURL == nil)
+            guard !Task.isCancelled else { return }
+            image = loaded
+        }
     }
 }
 
