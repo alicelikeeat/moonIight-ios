@@ -324,7 +324,7 @@ struct RootView: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
             if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
-                await backgroundStore.prepareUITestMedia()
+                await backgroundStore.prepareUITestMedia(applyBackgrounds: !ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests"))
                 if let video = backgroundStore.assets.first(where: { $0.id == "ui-test-background-video" }),
                    let image = backgroundStore.assets.first(where: { $0.id == "ui-test-background-image" }) {
                     model.mediaStore.prepareReelsUITest(videoURL: backgroundStore.url(for: video), imageURL: backgroundStore.url(for: image))
@@ -349,7 +349,7 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") {
+            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
                 Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
                     .font(.caption2).foregroundStyle(.secondary).allowsHitTesting(false)
                     .accessibilityIdentifier("background-test-state")

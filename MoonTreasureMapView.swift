@@ -160,8 +160,8 @@ struct MoonTreasureMapView: View {
                     "centerIcons": scene.centerPlayIconCount,
                     "auto": videoAutoplay ? 1 : 0
                 ]
-                if let data = try? JSONSerialization.data(withJSONObject: values), let text = String(data: data, encoding: .utf8) {
-                    videoDiagnostics = text
+                if let data = try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys), let text = String(data: data, encoding: .utf8) {
+                    if videoDiagnostics != text { videoDiagnostics = text }
                 }
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }

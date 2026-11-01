@@ -5,8 +5,14 @@ final class ScrollGestureTests: XCTestCase {
     func testTreasureVideoPreviewCanPlayFreezeAndRememberPreference() {
         let app = launch(discover: false, flags: ["--treasure-video-ui-tests"])
         func openMap() {
+            let ready = app.staticTexts["background-test-state"]
+            XCTAssertTrue(ready.waitForExistence(timeout: 10))
+            let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)
+            XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 10), .completed)
             app.buttons["navigation-me"].press(forDuration: 0.7)
-            app.buttons["打开库"].tap()
+            let library = app.buttons["打开库"]
+            XCTAssertTrue(library.waitForExistence(timeout: 5))
+            library.tap()
             app.buttons["library-treasure-map"].tap()
             XCTAssertTrue(app.buttons["treasure-video-mode"].waitForExistence(timeout: 5))
         }
