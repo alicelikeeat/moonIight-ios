@@ -1647,7 +1647,7 @@ private struct DiscoverView: View {
                     }
                     .onSubmit { Task { await model.mediaStore.searchDiscover(query) } }
                 if !query.isEmpty {
-                    Button { query = ""; model.mediaStore.clearDiscoverySearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.accessibilityLabel("清除媒体搜索").accessibilityIdentifier("discover-search-clear")
+                    Button { query = ""; model.mediaStore.clearDiscoverySearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary).frame(width: 44, height: 44) }.accessibilityLabel("清除媒体搜索").accessibilityIdentifier("discover-search-clear")
                 }
             }
             .padding(.horizontal, 15).frame(height: 50)
@@ -1675,7 +1675,7 @@ private struct DiscoverView: View {
                     Label("搜索", systemImage: "magnifyingglass").font(.subheadline.weight(.medium))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
             }
-            let results = (query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults).filter { kindFilter == "all" || $0.kind.rawValue == kindFilter }
+            let results = (query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults).filter { kindFilter == "all" || (kindFilter == "video" ? $0.kind != .image : $0.kind.rawValue == kindFilter) }
             if results.isEmpty {
                 EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "打开内容源选择分类并查看加载状态。", symbol: "safari")
                 Button(action: onSources) { Label("查看内容源", systemImage: "slider.horizontal.3") }.buttonStyle(MoonGlassButtonStyle())
@@ -3689,6 +3689,9 @@ private struct GlobalAssistantSearchOverlay: View {
     @EnvironmentObject private var model: AppModel
     @State private var query = ""
     @State private var submission = 0
+    @State private var pendingCommand: AppCommand?
+    @State private var pendingChat: String?
+    @State private var submitting = false
     @FocusState private var focused: Bool
 
     private var cleanQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -3718,7 +3721,7 @@ private struct GlobalAssistantSearchOverlay: View {
 
                     if !cleanQuery.isEmpty {
                         FlowLayout(spacing: 9) {
-                            Button { onChat(cleanQuery) } label: {
+                            Button { submitChat() } label: {
                                 Label("问 \(provider.title)", systemImage: "bubble.left.and.bubble.right.fill")
                             }.globalSearchBubble(tint: MoonStyle.accent)
 
@@ -3739,22 +3742,34 @@ private struct GlobalAssistantSearchOverlay: View {
             }
         }
         .onAppear { DispatchQueue.main.async { focused = true } }
+        .task(id: submission) {
+            guard submission > 0 else { return }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            submitting = false
+            if let command = pendingCommand { onCommand(command) }
+            else if let prompt = pendingChat { onChat(prompt) }
+        }
+        .onDisappear { if submitting { model.pendingMediaSearch = nil }; submitting = false }
         .accessibilityIdentifier("global-assistant-search")
     }
     private func sendCommand(_ command: AppCommand) {
+        guard !submitting else { return }
         if command == .searchMedia { model.pendingMediaSearch = MediaSearchIntent.parse(query) }
-        submission += 1
-        onCommand(command)
+        pendingCommand = command; pendingChat = nil
+        focused = false; submitting = true; submission += 1
+    }
+    private func submitChat() {
+        guard !submitting, !cleanQuery.isEmpty else { return }
+        pendingCommand = nil; pendingChat = cleanQuery
+        focused = false; submitting = true; submission += 1
     }
     private func submitSearch() {
         guard !cleanQuery.isEmpty else { return }
-        if let intent = MediaSearchIntent.parse(query) {
-            model.pendingMediaSearch = intent
-            submission += 1; onCommand(.searchMedia)
-        } else if let exact = matches.first(where: { $0.searchTerms.contains { $0.caseInsensitiveCompare(cleanQuery) == .orderedSame } }) { sendCommand(exact) }
-        else { submission += 1; onChat(cleanQuery) }
+        if MediaSearchIntent.parse(query) != nil { sendCommand(.searchMedia) }
+        else if let exact = matches.first(where: { $0.searchTerms.contains { $0.caseInsensitiveCompare(cleanQuery) == .orderedSame } }) { sendCommand(exact) }
+        else { submitChat() }
     }
-
 }
 
 private extension View {
@@ -3935,7 +3950,7 @@ private struct AssistantDock: View {
                     Button {
                         focused = false
                     } label: {
-                        Image(systemName: "chevron.down").frame(width: 36, height: 36)
+                        Image(systemName: "chevron.down").frame(width: 44, height: 44)
                     }.accessibilityLabel("收起输入栏")
                 }
             }
@@ -3967,7 +3982,7 @@ private struct AssistantDock: View {
                     Toggle("深入思考", isOn: $deepThinking)
                 } label: {
                     Image(systemName: "plus").font(.title3.weight(.semibold))
-                        .frame(width: 38, height: 38)
+                        .frame(width: 44, height: 44)
                         .background(Color.clear, in: Circle())
                 }
                 TextField("搜索功能或询问 \(provider.title)", text: $draft, axis: .vertical)
@@ -3977,7 +3992,7 @@ private struct AssistantDock: View {
                     .accessibilityIdentifier("assistant-input")
                 Button(action: submit) {
                     Image(systemName: "arrow.up").font(.headline.weight(.bold))
-                        .foregroundStyle(MoonStyle.accent).frame(width: 38, height: 38)
+                        .foregroundStyle(MoonStyle.accent).frame(width: 44, height: 44)
                 }
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("发送给 " + provider.title)

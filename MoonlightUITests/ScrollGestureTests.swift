@@ -2,6 +2,88 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testDirectedPlaybackConfirmsStableTailAndDoesNotAutoReturn() {
+        let app = launch(discover: false, flags: ["--treasure-directed-ui-tests"])
+        func openMap() {
+            let ready = app.staticTexts["background-test-state"]
+            XCTAssertTrue(ready.waitForExistence(timeout: 10))
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 10), .completed)
+            app.buttons["navigation-me"].press(forDuration: 0.7)
+            let library = app.buttons["打开库"]
+            XCTAssertTrue(library.waitForExistence(timeout: 5)); library.tap()
+            app.buttons["library-treasure-map"].tap()
+            XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
+        }
+        func reveal(_ element: XCUIElement) {
+            for _ in 0..<10 { if element.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(element.isHittable)
+        }
+        openMap()
+        app.buttons["treasure-directed-settings"].tap()
+        let count = app.steppers["treasure-sequence-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        for _ in 0..<4 { count.buttons.element(boundBy: 1).tap() }
+        let returnToggle = app.switches["treasure-auto-return"]
+        XCTAssertEqual(returnToggle.value as? String, "0")
+        let reset = app.buttons["treasure-background-reset"]
+        reveal(reset); reset.tap()
+        let target = app.buttons["treasure-target-scroll-fixture-0"]
+        reveal(target); target.tap()
+        XCTAssertFalse(app.buttons["treasure-sequence-close"].exists, "Selection started without confirmation")
+        let confirm = app.buttons["treasure-confirm-target"]
+        reveal(confirm)
+        XCTAssertTrue(app.staticTexts["treasure-planned-count"].label.contains("2"), "Only one video and one image have valid fixture URLs")
+        confirm.tap()
+        let close = app.buttons["treasure-sequence-close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 8))
+        let pause = app.buttons["treasure-sequence-pause"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: pause)], timeout: 5), .completed)
+        pause.tap()
+        let position = app.staticTexts["treasure-sequence-position"].label
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(app.staticTexts["treasure-sequence-position"].label, position)
+        pause.tap()
+        XCTAssertTrue(app.staticTexts["本次播放完成"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["treasure-sequence-position"].label.contains("2/2"))
+        close.tap()
+        app.buttons["treasure-directed-start"].tap()
+        XCTAssertTrue(close.waitForExistence(timeout: 8))
+        app.buttons["treasure-sequence-next"].tap()
+        app.buttons["treasure-sequence-stop"].tap()
+        XCTAssertTrue(app.staticTexts["已停止"].firstMatch.waitForExistence(timeout: 5))
+        close.tap()
+        app.terminate(); app.launch(); openMap()
+        XCTAssertFalse(app.buttons["treasure-sequence-close"].exists)
+        app.buttons["treasure-directed-settings"].tap()
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        XCTAssertTrue(count.label.contains("5"), "Continuous count did not persist")
+        attach(app, name: "review-v21-directed-settings")
+    }
+
+    @MainActor
+    func testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI() {
+        let app = launch(discover: false, flags: ["--assistant-dock-ui-tests"])
+        let input = app.textFields["assistant-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("月藏图")
+        let command = app.buttons["assistant-command-treasureMap"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
+        XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
+        app.buttons["完成"].firstMatch.tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("搜索图片 猫\n")
+        let field = app.textFields["discover-search-input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "猫")
+        XCTAssertTrue(app.segmentedControls["discover-kind-filter"].buttons["图片"].isSelected)
+        XCTAssertFalse(app.navigationBars["智能对话"].exists)
+        let clear = app.buttons["discover-search-clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5)); clear.tap()
+        XCTAssertNotEqual(field.value as? String, "猫")
+        attach(app, name: "review-v21-search-routing")
+    }
+
+    @MainActor
     func testTreasureVideoPreviewCanPlayFreezeAndRememberPreference() {
         let app = launch(discover: false, flags: ["--treasure-video-ui-tests"])
         func openMap() {

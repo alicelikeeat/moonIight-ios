@@ -12,7 +12,7 @@ extension EnvironmentValues {
 struct MoonGlassBackdrop: View {
     var radius: CGFloat = 22
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.accessibilityContrast) private var contrast
+    @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
         Group {
             if reduceTransparency {

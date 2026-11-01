@@ -141,6 +141,8 @@ private final class TreasureSequenceSession: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var endObserver: NSObjectProtocol?
     private var audioOwned = false
+    private var wantsPlaying = false
+    private var loadingAsset: AVURLAsset?
     private var remaining = 0.0
     private var imageStarted: Date?
 
@@ -153,7 +155,7 @@ private final class TreasureSequenceSession: ObservableObject {
         stopItem()
         guard ids.indices.contains(index) else { message = "本次播放完成"; current = nil; return }
         guard let entry = lookup?(ids[index]) else { message = "目标已删除，请关闭后重新选择。"; current = nil; return }
-        current = entry; message = ""
+        current = entry; message = ""; wantsPlaying = true
         guard let url = entry.remoteURL, entry.kind != .embed else { message = "当前目标不可播放，请重新选择。"; return }
         if entry.kind == .image {
             remaining = options.imageSeconds; playing = true; scheduleImage()
@@ -161,28 +163,35 @@ private final class TreasureSequenceSession: ObservableObject {
             let expectedID = entry.id
             loadTask = Task { @MainActor [weak self] in
                 let asset = AVURLAsset(url: url)
+                self?.loadingAsset = asset
                 let valid = (try? await asset.load(.isPlayable)) == true
                 guard !Task.isCancelled, let self, self.current?.id == expectedID else { return }
                 guard valid else { self.message = "此来源无法直接播放，请重新选择。"; return }
-                var audioAvailable = true
+                self.loadingAsset = nil
+                var audioAvailable = self.wantsPlaying
                 do {
+                    guard self.wantsPlaying else { throw CancellationError() }
                     // soloAmbient honors Ring/Silent and never mixes a second
                     // soundtrack over this sequence. No background entitlement.
                     try AVAudioSession.sharedInstance().setCategory(.soloAmbient, mode: .default)
                     try AVAudioSession.sharedInstance().setActive(true)
                     self.audioOwned = true
-                } catch { self.message = "音频会话不可用，将静音播放。"; audioAvailable = false }
+                } catch {
+                    if self.wantsPlaying { self.message = "音频会话不可用，将静音播放。" }
+                    audioAvailable = false
+                }
                 let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
                 player.isMuted = !audioAvailable || self.options.sound == .muted
                 player.volume = Float(self.options.volume / 100)
                 self.player = player
                 self.endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main) { [weak self] _ in
                     Task { @MainActor in
-                        guard let self, self.current?.id == expectedID else { return }
+                        guard let self, self.current?.id == expectedID, self.playing else { return }
                         self.next()
                     }
                 }
-                self.playing = true; player.play()
+                self.playing = self.wantsPlaying
+                if self.playing { player.play() }
             }
         }
     }
@@ -197,8 +206,20 @@ private final class TreasureSequenceSession: ObservableObject {
     }
     func togglePause() {
         guard current != nil else { return }
-        playing.toggle()
-        if let player { playing ? player.play() : player.pause() }
+        playing.toggle(); wantsPlaying = playing
+        if let player {
+            if playing {
+                if !audioOwned {
+                    do {
+                        try AVAudioSession.sharedInstance().setCategory(.soloAmbient, mode: .default)
+                        try AVAudioSession.sharedInstance().setActive(true)
+                        audioOwned = true
+                    } catch { message = "音频会话不可用，将静音播放。" }
+                }
+                player.isMuted = !audioOwned || options.sound == .muted
+                player.play()
+            } else { player.pause() }
+        }
         else if current?.kind == .image {
             if playing { scheduleImage() }
             else {
@@ -207,12 +228,13 @@ private final class TreasureSequenceSession: ObservableObject {
             }
         }
     }
-    func pause() { if playing { togglePause() } }
+    func pause() { wantsPlaying = false; if playing { togglePause() } }
     func next() { index += 1; open() }
     func validate(_ available: Set<String>) {
         if let id = current?.id, !available.contains(id) { stop(); message = "当前目标已删除，请重新选择。" }
     }
     private func stopItem() {
+        loadingAsset?.cancelLoading(); loadingAsset = nil
         loadTask?.cancel(); loadTask = nil
         imageTask?.cancel(); imageTask = nil; imageStarted = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
@@ -224,7 +246,7 @@ private final class TreasureSequenceSession: ObservableObject {
             audioOwned = false
         }
     }
-    func stop() { stopItem(); current = nil; lookup = nil; message = "已停止" }
+    func stop() { wantsPlaying = false; stopItem(); current = nil; lookup = nil; message = "已停止" }
 }
 
 struct TreasureDirectedPlayer: View {
