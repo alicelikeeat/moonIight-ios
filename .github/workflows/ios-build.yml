@@ -69,7 +69,7 @@ jobs:
         if: steps.version.outputs.release != 'true'
         timeout-minutes: 10
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureGridCanOpenHoldAndSwitchTwentyTimes -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureDragKeepsTouchAndPhysicsOwnership -resultBundlePath build/TreasureTests.xcresult test
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureGridCanOpenHoldAndSwitchTwentyTimes -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureDragKeepsTouchAndPhysicsOwnership -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureVideoPreviewCanPlayFreezeAndRememberPreference -resultBundlePath build/TreasureTests.xcresult test
       - name: Run focused visual diagnostics
         if: steps.version.outputs.release != 'true'
         continue-on-error: true
@@ -94,7 +94,7 @@ jobs:
           SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
           COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
           SKIP=()
-          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership; do
+          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference; do
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test

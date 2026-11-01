@@ -2,6 +2,48 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testTreasureVideoPreviewCanPlayFreezeAndRememberPreference() {
+        let app = launch(discover: false, flags: ["--treasure-video-ui-tests"])
+        func openMap() {
+            app.buttons["navigation-me"].press(forDuration: 0.7)
+            app.buttons["打开库"].tap()
+            app.buttons["library-treasure-map"].tap()
+            XCTAssertTrue(app.buttons["treasure-video-mode"].waitForExistence(timeout: 5))
+        }
+        func select(_ title: String) {
+            app.buttons["treasure-video-mode"].tap()
+            let option = app.buttons[title]
+            XCTAssertTrue(option.waitForExistence(timeout: 3))
+            option.tap()
+        }
+        func waitForPreview(_ predicate: @escaping ([String: Int]) -> Bool) {
+            let probe = app.staticTexts["treasure-video-probe"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            let condition = NSPredicate { _, _ in
+                guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                      let snapshot = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
+                return predicate(snapshot)
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12), .completed)
+        }
+        openMap()
+        let layout = app.buttons["treasure-layout"]
+        if layout.label == "自由" { layout.tap() }
+        select("静止封面")
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
+        select("自动播放（最多3张）")
+        waitForPreview { $0["players"] == 3 && $0["advancing"] == 3 && $0["muted"] == 1 && $0["nodes"] == 3 && $0["centerIcons"] == 0 }
+        layout.tap()
+        waitForPreview { ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 4) <= 3 && $0["nodes"] == 0 }
+        app.terminate(); app.launch()
+        openMap()
+        waitForPreview { $0["auto"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        select("静止封面")
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
+        attach(app, name: "review-treasure-static-video-no-center-icon")
+    }
+
+    @MainActor
     func testTreasureDragKeepsTouchAndPhysicsOwnership() {
         let app = launch(discover: false, flags: ["--treasure-drag-ui-tests"])
         app.buttons["navigation-me"].press(forDuration: 0.7)

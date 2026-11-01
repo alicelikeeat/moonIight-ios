@@ -10,14 +10,20 @@ import AVFoundation
 struct MoonTreasureMapView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var activeEntry: MediaEntry?
     @State private var actionEntry: MediaEntry?
     @State private var scope = TreasureScope.all
     @AppStorage("treasure-count") private var dropCount = 12
     @AppStorage("treasure-organized") private var organized = false
+    @AppStorage("treasure-video-autoplay") private var videoAutoplay = false
+    @StateObject private var videoPreviews = TreasureVideoPreviews()
+    @State private var visibleGridVideos = Set<String>()
     @State private var scene = MoonTreasureScene()
     @State private var controlsVisible = true
     @State private var dragDiagnostics = ""
+    @State private var videoDiagnostics = ""
+    @State private var pageVisible = false
 
     private var filteredItems: [MediaEntry] {
         let source: [MediaEntry]
@@ -54,12 +60,16 @@ struct MoonTreasureMapView: View {
                             ForEach(filteredItems) { entry in
                                 Button { activeEntry = entry } label: {
                                     VStack {
-                                        TreasureThumbnail(entry: entry).frame(height: 100)
+                                        TreasureThumbnail(entry: entry, player: videoPreviews.players[entry.id]).frame(height: 100)
                                         Text(entry.title).lineLimit(2)
                                     }.frame(maxWidth: .infinity).padding(8)
                                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
                                 }
                                 .accessibilityIdentifier("treasure-grid-" + entry.id)
+                                .onAppear {
+                                    if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() }
+                                }
+                                .onDisappear { visibleGridVideos.remove(entry.id); refreshVideoPreviews() }
                                 .contextMenu {
                                     Button("打开播放") { activeEntry = entry }
                                     Button(entry.isFavorite ? "取消收藏" : "收藏") { model.mediaStore.toggleFavorite(entry) }
@@ -97,6 +107,11 @@ struct MoonTreasureMapView: View {
                         .accessibilityIdentifier("treasure-physics-probe")
                         .accessibilityValue(dragDiagnostics)
                 }
+                if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
+                    Text("视频预览测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01)
+                        .allowsHitTesting(false).accessibilityIdentifier("treasure-video-probe")
+                        .accessibilityValue(videoDiagnostics)
+                }
                 #endif
                 HStack {
                     Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张")
@@ -116,7 +131,44 @@ struct MoonTreasureMapView: View {
                 }
             }
         }
+        .onAppear { pageVisible = true; refreshVideoPreviews() }
+        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized ? [:] : $0) }
+        .onChange(of: videoAutoplay) { _ in refreshVideoPreviews() }
+        .onChange(of: organized) { _ in
+            videoPreviews.stopAll()
+            scene.setVideoPreviews([:])
+            if !organized { visibleGridVideos.removeAll() }
+            refreshVideoPreviews()
+        }
+        .onChange(of: scope) { _ in refreshVideoPreviews() }
+        .onChange(of: model.mediaStore.items) { _ in refreshVideoPreviews() }
+        .onChange(of: scenePhase) { phase in
+            refreshVideoPreviews()
+            if phase == .active, !organized, activeEntry == nil { scene.startMotion() }
+            else { scene.stopMotion() }
+        }
+        .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion() }
+        .task {
+            #if DEBUG
+            guard ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") else { return }
+            while !Task.isCancelled {
+                let values: [String: Int] = [
+                    "players": videoPreviews.players.count,
+                    "advancing": videoPreviews.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count,
+                    "muted": videoPreviews.players.values.allSatisfy(\.isMuted) ? 1 : 0,
+                    "nodes": scene.videoPreviewCount,
+                    "centerIcons": scene.centerPlayIconCount,
+                    "auto": videoAutoplay ? 1 : 0
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: values), let text = String(data: data, encoding: .utf8) {
+                    videoDiagnostics = text
+                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            #endif
+        }
         .onChange(of: activeEntry?.id) { id in
+            refreshVideoPreviews()
             if id != nil { scene.stopMotion() }
             else if !organized { scene.startMotion() }
         }
@@ -170,7 +222,29 @@ struct MoonTreasureMapView: View {
                 .background(.ultraThinMaterial, in: Circle())
             }
             .accessibilityIdentifier("treasure-drop-count")
+            Menu {
+                Picker("视频预览", selection: $videoAutoplay) {
+                    Text("静止封面").tag(false)
+                    Text("自动播放（最多3张）").tag(true)
+                }
+            } label: {
+                VStack(spacing: 2) {
+                    Image(systemName: "video")
+                    Text(videoAutoplay ? "自动" : "静止").font(.system(size: 9, weight: .medium))
+                }.foregroundStyle(.white).frame(width: 44, height: 44)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel("视频预览")
+            .accessibilityValue(videoAutoplay ? "自动播放" : "静止封面")
+            .accessibilityIdentifier("treasure-video-mode")
         }.padding(.horizontal, 22).padding(.top, 8)
+    }
+
+    private func refreshVideoPreviews() {
+        let candidates = organized ? filteredItems.filter { visibleGridVideos.contains($0.id) } : items
+        videoPreviews.configure(entries: candidates,
+                                enabled: pageVisible && videoAutoplay && scenePhase == .active && activeEntry == nil)
+        scene.setVideoPreviews(organized ? [:] : videoPreviews.players)
     }
 
     private func configureScene() {
@@ -189,6 +263,7 @@ struct MoonTreasureMapView: View {
                 actionEntry = model.mediaStore.items.first { $0.id == id }
             }
         )
+        refreshVideoPreviews()
     }
 }
 
@@ -200,6 +275,7 @@ private enum TreasureScope: String, CaseIterable, Identifiable {
 
 private final class MoonTreasureScene: SKScene {
     var onDragDiagnostics: ((String) -> Void)?
+    private var videoBindings: [String: AVQueuePlayer] = [:]
     private var select: ((String) -> Void)?
     private var longPress: ((String) -> Void)?
     private var longPressTasks: [ObjectIdentifier: DispatchWorkItem] = [:]
@@ -251,6 +327,7 @@ private final class MoonTreasureScene: SKScene {
         previewTasks.removeAll()
         children.forEach { $0.removeAllActions() }
         removeAllChildren()
+        videoBindings.removeAll()
         originalFillColors.removeAll()
         physicsWorld.gravity = CGVector(dx: 0, dy: -4.6)
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
@@ -334,6 +411,7 @@ private final class MoonTreasureScene: SKScene {
 
         let previewHeight = height * 0.62
         let crop = SKCropNode()
+        crop.name = "preview-crop"
         let mask = SKShapeNode(rectOf: CGSize(width: width - 8, height: previewHeight - 5), cornerRadius: 13)
         mask.fillColor = .white
         crop.maskNode = mask
@@ -352,16 +430,11 @@ private final class MoonTreasureScene: SKScene {
         node.addChild(glassStrip)
 
         if entry.kind == .video {
-            let playGlass = SKShapeNode(circleOfRadius: 16)
-            playGlass.fillColor = .white.withAlphaComponent(0.76)
-            playGlass.strokeColor = .white.withAlphaComponent(0.9)
-            playGlass.lineWidth = 1
-            playGlass.position = CGPoint(x: 0, y: height * 0.16)
-            let icon = SKLabelNode(fontNamed: "SFProDisplay-Semibold")
-            icon.text = "▶"; icon.fontColor = .black; icon.fontSize = 15
-            icon.verticalAlignmentMode = .center; icon.horizontalAlignmentMode = .center; icon.position = CGPoint(x: 1.5, y: 0)
-            playGlass.addChild(icon)
-            node.addChild(playGlass)
+            let badge = SKLabelNode(fontNamed: "SFProText-Medium")
+            badge.text = "视频"; badge.fontSize = 8; badge.fontColor = .white
+            badge.position = CGPoint(x: width / 2 - 16, y: height / 2 - 14)
+            badge.zPosition = 3
+            node.addChild(badge)
         } else {
             let icon = SKLabelNode(fontNamed: "SFProDisplay-Semibold")
             icon.text = "✦"; icon.fontColor = .white; icon.fontSize = 17
@@ -381,6 +454,35 @@ private final class MoonTreasureScene: SKScene {
         if !UIAccessibility.isReduceMotionEnabled {
             node.setScale(0.9)
             node.run(.sequence([.wait(forDuration: Double(index) * 0.04), .scale(to: 1, duration: 0.15)]), withKey: "spawn")
+        }
+    }
+
+    #if DEBUG
+    var videoPreviewCount: Int { videoBindings.count }
+    var centerPlayIconCount: Int {
+        var count = 0
+        enumerateChildNodes(withName: "//*") { node, _ in
+            if (node as? SKLabelNode)?.text == "▶" { count += 1 }
+        }
+        return count
+    }
+    #endif
+
+    func setVideoPreviews(_ players: [String: AVQueuePlayer]) {
+        for case let card as SKShapeNode in children {
+            guard let id = card.name, let crop = card.childNode(withName: "preview-crop") as? SKCropNode else { continue }
+            if let player = players[id], videoBindings[id] === player { continue }
+            (crop.childNode(withName: "video-preview") as? SKVideoNode)?.pause()
+            crop.childNode(withName: "video-preview")?.removeFromParent()
+            videoBindings[id] = nil
+            guard let player = players[id] else { continue }
+            let video = SKVideoNode(avPlayer: player)
+            video.name = "video-preview"
+            video.size = crop.maskNode?.frame.size ?? CGSize(width: 84, height: 60)
+            video.zPosition = 1
+            crop.addChild(video)
+            videoBindings[id] = player
+            video.play()
         }
     }
 
@@ -494,6 +596,7 @@ private final class MoonTreasureScene: SKScene {
         select = nil
         longPress = nil
         onDragDiagnostics = nil
+        setVideoPreviews([:])
     }
 
     private func clamped(_ point: CGPoint, node: SKNode) -> CGPoint {
@@ -663,15 +766,24 @@ private final class MoonTreasureScene: SKScene {
 
 private struct TreasureThumbnail: View {
     let entry: MediaEntry
+    let player: AVQueuePlayer?
     @State private var image: UIImage?
     private var url: URL? { entry.coverURL ?? entry.remoteURL }
 
     var body: some View {
         ZStack {
             if let image { Image(uiImage: image).resizable().scaledToFit() }
-            else { Image(systemName: entry.kind == .video ? "play.rectangle.fill" : "photo") }
+            else if entry.kind != .video { Image(systemName: "photo") }
+            else { Color.white.opacity(0.05) }
+            if let player {
+                TreasureVideoSurface(player: player).allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
             if entry.kind == .video {
-                Image(systemName: "play.circle.fill").font(.title).foregroundStyle(.white)
+                Text("视频").font(.caption2).padding(4)
+                    .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 5)).padding(4)
             }
         }
         .task(id: url) {
@@ -682,6 +794,73 @@ private struct TreasureThumbnail: View {
             image = loaded
         }
     }
+}
+
+/// A page-scoped pool owns all preview decoders. Both browsing modes use
+/// the same limit; media remains on its existing cover until a playable URL loads.
+@MainActor
+private final class TreasureVideoPreviews: ObservableObject {
+    @Published private(set) var players: [String: AVQueuePlayer] = [:]
+    private var loopers: [String: AVPlayerLooper] = [:]
+    private var loads: [String: Task<Void, Never>] = [:]
+    private var assets: [String: AVURLAsset] = [:]
+    private var wanted: [String: URL] = [:]
+
+    func configure(entries: [MediaEntry], enabled: Bool) {
+        let candidates = enabled ? Array(entries.filter { $0.kind == .video && $0.remoteURL != nil }.prefix(3)) : []
+        let next = Dictionary(candidates.compactMap { entry in entry.remoteURL.map { (entry.id, $0) } },
+                              uniquingKeysWith: { first, _ in first })
+        for id in Array(wanted.keys) where wanted[id] != next[id] { stop(id) }
+        wanted = next
+        for (id, url) in next where players[id] == nil && loads[id] == nil {
+            // remoteURL is the same canonical source used by MediaPlayerView.
+            // Asset validation prevents treating arbitrary web URLs as playable.
+            let asset = AVURLAsset(url: url)
+            assets[id] = asset
+            loads[id] = Task { @MainActor [weak self] in
+                let playable = (try? await asset.load(.isPlayable)) == true
+                guard !Task.isCancelled, let self, self.wanted[id] == url else { return }
+                self.loads[id] = nil
+                guard playable else { self.assets[id] = nil; return }
+                let player = AVQueuePlayer()
+                player.isMuted = true
+                let looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(asset: asset))
+                self.loopers[id] = looper
+                self.players[id] = player
+                player.play()
+            }
+        }
+    }
+
+    private func stop(_ id: String) {
+        loads.removeValue(forKey: id)?.cancel()
+        assets.removeValue(forKey: id)?.cancelLoading()
+        loopers.removeValue(forKey: id)?.disableLooping()
+        if let player = players.removeValue(forKey: id) {
+            player.pause()
+            player.removeAllItems()
+        }
+        wanted[id] = nil
+    }
+
+    func stopAll() { for id in Array(wanted.keys) { stop(id) } }
+}
+
+private struct TreasureVideoSurface: UIViewRepresentable {
+    let player: AVQueuePlayer
+    func makeUIView(context: Context) -> TreasureVideoLayerView {
+        let view = TreasureVideoLayerView()
+        view.videoLayer.videoGravity = .resizeAspectFill
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: TreasureVideoLayerView, context: Context) { view.videoLayer.player = player }
+    static func dismantleUIView(_ view: TreasureVideoLayerView, coordinator: ()) { view.videoLayer.player = nil }
+}
+
+private final class TreasureVideoLayerView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+    var videoLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 }
 
 private actor TreasurePreviewStore {

@@ -323,11 +323,14 @@ struct RootView: View {
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
-            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") {
+            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
                 await backgroundStore.prepareUITestMedia()
                 if let video = backgroundStore.assets.first(where: { $0.id == "ui-test-background-video" }),
                    let image = backgroundStore.assets.first(where: { $0.id == "ui-test-background-image" }) {
                     model.mediaStore.prepareReelsUITest(videoURL: backgroundStore.url(for: video), imageURL: backgroundStore.url(for: image))
+                    if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
+                        model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video))
+                    }
                 }
             }
             if ProcessInfo.processInfo.arguments.contains("--moments-width-ui-tests") {
