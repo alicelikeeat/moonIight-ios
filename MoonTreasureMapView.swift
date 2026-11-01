@@ -72,6 +72,7 @@ struct MoonTreasureMapView: View {
                                     }.frame(maxWidth: .infinity).padding(8)
                                         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
                                 }
+                                .buttonStyle(.plain)
                                 .accessibilityIdentifier("treasure-grid-" + entry.id)
                                 .onAppear {
                                     if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() }

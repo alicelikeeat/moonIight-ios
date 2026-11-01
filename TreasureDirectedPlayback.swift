@@ -91,6 +91,9 @@ struct TreasureDirectedSettings: View {
                 }
                 Button("恢复系统背景") { options.background = .system }
                     .accessibilityIdentifier("treasure-background-reset")
+                TreasureBackgroundSurface(options: options)
+                    .frame(height: 72).clipShape(RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("当前背景预览")
             }
             Section("选择起始媒体（\(matches.count)）") {
                 if !options.startID.isEmpty && !source.contains(where: { $0.id == options.startID }) {
@@ -134,7 +137,9 @@ struct TreasureDirectedSettings: View {
         }
         .searchable(text: $query, prompt: "搜索标题或来源")
         .navigationTitle("定向播放与背景")
-        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() } } }
+        .toolbar { ToolbarItem(placement: .cancellationAction) {
+            Button("完成") { dismiss() }.accessibilityIdentifier("treasure-settings-close")
+        } }
     }
 }
 
