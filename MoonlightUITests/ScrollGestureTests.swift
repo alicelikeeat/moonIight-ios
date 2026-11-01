@@ -26,12 +26,17 @@ final class ScrollGestureTests: XCTestCase {
             Thread.sleep(forTimeInterval: 2)
             let before = snapshot()
             let width = before["width"] ?? 1, height = before["height"] ?? 1
-            let start = probe.coordinate(withNormalizedOffset: CGVector(
-                dx: (before["x"] ?? 0) / width, dy: (before["y"] ?? 0) / height))
-            let end = probe.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.3))
+            let screen = app.coordinate(withNormalizedOffset: .zero)
+            let start = screen.withOffset(CGVector(dx: before["x"] ?? 0, dy: before["y"] ?? 0))
+            let end = screen.withOffset(CGVector(dx: (before["originX"] ?? 0) + width * x,
+                                                dy: (before["originY"] ?? 0) + height * 0.3))
             start.press(forDuration: 0.05, thenDragTo: end,
                         withVelocity: .slow, thenHoldForDuration: 1.2)
-            let after = snapshot()
+            var after = snapshot()
+            for _ in 0..<10 where after["owned"] != 0 {
+                Thread.sleep(forTimeInterval: 0.1)
+                after = snapshot()
+            }
             XCTAssertEqual(after["cancelled"], 0, "The presentation stole the drag")
             XCTAssertGreaterThan(after["moves"] ?? 0, (before["moves"] ?? 0) + 2)
             XCTAssertGreaterThan(after["travel"] ?? 0, 100, "Card only moved once")

@@ -17,6 +17,7 @@ struct MoonTreasureMapView: View {
     @AppStorage("treasure-organized") private var organized = false
     @State private var scene = MoonTreasureScene()
     @State private var controlsVisible = true
+    @State private var dragDiagnostics = ""
 
     private var filteredItems: [MediaEntry] {
         let source: [MediaEntry]
@@ -88,6 +89,15 @@ struct MoonTreasureMapView: View {
                         }
                     }
                 }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests") {
+                    Text("物理拖拽测试状态")
+                        .font(.system(size: 1)).frame(height: 1).opacity(0.01)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("treasure-physics-probe")
+                        .accessibilityValue(dragDiagnostics)
+                }
+                #endif
                 HStack {
                     Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张")
                         .accessibilityIdentifier("treasure-actual-count")
@@ -164,6 +174,9 @@ struct MoonTreasureMapView: View {
     }
 
     private func configureScene() {
+        #if DEBUG
+        scene.onDragDiagnostics = { dragDiagnostics = $0 }
+        #endif
         scene.configure(
             with: items,
             onSelect: { id in
@@ -186,6 +199,7 @@ private enum TreasureScope: String, CaseIterable, Identifiable {
 }
 
 private final class MoonTreasureScene: SKScene {
+    var onDragDiagnostics: ((String) -> Void)?
     private var select: ((String) -> Void)?
     private var longPress: ((String) -> Void)?
     private var longPressTasks: [ObjectIdentifier: DispatchWorkItem] = [:]
@@ -197,6 +211,7 @@ private final class MoonTreasureScene: SKScene {
     private var dragAnchors: [ObjectIdentifier: CGPoint] = [:]
     private var savedPhysics: [ObjectIdentifier: (dynamic: Bool, gravity: Bool, rotation: Bool)] = [:]
     #if DEBUG
+    private var lastDiagnosticsTime: TimeInterval = 0
     private var diagnosticMoves = 0
     private var diagnosticCancellations = 0
     private var diagnosticHeldFrames = 0
@@ -478,6 +493,7 @@ private final class MoonTreasureScene: SKScene {
         previewTasks.removeAll()
         select = nil
         longPress = nil
+        onDragDiagnostics = nil
     }
 
     private func clamped(_ point: CGPoint, node: SKNode) -> CGPoint {
@@ -535,10 +551,15 @@ private final class MoonTreasureScene: SKScene {
         #if DEBUG
         guard ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests"),
               let view, let card = children.first(where: { $0.name != nil }) else { return }
-        let point = convertPoint(toView: card.position)
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastDiagnosticsTime >= 0.1 else { return }
+        lastDiagnosticsTime = now
+        let point = view.convert(convertPoint(toView: card.position), to: nil)
+        let origin = view.convert(.zero, to: nil)
         let values: [String: Double] = [
             "x": Double(point.x), "y": Double(point.y),
             "width": Double(view.bounds.width), "height": Double(view.bounds.height),
+            "originX": Double(origin.x), "originY": Double(origin.y),
             "owned": Double(draggedTreasures.count), "moves": Double(diagnosticMoves),
             "cancelled": Double(diagnosticCancellations), "frames": Double(diagnosticHeldFrames),
             "travel": Double(diagnosticTravel), "drift": Double(diagnosticDrift),
@@ -547,9 +568,9 @@ private final class MoonTreasureScene: SKScene {
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: values),
               let value = String(data: data, encoding: .utf8) else { return }
-        view.isAccessibilityElement = true
-        view.accessibilityIdentifier = "treasure-physics-probe"
-        view.accessibilityValue = value
+        // SpriteView wraps SKView's accessibility tree. Publish through a
+        // separate SwiftUI probe instead of relying on the wrapped SKView.
+        onDragDiagnostics?(value)
         #endif
     }
 
