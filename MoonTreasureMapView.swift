@@ -192,6 +192,19 @@ private final class MoonTreasureScene: SKScene {
     private var heldTouches = Set<ObjectIdentifier>()
     private var samples: [ObjectIdentifier: [(CGPoint, TimeInterval)]] = [:]
     private var offsets: [ObjectIdentifier: CGPoint] = [:]
+    // The finger owns both position and physics until end/cancel. Keeping a
+    // separate anchor also holds the card still when no move events arrive.
+    private var dragAnchors: [ObjectIdentifier: CGPoint] = [:]
+    private var savedPhysics: [ObjectIdentifier: (dynamic: Bool, gravity: Bool, rotation: Bool)] = [:]
+    #if DEBUG
+    private var diagnosticMoves = 0
+    private var diagnosticCancellations = 0
+    private var diagnosticHeldFrames = 0
+    private var diagnosticTravel: CGFloat = 0
+    private var diagnosticDrift: CGFloat = 0
+    private var diagnosticReleasedPhysics = false
+    private var diagnosticPhysicsViolations = 0
+    #endif
     private var previewTasks: [Task<Void, Never>] = []
     private let motionManager = CMMotionManager()
     private var lastShake = Date.distantPast
@@ -385,8 +398,12 @@ private final class MoonTreasureScene: SKScene {
             touchStarts[key] = point
             offsets[key] = CGPoint(x: node.position.x - point.x, y: node.position.y - point.y)
             samples[key] = [(point, touch.timestamp)]
-            node.physicsBody?.velocity = .zero
-            node.physicsBody?.angularVelocity = 0
+            dragAnchors[key] = node.position
+            if let body = node.physicsBody {
+                savedPhysics[key] = (body.isDynamic, body.affectedByGravity, body.allowsRotation)
+            }
+            node.removeAllActions()
+            pinToFinger(node, at: node.position)
             let work = DispatchWorkItem { [weak self] in
                 guard let self, !self.movedTouches.contains(key), let node = self.draggedTreasures[key], let id = node.name else { return }
                 self.heldTouches.insert(key)
@@ -402,6 +419,10 @@ private final class MoonTreasureScene: SKScene {
             let key = ObjectIdentifier(touch)
             guard let node = draggedTreasures[key], let start = touchStarts[key], !heldTouches.contains(key) else { continue }
             let point = touch.location(in: self)
+            #if DEBUG
+            diagnosticMoves += 1
+            diagnosticTravel = max(diagnosticTravel, hypot(point.x - start.x, point.y - start.y))
+            #endif
             if TreasureRules.shouldDrag(distance: hypot(point.x - start.x, point.y - start.y)) {
                 longPressTasks.removeValue(forKey: key)?.cancel()
                 if movedTouches.insert(key).inserted {
@@ -414,7 +435,9 @@ private final class MoonTreasureScene: SKScene {
             }
             guard movedTouches.contains(key) else { continue }
             let offset = offsets[key] ?? .zero
-            node.position = clamped(CGPoint(x: point.x + offset.x, y: point.y + offset.y), node: node)
+            let anchor = clamped(CGPoint(x: point.x + offset.x, y: point.y + offset.y), node: node)
+            dragAnchors[key] = anchor
+            pinToFinger(node, at: anchor)
             samples[key, default: []].append((point, touch.timestamp))
             samples[key] = samples[key]?.filter { touch.timestamp - $0.1 <= 0.12 }
             updateFusion(for: node)
@@ -440,7 +463,13 @@ private final class MoonTreasureScene: SKScene {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for touch in touches { finishDrag(for: ObjectIdentifier(touch)) }
+        for touch in touches {
+            let key = ObjectIdentifier(touch)
+            #if DEBUG
+            if draggedTreasures[key] != nil { diagnosticCancellations += 1 }
+            #endif
+            finishDrag(for: key)
+        }
     }
 
     override func willMove(from view: SKView) {
@@ -457,6 +486,28 @@ private final class MoonTreasureScene: SKScene {
         return CGPoint(x: min(max(point.x, x), size.width - x), y: min(max(point.y, y), size.height - y))
     }
 
+    private func pinToFinger(_ node: SKShapeNode, at point: CGPoint) {
+        if let body = node.physicsBody {
+            body.affectedByGravity = false
+            body.isDynamic = false
+            body.allowsRotation = false
+            body.velocity = .zero
+            body.angularVelocity = 0
+        }
+        node.position = point
+    }
+
+    override func update(_ currentTime: TimeInterval) {
+        // CoreMotion and collisions may continue for other cards. They must
+        // never change a finger-owned card, even during a stationary hold.
+        for (key, node) in draggedTreasures {
+            guard let point = dragAnchors[key] else { continue }
+            let anchor = clamped(point, node: node)
+            dragAnchors[key] = anchor
+            pinToFinger(node, at: anchor)
+        }
+    }
+
     override func didSimulatePhysics() {
         for case let node as SKShapeNode in children where node.name != nil {
             node.position = clamped(node.position, node: node)
@@ -464,6 +515,42 @@ private final class MoonTreasureScene: SKScene {
                 body.angularVelocity = min(max(body.angularVelocity, -4), 4)
             }
         }
+        for (key, node) in draggedTreasures {
+            guard let anchor = dragAnchors[key] else { continue }
+            #if DEBUG
+            if movedTouches.contains(key) {
+                diagnosticHeldFrames += 1
+                if let body = node.physicsBody, body.isDynamic || body.affectedByGravity || body.allowsRotation {
+                    diagnosticPhysicsViolations += 1
+                }
+                diagnosticDrift = max(diagnosticDrift, hypot(node.position.x - anchor.x, node.position.y - anchor.y))
+            }
+            #endif
+            pinToFinger(node, at: anchor)
+        }
+        publishDragDiagnostics()
+    }
+
+    private func publishDragDiagnostics() {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests"),
+              let view, let card = children.first(where: { $0.name != nil }) else { return }
+        let point = convertPoint(toView: card.position)
+        let values: [String: Double] = [
+            "x": Double(point.x), "y": Double(point.y),
+            "width": Double(view.bounds.width), "height": Double(view.bounds.height),
+            "owned": Double(draggedTreasures.count), "moves": Double(diagnosticMoves),
+            "cancelled": Double(diagnosticCancellations), "frames": Double(diagnosticHeldFrames),
+            "travel": Double(diagnosticTravel), "drift": Double(diagnosticDrift),
+            "released": diagnosticReleasedPhysics ? 1 : 0,
+            "violations": Double(diagnosticPhysicsViolations)
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: values),
+              let value = String(data: data, encoding: .utf8) else { return }
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "treasure-physics-probe"
+        view.accessibilityValue = value
+        #endif
     }
 
     private func treasure(at location: CGPoint) -> SKShapeNode? {
@@ -522,8 +609,15 @@ private final class MoonTreasureScene: SKScene {
         offsets[key] = nil
         treasure.setScale(1)
         treasure.zPosition = 0
-        treasure.physicsBody?.affectedByGravity = true
-        treasure.physicsBody?.isDynamic = true
+        if let saved = savedPhysics.removeValue(forKey: key), let body = treasure.physicsBody {
+            body.affectedByGravity = saved.gravity
+            body.isDynamic = saved.dynamic
+            body.allowsRotation = saved.rotation
+            #if DEBUG
+            diagnosticReleasedPhysics = body.isDynamic && body.affectedByGravity
+            #endif
+        }
+        dragAnchors[key] = nil
         touchStarts[key] = nil
         movedTouches.remove(key)
         if draggedTreasures.isEmpty {

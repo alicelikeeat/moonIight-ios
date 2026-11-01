@@ -2,6 +2,51 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testTreasureDragKeepsTouchAndPhysicsOwnership() {
+        let app = launch(discover: false, flags: ["--treasure-drag-ui-tests"])
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        app.buttons["library-treasure-map"].tap()
+        let layout = app.buttons["treasure-layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        if layout.label == "自由" { layout.tap() }
+        let probe = app.descendants(matching: .any).matching(identifier: "treasure-physics-probe").firstMatch
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        func snapshot() -> [String: Double] {
+            guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                  let result = try? JSONDecoder().decode([String: Double].self, from: data) else {
+                XCTFail("SpriteKit did not publish drag diagnostics")
+                return [:]
+            }
+            return result
+        }
+        // Exercise the actual SKView touch path with gravity running. Start
+        // from a settled card rather than guessing a SpriteKit node's frame.
+        for x in [0.35, 0.65] {
+            Thread.sleep(forTimeInterval: 2)
+            let before = snapshot()
+            let width = before["width"] ?? 1, height = before["height"] ?? 1
+            let start = probe.coordinate(withNormalizedOffset: CGVector(
+                dx: (before["x"] ?? 0) / width, dy: (before["y"] ?? 0) / height))
+            let end = probe.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.3))
+            start.press(forDuration: 0.05, thenDragTo: end,
+                        withVelocity: .slow, thenHoldForDuration: 1.2)
+            let after = snapshot()
+            XCTAssertEqual(after["cancelled"], 0, "The presentation stole the drag")
+            XCTAssertGreaterThan(after["moves"] ?? 0, (before["moves"] ?? 0) + 2)
+            XCTAssertGreaterThan(after["travel"] ?? 0, 100, "Card only moved once")
+            XCTAssertGreaterThan(after["frames"] ?? 0, (before["frames"] ?? 0) + 10)
+            XCTAssertLessThan(after["drift"] ?? 100, 2, "Gravity/collisions moved a held card")
+            XCTAssertEqual(after["violations"], 0)
+            XCTAssertEqual(after["owned"], 0)
+            XCTAssertEqual(after["released"], 1, "Release failed to restore physics")
+            XCTAssertFalse(app.buttons["player-close"].exists)
+            XCTAssertFalse(app.buttons["加入播放队列"].exists)
+        }
+        attach(app, name: "review-treasure-sustained-drag")
+    }
+
+    @MainActor
     func testTreasureGridCanOpenHoldAndSwitchTwentyTimes() {
         let app = launch(discover: false)
         app.buttons["navigation-me"].press(forDuration: 0.7)

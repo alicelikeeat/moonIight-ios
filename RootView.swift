@@ -3218,7 +3218,7 @@ private struct LibraryView: View {
             .fullScreenCover(item: $reelsSmartPlaylist) { playlist in
                 ReelsView(source: .smart(playlist)).environmentObject(model)
             }
-            .sheet(isPresented: $showingTreasureMap) {
+            .fullScreenCover(isPresented: $showingTreasureMap) {
                 NavigationStack { MoonTreasureMapView().environmentObject(model) }
             }
             .task(id: model.command?.id) {

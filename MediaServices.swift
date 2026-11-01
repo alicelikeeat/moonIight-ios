@@ -542,9 +542,10 @@ final class MediaStore: ObservableObject {
                            title: "Scroll fixture \(index)", author: "Gesture verification",
                            platform: "test", source: "ui-test")
             }
-            items = fixtures
+            items = ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests")
+                ? Array(fixtures.prefix(1)) : fixtures
             items[0].isFavorite = true
-            items[1].source = "download"
+            if items.count > 1 { items[1].source = "download" }
             discoverItems = fixtures
         }
         #endif
