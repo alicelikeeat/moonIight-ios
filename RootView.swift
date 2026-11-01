@@ -2918,6 +2918,7 @@ private struct MeView: View {
                             Spacer()
                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                         }.padding(18).moonSingleGlass(radius: 24)
+                            .contentShape(RoundedRectangle(cornerRadius: 24))
                     }.buttonStyle(.plain)
                     HStack(spacing: 10) {
                         StatCard(value: "\(model.moments.count)", label: "动态")
@@ -4327,6 +4328,7 @@ private struct MenuRow: View {
             Spacer()
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
         }.padding(.vertical, 13).padding(.horizontal, 8)
+            .contentShape(Rectangle())
     }
 }
 

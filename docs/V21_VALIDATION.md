@@ -18,7 +18,9 @@
 | 定向播放 UI | [41302244171](https://github.com/alicelikeeat/moonIight-ios/actions/runs/41302244171) 已通过真实本地 H264 + JPEG 测试：确认启动、实际不足数量、暂停继续、自然播完到尾部、下一条、停止、重启持久化与默认不自动重进 |
 | 搜索 UI | [41303499214](https://github.com/alicelikeeat/moonIight-ios/actions/runs/41303499214) 已通过月藏图命令、原生回车提交带图片类型和关键词的媒体搜索、清除与避免 AI 误路由；同轮两项 V2.1 UI 均通过 |
 | 控件清单 | 307 个控件/手势声明与入口，CI 重建并比较版本库，见 [全量清单](CONTROL_INVENTORY.md) 与 [行为审计](BUTTON_AUDIT.md)。静态定位不等同于逐个真机通过 |
-| 最新修订 | [41308317613](https://github.com/alicelikeeat/moonIight-ios/actions/runs/41308317613) 模拟器编译、200 项策略检查与两项 V2.1 UI 均通过；包含新增“定向播放”搜索直达设置和明确关闭返回。拖拽与视频预览 UI 通过，网格长按菜单仍失败；该轮工作流失败，其余套件当时被跳过 |
+| 前期定向修订 | [41308317613](https://github.com/alicelikeeat/moonIight-ios/actions/runs/41308317613) 模拟器编译、200 项策略检查与两项 V2.1 UI 均通过；包含新增“定向播放”搜索直达设置和明确关闭返回。拖拽与视频预览 UI 通过，网格长按菜单仍失败；该轮工作流失败，其余套件当时被跳过 |
+
+| 全局与月藏图回归 | [41311387486](https://github.com/alicelikeeat/moonIight-ios/actions/runs/41311387486)：27 项滚动/导航 UI、3 项月藏图 UI、搜索 UI 均通过；播放 UI 未进入月藏图即失败；4 项非阻断诊断中 3 项失败，共 5 个断言，整轮失败 |
 
 ## 已发现问题及处理
 
@@ -31,6 +33,8 @@
 6. 图片计时改为成功加载后开始，加载失败明确提示且停止计时；本地解码与远程加载结果按媒体 ID 校验，防止旧任务影响新目标。41309885661 的播放用例在进入月藏图之前因长按导航菜单未出现而失败，未覆盖新图片计时；搜索 UI 与三项月藏图回归均通过。播放测试改走有 identifier 的普通“我 → 库”路径，长按仍由独立测试覆盖，待重跑。
 
 7. 网格手势内联使 SwiftUI 类型检查超时（41309621699）；已抽出 `TreasureOrganizedCard` 独立组件，[41309885661](https://github.com/alicelikeeat/moonIight-ios/actions/runs/41309885661) 模拟器编译已通过，继续运行回归。
+
+8. 普通“我 → 库”导航失败（41311387486）：共享玻璃组内 plain NavigationLink 的 MenuRow 中心为空白，缺少整行 contentShape。已为菜单行与资料卡补足透明命中区域；播放测试同时等待目标页面出现，待新回归验证。
 
 ## 真机与覆盖限制
 

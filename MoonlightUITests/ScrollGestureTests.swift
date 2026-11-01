@@ -11,7 +11,8 @@ final class ScrollGestureTests: XCTestCase {
             app.buttons["navigation-me"].tap()
             let library = app.buttons["me-library"]
             XCTAssertTrue(library.waitForExistence(timeout: 5)); library.tap()
-            app.buttons["library-treasure-map"].tap()
+            let map = app.buttons["library-treasure-map"]
+            XCTAssertTrue(map.waitForExistence(timeout: 8)); map.tap()
             XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
         }
         func reveal(_ element: XCUIElement) {
