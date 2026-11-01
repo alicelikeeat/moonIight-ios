@@ -65,19 +65,8 @@ struct MoonTreasureMapView: View {
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))]) {
                             ForEach(filteredItems) { entry in
-                                VStack {
-                                        TreasureThumbnail(entry: entry, player: videoPreviews.players[entry.id]).frame(height: 100)
-                                        Text(entry.title).lineLimit(2)
-                                    }.frame(maxWidth: .infinity).padding(8)
-                                        .background { MoonGlassBackdrop(radius: 16) }
-                                .modifier(NativeMediaCardInteractions(holdEnabled: true,
-                                    onTap: { activeEntry = entry }, onHold: { actionEntry = entry }))
-                                .accessibilityElement(children: .combine)
-                                .accessibilityAddTraits(.isButton)
-                                .accessibilityLabel(entry.title)
-                                .accessibilityAction { activeEntry = entry }
-                                .accessibilityAction(named: Text("藏品操作")) { actionEntry = entry }
-                                .accessibilityIdentifier("treasure-grid-" + entry.id)
+                                TreasureOrganizedCard(entry: entry, player: videoPreviews.players[entry.id],
+                                    onOpen: { activeEntry = entry }, onHold: { actionEntry = entry })
                                 .onAppear {
                                     if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() }
                                 }
@@ -861,6 +850,29 @@ private final class MoonTreasureScene: SKScene {
         guard let fusionHalo else { return }
         self.fusionHalo = nil
         fusionHalo.run(.sequence([.fadeOut(withDuration: 0.16), .removeFromParent()]))
+    }
+}
+
+private struct TreasureOrganizedCard: View {
+    let entry: MediaEntry
+    let player: AVQueuePlayer?
+    let onOpen: () -> Void
+    let onHold: () -> Void
+    var body: some View {
+        VStack {
+            TreasureThumbnail(entry: entry, player: player).frame(height: 100)
+            Text(entry.title).lineLimit(2)
+        }
+        .frame(maxWidth: .infinity).padding(8)
+        .background { MoonGlassBackdrop(radius: 16) }
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .modifier(NativeMediaCardInteractions(holdEnabled: true, onTap: onOpen, onHold: onHold))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(entry.title)
+        .accessibilityAction { onOpen() }
+        .accessibilityAction(named: Text("藏品操作")) { onHold() }
+        .accessibilityIdentifier("treasure-grid-" + entry.id)
     }
 }
 
