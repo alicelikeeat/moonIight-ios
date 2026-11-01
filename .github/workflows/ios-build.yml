@@ -38,7 +38,7 @@ jobs:
       - name: Test treasure interaction policy
         run: |
           mkdir -p build
-          swiftc TreasureRules.swift tests/main.swift -o build/treasure-tests
+          swiftc TreasureRules.swift TreasurePlaybackPlan.swift AppSearchIntent.swift tests/main.swift -o build/treasure-tests
           build/treasure-tests
       - name: Compile simulator build
         if: steps.version.outputs.release != 'true'
