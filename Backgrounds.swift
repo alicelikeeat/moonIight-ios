@@ -367,7 +367,7 @@ final class BackgroundStore: ObservableObject {
     }
 
     #if DEBUG
-    func prepareUITestMedia() async {
+    func prepareUITestMedia(applyBackgrounds: Bool = true) async {
         guard !uiTestReady else { return }
         let imageID = "ui-test-background-image", videoID = "ui-test-background-video"
         let imageName = imageID + ".jpg", videoName = videoID + ".mp4"
@@ -404,7 +404,7 @@ final class BackgroundStore: ObservableObject {
             assets.append(BackgroundAsset(id: videoID, fileName: videoName, posterName: imageName, isVideo: true, createdAt: .now))
         }
         if let image = assets.first(where: { $0.id == imageID }), let video = assets.first(where: { $0.id == videoID }) {
-            use(image, for: .allPages); use(video, for: .allButtons)
+            if applyBackgrounds { use(image, for: .allPages); use(video, for: .allButtons) }
             uiTestReady = true
         }
     }

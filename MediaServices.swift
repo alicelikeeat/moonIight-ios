@@ -542,9 +542,10 @@ final class MediaStore: ObservableObject {
                            title: "Scroll fixture \(index)", author: "Gesture verification",
                            platform: "test", source: "ui-test")
             }
-            items = fixtures
+            items = ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests")
+                ? Array(fixtures.prefix(1)) : fixtures
             items[0].isFavorite = true
-            items[1].source = "download"
+            if items.count > 1 { items[1].source = "download" }
             discoverItems = fixtures
         }
         #endif
@@ -564,6 +565,12 @@ final class MediaStore: ObservableObject {
     #if DEBUG
     func insertAsyncUITestEntry() {
         discoverItems.insert(MediaEntry(id: "async-source-item", kind: .image, title: "异步到达的新内容", author: "UI verification", platform: "test", source: "ui-test"), at: 0)
+    }
+    func prepareTreasureVideoUITest(videoURL: URL) {
+        for index in items.indices.prefix(5) {
+            items[index].kind = .video
+            items[index].remoteURL = videoURL
+        }
     }
     func prepareReelsUITest(videoURL: URL, imageURL: URL) {
         guard items.count >= 2 else { return }

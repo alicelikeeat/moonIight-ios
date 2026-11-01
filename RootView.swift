@@ -323,11 +323,14 @@ struct RootView: View {
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
-            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") {
-                await backgroundStore.prepareUITestMedia()
+            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
+                await backgroundStore.prepareUITestMedia(applyBackgrounds: !ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests"))
                 if let video = backgroundStore.assets.first(where: { $0.id == "ui-test-background-video" }),
                    let image = backgroundStore.assets.first(where: { $0.id == "ui-test-background-image" }) {
                     model.mediaStore.prepareReelsUITest(videoURL: backgroundStore.url(for: video), imageURL: backgroundStore.url(for: image))
+                    if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
+                        model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video))
+                    }
                 }
             }
             if ProcessInfo.processInfo.arguments.contains("--moments-width-ui-tests") {
@@ -346,7 +349,7 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") {
+            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
                 Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
                     .font(.caption2).foregroundStyle(.secondary).allowsHitTesting(false)
                     .accessibilityIdentifier("background-test-state")
@@ -3218,7 +3221,7 @@ private struct LibraryView: View {
             .fullScreenCover(item: $reelsSmartPlaylist) { playlist in
                 ReelsView(source: .smart(playlist)).environmentObject(model)
             }
-            .sheet(isPresented: $showingTreasureMap) {
+            .fullScreenCover(isPresented: $showingTreasureMap) {
                 NavigationStack { MoonTreasureMapView().environmentObject(model) }
             }
             .task(id: model.command?.id) {

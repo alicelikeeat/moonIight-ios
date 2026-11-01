@@ -2,6 +2,135 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testTreasureVideoPreviewCanPlayFreezeAndRememberPreference() {
+        let app = launch(discover: false, flags: ["--treasure-video-ui-tests"])
+        func openMap() {
+            let ready = app.staticTexts["background-test-state"]
+            XCTAssertTrue(ready.waitForExistence(timeout: 10))
+            let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)
+            XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 10), .completed)
+            app.buttons["navigation-me"].press(forDuration: 0.7)
+            let library = app.buttons["打开库"]
+            XCTAssertTrue(library.waitForExistence(timeout: 5))
+            library.tap()
+            app.buttons["library-treasure-map"].tap()
+            XCTAssertTrue(app.buttons["treasure-video-mode"].waitForExistence(timeout: 5))
+        }
+        func select(_ title: String) {
+            app.buttons["treasure-video-mode"].tap()
+            let option = app.buttons[title]
+            XCTAssertTrue(option.waitForExistence(timeout: 3))
+            option.tap()
+        }
+        func waitForPreview(_ predicate: @escaping ([String: Int]) -> Bool) {
+            let probe = app.staticTexts["treasure-video-probe"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            let condition = NSPredicate { _, _ in
+                guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                      let snapshot = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
+                return predicate(snapshot)
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12), .completed)
+        }
+        openMap()
+        let layout = app.buttons["treasure-layout"]
+        if layout.label == "自由" { layout.tap() }
+        select("静止封面")
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
+        select("自动播放（最多3张）")
+        waitForPreview { $0["players"] == 3 && $0["advancing"] == 3 && $0["muted"] == 1 && $0["nodes"] == 3 && $0["centerIcons"] == 0 }
+        layout.tap()
+        waitForPreview { ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 4) <= 3 && $0["nodes"] == 0 }
+        app.terminate(); app.launch()
+        openMap()
+        waitForPreview { $0["auto"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        select("静止封面")
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
+        attach(app, name: "review-treasure-static-video-no-center-icon")
+    }
+
+    @MainActor
+    func testTreasureDragKeepsTouchAndPhysicsOwnership() {
+        let app = launch(discover: false, flags: ["--treasure-drag-ui-tests"])
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        app.buttons["library-treasure-map"].tap()
+        let layout = app.buttons["treasure-layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        if layout.label == "自由" { layout.tap() }
+        let probe = app.descendants(matching: .any).matching(identifier: "treasure-physics-probe").firstMatch
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        func snapshot() -> [String: Double] {
+            guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                  let result = try? JSONDecoder().decode([String: Double].self, from: data) else {
+                XCTFail("SpriteKit did not publish drag diagnostics")
+                return [:]
+            }
+            return result
+        }
+        // Exercise the actual SKView touch path with gravity running. Start
+        // from a settled card rather than guessing a SpriteKit node's frame.
+        for x in [0.35, 0.65] {
+            Thread.sleep(forTimeInterval: 2)
+            let before = snapshot()
+            let width = before["width"] ?? 1, height = before["height"] ?? 1
+            let screen = app.coordinate(withNormalizedOffset: .zero)
+            let start = screen.withOffset(CGVector(dx: before["x"] ?? 0, dy: before["y"] ?? 0))
+            let end = screen.withOffset(CGVector(dx: (before["originX"] ?? 0) + width * x,
+                                                dy: (before["originY"] ?? 0) + height * 0.3))
+            start.press(forDuration: 0.05, thenDragTo: end,
+                        withVelocity: .slow, thenHoldForDuration: 1.2)
+            var after = snapshot()
+            for _ in 0..<10 where after["owned"] != 0 {
+                Thread.sleep(forTimeInterval: 0.1)
+                after = snapshot()
+            }
+            XCTAssertEqual(after["cancelled"], 0, "The presentation stole the drag")
+            XCTAssertGreaterThan(after["moves"] ?? 0, (before["moves"] ?? 0) + 2)
+            XCTAssertGreaterThan(after["travel"] ?? 0, 100, "Card only moved once")
+            XCTAssertGreaterThan(after["frames"] ?? 0, (before["frames"] ?? 0) + 10)
+            XCTAssertLessThan(after["drift"] ?? 100, 2, "Gravity/collisions moved a held card")
+            XCTAssertEqual(after["violations"], 0)
+            XCTAssertEqual(after["owned"], 0)
+            XCTAssertEqual(after["released"], 1, "Release failed to restore physics")
+            XCTAssertFalse(app.buttons["player-close"].exists)
+            XCTAssertFalse(app.buttons["加入播放队列"].exists)
+        }
+        attach(app, name: "review-treasure-sustained-drag")
+    }
+
+    @MainActor
+    func testTreasureGridCanOpenHoldAndSwitchTwentyTimes() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].press(forDuration: 0.7)
+        app.buttons["打开库"].tap()
+        let entry = app.buttons["library-treasure-map"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        entry.tap()
+        let layout = app.buttons["treasure-layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        if layout.label == "自由" { layout.tap() }
+        for _ in 0..<20 {
+            layout.tap()
+            XCTAssertTrue(app.scrollViews["treasure-grid"].waitForExistence(timeout: 3))
+            layout.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["moon-treasure-map"].waitForExistence(timeout: 3))
+        }
+        layout.tap()
+        let card = app.buttons["treasure-grid-scroll-fixture-0"]
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["加入播放队列"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["player-close"].exists)
+        app.buttons["加入播放队列"].tap()
+        card.tap()
+        XCTAssertTrue(app.buttons["player-close"].waitForExistence(timeout: 5))
+        app.buttons["player-close"].tap()
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        attach(app, name: "review-treasure-organized")
+    }
+
+    @MainActor
     private func attach(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways
@@ -672,5 +801,6 @@ final class ScrollGestureTests: XCTestCase {
     }
 
 }
+
 
 
