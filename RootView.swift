@@ -46,6 +46,7 @@ struct RootView: View {
     @State private var selectedImage: Image?
     @State private var activeSheet: RootSheet?
     @State private var activePlayer: MediaEntry?
+    @State private var treasureRoute: AppCommand?
     @State private var discoveryQuery = ""
     @State private var discoverySourcesPresented = false
     @ObservedObject private var interactions = InteractionPreferences.shared
@@ -194,8 +195,8 @@ struct RootView: View {
         .onChange(of: navigationHideDelay) { _ in scheduleNavigationHide() }
         .task { scheduleNavigationHide() }
         .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
-        // Custom controls opt into one glass surface explicitly. A global
-        // button style would wrap circular/panel controls a second time.
+        // Explicit .plain styles preserve existing single-glass circles and
+        // media covers; shared containers keep their inner controls clear.
         // Full-blind mode hides the page layer itself. Search and the explicit
         // exit control remain readable when they are intentionally revealed.
         .buttonStyle(MoonInteractiveButtonStyle(blind: false))
@@ -267,6 +268,9 @@ struct RootView: View {
         } message: {
             Text("只移除当前横幅设置，媒体文件仍保留在背景库中。")
         }
+        .fullScreenCover(item: $treasureRoute, onDismiss: { revealNavigation() }) { command in
+            NavigationStack { MoonTreasureMapView(openDirectedSettings: command == .treasurePlayback) }
+        }
         .fullScreenCover(item: $captureRequest) { request in
             CameraCaptureView(captureVideo: request.video, onCapture: { image in
                 if let data = image.jpegData(compressionQuality: 0.92) { model.mediaStore.importImage(data, title: "拍摄的照片") }
@@ -323,8 +327,8 @@ struct RootView: View {
         .task {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") { await backgroundStore.prepareUITestMedia() }
-            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
-                await backgroundStore.prepareUITestMedia(applyBackgrounds: !ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests"))
+            if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-directed-ui-tests") {
+                await backgroundStore.prepareUITestMedia(applyBackgrounds: !ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") && !ProcessInfo.processInfo.arguments.contains("--treasure-directed-ui-tests"))
                 if let video = backgroundStore.assets.first(where: { $0.id == "ui-test-background-video" }),
                    let image = backgroundStore.assets.first(where: { $0.id == "ui-test-background-image" }) {
                     model.mediaStore.prepareReelsUITest(videoURL: backgroundStore.url(for: video), imageURL: backgroundStore.url(for: image))
@@ -349,7 +353,7 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
+            if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-directed-ui-tests") {
                 Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
                     .font(.caption2).foregroundStyle(.secondary).allowsHitTesting(false)
                     .accessibilityIdentifier("background-test-state")
@@ -611,6 +615,17 @@ struct RootView: View {
 
     private func route(_ action: AppCommand, context: String) {
         switch action {
+        case .searchMedia:
+            model.selectedTab = .discover
+            let intent = model.pendingMediaSearch
+            model.pendingMediaSearch = nil
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                var values: [String: String] = [:]
+                if let intent { values["query"] = intent.query; values["kind"] = intent.kind }
+                NotificationCenter.default.post(name: .init("moonlight.focusMediaSearch"), object: nil, userInfo: values)
+            }
+        case .treasureMap, .treasurePlayback: treasureRoute = action
         case .home: selectTab(.home)
         case .discover: selectTab(.discover)
         case .moments: selectTab(.moments)
@@ -653,6 +668,8 @@ struct RootView: View {
 
     @ViewBuilder private func commandDestination(_ action: AppCommand) -> some View {
         switch action {
+        case .treasureMap, .treasurePlayback: MoonTreasureMapView(openDirectedSettings: action == .treasurePlayback)
+        case .searchMedia: Text("请返回发现页搜索媒体。")
         case .settings: SettingsView()
         case .menuSettings: ContextMenuSettingsView()
         case .background, .backgrounds, .backgroundLibrary: BackgroundSettingsView()
@@ -1573,7 +1590,7 @@ private struct HomeView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 44, height: 44).moonGlassCircle()
                 }
-                .accessibilityLabel("随便看看")
+                .buttonStyle(.plain).accessibilityLabel("随便看看")
                 .accessibilityIdentifier("home-random-menu")
             }
             if model.mediaStore.items.isEmpty {
@@ -1592,6 +1609,8 @@ private struct DiscoverView: View {
     @Binding var query: String
     let onSelect: (MediaEntry) -> Void
     let onSources: () -> Void
+    @FocusState private var searchFocused: Bool
+    @State private var kindFilter = "all"
     @AppStorage("discover_columns") private var columns = 2
     @AppStorage("discover_banner_scale") private var bannerScale = 1.0
     private let grid = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
@@ -1616,14 +1635,26 @@ private struct DiscoverView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("搜索所选内容源或粘贴链接", text: $query)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .submitLabel(.search)
+                    .submitLabel(.search).focused($searchFocused)
+                    .accessibilityIdentifier("discover-search-input")
+                    .onReceive(NotificationCenter.default.publisher(for: .init("moonlight.focusMediaSearch"))) { note in
+                        if let text = note.userInfo?["query"] as? String {
+                            query = text
+                            kindFilter = note.userInfo?["kind"] as? String ?? "all"
+                            if !text.isEmpty { Task { await model.mediaStore.searchDiscover(text) } }
+                        }
+                        searchFocused = true
+                    }
                     .onSubmit { Task { await model.mediaStore.searchDiscover(query) } }
                 if !query.isEmpty {
-                    Button { query = ""; model.mediaStore.clearDiscoverySearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }
+                    Button { query = ""; model.mediaStore.clearDiscoverySearch() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.accessibilityLabel("清除媒体搜索").accessibilityIdentifier("discover-search-clear")
                 }
             }
             .padding(.horizontal, 15).frame(height: 50)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17))
+            .moonSingleGlass(radius: 17)
+            Picker("媒体类型", selection: $kindFilter) {
+                Text("全部").tag("all"); Text("视频").tag("video"); Text("图片").tag("image")
+            }.pickerStyle(.segmented).accessibilityIdentifier("discover-kind-filter")
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("横幅大小").font(.subheadline.weight(.medium))
@@ -1644,7 +1675,7 @@ private struct DiscoverView: View {
                     Label("搜索", systemImage: "magnifyingglass").font(.subheadline.weight(.medium))
                 }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
             }
-            let results = query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults
+            let results = (query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults).filter { kindFilter == "all" || $0.kind.rawValue == kindFilter }
             if results.isEmpty {
                 EmptyPanel(title: query.isEmpty ? "还没有推荐内容" : "没有搜索结果", detail: model.mediaStore.notice ?? "打开内容源选择分类并查看加载状态。", symbol: "safari")
                 Button(action: onSources) { Label("查看内容源", systemImage: "slider.horizontal.3") }.buttonStyle(MoonGlassButtonStyle())
@@ -1702,8 +1733,12 @@ private struct DiscoverTile: View {
 /// disappears; layout and hit testing stay intact.
 private struct MoonInteractiveButtonStyle: ButtonStyle {
     let blind: Bool
+    @Environment(\.moonGlassContainer) private var inGlass
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .padding(.horizontal, inGlass ? 0 : 8)
+            .frame(minHeight: 44)
+            .background { if !inGlass { MoonGlassBackdrop(radius: 22) } }
             .opacity(blind ? 0.01 : 1)
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .brightness(configuration.isPressed ? 0.08 : 0)
@@ -2518,7 +2553,7 @@ private struct MomentsView: View {
                         Spacer()
                         Button(action: onCompose) {
                             Image(systemName: "square.and.pencil").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
-                        }.accessibilityLabel("发布动态")
+                        }.buttonStyle(.plain).accessibilityLabel("发布动态")
                     }.padding(14)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -3651,7 +3686,9 @@ private struct GlobalAssistantSearchOverlay: View {
     let onDismiss: () -> Void
     let onCommand: (AppCommand) -> Void
     let onChat: (String) -> Void
+    @EnvironmentObject private var model: AppModel
     @State private var query = ""
+    @State private var submission = 0
     @FocusState private var focused: Bool
 
     private var cleanQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -3670,15 +3707,14 @@ private struct GlobalAssistantSearchOverlay: View {
                             .lineLimit(1...3)
                             .focused($focused)
                             .submitLabel(.send)
-                            .onSubmit { if !cleanQuery.isEmpty { onChat(cleanQuery) } }
+                            .onSubmit(submitSearch).accessibilityIdentifier("global-search-input")
                         Button(action: onDismiss) {
                             Image(systemName: "xmark").font(.footnote.weight(.bold))
-                                .frame(width: 28, height: 28).background(.thinMaterial, in: Circle())
+                                .frame(width: 44, height: 44)
                         }
                     }
                     .padding(.horizontal, 14).padding(.vertical, 12)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(0.34)))
+                    .modifier(MoonSearchBubble(focused: focused, submission: submission))
 
                     if !cleanQuery.isEmpty {
                         FlowLayout(spacing: 9) {
@@ -3687,9 +3723,9 @@ private struct GlobalAssistantSearchOverlay: View {
                             }.globalSearchBubble(tint: MoonStyle.accent)
 
                             ForEach(matches) { command in
-                                Button { onCommand(command) } label: {
+                                Button { sendCommand(command) } label: {
                                     Label(command.title, systemImage: command.symbol)
-                                }.globalSearchBubble(tint: .blue)
+                                }.globalSearchBubble(tint: .blue).accessibilityIdentifier("global-command-" + command.rawValue)
                             }
                         }
                         .transition(.scale(scale: 0.8, anchor: .topLeading).combined(with: .opacity))
@@ -3699,12 +3735,26 @@ private struct GlobalAssistantSearchOverlay: View {
                 .frame(width: min(proxy.size.width - 32, 430), alignment: .leading)
                 .position(x: proxy.size.width / 2,
                           y: min(max(presentation.location.y, 138), max(138, proxy.size.height - 250)))
-                .animation(.spring(response: 0.34, dampingFraction: 0.78), value: matches.map(\.rawValue))
+
             }
         }
         .onAppear { DispatchQueue.main.async { focused = true } }
         .accessibilityIdentifier("global-assistant-search")
     }
+    private func sendCommand(_ command: AppCommand) {
+        if command == .searchMedia { model.pendingMediaSearch = MediaSearchIntent.parse(query) }
+        submission += 1
+        onCommand(command)
+    }
+    private func submitSearch() {
+        guard !cleanQuery.isEmpty else { return }
+        if let intent = MediaSearchIntent.parse(query) {
+            model.pendingMediaSearch = intent
+            submission += 1; onCommand(.searchMedia)
+        } else if let exact = matches.first(where: { $0.searchTerms.contains { $0.caseInsensitiveCompare(cleanQuery) == .orderedSame } }) { sendCommand(exact) }
+        else { submission += 1; onChat(cleanQuery) }
+    }
+
 }
 
 private extension View {
@@ -3712,9 +3762,7 @@ private extension View {
         self.font(.subheadline.weight(.semibold))
             .padding(.horizontal, 14).padding(.vertical, 10)
             .foregroundStyle(.primary)
-            .background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(tint.opacity(0.36)))
-            .shadow(color: tint.opacity(0.18), radius: 9, y: 4)
+            .moonSingleGlass(radius: 40)
     }
 }
 
@@ -3836,8 +3884,7 @@ private struct AssistantProviderPicker: View {
                 Text((AssistantProvider(rawValue: providerRaw) ?? .openAI).title)
                 Image(systemName: "chevron.down").font(.caption2)
             }.font(.caption.weight(.semibold))
-                .padding(.horizontal, 10).frame(minHeight: 36)
-                .background(.thinMaterial, in: Capsule())
+                .padding(.horizontal, 10).frame(minHeight: 44)
         }
         .accessibilityLabel("选择智能体")
         .accessibilityIdentifier("assistant-provider")
@@ -3848,11 +3895,12 @@ private enum AssistantCommands {
     static func matching(_ query: String) -> [AppCommand] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return [] }
+        if MediaSearchIntent.parse(query) != nil { return [.searchMedia] }
         // Media-specific commands require a selected item; showing them in
         // page search would produce inert buttons.
         let available = AppCommand.allCases.filter { $0.mediaAction == nil }
         return Array(available.filter {
-            $0.title.lowercased().contains(needle) || $0.rawValue.lowercased().contains(needle)
+            $0.searchTerms.contains { $0.lowercased().contains(needle) }
         }.sorted { lhs, rhs in
             if (lhs.title == needle) != (rhs.title == needle) { return lhs.title == needle }
             return lhs.title.count < rhs.title.count
@@ -3870,6 +3918,7 @@ private struct AssistantDock: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage("moonlight.assistant.provider") private var providerRaw = AssistantProvider.openAI.rawValue
     @State private var draft = ""
+    @State private var submission = 0
     @State private var deepThinking = false
     @FocusState private var focused: Bool
     var onFocusChange: (Bool) -> Void
@@ -3894,6 +3943,7 @@ private struct AssistantDock: View {
                 FlowLayout(spacing: 9) {
                     ForEach(matches) { command in
                         Button {
+                            if command == .searchMedia { model.pendingMediaSearch = MediaSearchIntent.parse(draft) }
                             focused = false
                             draft = ""
                             model.send(command, context: "assistant-search")
@@ -3932,12 +3982,9 @@ private struct AssistantDock: View {
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityLabel("发送给 " + provider.title)
             }
-            .padding(8).background(.regularMaterial, in: Capsule())
-            .overlay(Capsule().strokeBorder(.white.opacity(0.28)))
-            .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+            .padding(8).modifier(MoonSearchBubble(focused: focused, submission: submission))
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: matches.map(\.rawValue))
-        .animation(.easeOut(duration: 0.2), value: focused)
+
         // Keep the input and command bubbles as separate accessibility elements.
         .accessibilityElement(children: .contain)
         .onChange(of: focused) { onFocusChange($0) }
@@ -3953,8 +4000,14 @@ private struct AssistantDock: View {
     private func submit() {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
+        submission += 1
         focused = false
-        onOpen(prompt, deepThinking)
+        if let intent = MediaSearchIntent.parse(prompt) {
+            model.pendingMediaSearch = intent
+            model.send(.searchMedia, context: "assistant-search")
+        } else if let exact = AssistantCommands.matching(prompt).first(where: { $0.searchTerms.contains { $0.caseInsensitiveCompare(prompt) == .orderedSame } }) {
+            model.send(exact, context: "assistant-search")
+        } else { onOpen(prompt, deepThinking) }
         draft = ""
     }
 }

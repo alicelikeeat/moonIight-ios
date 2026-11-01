@@ -19,13 +19,14 @@ enum GlassSurfaceSize: String, CaseIterable, Identifiable {
 }
 
 struct MoonGlassButtonStyle: ButtonStyle {
+    @Environment(\.moonGlassContainer) private var inGlass
     var prominent = false
     @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
     private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding)
             .contentShape(Rectangle())
-            .background { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) }
+            .background { if !inGlass { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) } }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -33,13 +34,7 @@ struct MoonGlassButtonStyle: ButtonStyle {
 
 private struct GlassCapsule: View {
     let prominent: Bool
-    var body: some View {
-        if #available(iOS 26.0, *) {
-            Capsule().fill(.clear).glassEffect(.regular.tint(prominent ? .accentColor.opacity(0.2) : .clear).interactive(), in: Capsule())
-        } else {
-            Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.7))
-        }
-    }
+    var body: some View { MoonGlassBackdrop(radius: 40) }
 }
 
 // Weak, live frames keep long-press context aligned with buttons after scrolling
@@ -580,11 +575,7 @@ private struct GlassPanelSizing: ViewModifier {
     private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     @ViewBuilder func body(content: Content) -> some View {
         let surface = content.padding(size.panelInset)
-        if #available(iOS 26.0, *) {
-            surface.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: size.panelRadius))
-        } else {
-            surface.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: size.panelRadius))
-        }
+        surface.moonSingleGlass(radius: size.panelRadius)
     }
 }
 

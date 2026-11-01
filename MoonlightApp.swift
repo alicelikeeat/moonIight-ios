@@ -70,6 +70,7 @@ struct ActiveLongPressMenu: Identifiable, Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    var pendingMediaSearch: MediaSearchIntent?
     @Published var command: AppCommandRequest?
     func send(_ action: AppCommand, context: String = "") { command = AppCommandRequest(action: action, context: context) }
     @Published var selectedTab: AppTab = .home
@@ -316,9 +317,11 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     case background, backgrounds, backgroundLibrary, gestures, menuSettings
     case playMedia, favoriteMedia, saveMedia, shareMedia
     case portrait, virtualFriends, navigationMode, selectAll, favorites, downloads
+    case searchMedia, treasureMap, treasurePlayback
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "定向播放"
         case .home: "首页"; case .discover: "发现"; case .moments: "朋友圈"; case .me: "我"
         case .library: "打开库"; case .settings: "设置"; case .friends: "朋友"; case .messages: "消息"; case .profile: "编辑资料"
         case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
@@ -335,6 +338,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     }
     var symbol: String {
         switch self {
+        case .searchMedia: "magnifyingglass"; case .treasureMap: "sparkles.rectangle.stack"; case .treasurePlayback: "play.square.stack"
         case .home: "moon.stars"; case .discover: "safari"; case .moments, .friends: "person.2"
         case .me, .profile, .avatar: "person.crop.circle"; case .library, .saveMedia: "square.grid.2x2"
         case .settings, .menuSettings: "gearshape"; case .messages: "bubble.left.and.bubble.right"
@@ -413,6 +417,22 @@ enum RingAction: Identifiable, Hashable {
     var symbol: String { switch self { case .media(let a): a.symbol; case .command(let a): a.symbol } }
     var mediaAction: QuickActionID? { switch self { case .media(let a): a; case .command(let a): a.mediaAction } }
     var background: BackgroundTarget { mediaAction.map(BackgroundTarget.ring(for:)) ?? .allRingButtons }
+}
+
+extension AppCommand {
+    var searchTerms: [String] {
+        let aliases: [String]
+        switch self {
+        case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
+        case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
+        case .treasurePlayback: aliases = ["定向播放", "播放目标", "声音", "音量", "幻灯片"]
+        case .importMedia: aliases = ["相册", "导入", "照片库"]
+        case .favorites: aliases = ["收藏", "我的收藏"]
+        case .library: aliases = ["库", "媒体库", "视频库"]
+        default: aliases = []
+        }
+        return [title, rawValue] + aliases
+    }
 }
 
 enum VirtualAIProvider: String, CaseIterable, Identifiable, Sendable {
