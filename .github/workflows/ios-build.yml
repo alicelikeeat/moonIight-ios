@@ -46,7 +46,7 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO build
       - name: Check public discovery source APIs
         run: |
           mkdir -p build
@@ -167,7 +167,7 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight.xcarchive INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" archive
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight.xcarchive MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" archive
           cat > build/ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -189,10 +189,30 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight-Unsigned.xcarchive INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight-Unsigned.xcarchive MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
           mkdir -p build/unsigned-ipa/Payload
           cp -R build/Moonlight-Unsigned.xcarchive/Products/Applications/Moonlight.app build/unsigned-ipa/Payload/Moonlight.app
           (cd build/unsigned-ipa && /usr/bin/zip -qry "Moonlight-v${APP_VERSION}.ipa" Payload)
+      - name: Validate device archive metadata
+        if: steps.version.outputs.release == 'true'
+        env:
+          APP_VERSION: ${{ steps.version.outputs.marketing }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          SIGNED_READY: ${{ steps.signing.outputs.ready }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, plistlib
+          from pathlib import Path
+          archive = 'Moonlight.xcarchive' if os.environ['SIGNED_READY'] == 'true' else 'Moonlight-Unsigned.xcarchive'
+          app = Path('build') / archive / 'Products/Applications/Moonlight.app'
+          with (app / 'Info.plist').open('rb') as f:
+              info = plistlib.load(f)
+          assert info.get('CFBundleShortVersionString') == os.environ['APP_VERSION'], 'Missing or wrong application version'
+          assert info.get('CFBundleVersion') == os.environ['BUILD_NUMBER'], 'Wrong build number'
+          assert info.get('CFBundleSupportedPlatforms') == ['iPhoneOS'], 'Expected device archive'
+          assert (app / info['CFBundleExecutable']).is_file(), 'Missing application executable'
+          print('Device archive metadata verified:', info['CFBundleShortVersionString'], info['CFBundleVersion'])
+          PYTHON
       - name: Upload unsigned IPA
         if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
