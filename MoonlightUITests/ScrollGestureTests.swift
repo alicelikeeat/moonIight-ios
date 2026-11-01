@@ -8,8 +8,8 @@ final class ScrollGestureTests: XCTestCase {
             let ready = app.staticTexts["background-test-state"]
             XCTAssertTrue(ready.waitForExistence(timeout: 10))
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 10), .completed)
-            app.buttons["navigation-me"].press(forDuration: 0.7)
-            let library = app.buttons["打开库"]
+            app.buttons["navigation-me"].tap()
+            let library = app.buttons["me-library"]
             XCTAssertTrue(library.waitForExistence(timeout: 5)); library.tap()
             app.buttons["library-treasure-map"].tap()
             XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))

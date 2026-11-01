@@ -2927,6 +2927,7 @@ private struct MeView: View {
                     }
                     VStack(spacing: 0) {
                         NavigationLink(value: AppCommand.library) { MenuRow(symbol: "square.grid.2x2.fill", title: "库", color: .orange) }
+                            .accessibilityIdentifier("me-library")
                         Divider().padding(.leading, 56)
                         NavigationLink(value: AppCommand.friends) { MenuRow(symbol: "person.2.fill", title: "朋友", color: .green) }
                         Divider().padding(.leading, 56)
