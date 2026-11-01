@@ -18,6 +18,17 @@ extension TreasurePlaybackOptions {
         TreasurePlaybackPlan.ids(in: source(in: store).filter { $0.kind != .embed && $0.remoteURL != nil }.map(\.id), startingAt: startID, count: count, single: target == .single)
     }
 }
+struct TreasureBackgroundSurface: View {
+    let options: TreasurePlaybackOptions
+    var body: some View {
+        switch options.background {
+        case .system: Color(uiColor: .systemBackground)
+        case .solid: Color(red: options.red, green: options.green, blue: options.blue)
+        case .purple: LinearGradient(colors: [.black, Color(red: 0.15, green: 0.11, blue: 0.25)], startPoint: .top, endPoint: .bottom)
+        }
+    }
+}
+
 struct TreasurePlaybackRequest: Identifiable {
     let id = UUID()
     let ids: [String]
@@ -140,6 +151,7 @@ private final class TreasureSequenceSession: ObservableObject {
     private var imageTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var endObserver: NSObjectProtocol?
+    private var audioObservers: [NSObjectProtocol] = []
     private var audioOwned = false
     private var wantsPlaying = false
     private var loadingAsset: AVURLAsset?
@@ -149,6 +161,16 @@ private final class TreasureSequenceSession: ObservableObject {
     func start(_ request: TreasurePlaybackRequest, lookup: @escaping (String) -> MediaEntry?) {
         stop()
         ids = request.ids; options = request.options; self.lookup = lookup; index = 0
+        audioObservers = [
+            NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+                let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue == AVAudioSession.InterruptionType.began.rawValue
+                if began { Task { @MainActor in self?.pause() } }
+            },
+            NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+                let unplugged = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue
+                if unplugged { Task { @MainActor in self?.pause() } }
+            }
+        ]
         open()
     }
     private func open() {
@@ -246,7 +268,11 @@ private final class TreasureSequenceSession: ObservableObject {
             audioOwned = false
         }
     }
-    func stop() { wantsPlaying = false; stopItem(); current = nil; lookup = nil; message = "已停止" }
+    func stop() {
+        wantsPlaying = false; stopItem()
+        audioObservers.forEach { NotificationCenter.default.removeObserver($0) }; audioObservers.removeAll()
+        current = nil; lookup = nil; message = "已停止"
+    }
 }
 
 struct TreasureDirectedPlayer: View {
@@ -273,7 +299,7 @@ struct TreasureDirectedPlayer: View {
                 Button("停止") { session.stop() }.accessibilityIdentifier("treasure-sequence-stop")
                 Button("完成") { session.stop(); dismiss() }.accessibilityIdentifier("treasure-sequence-close")
             }.frame(minHeight: 44).buttonStyle(.plain).padding(10).moonSingleGlass()
-        }.padding().background(Color(uiColor: .systemBackground))
+        }.padding().background { TreasureBackgroundSurface(options: request.options).ignoresSafeArea() }
             .onAppear { session.start(request) { id in model.mediaStore.items.first { $0.id == id } } }
             .onDisappear { session.stop() }
             .onChange(of: phase) { value in if value != .active { session.pause() } }

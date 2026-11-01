@@ -19,10 +19,13 @@
 | 相机 / 导入、系统相册 | 触发设备能力检查、系统选择器或导入 | openCamera / rootImporter / PhotosPicker | 保留独立行为；系统内部控件不包第二层玻璃 | 既有相机/相册回归 |
 | 个人资料 / 设置 / 背景编辑 / 菜单设置 | 对应导航与状态写入 | 现有 NavigationLink / AppCommand / BackgroundStore | 保留；普通操作继承玻璃，已有玻璃表面显式 plain，未强制跳转搜索 | 原有两项非阻断视觉诊断在 V2.0 曾失败，需保留实际记录，不能据工作流绿色宣称全过 |
 
+| 智能输入栏 / 全局搜索清除 | 清空输入，不提交或丢失焦点 | draft / query = 空字符串 | 新增明确名称与 identifier，内部透明，44pt 命中 | UI 待验 |
+
 ## 单层材质与输入
 
 - `MoonGlassBackdrop`：iOS 26+ 原生 glassEffect，iOS 16–25 系统 regularMaterial；降低透明度时改系统实色，增强对比度时加一条细边。
 - `moonGlassContainer` 环境标记使玻璃面板内部按钮不叠加第二层主材质。已有底部圆形与媒体内容使用显式 plain；原生 UITabBar、系统导航栏保留系统材质。
+- 搜索输入使用原生单行 TextField 处理回车，不监听文本换行自动发送；正文聊天仍保留多行，避免中文组合输入或粘贴误提交。
 - 智能输入框与全局搜索框使用 `MoonSearchBubble`，只缩放背景装饰 1→1.025→1；输入布局、光标与组合文字不做 scale/offset。焦点与提交各触发一次短动画，减少动态效果时只有淡入淡出。
 - 装饰层统一 `allowsHitTesting(false)` / accessibilityHidden；按钮、键盘与原有滑动手势保持原命中路径。
 

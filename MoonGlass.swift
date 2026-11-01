@@ -43,6 +43,7 @@ struct MoonSearchBubble: ViewModifier {
     let focused: Bool
     let submission: Int
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var scale: CGFloat = 1
     @State private var highlight = false
     @State private var lastSubmission = 0
@@ -50,7 +51,11 @@ struct MoonSearchBubble: ViewModifier {
         content
             .background {
                 MoonGlassBackdrop(radius: 40)
-                    .overlay(Capsule().strokeBorder(.white.opacity(highlight ? 0.45 : 0.08), lineWidth: 1))
+                    .overlay {
+                        if contrast != .increased {
+                            Capsule().strokeBorder(.white.opacity(highlight ? 0.45 : 0.08), lineWidth: 1)
+                        }
+                    }
                     .scaleEffect(scale).allowsHitTesting(false).accessibilityHidden(true)
             }
             .environment(\.moonGlassContainer, true)

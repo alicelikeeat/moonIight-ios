@@ -1737,7 +1737,7 @@ private struct MoonInteractiveButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, inGlass ? 0 : 8)
-            .frame(minHeight: 44)
+            .frame(minHeight: 44).contentShape(Rectangle())
             .background { if !inGlass { MoonGlassBackdrop(radius: 22) } }
             .opacity(blind ? 0.01 : 1)
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
@@ -3706,11 +3706,15 @@ private struct GlobalAssistantSearchOverlay: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 10) {
                         AssistantProviderPicker()
-                        TextField("搜索功能或询问 \(provider.title)", text: $query, axis: .vertical)
-                            .lineLimit(1...3)
+                        TextField("搜索功能或询问 \(provider.title)", text: $query)
+                            .lineLimit(1)
                             .focused($focused)
                             .submitLabel(.send)
                             .onSubmit(submitSearch).accessibilityIdentifier("global-search-input")
+                        Button { query = "" } label: {
+                            Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44)
+                        }.disabled(query.isEmpty).opacity(query.isEmpty ? 0 : 1)
+                            .accessibilityLabel("清除搜索").accessibilityIdentifier("global-search-clear")
                         Button(action: onDismiss) {
                             Image(systemName: "xmark").font(.footnote.weight(.bold))
                                 .frame(width: 44, height: 44)
@@ -3947,6 +3951,9 @@ private struct AssistantDock: View {
                 HStack {
                     AssistantProviderPicker()
                     Spacer()
+                    Button { draft = "" } label: {
+                        Image(systemName: "xmark.circle.fill").frame(width: 44, height: 44)
+                    }.disabled(draft.isEmpty).accessibilityLabel("清除输入").accessibilityIdentifier("assistant-clear")
                     Button {
                         focused = false
                     } label: {
@@ -3985,8 +3992,8 @@ private struct AssistantDock: View {
                         .frame(width: 44, height: 44)
                         .background(Color.clear, in: Circle())
                 }
-                TextField("搜索功能或询问 \(provider.title)", text: $draft, axis: .vertical)
-                    .focused($focused).lineLimit(1...4)
+                TextField("搜索功能或询问 \(provider.title)", text: $draft)
+                    .focused($focused).lineLimit(1)
                     .textInputAutocapitalization(.sentences)
                     .submitLabel(.send).onSubmit(submit)
                     .accessibilityIdentifier("assistant-input")
