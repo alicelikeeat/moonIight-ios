@@ -27,6 +27,7 @@ struct MoonTreasureMapView: View {
     @StateObject private var videoPreviews = TreasureVideoPreviews()
     @State private var visibleGridVideos = Set<String>()
     @State private var scene = MoonTreasureScene()
+    @State private var glassFrames: [TreasureGlassFrame] = []
     @State private var sceneDirty = false
     @State private var dragDiagnostics = ""
     @State private var videoDiagnostics = ""
@@ -152,7 +153,10 @@ struct MoonTreasureMapView: View {
                 }.padding(14)
             }.accessibilityIdentifier("treasure-grid")
         } else {
-            SpriteView(scene: scene, options: [.allowsTransparency])
+            ZStack {
+                TreasurePhysicsGlass(frames: glassFrames, sceneSize: scene.size)
+                SpriteView(scene: scene, options: [.allowsTransparency])
+            }
                 .clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14)
                 .accessibilityIdentifier("moon-treasure-map")
                 .onAppear { if scene.children.isEmpty || !scene.hasCallbacks { configureScene() }; syncFreeState() }
@@ -160,6 +164,7 @@ struct MoonTreasureMapView: View {
     }
     private func configureScene() {
         sceneDirty = false
+        scene.onGlassFrames = { glassFrames = $0 }
         #if DEBUG
         scene.onDragDiagnostics = { dragDiagnostics = $0 }
         #endif
@@ -208,7 +213,44 @@ private enum TreasureScope: String, CaseIterable, Identifiable {
     var title: String { switch self { case .all: "全部"; case .favorites: "收藏"; case .videos: "视频" } }
 }
 
+private struct TreasureGlassFrame: Identifiable, Equatable {
+    let id: String
+    let center: CGPoint
+    let size: CGSize
+    let rotation: CGFloat
+    let scale: CGFloat
+    let z: CGFloat
+}
+private struct TreasurePhysicsGlass: View {
+    let frames: [TreasureGlassFrame]
+    let sceneSize: CGSize
+    var body: some View {
+        GeometryReader { geometry in
+            let sx = geometry.size.width / max(1, sceneSize.width)
+            let sy = geometry.size.height / max(1, sceneSize.height)
+            if #available(iOS 26.0, *) {
+                GlassEffectContainer(spacing: 0) { surfaces(sx: sx, sy: sy, height: geometry.size.height) }
+            } else { surfaces(sx: sx, sy: sy, height: geometry.size.height) }
+        }.allowsHitTesting(false).accessibilityHidden(true)
+            .transaction { $0.animation = nil }
+    }
+    private func surfaces(sx: CGFloat, sy: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            ForEach(frames) { frame in
+                MoonGlassBackdrop(radius: 17)
+                    .frame(width: frame.size.width * sx, height: frame.size.height * sy)
+                    .scaleEffect(frame.scale).rotationEffect(.radians(-Double(frame.rotation)))
+                    .position(x: frame.center.x * sx, y: height - frame.center.y * sy)
+                    .zIndex(Double(frame.z))
+            }
+        }
+    }
+}
+
 private final class MoonTreasureScene: SKScene {
+    var onGlassFrames: (([TreasureGlassFrame]) -> Void)?
+    private var lastGlassTime: TimeInterval = 0
+    private var lastGlassFrames: [TreasureGlassFrame] = []
     var hasCallbacks: Bool { select != nil && longPress != nil }
     var onDragDiagnostics: ((String) -> Void)?
     private var darkCards = true
@@ -326,12 +368,12 @@ private final class MoonTreasureScene: SKScene {
         let height: CGFloat = entry.kind == .video ? 104 : 86
         let node = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 17)
         node.name = entry.id
-        // A translucent base plus a frosted metadata strip makes each physical
-        // node read as an individual glass treasure instead of a colored tile.
-        node.fillColor = .white.withAlphaComponent(0.16)
+        // The sole material is a native glass surface behind this scene.
+        // The transparent SpriteKit shape still owns physical hit testing.
+        node.fillColor = .clear
         originalFillColors[ObjectIdentifier(node)] = node.fillColor
-        node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.92) : .white.withAlphaComponent(0.56)
-        node.lineWidth = entry.isFavorite ? 2.1 : 1.2
+        node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.75) : .clear
+        node.lineWidth = entry.isFavorite ? 1 : 0
         node.position = CGPoint(
             x: 72 + CGFloat(index % max(Int((size.width - 144) / 105) + 1, 1)) * 105,
             y: 80 + CGFloat((index / 3) % max(Int((size.height - 160) / 115) + 1, 1)) * 115
@@ -361,7 +403,7 @@ private final class MoonTreasureScene: SKScene {
 
         let glassStrip = SKShapeNode(rectOf: CGSize(width: width - 7, height: height * 0.30), cornerRadius: 12)
         glassStrip.fillColor = SKColor(white: 0.03, alpha: 0.48)
-        glassStrip.strokeColor = .white.withAlphaComponent(0.16)
+        glassStrip.strokeColor = .clear
         glassStrip.lineWidth = 0.8
         glassStrip.position = CGPoint(x: 0, y: -height * 0.30)
         node.addChild(glassStrip)
@@ -408,9 +450,8 @@ private final class MoonTreasureScene: SKScene {
     func setCardContrast(dark: Bool) {
         darkCards = dark
         for case let card as SKShapeNode in children where card.name != nil {
-            card.fillColor = (dark ? SKColor.white : SKColor.black).withAlphaComponent(dark ? 0.16 : 0.1)
+            card.fillColor = .clear
             originalFillColors[ObjectIdentifier(card)] = card.fillColor
-            if card.lineWidth < 2 { card.strokeColor = (dark ? SKColor.white : SKColor.black).withAlphaComponent(0.4) }
         }
     }
 
@@ -542,6 +583,7 @@ private final class MoonTreasureScene: SKScene {
         select = nil
         longPress = nil
         onDragDiagnostics = nil
+        onGlassFrames = nil
         setVideoPreviews([:])
     }
 
@@ -593,7 +635,21 @@ private final class MoonTreasureScene: SKScene {
             #endif
             pinToFinger(node, at: anchor)
         }
+        publishGlassFrames()
         publishDragDiagnostics()
+    }
+    private func publishGlassFrames() {
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastGlassTime >= 1.0 / 30 else { return }
+        lastGlassTime = now
+        let frames = children.compactMap { node -> TreasureGlassFrame? in
+            guard let shape = node as? SKShapeNode, let id = shape.name, let path = shape.path else { return nil }
+            let center = CGPoint(x: (shape.position.x * 2).rounded() / 2, y: (shape.position.y * 2).rounded() / 2)
+            return TreasureGlassFrame(id: id, center: center, size: path.boundingBox.size,
+                rotation: (shape.zRotation * 200).rounded() / 200, scale: shape.xScale, z: shape.zPosition)
+        }
+        guard frames != lastGlassFrames else { return }
+        lastGlassFrames = frames; onGlassFrames?(frames)
     }
 
     private func publishDragDiagnostics() {
