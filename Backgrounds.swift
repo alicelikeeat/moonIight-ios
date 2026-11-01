@@ -24,7 +24,7 @@ struct MoonGlassButtonStyle: ButtonStyle {
     @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
     private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding)
+        configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding).frame(minHeight: 44)
             .contentShape(Rectangle())
             .background { if !inGlass { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) } }
             .scaleEffect(configuration.isPressed ? 0.95 : 1)

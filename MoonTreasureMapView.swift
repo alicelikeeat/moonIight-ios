@@ -154,11 +154,17 @@ struct MoonTreasureMapView: View {
             if !initialized {
                 directedOptions = TreasurePlaybackOptions.load(directedData)
                 initialized = true
-                if openDirectedSettings { showingDirectedSettings = true }
-                if directedOptions.confirmed && directedOptions.autoPlay && directedOptions.autoPlayOnReturn {
+                if openDirectedSettings {
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                        guard pageVisible else { return }
+                        showingDirectedSettings = true
+                    }
+                }
+                if !openDirectedSettings && directedOptions.confirmed && directedOptions.autoPlay && directedOptions.autoPlayOnReturn {
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 400_000_000)
-                        guard pageVisible else { return }
+                        guard pageVisible, !showingDirectedSettings, directedRequest == nil else { return }
                         requestDirectedPlayback()
                     }
                 }
@@ -234,7 +240,7 @@ struct MoonTreasureMapView: View {
         .preferredColorScheme(directedOptions.background == .system ? nil : (darkTreasureBackground ? .dark : .light))
         .navigationTitle("月藏图")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } } }
+        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() }.accessibilityIdentifier("treasure-map-close") } }
         .fullScreenCover(item: $activeEntry) { entry in
             MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 })
                 .environmentObject(model)

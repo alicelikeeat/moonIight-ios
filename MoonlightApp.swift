@@ -425,7 +425,7 @@ extension AppCommand {
         switch self {
         case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
         case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
-        case .treasurePlayback: aliases = ["定向播放", "播放目标", "声音", "音量", "幻灯片"]
+        case .treasurePlayback: aliases = ["定向播放", "播放目标", "声音", "音量", "幻灯片", "月藏图设置", "月藏图背景", "自动播放设置"]
         case .importMedia: aliases = ["相册", "导入", "照片库"]
         case .favorites: aliases = ["收藏", "我的收藏"]
         case .library: aliases = ["库", "媒体库", "视频库"]

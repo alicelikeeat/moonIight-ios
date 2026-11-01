@@ -3779,9 +3779,8 @@ private struct GlobalAssistantSearchOverlay: View {
 private extension View {
     func globalSearchBubble(tint: Color) -> some View {
         self.font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 14).padding(.vertical, 10)
-            .foregroundStyle(.primary)
-            .moonSingleGlass(radius: 40)
+            .foregroundStyle(.primary).tint(tint)
+            .buttonStyle(MoonGlassButtonStyle())
     }
 }
 

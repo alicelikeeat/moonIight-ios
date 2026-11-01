@@ -69,7 +69,14 @@ final class ScrollGestureTests: XCTestCase {
         let command = app.buttons["assistant-command-treasureMap"]
         XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
         XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
-        app.buttons["完成"].firstMatch.tap()
+        app.buttons["treasure-map-close"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("定向播放")
+        let settingsCommand = app.buttons["assistant-command-treasurePlayback"]
+        XCTAssertTrue(settingsCommand.waitForExistence(timeout: 5)); settingsCommand.tap()
+        XCTAssertTrue(app.steppers["treasure-sequence-count"].waitForExistence(timeout: 8))
+        app.buttons["treasure-settings-close"].tap()
+        app.buttons["treasure-map-close"].tap()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         input.tap(); input.typeText("搜索图片 猫\n")
         let field = app.textFields["discover-search-input"]
