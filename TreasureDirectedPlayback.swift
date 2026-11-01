@@ -300,6 +300,8 @@ struct TreasureDirectedPlayer: View {
                 Button("完成") { session.stop(); dismiss() }.accessibilityIdentifier("treasure-sequence-close")
             }.frame(minHeight: 44).buttonStyle(.plain).padding(10).moonSingleGlass()
         }.padding().background { TreasureBackgroundSurface(options: request.options).ignoresSafeArea() }
+            .preferredColorScheme(request.options.background == .system ? nil :
+                (request.options.background == .purple || request.options.red * 0.2126 + request.options.green * 0.7152 + request.options.blue * 0.0722 < 0.5 ? .dark : .light))
             .onAppear { session.start(request) { id in model.mediaStore.items.first { $0.id == id } } }
             .onDisappear { session.stop() }
             .onChange(of: phase) { value in if value != .active { session.pause() } }

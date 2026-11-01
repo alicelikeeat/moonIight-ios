@@ -1673,7 +1673,7 @@ private struct DiscoverView: View {
                     }
                 } label: {
                     Label("搜索", systemImage: "magnifyingglass").font(.subheadline.weight(.medium))
-                }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+                }.buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
             }
             let results = (query.isEmpty ? model.mediaStore.discoverItems : model.mediaStore.searchResults).filter { kindFilter == "all" || (kindFilter == "video" ? $0.kind != .image : $0.kind.rawValue == kindFilter) }
             if results.isEmpty {
@@ -2565,7 +2565,7 @@ private struct MomentsView: View {
                             Button(option) { timelineFilter = option }
                         }
                     } label: { Label(timelineFilter, systemImage: "line.3.horizontal.decrease.circle") }
-                    .buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+                    .buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
                 }
                 let filteredMoments = model.moments.filter { moment in
                     switch timelineFilter {
@@ -2917,7 +2917,7 @@ private struct MeView: View {
                             }
                             Spacer()
                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                        }.padding(18).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
+                        }.padding(18).moonSingleGlass(radius: 24)
                     }.buttonStyle(.plain)
                     HStack(spacing: 10) {
                         StatCard(value: "\(model.moments.count)", label: "动态")
@@ -2933,7 +2933,7 @@ private struct MeView: View {
                         NavigationLink(value: AppCommand.messages) { MenuRow(symbol: "bubble.left.and.bubble.right.fill", title: "消息", color: .purple) }
                     }
                     .buttonStyle(.plain).padding(.horizontal, 14)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
+                    .moonSingleGlass(radius: 24)
                 }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 96)
             }
             .scrollIndicators(.hidden)
@@ -3301,10 +3301,10 @@ private struct LibraryView: View {
                     }
                 } label: {
                     Image(systemName: "text.badge.play").font(.subheadline.weight(.semibold))
-                }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+                }.buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
                 PhotosPicker(selection: $folderImportSelection, matching: .any(of: [.images, .videos])) {
                     Label(selectedFolder == nil ? "导入" : "导入到文件夹", systemImage: "plus").font(.subheadline.weight(.semibold))
-                }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+                }.buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
             }
             if selectedFolder == nil {
                 Button { showingTreasureMap = true } label: {
@@ -3344,7 +3344,7 @@ private struct LibraryView: View {
                         Button("重命名") { folderName = selectedFolder.name; showingRenameFolder = true }
                         Button("删除文件夹", role: .destructive) { showingDeleteFolder = true }
                     } label: { Image(systemName: "ellipsis.circle") }
-                }.font(.subheadline.weight(.medium)).buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+                }.font(.subheadline.weight(.medium)).buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
             } else {
                 Menu {
                     ForEach(["全部", "继续观看", "未观看", "收藏", "下载"], id: \.self) { choice in
@@ -3448,7 +3448,7 @@ private struct LibraryView: View {
                 Button { folderName = ""; showingCreateFolder = true } label: {
                     Label("新建文件夹", systemImage: "folder.badge.plus")
                         .font(.subheadline.weight(.semibold))
-                }.buttonStyle(.plain).foregroundStyle(MoonStyle.accent)
+                }.buttonStyle(MoonGlassButtonStyle()).foregroundStyle(MoonStyle.accent)
             }
             if model.mediaStore.folders.isEmpty {
                 Text("新建文件夹，将喜欢的内容放在一起。")

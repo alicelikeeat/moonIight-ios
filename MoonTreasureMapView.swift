@@ -231,6 +231,7 @@ struct MoonTreasureMapView: View {
             if id != nil { scene.stopMotion() }
             else if !organized { scene.startMotion() }
         }
+        .preferredColorScheme(directedOptions.background == .system ? nil : (darkTreasureBackground ? .dark : .light))
         .navigationTitle("月藏图")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } } }
