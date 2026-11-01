@@ -120,7 +120,12 @@ final class ScrollGestureTests: XCTestCase {
                       let snapshot = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
                 return predicate(snapshot)
             }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12), .completed)
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12)
+            if result != .completed {
+                print("PREVIEW_TIMEOUT_SNAPSHOT: \(probe.value as? String ?? "missing")")
+                attach(app, name: "review-preview-timeout")
+            }
+            XCTAssertEqual(result, .completed)
         }
         openMap()
         let layout = app.buttons["treasure-layout"]

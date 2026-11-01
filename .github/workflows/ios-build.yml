@@ -7,6 +7,12 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      ui_suite:
+        description: 'UI validation scope (all on pull requests)'
+        type: choice
+        default: all
+        options: [all, directed, treasure, preview, settings, scroll]
 permissions:
   contents: write
 jobs:
@@ -70,17 +76,24 @@ jobs:
           xcrun simctl boot "$SIMULATOR_ID" || true
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
       - name: Run V2.1 directed playback and search tests
-        if: steps.version.outputs.release != 'true'
+        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'directed')
         timeout-minutes: 10
         run: |
           xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testDirectedPlaybackConfirmsStableTailAndDoesNotAutoReturn -only-testing:MoonlightUITests/ScrollGestureTests/testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI -resultBundlePath build/V21Tests.xcresult test
       - name: Run treasure browsing regression
-        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'treasure' || inputs.ui_suite == 'preview') }}
         timeout-minutes: 10
+        shell: bash
+        env:
+          UI_SUITE: ${{ inputs.ui_suite }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureGridCanOpenHoldAndSwitchTwentyTimes -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureDragKeepsTouchAndPhysicsOwnership -only-testing:MoonlightUITests/ScrollGestureTests/testTreasureVideoPreviewCanPlayFreezeAndRememberPreference -resultBundlePath build/TreasureTests.xcresult test
+          TESTS=(testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference)
+          if [[ "$UI_SUITE" == preview ]]; then TESTS=(testTreasureVideoPreviewCanPlayFreezeAndRememberPreference); fi
+          ONLY=()
+          for TEST_NAME in "${TESTS[@]}"; do ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/$TEST_NAME"); done
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${ONLY[@]}" -resultBundlePath build/TreasureTests.xcresult test
       - name: Run focused visual diagnostics
-        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'settings') }}
         continue-on-error: true
         timeout-minutes: 20
         shell: bash
@@ -96,7 +109,7 @@ jobs:
           # consume the gate suite's time limit.
           xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
       - name: Run card scrolling UI tests
-        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'scroll') }}
         timeout-minutes: 35
         shell: bash
         run: |
