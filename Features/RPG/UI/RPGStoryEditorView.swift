@@ -19,7 +19,9 @@ struct RPGStoryEditorView:View {
     @State private var graph=RPGStoryAuthoring.template()
     @State private var bindings:[MediaBinding]=[]
     @State private var message="编辑后先校验，可在隔离预览中测试。保存会创建新剧情，保留旧进度。"
-    @State private var importing=false,exporting=false,previewing=false
+    @State private var importing=false
+    @State private var exporting=false
+    @State private var previewing=false
     @State private var document=RPGStoryDocument(data:Data())
     var body:some View {
         List {
@@ -89,7 +91,8 @@ private struct RPGStoryNodeEditor:View {
     let media:[MediaEntry]
     let bindings:[MediaBinding]
     let save:(RPGStoryNode,MediaEntry?,Bool,Bool)->Void
-    @State private var loop=false,muted=true
+    @State private var loop=false
+    @State private var muted=true
     @State private var selectedMedia=""
     var body:some View {
         Form {
