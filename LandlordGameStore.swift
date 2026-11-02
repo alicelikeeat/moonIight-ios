@@ -20,9 +20,15 @@ import SwiftUI
         if let data = defaults.data(forKey: "landlord-game-v241"),
            let restored = try? JSONDecoder().decode(LandlordGame.self, from: data), restored.validated {
             game = restored
-        } else { game = LandlordGame() }
+        } else { game = Self.freshGame() }
         preferences = defaults.data(forKey: "landlord-media-v241").flatMap { try? JSONDecoder().decode(CardMediaPreferences.self, from: $0) } ?? CardMediaPreferences()
         summaries = Array((defaults.array(forKey: "landlord-scores-v241") as? [[Int]] ?? []).filter { $0.count == 3 }.suffix(3))
+    }
+    private static func freshGame() -> LandlordGame {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") { return LandlordGame(deck: LandlordCard.deck) }
+        #endif
+        return LandlordGame()
     }
     func persist() {
         defaults.set(try? JSONEncoder().encode(game), forKey: "landlord-game-v241")
@@ -39,7 +45,7 @@ import SwiftUI
     func bid(_ value: Int) { changed(game.bid(value, player: 0)) }
     func play() { changed(game.play(selection, player: 0)) }
     func pass() { changed(game.pass(player: 0)) }
-    func newGame() { task?.cancel(); game = LandlordGame(); selection = []; automatic = false; message = "新一局，请叫分。"; refresh() }
+    func newGame() { task?.cancel(); game = Self.freshGame(); selection = []; automatic = false; message = "新一局，请叫分。"; refresh() }
     private func changed(_ success: Bool) {
         if success { selection = []; message = ""; complete(); refresh() }
         else { message = "当前选牌不符合牌型或不能压过上一手。" }

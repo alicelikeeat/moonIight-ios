@@ -83,6 +83,7 @@ private actor CardFrameRenderer {
     private var requested = 2
     private var active = false
     private var resumeAfterInterruption = false
+    private var interrupted = false
     private var pressure = false
     private var slow = false
     private var generation = UUID()
@@ -115,8 +116,9 @@ private actor CardFrameRenderer {
                         self.notice = "内存紧张，已切换静态牌面；可在媒体设置中重新启用。"
                     }
                     if interrupted {
-                        if ended { self.active = self.resumeAfterInterruption; self.resumeAfterInterruption = false }
-                        else { self.resumeAfterInterruption = self.active; self.active = false }
+                        if ended {
+                            if self.interrupted { self.active = self.resumeAfterInterruption; self.resumeAfterInterruption = false; self.interrupted = false }
+                        } else { self.interrupted = true; self.resumeAfterInterruption = self.active; self.active = false }
                         self.mute()
                     }
                     self.reconcile()
@@ -266,7 +268,7 @@ private actor CardFrameRenderer {
         }
     }
     func stop(clear: Bool = false) {
-        active = false; resumeAfterInterruption = false; generation = UUID(); mute()
+        active = false; resumeAfterInterruption = false; interrupted = false; generation = UUID(); mute()
         timer?.invalidate(); timer = nil
         for id in Array(slots.keys) { release(id) }
         for task in posterTasks.values { task.cancel() }; posterTasks.removeAll(); posterQueue.removeAll()

@@ -220,7 +220,7 @@ struct LandlordGameView: View {
                 }
             }.disabled(store.game.turn != 0 || store.automatic).frame(minHeight: 44)
             HStack { Text("托管我的手牌").font(.caption); Spacer(); Toggle("托管我的手牌", isOn: $store.automatic).labelsHidden().frame(width: 51, height: 44).accessibilityIdentifier("landlord-auto") }.padding(.horizontal, 12)
-        }.buttonStyle(MoonGlassButtonStyle()).padding(.horizontal, 12).padding(.bottom, 6)
+        }.buttonStyle(MoonGlassButtonStyle()).padding(.horizontal, 12).padding(.bottom, 78)
     }
     private var mediaSettings: some View {
         NavigationStack {

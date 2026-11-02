@@ -27,6 +27,7 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
         waitLandlord(app) { $0["valid"] == "1" && (Int($0["history"] ?? "0") ?? 0) > 0 && $0["players"] == "0" }
         app.switches["landlord-auto"].tap()
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "1")
         waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
         attach(app, name: "review-v241-classic-result")
         app.buttons["landlord-new-game"].tap()
@@ -71,6 +72,7 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
         waitLandlord(app) { (Int($0["history"] ?? "0") ?? 0) > 0 && $0["valid"] == "1" && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["owned"] ?? "99") ?? 99) <= 2 }
         app.switches["landlord-auto"].tap()
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "1")
         waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
         attach(app, name: "review-v241-media-result")
         for _ in 0..<3 {
