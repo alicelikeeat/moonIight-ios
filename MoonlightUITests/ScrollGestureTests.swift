@@ -2,6 +2,48 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGMediaFramesBudgetLoopAndBackground() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
+        let ready=app.staticTexts["background-test-state"]
+        XCTAssertTrue(ready.waitForExistence(timeout:15))
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","背景测试就绪"),object:ready)],timeout:20),.completed)
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        func media(_ id:String,_ index:Int) {
+            let entrance=app.buttons[id]
+            guard revealListControl(entrance,in:app) else{return};entrance.tap()
+            let item=app.buttons["rpg-pick-scroll-fixture-\(index)"]
+            guard revealListControl(item,in:app) else{return};item.tap()
+            XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label CONTAINS %@","Scroll fixture \(index)"),object:app.staticTexts["rpg-current-media"])],timeout:10),.completed)
+            app.buttons["rpg-media-back"].tap()
+        }
+        media("rpg-media-player",0);media("rpg-media-background",11)
+        app.buttons["rpg-tools-close"].tap()
+        let probe=app.staticTexts["rpg-media-probe"]
+        func waitMedia(_ condition:@escaping ([String:Int])->Bool) {
+            let predicate=NSPredicate{_,_ in
+                let pairs=(probe.value as? String ?? "").split(separator:";").compactMap{item->(String,Int)? in
+                    let pair=item.split(separator:"=",maxSplits:1);guard pair.count==2,let number=Int(pair[1]) else{return nil};return(String(pair[0]),number)
+                }
+                return condition(Dictionary(pairs,uniquingKeysWith:{first,_ in first}))
+            }
+            XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:predicate,object:probe)],timeout:25),.completed)
+        }
+        waitMedia{($0["frames"] ?? 0)>0 && ($0["posters"] ?? 0)>0 && ($0["advancing"] ?? 0)>0 && ($0["global"] ?? 99)<=2 && $0["muted"]==1}
+        XCUIDevice.shared.press(.home);app.activate()
+        waitMedia{($0["advancing"] ?? 0)>0 && $0["muted"]==1}
+        app.buttons["rpg-tools"].tap()
+        let player=app.buttons["rpg-media-player"];guard revealListControl(player,in:app) else{return};player.tap()
+        let loop=app.switches["rpg-binding-loop"]
+        guard revealListControl(loop,in:app) else{return};if loop.value as? String=="1"{loop.tap()}
+        app.buttons["rpg-media-back"].tap();app.buttons["rpg-tools-close"].tap()
+        waitMedia{($0["completed"] ?? 0)>0 && $0["players"]==0}
+        attach(app,name:"review-rpg-p5-media")
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout:5))
+    }
+
+    @MainActor
     func testRPGSharedEntityAndSafeDualProjection() {
         let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()

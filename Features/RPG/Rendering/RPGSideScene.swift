@@ -2,6 +2,8 @@ import SpriteKit
 import UIKit
 
 @MainActor final class RPGSideScene: SKScene {
+    var onFrame:((TimeInterval)->Void)?
+    private(set) var mediaTargets:[RPGMediaNode]=[]
     var onSelectCell: ((SidePlacement) -> Void)?
     var onPosition: ((SidePlacement, Bool) -> Void)?
     private let avatar = SKShapeNode(rectOf: CGSize(width:16,height:22),cornerRadius:5)
@@ -38,6 +40,9 @@ import UIKit
             physicsBody=SKPhysicsBody(edgeLoopFrom:CGRect(x:0,y:0,width:width,height:64*24));physicsBody?.categoryBitMask=2
         }
         objects.removeAllChildren()
+        avatar.children.filter{$0.name?.hasPrefix("media:")==true}.forEach{$0.removeFromParent()}
+        mediaTargets=RPGMediaSprites.backgrounds(world:world,camera:worldCamera,size:size,topDown:false)
+        if let target=RPGMediaSprites.attach(ownerID:"player",bindingID:world.player.mediaBindingID,role:.player,parent:avatar,world:world,size:CGSize(width:24,height:32)){mediaTargets.append(target)}
         let entities=RPGProjectionRules.sideEntities(world:world,generator:RPGWorldGenerator(seed:world.seed))
         sharedIDs=entities.filter{$0.scope == .shared}.map(\.id).sorted()
         for entity in entities {
@@ -49,6 +54,7 @@ import UIKit
             node.strokeColor = .white.withAlphaComponent(0.5);node.name=entity.id
             if entity.physics.sideSolid { node.physicsBody=SKPhysicsBody(rectangleOf:size);node.physicsBody?.isDynamic=false;node.physicsBody?.categoryBitMask=2 }
             objects.addChild(node)
+            if let target=RPGMediaSprites.attach(ownerID:entity.id,bindingID:entity.mediaBindingID,role:.interactive,parent:node,world:world,size:size){mediaTargets.append(target)}
         }
         if changed || resetPlayer { respawn(world.player.side ?? selectedRegion.landing) }
     }
@@ -69,7 +75,7 @@ import UIKit
         let h=max(0,min(63,Int(floor(avatar.position.y/24))))
         let cell=SidePlacement(regionID:region.id,horizontal:u,height:h)
         if cell != lastCell || lastGrounded != isOnGround {lastCell=cell;lastGrounded=isOnGround;onPosition?(cell,isOnGround)}
-        follow()
+        follow();onFrame?(currentTime)
     }
     private func follow(){worldCamera.position=CGPoint(x:avatar.position.x,y:max(size.height*0.4,avatar.position.y+size.height*0.15))}
     override func touchesBegan(_ touches:Set<UITouch>,with event:UIEvent?){
@@ -77,5 +83,5 @@ import UIKit
         let p=touch.location(in:self),u=Int(floor(p.x/24)),h=Int(floor(p.y/24))
         if (0..<region.width).contains(u) && (0..<64).contains(h){onSelectCell?(.init(regionID:region.id,horizontal:u,height:h))}
     }
-    func shutdown(){isPaused=true;onSelectCell=nil;onPosition=nil;avatar.physicsBody?.velocity = .zero;objects.removeAllChildren();floorLayer.removeAllChildren();region=nil;sharedIDs=[];removeAllActions()}
+    func shutdown(){isPaused=true;onSelectCell=nil;onPosition=nil;onFrame=nil;mediaTargets=[];avatar.physicsBody?.velocity = .zero;objects.removeAllChildren();floorLayer.removeAllChildren();region=nil;sharedIDs=[];removeAllActions()}
 }

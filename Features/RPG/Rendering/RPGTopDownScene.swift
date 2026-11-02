@@ -12,12 +12,15 @@ import UIKit
     private let avatar = SKShapeNode(circleOfRadius: 8)
     private let selection = SKShapeNode(rectOf: CGSize(width: 23, height: 23), cornerRadius: 3)
     private let worldCamera = SKCameraNode()
+    var onFrame: ((TimeInterval) -> Void)?
+    private(set) var mediaTargets: [RPGMediaNode] = []
     private(set) var sharedIDs: [String] = []
     private var maps: [ChunkCoordinate: SKTileMapNode] = [:]
     private var groups: [RPGTerrain: SKTileGroup] = [:]
     override init() {
         super.init(size: CGSize(width: 390, height: 500))
         scaleMode = .resizeFill; backgroundColor = .clear; physicsWorld.gravity = .zero
+        objects.zPosition = 2
         addChild(ground); addChild(objects); addChild(avatar); addChild(selection); addChild(worldCamera)
         camera = worldCamera
         avatar.fillColor = .systemTeal; avatar.strokeColor = .white; avatar.zPosition = 10
@@ -37,12 +40,16 @@ import UIKit
             ground.addChild(map); maps[chunk.coordinate] = map
         }
         objects.removeAllChildren(); sharedIDs = []
+        avatar.children.filter { $0.name?.hasPrefix("media:") == true }.forEach { $0.removeFromParent() }
+        mediaTargets = RPGMediaSprites.backgrounds(world: world, camera: worldCamera, size: size, topDown: true)
+        if let target = RPGMediaSprites.attach(ownerID: "player", bindingID: world.player.mediaBindingID, role: .player, parent: avatar, world: world, size: CGSize(width: 24, height: 32)) { mediaTargets.append(target) }
         for entity in chunks.flatMap({ RPGWorldEditing.entities(in: $0, world: world) }) {
             guard let point = entity.surface, wanted.contains(point.chunk ?? .init(x: -1, z: -1)) else { continue }
             let node = SKShapeNode(rectOf: CGSize(width: 16, height: 18), cornerRadius: 4)
             node.fillColor = entity.definitionID == "wood" ? .systemBrown : .systemGray
             node.strokeColor = .white.withAlphaComponent(0.5); node.position = Self.position(point); node.name = entity.id
             objects.addChild(node)
+            if let target = RPGMediaSprites.attach(ownerID: entity.id, bindingID: entity.mediaBindingID, role: .interactive, parent: node, world: world, size: CGSize(width: 24, height: 24)) { mediaTargets.append(target) }
             if entity.scope == .shared { sharedIDs.append(entity.id) }
         }
         let generator = RPGWorldGenerator(seed: world.seed)
@@ -69,6 +76,7 @@ import UIKit
         }
     }
     static func position(_ point: SurfacePoint) -> CGPoint { CGPoint(x: CGFloat(point.x) * cell + cell / 2, y: CGFloat(point.z) * cell + cell / 2) }
+    override func update(_ currentTime: TimeInterval) { onFrame?(currentTime) }
     private func cell(_ touch: UITouch) -> SurfacePoint? {
         let point = touch.location(in: self)
         let cell = SurfacePoint(x: Int(floor(point.x / Self.cell)), z: Int(floor(point.y / Self.cell)))
@@ -89,5 +97,5 @@ import UIKit
         strokePoints = []
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { strokePoints = [] }
-    func shutdown() { isPaused = true; onSelectCell = nil; onStroke = nil; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
+    func shutdown() { isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
 }

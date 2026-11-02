@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 enum RPGTool: String, CaseIterable { case select, paint, erase }
 @MainActor final class RPGSession: ObservableObject {
@@ -17,6 +18,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     @Published var tool = RPGTool.select { didSet { scene.tool = tool } }
     @Published private(set) var rangeStart: SurfacePoint?
     @Published private(set) var hasClipboard = false
+    @Published private(set) var media: RPGMediaCoordinator?
+    private var mediaNotice: AnyCancellable?
     let scene = RPGTopDownScene()
     private var chunks: [RPGChunk] = []
     private var cache: RPGChunkCache?
@@ -44,7 +47,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         storage = RPGWorldDiskStore(root: root)
     }
     func activate() {
-        active = true; bindScenes(); applyScenePause()
+        active = true; silenceMedia(); bindScenes(); applyScenePause()
         if ready { loadVisible(force: true) } else if boot == nil { loadWorld() }
     }
     func loadWorld() {
@@ -65,16 +68,16 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func assign(_ value: WorldState) {
         generation = UUID(); loading?.cancel(); saving?.cancel()
         scene.shutdown(); sideScene.shutdown()
-        world = value; terrainGenerator = .init(seed: world.seed)
+        world = value; silenceMedia(); terrainGenerator = .init(seed: world.seed)
         if !world.generated { world.player.surface = generator.anchor(.spawn); world.sideRegions = [generator.sideRegion]; world.generated = true }
         cache = RPGChunkCache(seed: world.seed); chunks = []; displayedChunk = nil; selected = nil; rangeStart = nil
         ready = true; working = false
         bindScenes(); applyScenePause(); scene.tool = tool
         loadVisible(force: true)
     }
-    func pause() { active = false; applyScenePause(); loading?.cancel(); save() }
+    func pause() { active = false; silenceMedia(); media?.pause(); applyScenePause(); loading?.cancel(); save() }
     func shutdown() {
-        save(); active = false; generation = UUID(); loading?.cancel(); boot?.cancel(); edit?.cancel(); boot = nil
+        silenceMedia(); save(); active = false; media?.stop(); media=nil; mediaNotice=nil; generation = UUID(); loading?.cancel(); boot?.cancel(); edit?.cancel(); boot = nil
         scene.shutdown(); sideScene.shutdown(); let old = cache; Task { await old?.clear() }; cache = nil; chunks = []; displayedChunk = nil
     }
     func move(dx: Int, dz: Int) {
@@ -114,6 +117,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func bindScenes() {
         scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point) }
         scene.onStroke = { [weak self] points in self?.stroke(points) }
+        scene.onFrame = { [weak self] time in self?.media?.frame(time) }
+        sideScene.onFrame = { [weak self] time in self?.media?.frame(time) }
         sideScene.onSelectCell = { [weak self] point in
             guard let self else { return }; self.selectedSide = point; self.sideScene.select(point)
             if let region = self.world.sideRegions.first(where: { $0.id == point.regionID }) { self.selected = .init(x: region.origin.x + point.horizontal, z: region.origin.z) }
@@ -129,7 +134,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.isPaused = !active || working || overlayVisible || world.player.perspective != .topDown
         sideScene.isPaused = !active || working || overlayVisible || world.player.perspective != .side
     }
-    func setOverlay(_ value: Bool) { overlayVisible = value; applyScenePause() }
+    func setOverlay(_ value: Bool) { overlayVisible = value; if value { silenceMedia(); media?.pause() }; applyScenePause(); syncMedia() }
     func travelToTemple() {
         guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { return }
         guard world.player.mode == .creative else { notice = "冒险模式请沿通路探索；创造模式可定位到双界入口。"; return }
@@ -161,7 +166,53 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func updateProjectionEvidence() {
         let ids = world.player.perspective == .side ? sideScene.sharedIDs : scene.sharedIDs
         projectionEvidence = world.player.perspective.rawValue + ":" + ids.sorted().joined(separator: ",")
+        syncMedia()
     }
+    func attachMediaStore(_ store:MediaStore) {
+        if media == nil {
+            media=RPGMediaCoordinator(store:store)
+            mediaNotice=media?.$notice.sink{[weak self] value in if !value.isEmpty { self?.notice=value } }
+        }
+        syncMedia()
+    }
+    private func syncMedia() {
+        let top=world.player.perspective == .topDown
+        media?.install(world:world,targets:top ? scene.mediaTargets : sideScene.mediaTargets,scene:top ? scene : sideScene,active:active && ready && !overlayVisible)
+    }
+    private func silenceMedia() {
+        if world.mediaBindings.contains(where:{!$0.muted}) {
+            for index in world.mediaBindings.indices { world.mediaBindings[index].muted=true };world.revision+=1
+        }
+    }
+    var selectedEntity:WorldEntity? {
+        if world.player.perspective == .side,let point=selectedSide { return RPGProjectionRules.sideEntities(world:world,generator:generator).first{RPGProjectionRules.occupies($0,point)} }
+        guard let selected else{return nil};return RPGWorldEditing.entity(at:selected,world:world,generator:generator)
+    }
+    func mediaBinding(for owner:RPGMediaOwner)->MediaBinding? {
+        guard let id=RPGMediaBindings.bindingID(for:owner,in:world) else{return nil};return world.mediaBindings.first{$0.id==id}
+    }
+    func assignMedia(_ entry:MediaEntry,to owner:RPGMediaOwner) {
+        guard entry.kind != .embed else{notice="网页素材不能作为世界纹理。";return}
+        let id=entry.id,kind:RPGMediaKind=entry.kind == .video ? .video : .image
+        perform{world,generator in try RPGMediaBindings.assign(mediaID:id,kind:kind,to:owner,world:&world,generator:generator)}
+    }
+    func clearMedia(_ owner:RPGMediaOwner) { perform{world,_ in try RPGMediaBindings.clear(owner,world:&world)} }
+    func changeBinding(_ id:String,scale:Double?=nil,anchorX:Double?=nil,anchorY:Double?=nil,loop:Bool?=nil,muted:Bool?=nil,cropWidth:Double?=nil) {
+        guard ready,!working,let index=world.mediaBindings.firstIndex(where:{$0.id==id}) else{return}
+        var next=world
+        if let scale{next.mediaBindings[index].scale=scale}
+        if let anchorX{next.mediaBindings[index].anchorX=anchorX}
+        if let anchorY{next.mediaBindings[index].anchorY=anchorY}
+        if let loop{next.mediaBindings[index].loop=loop}
+        if let cropWidth{next.mediaBindings[index].cropWidth=cropWidth;next.mediaBindings[index].cropX=(1-cropWidth)/2}
+        if let muted {
+            if !muted && world.videoBudget==0 {notice="动态预览已关闭，请先增加播放预算。";return}
+            if !muted {for i in next.mediaBindings.indices{next.mediaBindings[i].muted=true}}
+            next.mediaBindings[index].muted=muted
+        }
+        do {next.revision+=1;try next.validate();world=next;renderCurrent();save()}catch{notice=error.localizedDescription}
+    }
+    func setVideoBudget(_ value:Int){guard (0...2).contains(value) else{return};world.videoBudget=value;world.revision+=1;syncMedia();save()}
     private func renderCurrent() {
         if world.player.perspective == .side { sideScene.show(world: world); sideScene.select(selectedSide) }
         else { scene.show(chunks: chunks, world: world); scene.select(selected) }
@@ -221,7 +272,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     func saveBeforeExit() async -> Bool {
         guard ready else { return true }
         guard !working else { notice = "请等待当前操作完成。"; return false }
-        saving?.cancel(); working = true
+        silenceMedia(); saving?.cancel(); working = true
         do { try await storage.save(world); active = false; working = false; return true }
         catch { working = false; notice = error.localizedDescription; return false }
     }

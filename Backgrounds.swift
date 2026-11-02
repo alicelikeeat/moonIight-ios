@@ -414,6 +414,7 @@ private enum BackgroundImportError: LocalizedError {
 struct BackgroundMediaLayer: View {
     @EnvironmentObject private var store: BackgroundStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.moonlightMediaSuspended) private var mediaSuspended
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let configuration: BackgroundConfiguration
     var paused = false
@@ -421,7 +422,7 @@ struct BackgroundMediaLayer: View {
         GeometryReader { geometry in
             if let asset = store.asset(configuration) {
                 ZStack {
-                    if asset.isVideo, !paused, !reduceMotion, !ProcessInfo.processInfo.isLowPowerModeEnabled, scenePhase == .active {
+                    if asset.isVideo, !paused, !mediaSuspended, !reduceMotion, !ProcessInfo.processInfo.isLowPowerModeEnabled, scenePhase == .active {
                         BackgroundVideoLoop(url: store.url(for: asset))
                     } else if let image = store.image(for: asset) {
                         Image(uiImage: image).resizable().scaledToFill()

@@ -6,6 +6,8 @@ struct RPGShellView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var session = RPGSession()
     @State private var tools = false
+    @State private var mediaDiagnostics = ""
+    @State private var backgroundLayer = 0
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -53,12 +55,30 @@ struct RPGShellView: View {
             }
         }.buttonStyle(MoonGlassButtonStyle()).padding(12).padding(.bottom, 82)
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
-            .onAppear { session.activate() }
+            .onAppear { session.attachMediaStore(model.mediaStore); session.activate() }
             .onDisappear { session.shutdown() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.activate() }
             .sheet(isPresented: $tools) { toolPanel }
+            .overlay(alignment: .topLeading) {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests") {
+                    Text("媒体测试状态").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("rpg-media-probe").accessibilityValue(mediaDiagnostics)
+                }
+                #endif
+            }
+            .task {
+                #if DEBUG
+                guard ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests") else{return}
+                while !Task.isCancelled {
+                    mediaDiagnostics="players=\(session.media?.decoderCount ?? 0);frames=\(session.media?.frameCount ?? 0);advancing=\(session.media?.advancing ?? 0);posters=\(session.media?.posterCount ?? 0);muted=\(session.media?.muted == false ? 0 : 1);completed=\(session.media?.completedCount ?? 0);cache=\(session.media?.cacheBytes ?? 0);global=\(CardMediaCoordinator.ownedPlayers)"
+                    try? await Task.sleep(nanoseconds:500_000_000)
+                }
+                #endif
+            }
             .onChange(of: tools) { visible in session.setOverlay(visible) }
+            .onChange(of: session.world.backgroundBindingIDs.count) { count in backgroundLayer=min(2,count) }
     }
     private var positionLabel: String {
         if session.world.player.perspective == .side, let point = session.world.player.side { return "u \(point.horizontal) · y \(point.height)" }
@@ -78,6 +98,21 @@ struct RPGShellView: View {
                 }
                 Text("木材 \(session.world.inventory["wood",default:0]) · 石材 \(session.world.inventory["stone",default:0])").font(.caption)
                 Button("选取附近空地") { session.chooseSite() }.accessibilityIdentifier("rpg-choose-site")
+                Section("媒体外观") {
+                    NavigationLink("角色图片 / 视频") { RPGMediaEditorView(session:session,store:model.mediaStore,owner:.player) }
+                        .accessibilityIdentifier("rpg-media-player")
+                    Picker("背景层",selection:$backgroundLayer){ForEach(0..<min(3,session.world.backgroundBindingIDs.count+1),id:\.self){Text("第 \($0+1) 层").tag($0)}}
+                    NavigationLink("背景图片 / 视频") { RPGMediaEditorView(session:session,store:model.mediaStore,owner:.background(backgroundLayer)) }
+                        .accessibilityIdentifier("rpg-media-background")
+                    if let entity=session.selectedEntity {
+                        NavigationLink("选中方块图片 / 视频") { RPGMediaEditorView(session:session,store:model.mediaStore,owner:.entity(entity.id)) }
+                            .accessibilityIdentifier("rpg-media-block")
+                    }
+                    Stepper("同时预览：\(session.world.videoBudget) 路",value:Binding(get:{session.world.videoBudget},set:{session.setVideoBudget($0)}),in:0...2)
+                    Text("默认静音。角色、背景与可见互动素材共享预算，其他显示封面或默认外观。3–4 路待实机验证后再评估。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("重新启用预览"){session.media?.retry()}.accessibilityIdentifier("rpg-media-retry")
+                }
                 Section("范围与复制") {
                     Button("标记起点") { session.markRange() }
                     Button("填充到选中格") { session.fillRange() }.disabled(session.rangeStart == nil || session.selected == nil)

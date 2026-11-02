@@ -95,8 +95,8 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 1
-    var schemaVersion = 1
+    static let currentSchema = 2
+    var schemaVersion = 2
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64
@@ -106,6 +106,8 @@ struct WorldState: Codable, Equatable, Sendable {
     var mediaBindings: [MediaBinding] = []
     var sideRegions: [SideRegion] = []
     var generated = false
+    var videoBudget = 2
+    var backgroundBindingIDs: [String] = []
     var parentWorldID: String?
     var isCreativeCopy = false
     var removedGeneratedIDs: [String] = []
@@ -129,6 +131,8 @@ struct WorldState: Codable, Equatable, Sendable {
               (undo + redo).allSatisfy({ !$0.id.isEmpty && !$0.changes.isEmpty && $0.changes.count <= 256 && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
               !isCreativeCopy || parentWorldID != nil else { throw RPGWorldError.invalidState }
         let bindings = Set(mediaBindings.map(\.id))
+        guard (0...2).contains(videoBudget), backgroundBindingIDs.count <= 3, Set(backgroundBindingIDs).count == backgroundBindingIDs.count,
+              backgroundBindingIDs.allSatisfy({ bindings.contains($0) }), mediaBindings.filter({ !$0.muted }).count <= 1 else { throw RPGWorldError.invalidState }
         func validSide(_ side: SidePlacement) -> Bool {
             guard let region = sideRegions.first(where: { $0.id == side.regionID }) else { return false }
             return (0..<region.width).contains(side.horizontal) && (0..<64).contains(side.height)

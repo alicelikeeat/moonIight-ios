@@ -200,6 +200,7 @@ struct RootView: View {
         // Full-blind mode hides the page layer itself. Search and the explicit
         // exit control remain readable when they are intentionally revealed.
         .buttonStyle(MoonInteractiveButtonStyle(blind: false))
+        .environment(\.moonlightMediaSuspended, treasureRoute == .rpg)
         .tint(activeButtonTint)
         .overlay {
             GeometryReader { geometry in
@@ -340,7 +341,7 @@ struct RootView: View {
                     }
                     if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
                         model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video), count: ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") ? 11 : 5)
-                        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") { model.mediaStore.prepareCardImageUITest(imageURL: backgroundStore.url(for: image)) }
+                        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") || ProcessInfo.processInfo.arguments.contains("--rpg-media-ui-tests") { model.mediaStore.prepareCardImageUITest(imageURL: backgroundStore.url(for: image)) }
                     }
                 }
             }

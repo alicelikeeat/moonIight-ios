@@ -178,3 +178,28 @@ let blockedBefore=landingBlocked
 editRejected("blocked landing never partially switches") {try RPGProjectionRules.switchPerspective(world:&landingBlocked,generator:generated)}
 check(landingBlocked == blockedBefore,"blocked landing rollback")
 print("RPG P4: \(checks) total checks passed")
+
+var visualWorld=WorldState(seed:42)
+visualWorld.sideRegions=[generated.sideRegion]
+let identityBefore=visualWorld.id
+try RPGMediaBindings.assign(mediaID:"local-video",kind:.video,to:.player,world:&visualWorld,generator:generated)
+try RPGMediaBindings.assign(mediaID:"local-image",kind:.image,to:.background(0),world:&visualWorld,generator:generated)
+check(visualWorld.id==identityBefore && visualWorld.player.mediaBindingID != nil && visualWorld.backgroundBindingIDs.count==1,"media does not replace world or player identity")
+let serializedVisual=try RPGWorldCodec.encode(visualWorld)
+let visualRestored=try RPGWorldCodec.decode(serializedVisual)
+check(visualRestored == visualWorld && !String(data:serializedVisual,encoding:.utf8)!.contains("file://"),"world stores media identity without original file bytes or sandbox URL")
+var oldJSON=try JSONSerialization.jsonObject(with:serializedVisual) as! [String:Any]
+oldJSON["schemaVersion"]=1;oldJSON["videoBudget"]=nil;oldJSON["backgroundBindingIDs"]=nil
+let migrated=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:oldJSON))
+check(migrated.schemaVersion==2 && migrated.player.mediaBindingID==visualWorld.player.mediaBindingID && migrated.mediaBindings==visualWorld.mediaBindings,"schema 1 media defaults preserve existing identities")
+let manyRequests=(0..<256).map{RPGMediaRequest(ownerID:String($0),mediaID:String($0),role:.interactive,visible:true)}
+check(RPGMediaPolicy.schedule(manyRequests,limit:256).count==2,"256 video bindings never create 256 slots")
+check(RPGMediaPolicy.schedule((0..<54).map{.init(ownerID:String($0),mediaID:"shared",role:.interactive,visible:true)},limit:2)==["shared"],"one decoder for reused texture")
+let backgroundRequests=(0..<3).map{RPGMediaRequest(ownerID:String($0),mediaID:String($0),role:.background,visible:true)}
+check(RPGMediaPolicy.schedule(backgroundRequests,limit:2).count==1,"one background video role")
+check(RPGMediaPolicy.schedule([.init(ownerID:"offscreen",mediaID:"v",role:.player,visible:false)],limit:2).isEmpty,"invisible texture gets no slot")
+check(RPGMediaPolicy.schedule(backgroundRequests+[.init(ownerID:"player",mediaID:"player",role:.player,visible:true)],limit:2).first=="player","player role priority")
+check(RPGMediaPolicy.schedule(manyRequests,limit:0).isEmpty,"static budget")
+var badMedia=visualWorld;badMedia.backgroundBindingIDs=["missing"]
+rejected(badMedia,"invalid background reference")
+print("RPG P5: \(checks) total checks passed")

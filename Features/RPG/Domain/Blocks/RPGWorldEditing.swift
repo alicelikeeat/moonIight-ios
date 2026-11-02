@@ -110,7 +110,9 @@ enum RPGWorldEditing {
             try check(request.point, world: world, generator: generator)
             guard let definition = BlockDefinition.find(request.definitionID) else { throw RPGEditError.unknownDefinition }
             guard generator.tile(at: request.point)?.passable == true else { throw RPGEditError.outside }
-            guard request.point != world.player.surface, entity(at: request.point, world: next, generator: generator) == nil else { throw RPGEditError.occupied }
+            let sidePoint = SidePlacement(regionID: generator.sideRegion.id, horizontal: request.point.x - generator.sideRegion.origin.x, height: 2)
+            let playerCollision = world.player.perspective == .topDown ? request.point == world.player.surface : world.player.side == sidePoint
+            guard !playerCollision, entity(at: request.point, world: next, generator: generator) == nil else { throw RPGEditError.occupied }
             if let binding = request.mediaBindingID, !world.mediaBindings.contains(where: { $0.id == binding }) { throw RPGWorldError.missingReference }
             if world.player.mode == .adventure, let cost = definition.cost {
                 guard next.inventory[cost, default: 0] > 0 else { throw RPGEditError.resources }
@@ -170,13 +172,13 @@ enum RPGWorldEditing {
             let restoredGenerated = !(inverse ? change.removedBefore : change.removedAfter) && world.removedGeneratedIDs.contains(change.id)
             if restoredGenerated {
                 let parts = change.id.split(separator: ":")
-                if parts.count == 4, let x = Int(parts[2]), let z = Int(parts[3]), SurfacePoint(x: x, z: z) == world.player.surface { throw RPGEditError.occupied }
+                if world.player.perspective == .topDown, parts.count == 4, let x = Int(parts[2]), let z = Int(parts[3]), SurfacePoint(x: x, z: z) == world.player.surface { throw RPGEditError.occupied }
             }
             if restoredGenerated, let player = world.player.side, world.player.perspective == .side,
                let generated = RPGProjectionRules.sideBaseEntities(world: world, generator: RPGWorldGenerator(seed: world.seed)).first(where: { $0.id == change.id }),
                generated.physics.sideSolid && RPGProjectionRules.occupies(generated, player) { throw RPGEditError.occupied }
             let value = inverse ? change.before : change.after
-            if let value, value.surface == world.player.surface && value.physics.topDownSolid { throw RPGEditError.occupied }
+            if world.player.perspective == .topDown, let value, value.surface == world.player.surface && value.physics.topDownSolid { throw RPGEditError.occupied }
             if let value, let player = world.player.side, world.player.perspective == .side, value.physics.sideSolid && RPGProjectionRules.occupies(value,player) { throw RPGEditError.occupied }
             next.entities.removeAll { $0.id == change.id }; if let value { next.entities.append(value) }
             next.removedGeneratedIDs.removeAll { $0 == change.id }

@@ -11,7 +11,18 @@ enum RPGWorldCodec {
     }
     static func decode(_ data: Data) throws -> WorldState {
         guard data.count <= maximumBytes else { throw RPGWorldError.oversized }
-        let value = try JSONDecoder().decode(WorldState.self, from: data)
+        struct Header: Decodable { let schemaVersion: Int }
+        let version = try JSONDecoder().decode(Header.self, from: data).schemaVersion
+        var migrated = data
+        if version == 1 {
+            guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw RPGWorldError.invalidState }
+            object["schemaVersion"] = WorldState.currentSchema
+            let defaults: [String: Any] = ["videoBudget": 2, "backgroundBindingIDs": [String](), "removedGeneratedIDs": [String](),
+                "damage": [String: Int](), "inventory": ["wood":12,"stone":8], "undo": [String](), "redo": [String](), "events": [String](), "isCreativeCopy": false]
+            for (key,value) in defaults where object[key] == nil { object[key] = value }
+            migrated = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        } else if version != WorldState.currentSchema { throw RPGWorldError.unsupportedVersion }
+        let value = try JSONDecoder().decode(WorldState.self, from: migrated)
         try value.validate(); return value
     }
 }

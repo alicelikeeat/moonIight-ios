@@ -948,6 +948,23 @@ final class MediaStore: ObservableObject {
         }
     }
 
+    /// RPG file imports copy off the main actor and return the stable entry ID.
+    func importLocalFile(_ sourceURL: URL, title: String, kind: MediaKind) async -> MediaEntry? {
+        guard sourceURL.isFileURL, kind != .embed else { return nil }
+        let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
+        let ext = sourceURL.pathExtension.lowercased()
+        let safe = !ext.isEmpty && ext.count <= 12 && ext.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) ? ext : (kind == .video ? "mov" : "jpg")
+        let destination = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(safe)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: sourceURL, to: destination)
+            }.value
+            let entry = MediaEntry(kind: kind, title: title, remoteURL: destination, platform: "local", source: "rpg-import")
+            items.insert(entry, at: 0); persist(); notice = "已保存到库。"; return entry
+        } catch { notice = "导入失败：\(error.localizedDescription)"; return nil }
+    }
+
     func importVideoFile(_ sourceURL: URL, title: String) {
         let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
         do {
