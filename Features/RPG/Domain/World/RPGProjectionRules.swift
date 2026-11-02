@@ -14,8 +14,7 @@ enum RPGProjectionError: Error, LocalizedError, Equatable {
 enum RPGProjectionRules {
     static func sideBaseEntities(world: WorldState, generator: RPGWorldGenerator) -> [WorldEntity] {
         guard let region = world.sideRegions.first else { return [] }
-        let coordinates = Set((0..<region.width).compactMap { SurfacePoint(x: region.origin.x + $0, z: region.origin.z).chunk })
-        var values = coordinates.sorted { $0.id < $1.id }.flatMap { generator.chunk($0)?.entities ?? [] }.filter { $0.side?.regionID == region.id }
+        var values = (0..<region.width).compactMap { generator.baseEntity(at:SurfacePoint(x:region.origin.x+$0,z:region.origin.z)) }.filter { $0.side?.regionID == region.id }
         for (index, pair) in [(6,3),(10,5),(23,3),(28,5),(34,7),(40,4)].enumerated() where pair.0 + 3 < region.width {
             values.append(.init(id: "s1:\(world.seed):\(region.id):\(index)", definitionID: "platform", scope: .sideOnly, surface: nil,
                 side: .init(regionID: region.id, horizontal: pair.0, height: pair.1),

@@ -477,27 +477,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { notice = "请在俯视且非战斗时导航。"; return }
         guiding?.cancel()
         let generator = generator, origin = world.player.surface, target = generator.anchor(anchor), epoch = generation
-        let obstacles = combatObstacles
+        let entities=world.entities,removed=world.removedGeneratedIDs
         guiding = Task { [weak self] in
-            let path = await Task.detached(priority:.userInitiated) { () -> [SurfacePoint] in
-                var queue = [origin], head = 0, visited: Set<SurfacePoint> = [origin], parent: [SurfacePoint:SurfacePoint] = [:]
-                while head < queue.count && visited.count <= 65536 {
-                    if Task.isCancelled { return [] }
-                    let p = queue[head]; head += 1
-                    if p == target {
-                        var route: [SurfacePoint] = [], cursor = p
-                        while cursor != origin { route.append(cursor); guard let previous = parent[cursor] else { return [] }; cursor = previous }
-                        return route.reversed()
-                    }
-                    for d in [(1,0),(-1,0),(0,1),(0,-1)] {
-                        let next = SurfacePoint(x:p.x+d.0,z:p.z+d.1)
-                        if !visited.contains(next), generator.tile(at:next)?.passable == true, !obstacles.contains(next) {
-                            visited.insert(next); parent[next] = p; queue.append(next)
-                        }
-                    }
-                }
-                return []
-            }.value
+            let planner=Task.detached(priority:.userInitiated){
+                RPGWorldRoute.path(from:origin,to:target,generator:generator,entities:entities,removedIDs:removed,cancelled:{Task.isCancelled})
+            }
+            let path=await withTaskCancellationHandler(operation:{await planner.value},onCancel:{planner.cancel()})
             guard let self, !Task.isCancelled, self.generation == epoch, self.world.player.surface == origin else { return }
             // Let the tool sheet dismiss before starting the walk.
             try? await Task.sleep(nanoseconds:250_000_000)

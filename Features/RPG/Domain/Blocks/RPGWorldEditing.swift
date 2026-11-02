@@ -74,8 +74,9 @@ enum RPGWorldEditing {
         return chunk.entities.filter { !overrides.contains($0.id) && !removed.contains($0.id) } + world.entities.filter { $0.surface?.chunk == chunk.coordinate }
     }
     static func entity(at point: SurfacePoint, world: WorldState, generator: RPGWorldGenerator) -> WorldEntity? {
-        guard let coordinate = point.chunk, let chunk = generator.chunk(coordinate) else { return nil }
-        return entities(in: chunk, world: world).first { $0.surface == point }
+        guard point.valid else{return nil}
+        if let base=generator.baseEntity(at:point),!world.removedGeneratedIDs.contains(base.id),!world.entities.contains(where:{$0.id==base.id}) {return base}
+        return world.entities.first{$0.surface==point}
     }
     static func rectangle(_ a: SurfacePoint, _ b: SurfacePoint) throws -> [SurfacePoint] {
         guard a.valid, b.valid else { throw RPGEditError.outside }

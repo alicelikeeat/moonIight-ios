@@ -81,17 +81,26 @@ struct RPGWorldGenerator: Sendable {
             let point = SurfacePoint(x: coordinate.x * 32 + x, z: coordinate.z * 32 + z)
             let terrain = tile(at: point)!
             tiles.append(terrain)
+            if let entity = resource(at:point,terrain:terrain) { entities.append(entity) }
+        } }
+        return .init(coordinate: coordinate, terrain: tiles, entities: entities)
+    }
+    /// Same generator-v1 entity without allocating a complete terrain chunk.
+    func baseEntity(at point:SurfacePoint)->WorldEntity? {
+        guard let terrain=tile(at:point) else{return nil}
+        return resource(at:point,terrain:terrain)
+    }
+    private func resource(at point:SurfacePoint,terrain:RPGTerrain)->WorldEntity? {
             let n = Self.hash(seed: seed, x: point.x, z: point.z, salt: 41)
             if terrain.passable && !protected(point) && n % 31 == 0 {
                 let shared = sideRegion.contains(point)
                 let definition = n % 2 == 0 ? "wood" : "stone"
-                entities.append(.init(id: "g1:\(seed):\(point.x):\(point.z)", definitionID: definition,
+                return .init(id: "g1:\(seed):\(point.x):\(point.z)", definitionID: definition,
                     scope: shared ? .shared : .topDownOnly, surface: point,
                     side: shared ? .init(regionID: sideRegion.id, horizontal: point.x - sideRegion.origin.x, height: 2) : nil,
-                    physics: .init(topDownSolid: true, sideSolid: true, sideGravity: false, pushable: false, hitPoints: definition == "stone" ? 5 : 3, width: 1, height: 1)))
+                    physics: .init(topDownSolid: true, sideSolid: true, sideGravity: false, pushable: false, hitPoints: definition == "stone" ? 5 : 3, width: 1, height: 1))
             }
-        } }
-        return .init(coordinate: coordinate, terrain: tiles, entities: entities)
+        return nil
     }
     func priorityChunks(around point: SurfacePoint) -> [ChunkCoordinate] {
         guard let center = point.chunk else { return [] }
