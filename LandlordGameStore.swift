@@ -61,17 +61,3 @@ import SwiftUI
         }
     }
 }
-extension LandlordGame {
-    var validated: Bool {
-        guard hands.count == 3, bottom.count == 3, Set(bottom.map(\.id)).count == 3,
-              (0..<3).contains(turn), landlord.map({ (0..<3).contains($0) }) ?? true,
-              leader.map({ (0..<3).contains($0) }) ?? true,
-              scores.count == 3, playedHands.count == 3, history.count <= 54,
-              (0...3).contains(highestBid), (0...3).contains(bidCount), (0...1).contains(passes),
-              multiplier > 0, multiplier <= 131072, conserved else { return false }
-        if phase == .playing || phase == .finished { guard landlord != nil, highestBid > 0 else { return false } }
-        return history.enumerated().allSatisfy { index, play in
-            play.id == index && (0..<3).contains(play.player) && LandlordRules.patterns(play.cards).contains(play.pattern)
-        }
-    }
-}

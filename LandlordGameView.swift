@@ -92,7 +92,7 @@ struct LandlordGameView: View {
             #if DEBUG
             guard ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") else { return }
             while !Task.isCancelled {
-                diagnostic = "players=\(media.decoderCount);advancing=\(media.advancing);frames=\(media.renderedFrames);muted=\(media.muted ? 1 : 0);cache=\(media.cacheBytes);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);phase=\(store.game.phase.rawValue);valid=\(store.game.conserved ? 1 : 0)"
+                diagnostic = "players=\(media.decoderCount);owned=\(CardMediaCoordinator.ownedPlayers);advancing=\(media.advancing);frames=\(media.renderedFrames);muted=\(media.muted ? 1 : 0);cache=\(media.cacheBytes);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);phase=\(store.game.phase.rawValue);valid=\(store.game.conserved ? 1 : 0)"
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
             #endif
@@ -159,7 +159,7 @@ struct LandlordGameView: View {
         }.offset(x: CGFloat(level) * 3 + 4, y: CGFloat(level) * yStep).zIndex(Double(level))
     }
     private func groupTitle(_ group: LandlordPlay) -> String {
-        name(group.player) + " · 第 " + String(group.trick) + " 轮 · " + group.pattern.title
+        name(group.player) + " · 第 " + String(group.trick) + " 轮 · " + group.pattern.kind.title
     }
     private func hand(viewport: CGRect) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -221,7 +221,13 @@ struct LandlordGameView: View {
                     .accessibilityIdentifier("landlord-budget")
                 Text("默认静音循环播放。动态预算最多 2 路，同一素材共用解码；被完全遮挡的牌保留快照。3–4 路需真实 iPhone 压测后再开放。")
                     .font(.caption).foregroundStyle(.secondary)
-                Button("重新启用动态预览") { media.retry() }
+                Button("重新启用动态预览") { media.retry() }.accessibilityIdentifier("landlord-retry")
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") {
+                    Button("模拟内存警告") { NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil) }
+                        .accessibilityIdentifier("landlord-test-memory")
+                }
+                #endif
                 Section("选择图片或视频（\(store.preferences.mediaIDs.count)/54）") {
                     if assets.isEmpty { Text("请先在库中导入图片或视频；缺失素材自动显示经典牌面。") }
                     ForEach(assets) { entry in

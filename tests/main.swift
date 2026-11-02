@@ -114,12 +114,14 @@ for seed in 0..<20 {
     var game = LandlordGame(deck: deck, startingSeat: seed % 3)
     var actions = 0
     while game.phase == .bidding || game.phase == .playing {
-        check(game.conserved, "54 cards conserved on every transition")
+        check(game.conserved && game.validated, "54 cards conserved and valid on every transition")
         check(game.autoAct(), "bot always takes a legal action")
         actions += 1
         if actions > 165 { break }
     }
-    check(game.phase == .finished && actions <= 165, "whole game terminates")
+    check(game.phase == .finished && game.validated && actions <= 165, "whole game terminates")
+    let stake = game.highestBid * game.multiplier
+    check(game.scores[game.landlord!] == (game.winner == game.landlord ? 2 : -2) * stake, "exact landlord settlement")
     check(game.scores.reduce(0,+) == 0 && game.winner != nil, "scores settle zero sum")
     let serialized = try JSONEncoder().encode(game)
     let decoded = try JSONDecoder().decode(LandlordGame.self, from: serialized)
@@ -150,3 +152,14 @@ let snapshot = CardPlaybackSnapshot(mediaID: "a", seconds: 12.25, frameReference
 let decodedSnapshot = try JSONDecoder().decode(CardPlaybackSnapshot.self, from: JSONEncoder().encode(snapshot))
 check(decodedSnapshot == snapshot, "hidden snapshot retains progress and frame reference")
 print("V2.4.1 total: \(checks) checks passed")
+
+let ambiguousPlane = cards([3,3,3,4,4,4,5,5,5,6,6,6])
+let airplaneTarget = LandlordPattern(kind: .planeSingles, high: 4, count: 12, run: 3)
+check(LandlordRules.pattern(ambiguousPlane, beating: airplaneTarget)?.kind == .planeSingles, "target-aware ambiguous airplane")
+var mediaGame = LandlordGame(deck: LandlordCard.deck)
+let beforeMedia = mediaGame
+var mediaPrefs = CardMediaPreferences()
+mediaPrefs.style = .media; mediaPrefs.mediaIDs = ["v", "p", "missing"]; mediaPrefs.normalize(available: ["v", "p"])
+_ = CardMediaMapping(cards: Array(0..<54), media: mediaPrefs.mediaIDs, game: mediaGame.id, cycle: true)
+check(mediaGame == beforeMedia && mediaPrefs.mediaIDs == ["v", "p"], "media changes cannot mutate rules state")
+print("V2.4.1 validated total: \(checks) checks passed")

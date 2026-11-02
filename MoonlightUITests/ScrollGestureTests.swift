@@ -58,9 +58,16 @@ final class ScrollGestureTests: XCTestCase {
         waitLandlord(app) { $0["muted"] == "1" && $0["history"] == "0" }
         XCUIDevice.shared.press(.home); app.activate()
         waitLandlord(app) { $0["muted"] == "1" && (Int($0["advancing"] ?? "0") ?? 0) > 0 }
+        app.buttons["landlord-settings"].tap()
+        app.buttons["landlord-test-memory"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { $0["players"] == "0" && $0["owned"] == "0" && (Int($0["cache"] ?? "9999999") ?? 9999999) <= 2097152 && $0["history"] == "0" }
+        app.buttons["landlord-settings"].tap(); app.buttons["landlord-retry"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { (Int($0["advancing"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" }
         app.buttons["landlord-bid-3"].tap()
         app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
-        waitLandlord(app) { (Int($0["history"] ?? "0") ?? 0) > 0 && $0["valid"] == "1" && (Int($0["players"] ?? "99") ?? 99) <= 2 }
+        waitLandlord(app) { (Int($0["history"] ?? "0") ?? 0) > 0 && $0["valid"] == "1" && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["owned"] ?? "99") ?? 99) <= 2 }
         app.switches["landlord-auto"].tap()
         waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
         attach(app, name: "review-v241-media-result")
