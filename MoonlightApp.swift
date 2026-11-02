@@ -317,11 +317,11 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     case background, backgrounds, backgroundLibrary, gestures, menuSettings
     case playMedia, favoriteMedia, saveMedia, shareMedia
     case portrait, virtualFriends, navigationMode, selectAll, favorites, downloads
-    case searchMedia, treasureMap, treasurePlayback, landlord
+    case searchMedia, treasureMap, treasurePlayback, landlord, rpg, rpgStory, rpgEditor, rpgDiagnostics
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "视频墙"; case .landlord: "斗地主"
+        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "视频墙"; case .landlord: "斗地主"; case .rpg: "自由媒体沙盒"; case .rpgStory: "剧情与任务"; case .rpgEditor: "剧情编辑器"; case .rpgDiagnostics: "沙盒运行诊断"
         case .home: "首页"; case .discover: "发现"; case .moments: "朋友圈"; case .me: "我"
         case .library: "打开库"; case .settings: "设置"; case .friends: "朋友"; case .messages: "消息"; case .profile: "编辑资料"
         case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
@@ -338,7 +338,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     }
     var symbol: String {
         switch self {
-        case .searchMedia: "magnifyingglass"; case .treasureMap: "sparkles.rectangle.stack"; case .treasurePlayback: "play.square.stack"; case .landlord: "suit.spade"
+        case .searchMedia: "magnifyingglass"; case .treasureMap: "sparkles.rectangle.stack"; case .treasurePlayback: "play.square.stack"; case .landlord: "suit.spade"; case .rpg: "square.grid.3x3"; case .rpgStory: "book"; case .rpgEditor: "point.3.connected.trianglepath.dotted"; case .rpgDiagnostics: "waveform.path.ecg"
         case .home: "moon.stars"; case .discover: "safari"; case .moments, .friends: "person.2"
         case .me, .profile, .avatar: "person.crop.circle"; case .library, .saveMedia: "square.grid.2x2"
         case .settings, .menuSettings: "gearshape"; case .messages: "bubble.left.and.bubble.right"
@@ -424,6 +424,10 @@ extension AppCommand {
         let aliases: [String]
         switch self {
         case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
+        case .rpg: aliases = ["沙盒", "沙盘", "RPG", "双视角", "世界", "冒险", "创造", "建造", "放置", "挖掘", "八向移动", "范围技能", "翻滚", "冲刺", "方块行为", "世界保存", "撤销", "重做"]
+        case .rpgStory: aliases = ["沙盒剧情", "序章", "村庄", "月核", "守灯人", "任务导航"]
+        case .rpgEditor: aliases = ["剧情节点", "剧情JSON", "剧情导入", "剧情导出", "自制任务", "媒体演出"]
+        case .rpgDiagnostics: aliases = ["沙盒帧率", "沙盒性能", "解码器", "沙盒内存"]
         case .landlord: aliases = ["斗地主", "叫分", "媒体牌面", "经典牌面", "出牌", "不出", "提示", "新一局", "托管", "牌桌记录", "牌面声音", "清理失效素材", "动态预览"]
         case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
         case .treasurePlayback: aliases = ["视频墙", "顺序播放", "随机播放", "同时播放", "选择视频"]

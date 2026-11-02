@@ -19,6 +19,7 @@ enum GlassSurfaceSize: String, CaseIterable, Identifiable {
 }
 
 struct MoonGlassButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @Environment(\.moonGlassContainer) private var inGlass
     var prominent = false
     @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
@@ -27,8 +28,8 @@ struct MoonGlassButtonStyle: ButtonStyle {
         configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding).frame(minHeight: 44)
             .contentShape(Rectangle())
             .background { if !inGlass { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) } }
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reducedMotion ? 0.95 : 1)
+            .animation(reducedMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -414,6 +415,7 @@ private enum BackgroundImportError: LocalizedError {
 struct BackgroundMediaLayer: View {
     @EnvironmentObject private var store: BackgroundStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.moonlightMediaSuspended) private var mediaSuspended
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let configuration: BackgroundConfiguration
     var paused = false
@@ -421,7 +423,7 @@ struct BackgroundMediaLayer: View {
         GeometryReader { geometry in
             if let asset = store.asset(configuration) {
                 ZStack {
-                    if asset.isVideo, !paused, !reduceMotion, !ProcessInfo.processInfo.isLowPowerModeEnabled, scenePhase == .active {
+                    if asset.isVideo, !paused, !mediaSuspended, !reduceMotion, !ProcessInfo.processInfo.isLowPowerModeEnabled, scenePhase == .active {
                         BackgroundVideoLoop(url: store.url(for: asset))
                     } else if let image = store.image(for: asset) {
                         Image(uiImage: image).resizable().scaledToFill()

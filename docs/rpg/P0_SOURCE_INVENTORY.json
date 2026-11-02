@@ -1,0 +1,186 @@
+{
+  "audit_kind": "static_source_inventory_not_ios_build_or_runtime_validation",
+  "base_commit": "22dfc109386e092dc86a6dc649d014079893563b",
+  "root_swift_sources": [
+    "AppFeatureViews.swift",
+    "AppSearchIntent.swift",
+    "BackgroundSettingsView.swift",
+    "Backgrounds.swift",
+    "CardMediaCoordinator.swift",
+    "CardMediaPolicy.swift",
+    "DiscoverySources.swift",
+    "DiscoverySourcesView.swift",
+    "LandlordGameStore.swift",
+    "LandlordGameView.swift",
+    "LandlordRules.swift",
+    "MediaServices.swift",
+    "MoonGlass.swift",
+    "MoonTreasureMapView.swift",
+    "MoonlightApp.swift",
+    "RootView.swift",
+    "TreasureAppearance.swift",
+    "TreasurePlaybackCoordinator.swift",
+    "TreasureRules.swift",
+    "TreasureVideoSelectionModel.swift",
+    "TreasureVideoWallView.swift"
+  ],
+  "root_swift_source_count": 21,
+  "app_swift_source_fingerprint_sha256": "a799ec1857c0959e8a435bdde1b42037d23fe0589e59d504d257fc96af6f570c",
+  "project_swift_reference_count_including_ui_tests": 22,
+  "missing_project_references": [],
+  "ui_test_methods": [
+    "testLandlordClassicWholeGameAndNewRound",
+    "testLandlordMediaBudgetFocusBackgroundAndModeCleanup",
+    "testVideoWallSelectionLimitModesFocusAndCleanup",
+    "testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI",
+    "testTreasureVideoPreviewCanPlayFreezeAndRememberPreference",
+    "testTreasureDragKeepsTouchAndPhysicsOwnership",
+    "testTreasureGridCanOpenHoldAndSwitchTwentyTimes",
+    "testHeaderButtonsAreFullyVisibleAndNavigationWinsOverMenu",
+    "testHoldOnNavigationAndOrdinaryButtonDoesNotTapThrough",
+    "testHoldOnPageAndSwipeOnHeaderButton",
+    "testBubbleLongPressKeepsMenuInteractive",
+    "testHomeFastCardScroll",
+    "testCardScrollsWithLongPressDisabled",
+    "testBottomPullRefreshUsesFeedPan",
+    "testConsecutiveCardFlicksKeepMoving",
+    "testFullBlindModeKeepsOnlyBackgroundSearchAndTripleTapExit",
+    "testBottomHoldAvoidsNavigationAndCameraOffersCaptureOptions",
+    "testWideMomentStaysInsideScreenAndCanBeDeleted",
+    "testReelsUsesVerticalPagesAndReturnsToHome",
+    "testContextLibraryNavigationCanPlayAndReturn",
+    "testLibraryFolderKeepsReelsInsideItsContents",
+    "testFavoriteAndDownloadFiltersUseCardsAndCanDelete",
+    "testNativeSliderSwitchesPages",
+    "testButtonBackgroundPlaylistPersists",
+    "testConfiguredMenuPersistsAndShowsExtraActionInMore",
+    "testHomeSlowCardScroll",
+    "testDiscoverTwoColumnFastCardScroll",
+    "testDiscoverTwoColumnSlowCardScroll",
+    "testDiscoverSingleColumnCardScroll",
+    "testStationaryHoldOpensRingAndReleaseKeepsItOpen",
+    "testShortTapStillOpensPlayer",
+    "testSourceSwitchPersistsAndSidebarScrolls",
+    "testBackgroundImagesVideosAndEditorKeepCardScrolling",
+    "testProfileAvatarAndCoverOpenNativeMediaPicker",
+    "testAsyncDiscoveryUpdatesWithoutSwitchingTabs",
+    "testAssistantDockFindsFunctionsAndDismissesOnBlankTap",
+    "testHiddenDockDoesNotCoverCardSwipe",
+    "testHomeRandomPanelIsCompact"
+  ],
+  "ui_test_count": 38,
+  "unique_ui_test_count": 38,
+  "swift_versions": [
+    "6.0"
+  ],
+  "deployment_targets": [
+    "16.0"
+  ],
+  "device_families": [
+    "1,2"
+  ],
+  "swift_package_references": 0,
+  "root_dependency_manifests": [],
+  "framework_imports_by_file": {
+    "AVFoundation": [
+      "Backgrounds.swift",
+      "CardMediaCoordinator.swift",
+      "MoonTreasureMapView.swift",
+      "TreasurePlaybackCoordinator.swift",
+      "TreasureVideoWallView.swift"
+    ],
+    "AVKit": [
+      "AppFeatureViews.swift",
+      "RootView.swift"
+    ],
+    "Combine": [
+      "AppFeatureViews.swift",
+      "MediaServices.swift",
+      "MoonlightApp.swift",
+      "TreasurePlaybackCoordinator.swift"
+    ],
+    "CoreGraphics": [
+      "CardMediaPolicy.swift"
+    ],
+    "CoreImage": [
+      "CardMediaCoordinator.swift"
+    ],
+    "CoreMotion": [
+      "MoonTreasureMapView.swift"
+    ],
+    "CoreTransferable": [
+      "Backgrounds.swift"
+    ],
+    "Foundation": [
+      "AppSearchIntent.swift",
+      "CardMediaPolicy.swift",
+      "DiscoverySources.swift",
+      "LandlordRules.swift",
+      "MediaServices.swift",
+      "TreasureRules.swift",
+      "TreasureVideoSelectionModel.swift"
+    ],
+    "ImageIO": [
+      "AppFeatureViews.swift",
+      "Backgrounds.swift",
+      "CardMediaCoordinator.swift",
+      "MoonTreasureMapView.swift"
+    ],
+    "Network": [
+      "TreasurePlaybackCoordinator.swift"
+    ],
+    "PhotosUI": [
+      "AppFeatureViews.swift",
+      "BackgroundSettingsView.swift",
+      "Backgrounds.swift",
+      "DiscoverySourcesView.swift",
+      "RootView.swift"
+    ],
+    "Security": [
+      "MediaServices.swift"
+    ],
+    "SpriteKit": [
+      "MoonTreasureMapView.swift"
+    ],
+    "SwiftUI": [
+      "AppFeatureViews.swift",
+      "BackgroundSettingsView.swift",
+      "Backgrounds.swift",
+      "CardMediaCoordinator.swift",
+      "DiscoverySourcesView.swift",
+      "LandlordGameStore.swift",
+      "LandlordGameView.swift",
+      "MoonGlass.swift",
+      "MoonTreasureMapView.swift",
+      "MoonlightApp.swift",
+      "RootView.swift",
+      "TreasureAppearance.swift",
+      "TreasureVideoWallView.swift"
+    ],
+    "UIKit": [
+      "AppFeatureViews.swift",
+      "Backgrounds.swift",
+      "MoonTreasureMapView.swift",
+      "MoonlightApp.swift",
+      "RootView.swift",
+      "TreasureAppearance.swift",
+      "TreasurePlaybackCoordinator.swift",
+      "TreasureVideoWallView.swift"
+    ],
+    "UniformTypeIdentifiers": [
+      "Backgrounds.swift",
+      "DiscoverySourcesView.swift",
+      "RootView.swift"
+    ],
+    "WebKit": [
+      "RootView.swift"
+    ]
+  },
+  "proposed_rpg_type_declarations_found": {},
+  "spec_dimension_arithmetic_only_not_a_generated_world": {
+    "surface_cells": 65536,
+    "chunk_cells": 1024,
+    "chunks_per_axis": 8,
+    "chunks_total": 64
+  }
+}

@@ -200,6 +200,7 @@ struct RootView: View {
         // Full-blind mode hides the page layer itself. Search and the explicit
         // exit control remain readable when they are intentionally revealed.
         .buttonStyle(MoonInteractiveButtonStyle(blind: false))
+        .environment(\.moonlightMediaSuspended, treasureRoute?.rpgPage != nil)
         .tint(activeButtonTint)
         .overlay {
             GeometryReader { geometry in
@@ -269,7 +270,10 @@ struct RootView: View {
             Text("只移除当前横幅设置，媒体文件仍保留在背景库中。")
         }
         .fullScreenCover(item: $treasureRoute, onDismiss: { revealNavigation() }) { command in
-            NavigationStack { MoonTreasureMapView(openVideoWall: command == .treasurePlayback, openLandlord: command == .landlord) }
+            NavigationStack {
+                if let page=command.rpgPage { RPGShellView(initialPage:page).environmentObject(model) }
+                else { MoonTreasureMapView(openVideoWall: command == .treasurePlayback, openLandlord: command == .landlord) }
+            }
         }
         .fullScreenCover(item: $captureRequest) { request in
             CameraCaptureView(captureVideo: request.video, onCapture: { image in
@@ -337,7 +341,7 @@ struct RootView: View {
                     }
                     if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
                         model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video), count: ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") ? 11 : 5)
-                        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") { model.mediaStore.prepareCardImageUITest(imageURL: backgroundStore.url(for: image)) }
+                        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") || ProcessInfo.processInfo.arguments.contains("--rpg-media-ui-tests") { model.mediaStore.prepareCardImageUITest(imageURL: backgroundStore.url(for: image)) }
                     }
                 }
             }
@@ -629,7 +633,7 @@ struct RootView: View {
                 if let intent { values["query"] = intent.query; values["kind"] = intent.kind }
                 NotificationCenter.default.post(name: .init("moonlight.focusMediaSearch"), object: nil, userInfo: values)
             }
-        case .treasureMap, .treasurePlayback, .landlord: treasureRoute = action
+        case .treasureMap, .treasurePlayback, .landlord, .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics: treasureRoute = action
         case .home: selectTab(.home)
         case .discover: selectTab(.discover)
         case .moments: selectTab(.moments)
@@ -672,6 +676,7 @@ struct RootView: View {
 
     @ViewBuilder private func commandDestination(_ action: AppCommand) -> some View {
         switch action {
+        case .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics: RPGShellView(initialPage:action.rpgPage ?? .world).environmentObject(model)
         case .treasureMap, .treasurePlayback, .landlord: MoonTreasureMapView(openVideoWall: action == .treasurePlayback, openLandlord: action == .landlord)
         case .searchMedia: Text("请返回发现页搜索媒体。")
         case .settings: SettingsView()
@@ -2937,6 +2942,9 @@ private struct MeView: View {
                         Divider().padding(.leading, 56)
                         Button { showingTreasureMap = true } label: { MenuRow(symbol: "sparkles.rectangle.stack", title: "月藏图", color: .purple) }
                             .accessibilityIdentifier("me-treasure-map")
+                        Divider().padding(.leading, 56)
+                        Button { model.send(.rpg) } label: { MenuRow(symbol: "square.grid.3x3", title: "自由媒体沙盒", color: .teal) }
+                            .accessibilityIdentifier("me-rpg-entrance")
                         Divider().padding(.leading, 56)
                         NavigationLink(value: AppCommand.friends) { MenuRow(symbol: "person.2.fill", title: "朋友", color: .green) }
                         Divider().padding(.leading, 56)

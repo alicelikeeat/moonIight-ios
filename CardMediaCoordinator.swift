@@ -91,6 +91,9 @@ private actor CardFrameRenderer {
     private var observations: [NSObjectProtocol] = []
     private var audioBefore: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
     private var failed = Set<String>()
+    private var loopingMediaIDs: Set<String>?
+    private var completed = Set<String>()
+    var completedPreviewCount: Int { completed.count }
     private(set) var snapshots: [Int: CardPlaybackSnapshot] = [:]
     private(set) var focusID: Int?
     @Published private(set) var audible = false
@@ -141,7 +144,23 @@ private actor CardFrameRenderer {
         if !active { mute() }
         reconcile()
     }
-    func retry() { pressure = false; slow = false; failed.removeAll(); cache.maxEntries = 24; cache.maxCost = 12 * 1024 * 1024; notice = ""; reconcile() }
+    func configureLooping(_ ids: Set<String>) {
+        loopingMediaIDs = ids
+        completed.subtract(ids)
+    }
+    // RPG cutscenes restore a bounded snapshot before the slot is created.
+    func restorePlayback(cardID:Int,mediaID:String,seconds:Double) {
+        guard seconds.isFinite,(0...10_000_000).contains(seconds),slots[mediaID] == nil else { return }
+        snapshots[cardID] = CardPlaybackSnapshot(mediaID:mediaID,seconds:seconds)
+    }
+    func playbackSeconds(_ mediaID:String)->Double {
+        let seconds = slots[mediaID]?.player.currentTime().seconds ?? snapshots.values.first(where:{$0.mediaID==mediaID})?.seconds ?? 0
+        return seconds.isFinite ? max(0,min(10_000_000,seconds)):0
+    }
+    func retainSnapshots(for ids: Set<Int>) { for id in Array(snapshots.keys) where !ids.contains(id) { snapshots[id] = nil } }
+    func retry() {
+        for key in Array(snapshots.keys) where completed.contains(snapshots[key]?.mediaID ?? "") { snapshots[key]?.seconds = 0 }
+        completed.removeAll(); pressure = false; slow = false; failed.removeAll(); cache.maxEntries = 24; cache.maxCost = 12 * 1024 * 1024; notice = ""; reconcile() }
     func update(_ values: [CardMediaCandidate], focus: Int?) {
         let newlyHidden = Set(candidates.filter { $0.visibility != .hidden }.map(\.cardID)).subtracting(values.filter { $0.visibility != .hidden }.map(\.cardID))
         for id in newlyHidden {
@@ -151,6 +170,10 @@ private actor CardFrameRenderer {
                 snapshots[id]?.frameReference = cache.contains(mediaID) ? mediaID : nil
             }
         }
+        let visibleMedia = Set(values.filter { $0.visibility != .hidden }.map(\.mediaID))
+        let leaving = completed.subtracting(visibleMedia)
+        for key in Array(snapshots.keys) where leaving.contains(snapshots[key]?.mediaID ?? "") { snapshots[key]?.seconds = 0 }
+        completed.subtract(leaving)
         candidates = values; focusID = focus
         let visibleIDs = Set(values.filter { $0.visibility != .hidden }.map(\.cardID))
         for id in Array(snapshots.keys) where !visibleIDs.contains(id) { snapshots[id]?.visibility = .hidden }
@@ -186,7 +209,7 @@ private actor CardFrameRenderer {
     }
     private func reconcile() {
         let visible = active ? candidates.filter { $0.visibility != .hidden && (focusID == nil || $0.cardID == focusID) } : []
-        let videos = visible.filter { entries[$0.mediaID]?.kind == .video && !failed.contains($0.mediaID) }
+        let videos = visible.filter { entries[$0.mediaID]?.kind == .video && !failed.contains($0.mediaID) && !completed.contains($0.mediaID) }
         let desired = Set(CardMediaPolicy.scheduled(videos, budget: budget))
         for id in Array(slots.keys) where !desired.contains(id) { release(id) }
         for id in desired where slots[id] == nil {
@@ -197,7 +220,9 @@ private actor CardFrameRenderer {
             slot.end = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: slot.player.currentItem, queue: .main) { [weak self, weak slot] _ in
                 Task { @MainActor [weak self, weak slot] in
                     guard let self, let slot, self.slots[id] === slot else { return }
-                    slot.player.seek(to: .zero); slot.player.play()
+                    if self.loopingMediaIDs?.contains(id) != false {
+                        slot.player.seek(to: .zero); slot.player.play()
+                    } else { self.completed.insert(id); self.release(id); self.reconcile() }
                 }
             }
             slot.player.play()
@@ -276,7 +301,7 @@ private actor CardFrameRenderer {
         for task in posterTasks.values { task.cancel() }; posterTasks.removeAll(); posterQueue.removeAll()
         for token in observations { NotificationCenter.default.removeObserver(token) }; observations.removeAll()
         if !clear && cache.count > 0 { observe() }
-        if clear { candidates.removeAll(); focusID = nil; snapshots.removeAll(); cache.removeAll(); for feed in feeds.values { feed.show(nil) }; feeds.removeAll(); failed.removeAll() }
+        if clear { candidates.removeAll(); focusID = nil; snapshots.removeAll(); cache.removeAll(); for feed in feeds.values { feed.show(nil) }; feeds.removeAll(); failed.removeAll(); completed.removeAll() }
     }
     func dispose() { stop(clear: true) }
 }
