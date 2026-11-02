@@ -2,6 +2,30 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGStoryChoicePersistsAndWaitsForRealWorldEvent() {
+        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        let story = app.buttons["rpg-story"]
+        guard revealListControl(story,in:app) else { return }; story.tap()
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].waitForExistence(timeout:8))
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].label.contains("月核破碎"))
+        app.buttons["rpg-story-next"].tap()
+        let help = app.buttons["rpg-story-choice-help"]
+        XCTAssertTrue(help.waitForExistence(timeout:8)); help.tap()
+        let gathered = NSPredicate(format:"label CONTAINS %@","收集第一份材料")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:gathered,object:app.staticTexts["rpg-story-text"])],timeout:10),.completed)
+        app.buttons["rpg-story-next"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].label.contains("收集第一份材料"))
+        app.buttons["rpg-story-back"].tap(); app.buttons["rpg-tools-close"].tap(); app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:6)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        guard revealListControl(app.buttons["rpg-story"],in:app) else { return }; app.buttons["rpg-story"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:gathered,object:app.staticTexts["rpg-story-text"])],timeout:10),.completed)
+        attach(app,name:"review-rpg-p7-story")
+    }
+
+    @MainActor
     func testRPGCombatRewardsPersistWithoutDuplicateDrop() {
         let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()

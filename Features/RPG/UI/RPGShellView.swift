@@ -99,6 +99,12 @@ struct RPGShellView: View {
                 }
                 Text("木材 \(session.world.inventory["wood",default:0]) · 石材 \(session.world.inventory["stone",default:0])").font(.caption)
                 Button("选取附近空地") { session.chooseSite() }.accessibilityIdentifier("rpg-choose-site")
+                Section("剧情与探索") {
+                    NavigationLink("剧情与任务") { RPGStoryView(session:session,travel:{ anchor in tools = false; session.guideTo(anchor) }) }.accessibilityIdentifier("rpg-story")
+                    ForEach(RPGAnchorID.allCases,id:\.self) { anchor in
+                        Button("沿通路前往"+anchor.title) { tools = false; session.guideTo(anchor) }
+                    }
+                }
                 Section("战斗与装备") {
                     Button("开启训练遭遇") { session.trainingEncounter() }.accessibilityIdentifier("rpg-training")
                     Button("制作 / 装备月刃（木材 4）") { session.equip(.moonBlade) }

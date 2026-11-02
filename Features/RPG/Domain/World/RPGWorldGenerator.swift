@@ -4,7 +4,7 @@ enum RPGTerrain: UInt16, Codable, CaseIterable, Sendable {
     case grass, sand, water, cliff, road
     var passable: Bool { self != .water && self != .cliff }
 }
-enum RPGAnchorID: String, Codable, CaseIterable, Sendable {
+enum RPGAnchorID: String, Codable, Codable, CaseIterable, Sendable {
     case spawn, village, ruins, temple, boss, creation
     var title: String {
         switch self { case .spawn: "出生地"; case .village: "月光村"; case .ruins: "记忆遗迹"; case .temple: "双界神殿"; case .boss: "Boss 领域"; case .creation: "创作区域" }

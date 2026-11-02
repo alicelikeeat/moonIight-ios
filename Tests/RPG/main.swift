@@ -249,3 +249,60 @@ var legacyPlayer=legacyCombat["player"] as! [String:Any];legacyPlayer["facing"]=
 let legacyRestored=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:legacyCombat))
 check(legacyRestored.id==fighter.id && legacyRestored.player.surface==fighter.player.surface && legacyRestored.combat.enemies.isEmpty,"schema 2 migration preserves world and initializes combat")
 print("RPG P6: \(checks) total checks passed")
+
+// P7: both official branches, transactional actions and graph validation.
+try RPGOfficialStory.graph.validate()
+var tale=WorldState(seed:42);tale.player.surface=arenaGenerator.anchor(.spawn);tale.sideRegions=[arenaGenerator.sideRegion]
+try RPGStoryRuntime.start(graphID:RPGOfficialStory.graph.id,world:&tale)
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+check(tale.story.activeProgress?.current=="prologue","official prologue begins")
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+try RPGStoryRuntime.advance(choiceID:"help",world:&tale,generator:arenaGenerator)
+check(tale.story.activeProgress?.current=="gather" && tale.story.activeProgress?.variables["promise"]==1,"official branch writes variable")
+let waitingWood=tale.inventory["wood"]
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+check(tale.story.activeProgress?.current=="gather" && tale.inventory["wood"]==waitingWood,"unsatisfied quest holds without reward")
+tale.events.append(.init(id:"mined-once",kind:"blockDestroyed",entityID:"block",definitionID:"wood"))
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+check(tale.story.activeProgress?.current=="villageGate" && tale.inventory["wood"]==15,"material event completes prologue once")
+let villageCheckpoint=tale
+for _ in 0..<3{try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)}
+check(tale.inventory["wood"]==15,"waiting never replays prior reward")
+tale.player.surface=arenaGenerator.anchor(.village)
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+check(tale.story.activeProgress?.current=="villageChoice","stable semantic village anchor gates dialogue")
+let villageChoiceCheckpoint=tale
+try RPGStoryRuntime.advance(choiceID:"repair",world:&tale,generator:arenaGenerator)
+try RPGStoryRuntime.advance(world:&tale,generator:arenaGenerator)
+check(tale.story.activeProgress?.ended==true && tale.inventory["stone"]==6 && tale.inventory["moon-shard"]==1,"peace branch consumes materials and ends chapter")
+var resumedTale=try RPGWorldCodec.decode(RPGWorldCodec.encode(tale))
+try RPGStoryRuntime.advance(world:&resumedTale,generator:arenaGenerator)
+check(resumedTale==tale,"completed story does not replay after reload")
+var battleTale=villageChoiceCheckpoint
+try RPGStoryRuntime.advance(choiceID:"fight",world:&battleTale,generator:arenaGenerator)
+let guardID=RPGStoryRuntime.enemyID(graphID:RPGOfficialStory.graph.id,key:"village-guardian")
+check(battleTale.combat.enemies.contains{$0.id==guardID} && battleTale.player.inCombat,"battle branch creates stable enemy")
+try RPGCombatRules.action(.skill,world:&battleTale,generator:arenaGenerator,passable:{$0.valid})
+try RPGCombatRules.action(.attack,world:&battleTale,generator:arenaGenerator,passable:{$0.valid})
+for _ in 0..<4 {RPGCombatRules.advance(world:&battleTale,generator:arenaGenerator,delta:0.1,passable:{$0.valid})}
+try RPGCombatRules.action(.attack,world:&battleTale,generator:arenaGenerator,passable:{$0.valid})
+try RPGStoryRuntime.advance(world:&battleTale,generator:arenaGenerator)
+try RPGStoryRuntime.advance(world:&battleTale,generator:arenaGenerator)
+check(battleTale.story.activeProgress?.ended==true && battleTale.inventory["moon-shard"]==2,"combat event finishes alternative chapter branch")
+var invalidGraph=RPGOfficialStory.graph;invalidGraph.nodes[0].next="missing"
+do{try invalidGraph.validate();preconditionFailure("broken link accepted")}catch{checks+=1}
+invalidGraph=RPGOfficialStory.graph;invalidGraph.nodes[0].next="prologue"
+do{try invalidGraph.validate();preconditionFailure("cycle accepted")}catch{checks+=1}
+let rollbackGraph=RPGStoryGraph(id:"rollback",title:"回滚检查",start:"action",nodes:[.init(id:"action",kind:.world,next:"end",actions:[.init(kind:.giveItem,key:"wood",value:2),.init(kind:.takeItem,key:"stone",value:100)]),.init(id:"end",kind:.end)])
+var rollbackWorld=WorldState(seed:42);rollbackWorld.story.customGraphs=[rollbackGraph]
+try RPGStoryRuntime.start(graphID:rollbackGraph.id,world:&rollbackWorld)
+let rollbackBefore=rollbackWorld
+do{try RPGStoryRuntime.advance(world:&rollbackWorld,generator:arenaGenerator);preconditionFailure("insufficient story cost accepted")}catch{check(rollbackWorld==rollbackBefore,"failed node restores rewards, progress and receipts atomically")}
+var counterWorld=villageCheckpoint
+RPGStoryRuntime.recordEvents(world:&counterWorld);RPGStoryRuntime.recordEvents(world:&counterWorld)
+check(counterWorld.story.eventCounts["blockDestroyed"]==1,"repeated event delivery is idempotent")
+let graphData=try RPGStoryCodec.encode(RPGOfficialStory.graph)
+let decodedGraph=try RPGStoryCodec.decode(graphData)
+check(decodedGraph==RPGOfficialStory.graph,"independent story JSON round trip")
+print("RPG P7: \(checks) total checks passed")

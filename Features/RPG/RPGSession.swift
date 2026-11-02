@@ -5,6 +5,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
 @MainActor final class RPGSession: ObservableObject {
     private(set) var world = WorldState() { didSet { if !simulating { objectWillChange.send() } } }
     private var simulating = false
+    private var guiding: Task<Void,Never>?
+    private var followingRoute = false
     private var lastFrame: TimeInterval?
     private var lastHUD: TimeInterval = 0
     private var combatObstacles: Set<SurfacePoint> = []
@@ -80,12 +82,14 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         bindScenes(); applyScenePause(); scene.tool = tool
         loadVisible(force: true)
     }
-    func pause() { active = false; silenceMedia(); media?.pause(); applyScenePause(); loading?.cancel(); save() }
+    func pause() { guiding?.cancel(); active = false; silenceMedia(); media?.pause(); applyScenePause(); loading?.cancel(); save() }
     func shutdown() {
+        guiding?.cancel()
         silenceMedia(); save(); active = false; media?.stop(); media=nil; mediaNotice=nil; generation = UUID(); loading?.cancel(); boot?.cancel(); edit?.cancel(); boot = nil
         scene.shutdown(); sideScene.shutdown(); let old = cache; Task { await old?.clear() }; cache = nil; chunks = []; displayedChunk = nil
     }
     func move(dx: Int, dz: Int) {
+        if !followingRoute { guiding?.cancel() }
         guard active, ready, !working, world.player.health > 0, abs(dx) <= 1, abs(dz) <= 1 else { return }
         if world.player.perspective == .side {
             if dx != 0 { world.player.facing = .init(dx: dx, dz: 0) }
@@ -253,7 +257,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             switch result {
             case .success(let value):
                 guard self.world.revision == snapshot.revision else { self.notice = RPGEditError.stale.localizedDescription; return }
-                self.world = value; self.renderCurrent()
+                self.world = value; RPGStoryRuntime.recordEvents(world:&self.world); self.renderCurrent()
                 self.notice = "操作已提交。"; self.save()
             case .failure(let error): self.notice = error.localizedDescription
             }
@@ -346,6 +350,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         let wasCombat = world.player.inCombat, oldHealth = world.player.health
         simulating = true
         RPGCombatRules.advance(world:&world,generator:generator,delta:min(0.1,time-previous),passable:{ generator.tile(at:$0)?.passable == true && !obstacles.contains($0) })
+        RPGStoryRuntime.recordEvents(world:&world)
         simulating = false
         if world.player.perspective == .topDown { scene.showCombat(world) } else { sideScene.showCombat(world) }
         if time-lastHUD > 0.1 || oldHealth != world.player.health { combatHUD.update(world); lastHUD = time }
@@ -367,7 +372,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 else { scene.movePlayer(world.player.surface); loadVisible() }
             } else if world.player.perspective == .side { sideScene.combatEffect(action == .skill) }
             else { scene.combatEffect(action == .skill) }
-            refreshCombat(); save()
+            RPGStoryRuntime.recordEvents(world:&world); refreshCombat(); save()
         } catch { notice = error.localizedDescription }
     }
     func trainingEncounter() {
@@ -395,6 +400,61 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         for i in world.combat.enemies.indices { world.combat.enemies[i].aggro = false }
         world.combat.invulnerableRemaining = 2
         returnToSpawn(); refreshCombat(); save()
+    }
+    func prepareStory() {
+        guard ready, world.story.activeProgress == nil else { return }
+        beginStory(world.story.activeGraphID)
+    }
+    func beginStory(_ id: String) {
+        guard ready, !working else { return }
+        do {
+            let new = !world.story.progress.contains { $0.id == id }
+            try RPGStoryRuntime.start(graphID:id,world:&world)
+            if new { try RPGStoryRuntime.advance(world:&world,generator:generator) }
+            renderCurrent(); save()
+        } catch { notice = error.localizedDescription }
+    }
+    func advanceStory(choice: String? = nil) {
+        perform { world, generator in try RPGStoryRuntime.advance(choiceID:choice,world:&world,generator:generator) }
+    }
+    func guideTo(_ anchor: RPGAnchorID) {
+        guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { notice = "请在俯视且非战斗时导航。"; return }
+        guiding?.cancel()
+        let generator = generator, origin = world.player.surface, target = generator.anchor(anchor), epoch = generation
+        let obstacles = combatObstacles
+        guiding = Task { [weak self] in
+            let path = await Task.detached(priority:.userInitiated) { () -> [SurfacePoint] in
+                var queue = [origin], head = 0, visited: Set<SurfacePoint> = [origin], parent: [SurfacePoint:SurfacePoint] = [:]
+                while head < queue.count && visited.count <= 65536 {
+                    if Task.isCancelled { return [] }
+                    let p = queue[head]; head += 1
+                    if p == target {
+                        var route: [SurfacePoint] = [], cursor = p
+                        while cursor != origin { route.append(cursor); guard let previous = parent[cursor] else { return [] }; cursor = previous }
+                        return route.reversed()
+                    }
+                    for d in [(1,0),(-1,0),(0,1),(0,-1)] {
+                        let next = SurfacePoint(x:p.x+d.0,z:p.z+d.1)
+                        if !visited.contains(next), generator.tile(at:next)?.passable == true, !obstacles.contains(next) {
+                            visited.insert(next); parent[next] = p; queue.append(next)
+                        }
+                    }
+                }
+                return []
+            }.value
+            guard let self, !Task.isCancelled, self.generation == epoch, self.world.player.surface == origin else { return }
+            // Let the tool sheet dismiss before starting the walk.
+            try? await Task.sleep(nanoseconds:250_000_000)
+            for point in path {
+                guard !Task.isCancelled, self.active, !self.overlayVisible, !self.working, !self.world.player.inCombat, self.world.player.health > 0 else { return }
+                let old = self.world.player.surface
+                guard abs(point.x-old.x)+abs(point.z-old.z)==1 else { return }
+                self.followingRoute = true; self.move(dx:point.x-old.x,dz:point.z-old.z); self.followingRoute = false
+                guard self.world.player.surface == point else { self.notice = "导航被障碍挡住，请手动绕行。"; return }
+                try? await Task.sleep(nanoseconds:90_000_000)
+            }
+            self.notice = self.world.player.surface == target ? "已沿通路抵达"+anchor.title : "暂无可通行路线。"; self.save()
+        }
     }
     func validateRoundTrip() {
         do { let decoded = try RPGWorldCodec.decode(RPGWorldCodec.encode(world)); notice = decoded == world ? "世界数据往返校验通过。" : "世界数据校验失败。" }
