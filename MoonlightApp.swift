@@ -115,12 +115,9 @@ final class AppModel: ObservableObject {
     @Published var virtualIntervalMinutes = 30 {
         didSet { UserDefaults.standard.set(virtualIntervalMinutes, forKey: "moonlight.virtualFriends.interval") }
     }
+    private let momentPersistence = MomentPersistence()
     @Published private(set) var moments: [MomentPost] = [] {
-        didSet {
-            if let data = try? JSONEncoder().encode(moments) {
-                UserDefaults.standard.set(data, forKey: "moonlight.moments.v2")
-            }
-        }
+        didSet { momentPersistence.save(moments) }
     }
 
     init() {
@@ -128,10 +125,7 @@ final class AppModel: ObservableObject {
         let savedInterval = UserDefaults.standard.integer(forKey: "moonlight.virtualFriends.interval")
         if savedInterval > 0 { virtualIntervalMinutes = max(15, savedInterval) }
         virtualAIKeyDraft = SecureSettings.read(virtualAIProvider.keychainAccount) ?? ""
-        if let data = UserDefaults.standard.data(forKey: "moonlight.moments.v2"),
-           let saved = try? JSONDecoder().decode([MomentPost].self, from: data) {
-            moments = saved
-        }
+        moments = momentPersistence.load()
         if let rawValue = UserDefaults.standard.string(forKey: "moonlight.longPressStyle"),
            let savedStyle = LongPressStyle(rawValue: rawValue) {
             longPressStyle = savedStyle
@@ -451,7 +445,7 @@ enum VirtualFriendRoster {
     static let names = ["小林", "阿月", "晚风", "橘子汽水", "星河", "山雀"]
 }
 
-struct MomentPost: Codable, Identifiable {
+struct MomentPost: Codable, Identifiable, Sendable {
     var id = UUID().uuidString
     var text: String
     var date = Date.now
