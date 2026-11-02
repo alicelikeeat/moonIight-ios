@@ -28,7 +28,6 @@ struct RPGStoryEditorView:View {
             Section("剧情") {
                 TextField("标题",text:$graph.title).focused($editingTitle).submitLabel(.done).onSubmit{editingTitle=false}.accessibilityIdentifier("rpg-story-title")
                 Picker("起始节点",selection:$graph.start){ForEach(graph.nodes){Text($0.id).tag($0.id)}}
-                Text(message).font(.caption).accessibilityIdentifier("rpg-editor-status")
             }
             Section("节点列表") {
                 ForEach(graph.nodes){node in
@@ -63,6 +62,8 @@ struct RPGStoryEditorView:View {
                 }.accessibilityIdentifier("rpg-story-export")
                 Text("只导出节点和媒体引用，不打包视频。缺失媒体保留字幕；不执行脚本。").font(.caption)
             }
+        }.safeAreaInset(edge:.bottom){
+            Text(message).font(.caption).frame(maxWidth:.infinity,alignment:.leading).padding(12).background(.regularMaterial).accessibilityIdentifier("rpg-editor-status")
         }.navigationTitle("剧情编辑器").buttonStyle(MoonGlassButtonStyle())
             .navigationBarBackButtonHidden(true)
             .toolbar{ToolbarItem(placement:.navigationBarLeading){Button("返回工具"){dismiss()}.accessibilityIdentifier("rpg-editor-back")}}
@@ -97,16 +98,17 @@ private struct RPGStoryNodeEditor:View {
     var body:some View {
         Form {
             properties; conditions; choices; actions; mediaSection
-            Button("应用节点修改"){
-                if selectedMedia=="clear"{node.mediaBindingID=nil}
-                if node.kind == .end {node.next=nil;node.failure=nil;node.choices=[]}
-                node.mediaLoop=loop;node.mediaMuted=muted
-                save(node,media.first{$0.id==selectedMedia},loop,muted);dismiss()
-            }.accessibilityIdentifier("rpg-node-apply")
         }.navigationTitle("节点表单").buttonStyle(MoonGlassButtonStyle())
+            .toolbar{ToolbarItem(placement:.confirmationAction){Button("应用"){applyChanges()}.accessibilityIdentifier("rpg-node-apply")}}
             .onAppear{if let binding=bindings.first(where:{$0.id==node.mediaBindingID}){loop=node.mediaLoop ?? binding.loop;muted=node.mediaMuted ?? binding.muted}}
     }
 
+    private func applyChanges(){
+        if selectedMedia=="clear"{node.mediaBindingID=nil}
+        if node.kind == .end {node.next=nil;node.failure=nil;node.choices=[]}
+        node.mediaLoop=loop;node.mediaMuted=muted
+        save(node,media.first{$0.id==selectedMedia},loop,muted);dismiss()
+    }
     private var properties:some View {
             Section("属性") {
                 Text(node.id).font(.caption)

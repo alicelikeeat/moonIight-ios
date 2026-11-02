@@ -9,9 +9,9 @@ struct RPGFrameMetrics:Sendable {
     mutating func pause(){previous=nil}
     mutating func sample(_ time:Double){
         guard time.isFinite else{return}
-        defer{previous=time}
-        guard let previous,time>previous else{return}
-        let delta=time-previous
+        defer{self.previous=time}
+        guard let last=self.previous,time>last else{return}
+        let delta=time-last
         guard delta.isFinite else{return}
         if intervals.count<600{intervals.append(delta)}else{intervals[cursor]=delta;cursor=(cursor+1)%600}
         totalFrames+=1;if delta>0.05{hitches+=1}

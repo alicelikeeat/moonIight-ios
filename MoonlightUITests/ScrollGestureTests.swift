@@ -47,7 +47,7 @@ final class ScrollGestureTests: XCTestCase {
         let picker=app.buttons["rpg-node-media"];guard revealListControl(picker,in:app) else{return};picker.tap()
         let video=app.buttons["Scroll fixture 0"];XCTAssertTrue(video.waitForExistence(timeout:6));video.tap()
         let loop=app.switches["rpg-node-loop"];guard revealListControl(loop,in:app) else{return};if loop.value as? String == "0"{loop.tap()}
-        let apply=app.buttons["rpg-node-apply"];guard revealListControl(apply,in:app) else{return};apply.tap()
+        let apply=app.buttons["rpg-node-apply"];XCTAssertTrue(apply.waitForExistence(timeout:6));apply.tap()
         let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
         XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
         XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
@@ -79,7 +79,7 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["rpg-preview-text"].label.contains("字幕"));app.buttons["rpg-preview-next"].tap()
         XCTAssertTrue(app.staticTexts["rpg-preview-ended"].waitForExistence(timeout:6));app.buttons["rpg-preview-close"].tap()
         let publish=app.buttons["rpg-story-publish"];guard revealListControl(publish,in:app) else{return};publish.tap()
-        let status=app.staticTexts["rpg-editor-status"];guard revealListControl(status,in:app) else{return}
+        let status=app.staticTexts["rpg-editor-status"];XCTAssertTrue(status.waitForExistence(timeout:8))
         XCTAssertTrue(status.label.contains("已保存"));attach(app,name:"review-rpg-p8-editor")
         app.buttons["rpg-editor-back"].tap()
         let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
