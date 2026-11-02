@@ -1120,14 +1120,15 @@ final class ScrollGestureTests: XCTestCase {
             XCTAssertEqual(asset.value as? String, "已选择", "The background row did not accept selection")
         }
         let picker = app.descendants(matching: .any).matching(identifier: "background-playback-mode").firstMatch
-        for _ in 0..<16 { if picker.isHittable { break }; app.swipeDown() }
-        picker.tap(); app.buttons["顺序循环"].tap()
+        guard revealListControl(picker,in:app) else{return}
+        picker.tap()
+        let sequential=app.buttons["顺序循环"]
+        XCTAssertTrue(sequential.waitForExistence(timeout:5));sequential.tap()
         XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
         attach(app, name: "review-button-background-playlist")
         app.terminate(); app.launch(); openBackgroundSettings()
         let persistedSummary = app.staticTexts["background-playback-summary"]
-        for _ in 0..<16 { if persistedSummary.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(persistedSummary.isHittable)
+        guard revealListControl(persistedSummary,in:app) else{return}
         XCTAssertTrue(persistedSummary.label.contains("2 项 · 顺序循环"))
     }
 

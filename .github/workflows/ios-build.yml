@@ -110,9 +110,8 @@ jobs:
           ONLY=()
           for TEST_NAME in "${TESTS[@]}"; do ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/$TEST_NAME"); done
           xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${ONLY[@]}" -resultBundlePath build/TreasureTests.xcresult test
-      - name: Run focused visual diagnostics
+      - name: Run configuration UI regression
         if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'settings') }}
-        continue-on-error: true
         timeout-minutes: 20
         shell: bash
         run: |
@@ -122,9 +121,8 @@ jobs:
           for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
             ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
-          # These four cases stay diagnostic. An accessibility miss under the
-          # floating dock must not hide a gesture failure, and it must not
-          # consume the gate suite's time limit.
+          # Keep configuration cases separate so scrolling still runs after a
+          # failure. Every suite remains blocking for the final job result.
           xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
       - name: Run card scrolling UI tests
         if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'scroll') }}
