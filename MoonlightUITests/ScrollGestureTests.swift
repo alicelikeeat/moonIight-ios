@@ -64,7 +64,7 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["landlord-settings"].tap()
         app.buttons["landlord-test-memory"].tap()
         app.buttons["landlord-settings-done"].tap()
-        waitLandlord(app) { $0["players"] == "0" && $0["owned"] == "0" && (Int($0["cache"] ?? "9999999") ?? 9999999) <= 2097152 && $0["history"] == "0" }
+        waitLandlord(app) { $0["pressure"] == "1" && $0["players"] == "0" && $0["owned"] == "0" && (Int($0["cache"] ?? "9999999") ?? 9999999) <= 2097152 && $0["history"] == "0" }
         app.buttons["landlord-settings"].tap(); app.buttons["landlord-retry"].tap()
         app.buttons["landlord-settings-done"].tap()
         waitLandlord(app) { (Int($0["advancing"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" }

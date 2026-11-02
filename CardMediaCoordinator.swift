@@ -96,6 +96,7 @@ private actor CardFrameRenderer {
     @Published private(set) var audible = false
     @Published private(set) var notice = ""
     var decoderCount: Int { slots.count }
+    var isUnderPressure: Bool { pressure }
     var cacheBytes: Int { cache.cost }
     var advancing: Int { slots.values.filter { $0.player.rate > 0 && $0.player.currentTime().seconds > 0.05 }.count }
     var muted: Bool { slots.values.allSatisfy { $0.player.isMuted } }
@@ -118,7 +119,7 @@ private actor CardFrameRenderer {
                     }
                     if interrupted {
                         if ended {
-                            if self.interrupted { self.active = self.resumeAfterInterruption; self.resumeAfterInterruption = false; self.interrupted = false }
+                            if self.interrupted { self.active = self.active || self.resumeAfterInterruption; self.resumeAfterInterruption = false; self.interrupted = false }
                         } else { self.interrupted = true; self.resumeAfterInterruption = self.active; self.active = false }
                         self.mute()
                     }
@@ -136,7 +137,7 @@ private actor CardFrameRenderer {
         self.entries = Dictionary(entries.filter { $0.kind != .embed }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for id in oldIDs.subtracting(self.entries.keys) { cache.remove(id); feeds[id]?.show(nil) }
         self.requested = requested; self.active = active
-        if active { observe() }
+        if active || cache.count > 0 { observe() }
         if !active { mute() }
         reconcile()
     }
@@ -274,6 +275,7 @@ private actor CardFrameRenderer {
         for id in Array(slots.keys) { release(id) }
         for task in posterTasks.values { task.cancel() }; posterTasks.removeAll(); posterQueue.removeAll()
         for token in observations { NotificationCenter.default.removeObserver(token) }; observations.removeAll()
+        if !clear && cache.count > 0 { observe() }
         if clear { candidates.removeAll(); focusID = nil; snapshots.removeAll(); cache.removeAll(); for feed in feeds.values { feed.show(nil) }; feeds.removeAll(); failed.removeAll() }
     }
     func dispose() { stop(clear: true) }

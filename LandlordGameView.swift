@@ -14,7 +14,7 @@ private struct CardLayoutKey: PreferenceKey {
 
 struct LandlordGameView: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.scenePhase) private var scenePhase
+    @State private var applicationActive = UIApplication.shared.applicationState == .active
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var store = LandlordGameStore()
     @StateObject private var media = CardMediaCoordinator()
@@ -57,14 +57,16 @@ struct LandlordGameView: View {
             .onPreferenceChange(CardLayoutKey.self) { values in layouts = values; updateVisibility() }
         }
         .onAppear {
-            present = true
+            present = true; applicationActive = UIApplication.shared.applicationState == .active
             store.preferences.normalize(available: Set(store.preferences.mediaIDs))
-            store.activate(scenePhase == .active); configureMedia()
+            store.activate(applicationActive); configureMedia()
         }
         .onDisappear { present = false; store.activate(false); media.dispose() }
-        .onChange(of: scenePhase) { phase in
-            store.activate(present && phase == .active)
-            if phase != .active { media.stop() } else { configureMedia(); updateVisibility() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            applicationActive = false; store.activate(false); media.stop()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            applicationActive = true; present = true; store.activate(true); configureMedia(); updateVisibility()
         }
         .onChange(of: store.game.id) { _ in focus = nil; media.stop(clear: true); configureMedia(); updateVisibility() }
         .onChange(of: store.preferences) { _ in
@@ -92,7 +94,7 @@ struct LandlordGameView: View {
             #if DEBUG
             guard ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") else { return }
             while !Task.isCancelled {
-                diagnostic = "players=\(media.decoderCount);owned=\(CardMediaCoordinator.ownedPlayers);advancing=\(media.advancing);frames=\(media.renderedFrames);posters=\(media.posterFrames);muted=\(media.muted ? 1 : 0);cache=\(media.cacheBytes);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);phase=\(store.game.phase.rawValue);valid=\(store.game.conserved ? 1 : 0)"
+                diagnostic = "players=\(media.decoderCount);owned=\(CardMediaCoordinator.ownedPlayers);advancing=\(media.advancing);frames=\(media.renderedFrames);posters=\(media.posterFrames);muted=\(media.muted ? 1 : 0);pressure=\(media.isUnderPressure ? 1 : 0);active=\(applicationActive ? 1 : 0);cache=\(media.cacheBytes);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);phase=\(store.game.phase.rawValue);valid=\(store.game.conserved ? 1 : 0)"
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
             #endif
@@ -286,7 +288,7 @@ struct LandlordGameView: View {
     private func updatePause() { store.paused = focus != nil || settings || history; store.refresh() }
     private func configureMedia() {
         media.configure(entries: assets.filter { store.preferences.mediaIDs.contains($0.id) }, requested: store.preferences.budget,
-                        active: present && scenePhase == .active && store.preferences.style == .media && !settings && !history)
+                        active: present && applicationActive && store.preferences.style == .media && !settings && !history)
     }
     private func updateVisibility() {
         guard store.preferences.style == .media else { visibleCards = []; media.update([], focus: nil); return }
