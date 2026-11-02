@@ -102,6 +102,7 @@ private actor CardFrameRenderer {
     init() {}
     private func observe() {
         guard observations.isEmpty else { return }
+        let epoch = generation
         for name in [UIApplication.didReceiveMemoryWarningNotification, ProcessInfo.thermalStateDidChangeNotification,
                      Notification.Name.NSProcessInfoPowerStateDidChange, AVAudioSession.interruptionNotification] {
             observations.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
@@ -109,7 +110,7 @@ private actor CardFrameRenderer {
                 let interrupted = notification.name == AVAudioSession.interruptionNotification
                 let ended = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.ended.rawValue
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, self.generation == epoch else { return }
                     if isMemory {
                         self.pressure = true; self.cache.maxEntries = 6; self.cache.maxCost = 2 * 1024 * 1024; self.cache.trim()
                         for (id, feed) in self.feeds { feed.show(self.cache.value(id)) }
