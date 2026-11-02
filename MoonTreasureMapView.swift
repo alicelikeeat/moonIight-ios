@@ -8,12 +8,16 @@ import AVFoundation
 /// Separate experiences share media, never their playback state.
 struct MoonTreasureMapView: View {
     var openVideoWall = false
+    var openLandlord = false
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
     @State private var voiceOver = UIAccessibility.isVoiceOverRunning
-    @State private var wall = false
+    private enum Experience { case free, wall, landlord }
+    @State private var experience = Experience.free
+    private var wall: Bool { experience == .wall }
+    private var freeActive: Bool { experience == .free }
     @State private var initialized = false
     @State private var activeEntry: MediaEntry?
     @State private var actionEntry: MediaEntry?
@@ -48,20 +52,25 @@ struct MoonTreasureMapView: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 4) {
-                Button { wall = false } label: {
+                Button { experience = .free } label: {
                     Text("自由散落").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                        .background(!wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
-                }.accessibilityIdentifier("treasure-free-mode").accessibilityAddTraits(!wall ? .isSelected : [])
-                Button { wall = true } label: {
+                        .background(freeActive ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
+                }.accessibilityIdentifier("treasure-free-mode").accessibilityAddTraits(freeActive ? .isSelected : [])
+                Button { experience = .wall } label: {
                     Text("视频墙").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                         .background(wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
                 }.accessibilityIdentifier("treasure-wall-mode").accessibilityAddTraits(wall ? .isSelected : [])
+                Button { experience = .landlord } label: {
+                    Text("斗地主").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        .background(experience == .landlord ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
+                }.accessibilityIdentifier("treasure-landlord-mode").accessibilityAddTraits(experience == .landlord ? .isSelected : [])
             }.buttonStyle(.plain).padding(4).moonSingleGlass().padding(.horizontal, 14).zIndex(10)
             ZStack {
                 // Keep the SKView mounted so switching experiences preserves
                 // positions, velocities, camera and independently chosen count.
-                freeContent.opacity(wall ? 0 : 1).allowsHitTesting(!wall).accessibilityHidden(wall)
+                freeContent.opacity(freeActive ? 1 : 0).allowsHitTesting(freeActive).accessibilityHidden(!freeActive)
                 if wall { TreasureVideoWallView().environmentObject(model) }
+                if experience == .landlord { LandlordGameView().environmentObject(model) }
             }
         }
         .background { TreasureBackgroundSurface(options: appearance).ignoresSafeArea() }
@@ -84,14 +93,14 @@ struct MoonTreasureMapView: View {
             pageVisible = true
             if !initialized {
                 appearance = TreasureAppearance.load(appearanceData, legacy: legacyAppearance)
-                wall = openVideoWall; initialized = true
+                experience = openLandlord ? .landlord : openVideoWall ? .wall : .free; initialized = true
             }
             if voiceOver { organized = true }
             syncFreeState()
         }
         .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion(); scene.clearHandlers() }
-        .onChange(of: wall) { _ in
-            if !wall && !organized && sceneDirty { configureScene() }
+        .onChange(of: experience) { _ in
+            if freeActive && !organized && sceneDirty { configureScene() }
             syncFreeState()
         }
         .onChange(of: appearance) { value in
@@ -117,7 +126,7 @@ struct MoonTreasureMapView: View {
         .onChange(of: organized) { _ in
             videoPreviews.stopAll(); scene.setVideoPreviews([:]); refreshVideoPreviews()
         }
-        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized || wall ? [:] : $0) }
+        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized || !freeActive ? [:] : $0) }
         .fullScreenCover(item: $activeEntry) { entry in
             MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 }).environmentObject(model)
         }
@@ -182,7 +191,7 @@ struct MoonTreasureMapView: View {
         }
     }
     private func invalidateScene() {
-        if wall || organized { sceneDirty = true } else { configureScene() }
+        if !freeActive || organized { sceneDirty = true } else { configureScene() }
     }
     private func bindSceneHandlers(resumeCovers: Bool = true) {
         scene.onGlassFrames = { [weak projection = glassProjection, weak scene = scene] frames in
@@ -207,7 +216,7 @@ struct MoonTreasureMapView: View {
         scene.setCardContrast(dark: darkCards); syncFreeState()
     }
     private func syncFreeState() {
-        if pageVisible && !wall && !organized && scenePhase == .active && activeEntry == nil {
+        if pageVisible && freeActive && !organized && scenePhase == .active && activeEntry == nil {
             if !scene.hasCallbacks { bindSceneHandlers() }
             scene.startMotion()
         }
@@ -216,11 +225,15 @@ struct MoonTreasureMapView: View {
     }
     private func refreshVideoPreviews() {
         let candidates = organized ? filteredItems.filter { visibleGridVideos.contains($0.id) } : items
-        videoPreviews.configure(entries: candidates, enabled: pageVisible && !wall && videoAutoplay && scenePhase == .active && activeEntry == nil)
-        scene.setVideoPreviews(organized || wall ? [:] : videoPreviews.players)
+        videoPreviews.configure(entries: candidates, enabled: pageVisible && freeActive && videoAutoplay && scenePhase == .active && activeEntry == nil)
+        scene.setVideoPreviews(organized || !freeActive ? [:] : videoPreviews.players)
     }
     @ViewBuilder private var debugLabels: some View {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") {
+            Text("媒体池实例").font(.system(size: 1)).frame(height: 1).opacity(0.01).allowsHitTesting(false)
+                .accessibilityIdentifier("treasure-card-owned").accessibilityValue(String(CardMediaCoordinator.ownedPlayers))
+        }
         if ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests") {
             Text("物理拖拽测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01).allowsHitTesting(false)
                 .accessibilityIdentifier("treasure-physics-probe").accessibilityValue(dragDiagnostics)

@@ -317,11 +317,11 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     case background, backgrounds, backgroundLibrary, gestures, menuSettings
     case playMedia, favoriteMedia, saveMedia, shareMedia
     case portrait, virtualFriends, navigationMode, selectAll, favorites, downloads
-    case searchMedia, treasureMap, treasurePlayback
+    case searchMedia, treasureMap, treasurePlayback, landlord
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "视频墙"
+        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "视频墙"; case .landlord: "斗地主"
         case .home: "首页"; case .discover: "发现"; case .moments: "朋友圈"; case .me: "我"
         case .library: "打开库"; case .settings: "设置"; case .friends: "朋友"; case .messages: "消息"; case .profile: "编辑资料"
         case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
@@ -338,7 +338,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     }
     var symbol: String {
         switch self {
-        case .searchMedia: "magnifyingglass"; case .treasureMap: "sparkles.rectangle.stack"; case .treasurePlayback: "play.square.stack"
+        case .searchMedia: "magnifyingglass"; case .treasureMap: "sparkles.rectangle.stack"; case .treasurePlayback: "play.square.stack"; case .landlord: "suit.spade"
         case .home: "moon.stars"; case .discover: "safari"; case .moments, .friends: "person.2"
         case .me, .profile, .avatar: "person.crop.circle"; case .library, .saveMedia: "square.grid.2x2"
         case .settings, .menuSettings: "gearshape"; case .messages: "bubble.left.and.bubble.right"
@@ -424,6 +424,7 @@ extension AppCommand {
         let aliases: [String]
         switch self {
         case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
+        case .landlord: aliases = ["斗地主", "叫分", "媒体牌面", "出牌", "托管", "牌桌记录", "牌面声音"]
         case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
         case .treasurePlayback: aliases = ["视频墙", "顺序播放", "随机播放", "同时播放", "选择视频"]
         case .importMedia: aliases = ["相册", "导入", "照片库"]
