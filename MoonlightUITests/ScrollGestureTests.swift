@@ -2,6 +2,24 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGWorldSeedChunksAndMovement() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let count = app.staticTexts["rpg-loaded-chunks"]
+        XCTAssertTrue(count.waitForExistence(timeout: 8))
+        let ready = NSPredicate { _, _ in (Int(count.value as? String ?? "0") ?? 0) > 0 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: count)], timeout: 20), .completed)
+        let position = app.staticTexts["rpg-position"]
+        let before = position.label
+        app.buttons["rpg-move-1-0"].tap()
+        XCTAssertNotEqual(position.label, before)
+        app.buttons["rpg-move--1-0"].tap()
+        XCTAssertEqual(position.label, before)
+        attach(app, name: "review-rpg-p2-world")
+        app.buttons["rpg-close"].tap()
+    }
+
+    @MainActor
     func testRPGSkeletonCanValidateExitAndPreserveOtherModules() {
         let app = launch(discover: false)
         app.buttons["navigation-me"].tap()

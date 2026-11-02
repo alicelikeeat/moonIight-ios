@@ -42,3 +42,31 @@ let bound = try RPGWorldCodec.decode(RPGWorldCodec.encode(world))
 check(bound.entities[0].id == entity.id && bound.mediaBindings[0].mediaID == "library-item", "media independent identity")
 binding.cropWidth = 1.5; invalid = world; invalid.mediaBindings = [binding]; rejected(invalid, "bad crop")
 print("RPG P1: \(checks) checks passed")
+
+let generated = RPGWorldGenerator(seed: 42)
+check(RPGWorldGenerator.hash(seed: 42, x: 100, z: 100) == 1100301830784546726, "generator v1 integer golden vector")
+check(generated.anchor(.spawn) == .init(x: 13, z: 17) && generated.anchor(.temple) == .init(x: 177, z: 147), "anchor golden positions")
+var forward: [Int: RPGChunk] = [:], identities = Set<String>()
+for coordinate in ChunkCoordinate.all {
+    let chunk = generated.chunk(coordinate)!
+    check(chunk.terrain.count == 1024, "chunk dimensions")
+    for entity in chunk.entities {
+        check(identities.insert(entity.id).inserted && entity.surface?.chunk == coordinate, "stable global ownership")
+        check(!generated.protected(entity.surface!), "resources do not block reserved paths")
+    }
+    forward[coordinate.id] = chunk
+}
+for coordinate in ChunkCoordinate.all.reversed() { check(generated.chunk(coordinate) == forward[coordinate.id], "generation order independent") }
+check(RPGWorldGenerator(seed: 1).chunk(.init(x: 2, z: 2)) != generated.chunk(.init(x: 2, z: 2)), "seed affects world")
+check(generated.chunk(.init(x: -1, z: 0)) == nil && generated.tile(at: .init(x: 256, z: 0)) == nil, "generator rejects invalid coordinates")
+for seed: UInt64 in [0, 1, 42, UInt64.max] {
+    let value = RPGWorldGenerator(seed: seed)
+    check(value.anchorsReachable(), "all six plot anchors reachable")
+    check(value.anchors.allSatisfy { value.tile(at: $0.point)?.passable == true && value.protected($0.point) }, "safe anchors reserved before noise")
+}
+check(generated.priorityChunks(around: .init(x: 0, z: 0)).count == 4 && generated.priorityChunks(around: .init(x: 100, z: 100)).count == 9, "candidate neighborhood clipped to world")
+var generatedState = WorldState(seed: 42)
+generatedState.sideRegions = [generated.sideRegion]
+generatedState.entities = ChunkCoordinate.all.flatMap { forward[$0.id]!.entities }
+try generatedState.validate()
+print("RPG P2: \(checks) total checks passed")
