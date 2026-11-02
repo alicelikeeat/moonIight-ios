@@ -57,7 +57,6 @@ struct MoonTreasureMapView: View {
                         .background(wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
                 }.accessibilityIdentifier("treasure-wall-mode").accessibilityAddTraits(wall ? .isSelected : [])
             }.buttonStyle(.plain).padding(4).moonSingleGlass().padding(.horizontal, 14).zIndex(10)
-                .accessibilityIdentifier("treasure-experience")
             ZStack {
                 // Keep the SKView mounted so switching experiences preserves
                 // positions, velocities, camera and independently chosen count.
