@@ -89,9 +89,9 @@ struct MoonTreasureMapView: View {
             if voiceOver { organized = true }
             syncFreeState()
         }
-        .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion() }
+        .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion(); scene.clearHandlers() }
         .onChange(of: wall) { _ in
-            if !wall && sceneDirty { configureScene() }
+            if !wall && !organized && sceneDirty { configureScene() }
             syncFreeState()
         }
         .onChange(of: appearance) { value in
@@ -103,15 +103,15 @@ struct MoonTreasureMapView: View {
             if voiceOver { organized = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification)) { _ in
-            if wall { sceneDirty = true } else { configureScene() }
+            invalidateScene()
         }
         .onChange(of: colorScheme) { _ in scene.setCardContrast(dark: darkCards) }
         .onChange(of: scenePhase) { _ in syncFreeState() }
         .onChange(of: activeEntry?.id) { _ in syncFreeState() }
-        .onChange(of: scope) { _ in configureScene() }
-        .onChange(of: dropCount) { _ in configureScene() }
+        .onChange(of: scope) { _ in invalidateScene() }
+        .onChange(of: dropCount) { _ in invalidateScene() }
         .onChange(of: model.mediaStore.items) { _ in
-            if wall { sceneDirty = true } else { configureScene() }
+            invalidateScene()
         }
         .onChange(of: videoAutoplay) { _ in refreshVideoPreviews() }
         .onChange(of: organized) { _ in
@@ -174,23 +174,43 @@ struct MoonTreasureMapView: View {
             }
                 .clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14)
                 .accessibilityIdentifier("moon-treasure-map")
-                .onAppear { if scene.children.isEmpty || !scene.hasCallbacks { configureScene() }; syncFreeState() }
+                .onAppear {
+                    if scene.children.isEmpty || sceneDirty { configureScene() }
+                    else if !scene.hasCallbacks { bindSceneHandlers() }
+                    syncFreeState()
+                }
         }
     }
-    private func configureScene() {
-        sceneDirty = false
+    private func invalidateScene() {
+        if wall || organized { sceneDirty = true } else { configureScene() }
+    }
+    private func bindSceneHandlers(resumeCovers: Bool = true) {
         scene.onGlassFrames = { [weak projection = glassProjection, weak scene = scene] frames in
             guard let projection, let scene else { return }
             projection.snapshot = TreasureGlassSnapshot(frames: frames, sceneSize: scene.size)
         }
         #if DEBUG
-        scene.onDragDiagnostics = { dragDiagnostics = $0 }
+        let diagnostics = $dragDiagnostics
+        scene.onDragDiagnostics = { diagnostics.wrappedValue = $0 }
         #endif
-        scene.configure(with: items, onSelect: { id in activeEntry = model.mediaStore.items.first { $0.id == id } }, onLongPress: { id in actionEntry = model.mediaStore.items.first { $0.id == id } })
+        let selected = $activeEntry
+        let held = $actionEntry
+        let store = model.mediaStore
+        scene.setHandlers(onSelect: { [weak store] id in selected.wrappedValue = store?.items.first { $0.id == id } },
+                          onLongPress: { [weak store] id in held.wrappedValue = store?.items.first { $0.id == id } })
+        if resumeCovers { scene.resumeCovers(items) }
+    }
+    private func configureScene() {
+        sceneDirty = false
+        bindSceneHandlers(resumeCovers: false)
+        scene.configure(with: items)
         scene.setCardContrast(dark: darkCards); syncFreeState()
     }
     private func syncFreeState() {
-        if pageVisible && !wall && !organized && scenePhase == .active && activeEntry == nil { scene.startMotion() }
+        if pageVisible && !wall && !organized && scenePhase == .active && activeEntry == nil {
+            if !scene.hasCallbacks { bindSceneHandlers() }
+            scene.startMotion()
+        }
         else { scene.stopMotion() }
         refreshVideoPreviews()
     }
@@ -321,14 +341,22 @@ private final class MoonTreasureScene: SKScene {
         view.isMultipleTouchEnabled = true
     }
 
-    func configure(with entries: [MediaEntry],
-                   onSelect: @escaping (String) -> Void,
-                   onLongPress: @escaping (String) -> Void) {
+    func setHandlers(onSelect: @escaping (String) -> Void, onLongPress: @escaping (String) -> Void) {
+        select = onSelect; longPress = onLongPress
+    }
+    func clearHandlers() { select = nil; longPress = nil; onDragDiagnostics = nil; onGlassFrames = nil }
+    func resumeCovers(_ entries: [MediaEntry]) {
+        previewTasks.forEach { $0.cancel() }; previewTasks.removeAll()
+        for entry in entries {
+            guard let crop = childNode(withName: entry.id)?.childNode(withName: "preview-crop") as? SKCropNode,
+                  let preview = crop.children.first as? SKSpriteNode, preview.texture == nil else { continue }
+            loadPreview(for: entry, into: preview, fill: preview.size)
+        }
+    }
+    func configure(with entries: [MediaEntry]) {
         #if DEBUG
         configurationVersion += 1
         #endif
-        select = onSelect
-        longPress = onLongPress
         stopMotion()
         previewTasks.forEach { $0.cancel() }
         previewTasks.removeAll()
@@ -610,10 +638,7 @@ private final class MoonTreasureScene: SKScene {
         stopMotion()
         previewTasks.forEach { $0.cancel() }
         previewTasks.removeAll()
-        select = nil
-        longPress = nil
-        onDragDiagnostics = nil
-        onGlassFrames = nil
+        clearHandlers()
         setVideoPreviews([:])
     }
 
