@@ -3,7 +3,12 @@ import Combine
 
 enum RPGTool: String, CaseIterable { case select, paint, erase }
 @MainActor final class RPGSession: ObservableObject {
-    @Published private(set) var world = WorldState()
+    private(set) var world = WorldState() { didSet { if !simulating { objectWillChange.send() } } }
+    private var simulating = false
+    private var lastFrame: TimeInterval?
+    private var lastHUD: TimeInterval = 0
+    private var combatObstacles: Set<SurfacePoint> = []
+    let combatHUD = RPGCombatHUDModel()
     @Published private(set) var notice = "正在读取世界…"
     @Published private(set) var active = false
     @Published private(set) var ready = false
@@ -81,10 +86,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.shutdown(); sideScene.shutdown(); let old = cache; Task { await old?.clear() }; cache = nil; chunks = []; displayedChunk = nil
     }
     func move(dx: Int, dz: Int) {
-        guard active, ready, !working, abs(dx) <= 1, abs(dz) <= 1 else { return }
+        guard active, ready, !working, world.player.health > 0, abs(dx) <= 1, abs(dz) <= 1 else { return }
         if world.player.perspective == .side {
+            if dx != 0 { world.player.facing = .init(dx: dx, dz: 0) }
             if dz > 0 { sideScene.jump() }; if dx != 0 { sideScene.step(dx) }; return
         }
+        if dx != 0 || dz != 0 { world.player.facing = .init(dx: dx, dz: dz) }
         let old = world.player.surface, next = SurfacePoint(x: old.x + dx, z: old.z + dz)
         guard generator.tile(at: next)?.passable == true else { notice = "前方无法通行。"; return }
         if dx != 0 && dz != 0 {
@@ -117,11 +124,20 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func bindScenes() {
         scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point) }
         scene.onStroke = { [weak self] points in self?.stroke(points) }
-        scene.onFrame = { [weak self] time in self?.media?.frame(time) }
-        sideScene.onFrame = { [weak self] time in self?.media?.frame(time) }
+        scene.onFrame = { [weak self] time in self?.frame(time) }
+        sideScene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onSelectCell = { [weak self] point in
             guard let self else { return }; self.selectedSide = point; self.sideScene.select(point)
             if let region = self.world.sideRegions.first(where: { $0.id == point.regionID }) { self.selected = .init(x: region.origin.x + point.horizontal, z: region.origin.z) }
+        }
+        sideScene.onEnemyPosition = { [weak self] id, point in
+            guard let self, self.world.player.perspective == .side, let index = self.world.combat.enemies.firstIndex(where:{$0.id == id}) else { return }
+            self.simulating = true; defer { self.simulating = false }
+            self.world.combat.enemies[index].side = point
+            if self.world.combat.enemies[index].scope == .shared, let region = self.world.sideRegions.first(where:{$0.id == point.regionID}) {
+                self.world.combat.enemies[index].surface = .init(x:region.origin.x+point.horizontal,z:region.origin.z)
+            }
+            self.world.revision += 1
         }
         sideScene.onPosition = { [weak self] point, _ in
             guard let self, self.ready, self.active, self.world.player.perspective == .side, self.world.player.side != point else { return }
@@ -131,6 +147,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
     }
     private func applyScenePause() {
+        lastFrame = nil
         scene.isPaused = !active || working || overlayVisible || world.player.perspective != .topDown
         sideScene.isPaused = !active || working || overlayVisible || world.player.perspective != .side
     }
@@ -156,7 +173,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         if world.player.perspective == .side && !sideScene.isOnGround { notice = "请先落地并回到入口。"; return }
         do {
             try RPGProjectionRules.switchPerspective(world: &world, generator: generator)
-            selected = nil; selectedSide = nil; applyScenePause()
+            selected = nil; selectedSide = nil
+            if world.player.perspective == .side {
+                if world.player.facing.dx == 0 { world.player.facing = .init() }
+                RPGCombatRules.seedEnemies(world:&world,generator:generator,coordinates:[])
+            }
+            applyScenePause(); refreshCombat()
             if world.player.perspective == .side { sideScene.show(world: world, resetPlayer: true); updateProjectionEvidence() }
             else { loadVisible(force: true) }
             notice = world.player.perspective == .side ? "已进入独立侧视切片；靛色平台为侧视专属。" : "已返回俯视地表。"
@@ -214,12 +236,13 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func setVideoBudget(_ value:Int){guard (0...2).contains(value) else{return};world.videoBudget=value;world.revision+=1;syncMedia();save()}
     private func renderCurrent() {
+        combatObstacles = Set(chunks.flatMap { RPGWorldEditing.entities(in:$0,world:world) }.filter { $0.physics.topDownSolid }.compactMap(\.surface))
         if world.player.perspective == .side { sideScene.show(world: world); sideScene.select(selectedSide) }
         else { scene.show(chunks: chunks, world: world); scene.select(selected) }
-        updateProjectionEvidence()
+        updateProjectionEvidence(); refreshCombat()
     }
     private func perform(_ action: @escaping @Sendable (inout WorldState, RPGWorldGenerator) throws -> Void) {
-        guard ready, active, !working else { return }
+        guard ready, active, !working, world.player.health > 0 else { return }
         working = true; let snapshot = world, generator = generator, epoch = generation
         edit = Task { [weak self] in
             let result = await Task.detached(priority: .userInitiated) { () -> Result<WorldState, Error> in
@@ -313,6 +336,66 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             } catch { guard let self, self.generation == epoch else { return }; self.working = false; self.notice = error.localizedDescription }
         }
     }
+    private func frame(_ time: TimeInterval) {
+        media?.frame(time)
+        guard active, ready, !working, !overlayVisible else { lastFrame = nil; return }
+        guard let previous = lastFrame else { lastFrame = time; return }
+        guard time-previous >= 1.0/30 else { return }
+        lastFrame = time
+        let obstacles = combatObstacles, generator = generator
+        let wasCombat = world.player.inCombat, oldHealth = world.player.health
+        simulating = true
+        RPGCombatRules.advance(world:&world,generator:generator,delta:min(0.1,time-previous),passable:{ generator.tile(at:$0)?.passable == true && !obstacles.contains($0) })
+        simulating = false
+        if world.player.perspective == .topDown { scene.showCombat(world) } else { sideScene.showCombat(world) }
+        if time-lastHUD > 0.1 || oldHealth != world.player.health { combatHUD.update(world); lastHUD = time }
+        if wasCombat != world.player.inCombat || oldHealth > 0 && world.player.health == 0 {
+            objectWillChange.send(); notice = world.player.health == 0 ? "生命耗尽，请在安全入口复苏。" : world.player.inCombat ? "战斗开始，暂时不能切换视角。":"战斗结束，掉落已记录。"; save()
+        }
+    }
+    private func refreshCombat() {
+        combatHUD.update(world)
+        if world.player.perspective == .topDown { scene.showCombat(world) } else { sideScene.showCombat(world) }
+    }
+    func combatAction(_ action: RPGCombatAction) {
+        guard ready, active, !working, !overlayVisible else { return }
+        let obstacles = combatObstacles, generator = generator
+        do {
+            try RPGCombatRules.action(action,world:&world,generator:generator,passable:{ generator.tile(at:$0)?.passable == true && !obstacles.contains($0) })
+            if action == .roll {
+                if world.player.perspective == .side { sideScene.dash(world.player.facing.dx) }
+                else { scene.movePlayer(world.player.surface); loadVisible() }
+            } else if world.player.perspective == .side { sideScene.combatEffect(action == .skill) }
+            else { scene.combatEffect(action == .skill) }
+            refreshCombat(); save()
+        } catch { notice = error.localizedDescription }
+    }
+    func trainingEncounter() {
+        guard ready, !working else { return }
+        RPGCombatRules.trainingEncounter(world:&world,generator:generator); refreshCombat(); save()
+    }
+    func equip(_ equipment: RPGEquipment) {
+        guard ready, !working, !world.player.inCombat else { notice = "请在战斗结束后装备。"; return }
+        if equipment == .none { world.player.weapon = .none; world.player.armor = .none }
+        else {
+            let owned = world.inventory[equipment.rawValue,default:0] > 0
+            if !owned {
+                let cost = equipment == .moonBlade ? 4:6
+                let resource = equipment == .moonBlade ? "wood":"stone"
+                guard world.inventory[resource,default:0] >= cost else { notice = "材料不足。"; return }
+                world.inventory[resource,default:0] -= cost; world.inventory[equipment.rawValue] = 1
+            }
+            if equipment == .moonBlade { world.player.weapon = equipment } else { world.player.armor = equipment }
+        }
+        world.revision += 1; refreshCombat(); save()
+    }
+    func revive() {
+        guard ready, !working, world.player.health == 0 else { return }
+        world.player.health = 100; world.player.stamina = 100; world.player.inCombat = false
+        for i in world.combat.enemies.indices { world.combat.enemies[i].aggro = false }
+        world.combat.invulnerableRemaining = 2
+        returnToSpawn(); refreshCombat(); save()
+    }
     func validateRoundTrip() {
         do { let decoded = try RPGWorldCodec.decode(RPGWorldCodec.encode(world)); notice = decoded == world ? "世界数据往返校验通过。" : "世界数据校验失败。" }
         catch { notice = error.localizedDescription }
@@ -327,8 +410,18 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             let chunks = await cache?.load(wanted) ?? []
             guard !Task.isCancelled, let self, self.generation == epoch, self.active else { return }
             self.chunks = chunks; self.loadedChunks = chunks.count; self.displayedChunk = self.world.player.surface.chunk
+            RPGCombatRules.seedEnemies(world:&self.world,generator:self.generator,coordinates:chunks.map(\.coordinate))
             self.renderCurrent()
             self.notice = "世界已就绪 · \(self.loadedChunks)/64 区块在附近。"
         }
+    }
+}
+
+@MainActor final class RPGCombatHUDModel: ObservableObject {
+    @Published private(set) var text = "生命 100 · 耐力 100"
+    @Published private(set) var dead = false
+    func update(_ world: WorldState) {
+        let value = "生命 \(world.player.health) · 耐力 \(world.player.stamina) · 月晶 \(world.inventory["moon-shard",default:0]) · 技能 \(Int(ceil(world.combat.skillRemaining)))s"
+        if text != value { text = value }; if dead != (world.player.health == 0) { dead = world.player.health == 0 }
     }
 }

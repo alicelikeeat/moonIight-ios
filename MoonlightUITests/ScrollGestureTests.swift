@@ -2,6 +2,26 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGCombatRewardsPersistWithoutDuplicateDrop() {
+        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        let training = app.buttons["rpg-training"]
+        guard revealListControl(training,in:app) else { return }; training.tap()
+        app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-skill"].tap(); app.buttons["rpg-attack"].tap()
+        let stats = app.staticTexts["rpg-combat-stats"]
+        let reward = NSPredicate(format:"label CONTAINS %@","月晶 1")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:stats)],timeout:10),.completed)
+        attach(app,name:"review-rpg-p6-combat")
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:6)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:10),.completed)
+        app.buttons["rpg-attack"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-combat-stats"].label.contains("月晶 1"))
+    }
+
+    @MainActor
     func testRPGMediaFramesBudgetLoopAndBackground() {
         let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
         let ready=app.staticTexts["background-test-state"]

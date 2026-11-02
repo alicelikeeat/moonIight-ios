@@ -33,6 +33,7 @@ struct RPGShellView: View {
                 Text(session.world.player.perspective == .topDown ? "俯视地表" : "侧视切片")
                     .font(.caption).accessibilityIdentifier("rpg-projection-evidence").accessibilityValue(session.projectionEvidence)
             }
+            RPGCombatHUDView(model:session.combatHUD,session:session)
             Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
             HStack {
                 Button("放置") { session.placeSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-place")
@@ -98,6 +99,13 @@ struct RPGShellView: View {
                 }
                 Text("木材 \(session.world.inventory["wood",default:0]) · 石材 \(session.world.inventory["stone",default:0])").font(.caption)
                 Button("选取附近空地") { session.chooseSite() }.accessibilityIdentifier("rpg-choose-site")
+                Section("战斗与装备") {
+                    Button("开启训练遭遇") { session.trainingEncounter() }.accessibilityIdentifier("rpg-training")
+                    Button("制作 / 装备月刃（木材 4）") { session.equip(.moonBlade) }
+                    Button("制作 / 装备石甲（石材 6）") { session.equip(.stoneArmor) }
+                    Button("卸下装备") { session.equip(.none) }
+                    Text("俯视八向攻击、范围技能与翻滚；侧视支持空中攻击和冲刺。训练会开始真实战斗，战斗期间不能切换视角。") .font(.caption)
+                }
                 Section("媒体外观") {
                     NavigationLink("角色图片 / 视频") { RPGMediaEditorView(session:session,store:model.mediaStore,owner:.player) }
                         .accessibilityIdentifier("rpg-media-player")
@@ -134,5 +142,23 @@ struct RPGShellView: View {
     private func moveButton(_ title: String, _ dx: Int, _ dz: Int) -> some View {
         Button(title) { session.move(dx: dx, dz: dz) }.frame(width: 44, height: 44)
             .accessibilityLabel("移动 \(dx), \(dz)").accessibilityIdentifier("rpg-move-\(dx)-\(dz)")
+    }
+}
+
+private struct RPGCombatHUDView: View {
+    @ObservedObject var model: RPGCombatHUDModel
+    let session: RPGSession
+    var body: some View {
+        VStack(spacing:2) {
+            Text(model.text).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-combat-stats")
+            HStack {
+                if model.dead { Button("安全复苏") { session.revive() }.accessibilityIdentifier("rpg-revive") }
+                else {
+                    Button("攻击") { session.combatAction(.attack) }.accessibilityIdentifier("rpg-attack")
+                    Button("范围技能") { session.combatAction(.skill) }.accessibilityIdentifier("rpg-skill")
+                    Button("翻滚 / 冲刺") { session.combatAction(.roll) }.accessibilityIdentifier("rpg-roll")
+                }
+            }.frame(minHeight:44)
+        }
     }
 }

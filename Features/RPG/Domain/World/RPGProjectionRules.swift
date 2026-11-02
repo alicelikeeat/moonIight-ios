@@ -62,7 +62,7 @@ enum RPGProjectionRules {
         if !world.isCreativeCopy && generator.protected(surface) { throw RPGEditError.protectedArea }
         if let player = world.player.side, world.player.mode == .adventure && abs(player.horizontal-point.horizontal)+abs(player.height-point.height)>4 { throw RPGEditError.tooFar }
         guard let definition = BlockDefinition.find(definitionID) else { throw RPGEditError.unknownDefinition }
-        guard world.player.side != point, !sideEntities(world:world,generator:generator).contains(where:{ occupies($0,point) }) else { throw RPGEditError.occupied }
+        guard !world.combat.enemies.contains(where: { $0.health > 0 && $0.side == point }), world.player.side != point, !sideEntities(world:world,generator:generator).contains(where:{ occupies($0,point) }) else { throw RPGEditError.occupied }
         var next=world
         if world.player.mode == .adventure, let cost=definition.cost {
             guard next.inventory[cost,default:0]>0 else { throw RPGEditError.resources }; next.inventory[cost,default:0]-=1

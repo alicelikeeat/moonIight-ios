@@ -7,6 +7,8 @@ import UIKit
     var onStroke: (([SurfacePoint]) -> Void)?
     var tool = RPGTool.select
     private var strokePoints: [SurfacePoint] = []
+    private let enemies = SKNode()
+    private var enemyNodes: [String: SKShapeNode] = [:]
     private let ground = SKNode()
     private let objects = SKNode()
     private let avatar = SKShapeNode(circleOfRadius: 8)
@@ -21,7 +23,7 @@ import UIKit
         super.init(size: CGSize(width: 390, height: 500))
         scaleMode = .resizeFill; backgroundColor = .clear; physicsWorld.gravity = .zero
         objects.zPosition = 2
-        addChild(ground); addChild(objects); addChild(avatar); addChild(selection); addChild(worldCamera)
+        enemies.zPosition = 5; addChild(enemies); addChild(ground); addChild(objects); addChild(avatar); addChild(selection); addChild(worldCamera)
         camera = worldCamera
         avatar.fillColor = .systemTeal; avatar.strokeColor = .white; avatar.zPosition = 10
         selection.strokeColor = .systemYellow; selection.fillColor = .clear; selection.zPosition = 12; selection.isHidden = true
@@ -62,6 +64,31 @@ import UIKit
     }
     func movePlayer(_ point: SurfacePoint) { avatar.position = Self.position(point); worldCamera.position = avatar.position }
     func select(_ point: SurfacePoint?) { selection.isHidden = point == nil; if let point { selection.position = Self.position(point) } }
+    func showCombat(_ world: WorldState) {
+        let visible = world.combat.enemies.filter { enemy in
+            guard enemy.health > 0, let p = enemy.surface, enemy.scope != .sideOnly else { return false }
+            return abs(p.x-world.player.surface.x) < 24 && abs(p.z-world.player.surface.z) < 24
+        }
+        let ids = Set(visible.map(\.id))
+        for id in Array(enemyNodes.keys) where !ids.contains(id) { enemyNodes.removeValue(forKey:id)?.removeFromParent() }
+        for enemy in visible {
+            let node: SKShapeNode
+            if let existing = enemyNodes[enemy.id] { node = existing }
+            else {
+                node = SKShapeNode(circleOfRadius:enemy.boss ? 13:8)
+                node.strokeColor = .white; node.name = enemy.id; enemies.addChild(node); enemyNodes[enemy.id] = node
+                let label = SKLabelNode(); label.name = "hp"; label.fontSize = 9; label.position.y = 15; node.addChild(label)
+            }
+            node.fillColor = enemy.boss ? (enemy.phase == 2 ? .systemPurple:.systemOrange):.systemRed
+            node.position = Self.position(enemy.surface!)
+            (node.childNode(withName:"hp") as? SKLabelNode)?.text = String(enemy.health)
+        }
+    }
+    func combatEffect(_ skill: Bool) {
+        let effect = SKShapeNode(circleOfRadius: skill ? 90:42)
+        effect.position = avatar.position; effect.strokeColor = .systemYellow; effect.lineWidth = 3; effect.zPosition = 15
+        addChild(effect); effect.run(.sequence([.fadeOut(withDuration:0.25),.removeFromParent()]))
+    }
     private func prepareTiles() {
         guard groups.isEmpty else { return }
         let colors: [RPGTerrain: UIColor] = [.grass: .init(red: 0.20, green: 0.43, blue: 0.32, alpha: 1), .sand: .init(red: 0.63, green: 0.53, blue: 0.32, alpha: 1),
@@ -97,5 +124,5 @@ import UIKit
         strokePoints = []
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { strokePoints = [] }
-    func shutdown() { isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
+    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
 }

@@ -2,6 +2,12 @@ import SpriteKit
 import UIKit
 
 @MainActor final class RPGSideScene: SKScene {
+    var onEnemyPosition: ((String, SidePlacement) -> Void)?
+    private let enemyLayer = SKNode()
+    private var enemyNodes: [String: SKShapeNode] = [:]
+    private var enemyStates: [String: RPGEnemyState] = [:]
+    private var enemyCells: [String: SidePlacement] = [:]
+    private var dashUntil: TimeInterval = 0
     var onFrame:((TimeInterval)->Void)?
     private(set) var mediaTargets:[RPGMediaNode]=[]
     var onSelectCell: ((SidePlacement) -> Void)?
@@ -20,7 +26,7 @@ import UIKit
     override init() {
         super.init(size:CGSize(width:390,height:400));scaleMode = .resizeFill;backgroundColor = .clear
         physicsWorld.gravity=CGVector(dx:0,dy:-12)
-        addChild(floorLayer);addChild(objects);addChild(avatar);addChild(selection);addChild(worldCamera);camera=worldCamera
+        enemyLayer.zPosition = 5; addChild(enemyLayer); addChild(floorLayer);addChild(objects);addChild(avatar);addChild(selection);addChild(worldCamera);camera=worldCamera
         avatar.fillColor = .systemTeal;avatar.strokeColor = .white;avatar.zPosition=10
         let body=SKPhysicsBody(rectangleOf:CGSize(width:16,height:22));body.allowsRotation=false;body.mass=0.08;body.restitution=0;body.friction=0.2;body.categoryBitMask=1;body.collisionBitMask=2;body.contactTestBitMask=2
         avatar.physicsBody=body
@@ -69,13 +75,53 @@ import UIKit
         tick=currentTime
         guard !isPaused,let region else{return}
         if currentTime>movementUntil {direction=0}
-        avatar.physicsBody?.velocity.dx=direction*140
+        avatar.physicsBody?.velocity.dx=direction*(currentTime < dashUntil ? 340:140)
         isOnGround = (avatar.physicsBody?.allContactedBodies().contains{$0.categoryBitMask==2} ?? false) && abs(avatar.physicsBody?.velocity.dy ?? 0)<2
         let u=max(0,min(region.width-1,Int(floor(avatar.position.x/24))))
         let h=max(0,min(63,Int(floor(avatar.position.y/24))))
         let cell=SidePlacement(regionID:region.id,horizontal:u,height:h)
         if cell != lastCell || lastGrounded != isOnGround {lastCell=cell;lastGrounded=isOnGround;onPosition?(cell,isOnGround)}
-        follow();onFrame?(currentTime)
+        updateEnemies();follow();onFrame?(currentTime)
+    }
+    func dash(_ sign: Int) { direction = CGFloat(sign); dashUntil = tick+0.25; movementUntil = dashUntil }
+    func showCombat(_ world: WorldState) {
+        let visible = world.combat.enemies.filter { $0.health > 0 && $0.side?.regionID == region?.id && $0.side != nil }
+        let ids = Set(visible.map(\.id))
+        for id in Array(enemyNodes.keys) where !ids.contains(id) { enemyNodes.removeValue(forKey:id)?.removeFromParent(); enemyCells[id] = nil }
+        enemyStates = Dictionary(uniqueKeysWithValues:visible.map{($0.id,$0)})
+        for enemy in visible {
+            let node: SKShapeNode
+            if let existing = enemyNodes[enemy.id] { node = existing }
+            else {
+                node = SKShapeNode(rectOf:CGSize(width:18,height:20),cornerRadius:5)
+                node.name = enemy.id; node.strokeColor = .white
+                let body = SKPhysicsBody(rectangleOf:CGSize(width:18,height:20)); body.allowsRotation = false
+                body.categoryBitMask = 4; body.collisionBitMask = 2; body.contactTestBitMask = 2; body.restitution = 0
+                node.physicsBody = body
+                let p = enemy.side!; node.position = CGPoint(x:CGFloat(p.horizontal*24+12),y:CGFloat(p.height*24+12))
+                enemyLayer.addChild(node); enemyNodes[enemy.id] = node
+                let hp = SKLabelNode(); hp.name = "hp"; hp.fontSize = 9; hp.position.y = 15; node.addChild(hp)
+            }
+            node.fillColor = enemy.boss ? .systemPurple:.systemRed
+            (node.childNode(withName:"hp") as? SKLabelNode)?.text = String(enemy.health)
+        }
+    }
+    private func updateEnemies() {
+        guard let region else { return }
+        for (id,node) in enemyNodes {
+            guard let state = enemyStates[id], let body = node.physicsBody else { continue }
+            let delta = avatar.position.x-node.position.x
+            body.velocity.dx = state.aggro && abs(delta)>20 ? (delta>0 ? 70:-70):0
+            let grounded = body.allContactedBodies().contains{$0.categoryBitMask==2} && abs(body.velocity.dy)<2
+            if state.aggro && grounded && avatar.position.y>node.position.y+26 { body.velocity.dy = 260 }
+            let cell = SidePlacement(regionID:region.id,horizontal:max(0,min(region.width-1,Int(floor(node.position.x/24)))),height:max(0,min(63,Int(floor(node.position.y/24)))))
+            if enemyCells[id] != cell { enemyCells[id] = cell; onEnemyPosition?(id,cell) }
+        }
+    }
+    func combatEffect(_ skill: Bool) {
+        let effect = SKShapeNode(circleOfRadius:skill ? 90:42); effect.position = avatar.position
+        effect.strokeColor = .systemYellow; effect.lineWidth = 3; effect.zPosition = 15
+        addChild(effect); effect.run(.sequence([.fadeOut(withDuration:0.25),.removeFromParent()]))
     }
     private func follow(){worldCamera.position=CGPoint(x:avatar.position.x,y:max(size.height*0.4,avatar.position.y+size.height*0.15))}
     override func touchesBegan(_ touches:Set<UITouch>,with event:UIEvent?){
@@ -83,5 +129,5 @@ import UIKit
         let p=touch.location(in:self),u=Int(floor(p.x/24)),h=Int(floor(p.y/24))
         if (0..<region.width).contains(u) && (0..<64).contains(h){onSelectCell?(.init(regionID:region.id,horizontal:u,height:h))}
     }
-    func shutdown(){isPaused=true;onSelectCell=nil;onPosition=nil;onFrame=nil;mediaTargets=[];avatar.physicsBody?.velocity = .zero;objects.removeAllChildren();floorLayer.removeAllChildren();region=nil;sharedIDs=[];removeAllActions()}
+    func shutdown(){enemyLayer.removeAllChildren();enemyNodes.removeAll();enemyStates.removeAll();enemyCells.removeAll();onEnemyPosition=nil;isPaused=true;onSelectCell=nil;onPosition=nil;onFrame=nil;mediaTargets=[];avatar.physicsBody?.velocity = .zero;objects.removeAllChildren();floorLayer.removeAllChildren();region=nil;sharedIDs=[];removeAllActions()}
 }

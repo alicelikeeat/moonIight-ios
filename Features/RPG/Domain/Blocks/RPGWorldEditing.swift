@@ -112,7 +112,7 @@ enum RPGWorldEditing {
             guard generator.tile(at: request.point)?.passable == true else { throw RPGEditError.outside }
             let sidePoint = SidePlacement(regionID: generator.sideRegion.id, horizontal: request.point.x - generator.sideRegion.origin.x, height: 2)
             let playerCollision = world.player.perspective == .topDown ? request.point == world.player.surface : world.player.side == sidePoint
-            guard !playerCollision, entity(at: request.point, world: next, generator: generator) == nil else { throw RPGEditError.occupied }
+            guard !world.combat.enemies.contains(where: { $0.health > 0 && (world.player.perspective == .topDown ? $0.surface == request.point : $0.side == sidePoint) }), !playerCollision, entity(at: request.point, world: next, generator: generator) == nil else { throw RPGEditError.occupied }
             if let binding = request.mediaBindingID, !world.mediaBindings.contains(where: { $0.id == binding }) { throw RPGWorldError.missingReference }
             if world.player.mode == .adventure, let cost = definition.cost {
                 guard next.inventory[cost, default: 0] > 0 else { throw RPGEditError.resources }

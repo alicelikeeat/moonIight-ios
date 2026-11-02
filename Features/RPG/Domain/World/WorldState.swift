@@ -88,6 +88,9 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
     var side: SidePlacement?
     var health = 100
     var stamina = 100
+    var facing = RPGDirection()
+    var weapon = RPGEquipment.none
+    var armor = RPGEquipment.none
     var perspective = RPGPerspective.topDown
     var mode = RPGGameMode.adventure
     var inCombat = false
@@ -95,13 +98,14 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 2
-    var schemaVersion = 2
+    static let currentSchema = 3
+    var schemaVersion = 3
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64
     var revision: UInt64 = 0
     var player = RPGPlayerState()
+    var combat = RPGCombatState()
     var entities: [WorldEntity] = []
     var mediaBindings: [MediaBinding] = []
     var sideRegions: [SideRegion] = []
@@ -130,6 +134,7 @@ struct WorldState: Codable, Equatable, Sendable {
               undo.count <= 32, redo.count <= 32, events.count <= 256,
               (undo + redo).allSatisfy({ !$0.id.isEmpty && !$0.changes.isEmpty && $0.changes.count <= 256 && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
               !isCreativeCopy || parentWorldID != nil else { throw RPGWorldError.invalidState }
+        guard combat.valid, player.facing.valid, player.weapon != .stoneArmor, player.armor != .moonBlade else { throw RPGWorldError.invalidState }
         let bindings = Set(mediaBindings.map(\.id))
         guard (0...2).contains(videoBudget), backgroundBindingIDs.count <= 3, Set(backgroundBindingIDs).count == backgroundBindingIDs.count,
               backgroundBindingIDs.allSatisfy({ bindings.contains($0) }), mediaBindings.filter({ !$0.muted }).count <= 1 else { throw RPGWorldError.invalidState }
@@ -140,6 +145,17 @@ struct WorldState: Codable, Equatable, Sendable {
         if let side = player.side, !validSide(side) { throw RPGWorldError.invalidProjection }
         if player.perspective == .side && player.side == nil { throw RPGWorldError.invalidProjection }
         if let binding = player.mediaBindingID, !bindings.contains(binding) { throw RPGWorldError.missingReference }
+        for enemy in combat.enemies {
+            guard !entities.contains(where: { $0.id == enemy.id }) else { throw RPGWorldError.duplicateIdentity }
+            if let p = enemy.surface, !p.valid { throw RPGWorldError.invalidState }
+            if let p = enemy.side, !validSide(p) { throw RPGWorldError.invalidProjection }
+            switch enemy.scope {
+            case .topDownOnly: guard enemy.surface != nil && enemy.side == nil else { throw RPGWorldError.invalidProjection }
+            case .sideOnly: guard enemy.surface == nil && enemy.side != nil else { throw RPGWorldError.invalidProjection }
+            case .shared:
+                guard let p = enemy.surface, let side = enemy.side, let region = sideRegions.first(where: { $0.id == side.regionID }), region.contains(p), side.horizontal == p.x - region.origin.x else { throw RPGWorldError.invalidProjection }
+            }
+        }
         for entity in entities {
             guard !entity.id.isEmpty, entity.id.count <= 128, !entity.definitionID.isEmpty, entity.physics.valid else { throw RPGWorldError.invalidState }
             if let binding = entity.mediaBindingID, !bindings.contains(binding) { throw RPGWorldError.missingReference }

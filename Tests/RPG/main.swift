@@ -191,7 +191,7 @@ check(visualRestored == visualWorld && !String(data:serializedVisual,encoding:.u
 var oldJSON=try JSONSerialization.jsonObject(with:serializedVisual) as! [String:Any]
 oldJSON["schemaVersion"]=1;oldJSON["videoBudget"]=nil;oldJSON["backgroundBindingIDs"]=nil
 let migrated=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:oldJSON))
-check(migrated.schemaVersion==2 && migrated.player.mediaBindingID==visualWorld.player.mediaBindingID && migrated.mediaBindings==visualWorld.mediaBindings,"schema 1 media defaults preserve existing identities")
+check(migrated.schemaVersion==WorldState.currentSchema && migrated.player.mediaBindingID==visualWorld.player.mediaBindingID && migrated.mediaBindings==visualWorld.mediaBindings,"schema 1 media defaults preserve existing identities")
 let manyRequests=(0..<256).map{RPGMediaRequest(ownerID:String($0),mediaID:String($0),role:.interactive,visible:true)}
 check(RPGMediaPolicy.schedule(manyRequests,limit:256).count==2,"256 video bindings never create 256 slots")
 check(RPGMediaPolicy.schedule((0..<54).map{.init(ownerID:String($0),mediaID:"shared",role:.interactive,visible:true)},limit:2)==["shared"],"one decoder for reused texture")
@@ -203,3 +203,49 @@ check(RPGMediaPolicy.schedule(manyRequests,limit:0).isEmpty,"static budget")
 var badMedia=visualWorld;badMedia.backgroundBindingIDs=["missing"]
 rejected(badMedia,"invalid background reference")
 print("RPG P5: \(checks) total checks passed")
+
+// P6: actions are atomic, rewards and enemy identity survive saving and projection.
+var fighter = WorldState(seed:42)
+let arenaGenerator = RPGWorldGenerator(seed:42)
+fighter.sideRegions = [arenaGenerator.sideRegion]
+fighter.player.surface = arenaGenerator.anchor(.spawn)
+let origin = fighter.player.surface
+fighter.combat.enemies = [.init(id:"test-enemy",surface:.init(x:origin.x+2,z:origin.z),aggro:true)]
+fighter.player.inCombat = true
+try RPGCombatRules.action(.attack,world:&fighter,generator:arenaGenerator,passable:{$0.valid})
+check(fighter.combat.enemies[0].health==18 && fighter.player.stamina==92,"attack shares health and stamina")
+let cooldownSnapshot=fighter
+do { try RPGCombatRules.action(.attack,world:&fighter,generator:arenaGenerator,passable:{$0.valid});preconditionFailure("cooldown accepted") }catch{check(fighter==cooldownSnapshot,"cooldown rejection is atomic")}
+try RPGCombatRules.action(.skill,world:&fighter,generator:arenaGenerator,passable:{$0.valid})
+check(fighter.combat.enemies[0].health==0 && fighter.inventory["moon-shard"]==1 && !fighter.player.inCombat,"one reward and combat exit")
+for _ in 0..<40 { RPGCombatRules.advance(world:&fighter,generator:arenaGenerator,delta:0.1,passable:{$0.valid}) }
+try RPGCombatRules.action(.skill,world:&fighter,generator:arenaGenerator,passable:{$0.valid})
+check(fighter.inventory["moon-shard"]==1 && fighter.combat.defeatedIDs==["test-enemy"],"dead enemies never drop twice")
+let combatRestored=try RPGWorldCodec.decode(RPGWorldCodec.encode(fighter))
+check(combatRestored==fighter,"combat save restores cooldowns and exact defeated identities")
+var tired=fighter;tired.player.stamina=0;tired.combat.attackRemaining=0
+let tiredBefore=tired
+do {try RPGCombatRules.action(.attack,world:&tired,generator:arenaGenerator,passable:{$0.valid});preconditionFailure("stamina accepted")}catch{check(tired==tiredBefore,"stamina rejection rolls back cooldown")}
+var roller=fighter;roller.player.stamina=100;roller.combat.rollRemaining=0
+try RPGCombatRules.action(.roll,world:&roller,generator:arenaGenerator,passable:{$0.x<origin.x+2})
+check(roller.player.surface.x==origin.x+1 && roller.combat.invulnerableRemaining>0,"roll stops before obstruction")
+let pathStep=RPGCombatRules.nextStep(from:.init(x:10,z:10),to:.init(x:12,z:10),passable:{$0 != SurfacePoint(x:11,z:10)})
+check(pathStep != nil && pathStep != SurfacePoint(x:11,z:10),"enemy path routes around solid wall")
+var bossFight=WorldState(seed:42);bossFight.player.surface=origin;bossFight.player.weapon = .moonBlade
+bossFight.combat.enemies=[.init(id:"test-boss",boss:true,surface:.init(x:origin.x+1,z:origin.z),health:65,maximumHealth:120,aggro:true)]
+try RPGCombatRules.action(.attack,world:&bossFight,generator:arenaGenerator,passable:{$0.valid})
+check(bossFight.combat.enemies[0].phase==2 && bossFight.events.contains{$0.kind=="bossPhaseChanged"},"boss crosses second phase")
+var sideFighter=WorldState(seed:42);sideFighter.sideRegions=[arenaGenerator.sideRegion]
+sideFighter.player.perspective = .side;sideFighter.player.side=arenaGenerator.sideRegion.landing
+let sideOrigin=sideFighter.player.side!
+sideFighter.combat.enemies=[.init(id:"side-target",scope:.sideOnly,surface:nil,side:.init(regionID:sideOrigin.regionID,horizontal:sideOrigin.horizontal+1,height:sideOrigin.height+1)),.init(id:"surface-target",surface:sideFighter.player.surface)]
+try RPGCombatRules.action(.attack,world:&sideFighter,generator:arenaGenerator,passable:{$0.valid})
+check(sideFighter.combat.enemies[0].health==18 && sideFighter.combat.enemies[1].health==30,"air attack uses side volume only")
+var brokenEnemy=sideFighter;brokenEnemy.combat.enemies[0].scope = .shared
+rejected(brokenEnemy,"shared enemy requires explicit surface mapping")
+var legacyCombat=try JSONSerialization.jsonObject(with:RPGWorldCodec.encode(fighter)) as! [String:Any]
+legacyCombat["schemaVersion"]=2;legacyCombat["combat"]=nil
+var legacyPlayer=legacyCombat["player"] as! [String:Any];legacyPlayer["facing"]=nil;legacyPlayer["weapon"]=nil;legacyPlayer["armor"]=nil;legacyCombat["player"]=legacyPlayer
+let legacyRestored=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:legacyCombat))
+check(legacyRestored.id==fighter.id && legacyRestored.player.surface==fighter.player.surface && legacyRestored.combat.enemies.isEmpty,"schema 2 migration preserves world and initializes combat")
+print("RPG P6: \(checks) total checks passed")
