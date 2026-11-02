@@ -106,7 +106,7 @@ jobs:
           SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
           COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
           ONLY=()
-          for TEST_NAME in testLandlordClassicWholeGameAndNewRound testLandlordMediaBudgetFocusBackgroundAndModeCleanup testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
+          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
             ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
           # These four cases stay diagnostic. An accessibility miss under the
