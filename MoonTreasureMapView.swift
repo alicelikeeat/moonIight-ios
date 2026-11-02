@@ -5,34 +5,34 @@ import CoreMotion
 import ImageIO
 import AVFoundation
 
-/// 月藏图：把库内条目投影成可触碰、可堆叠的“月光宝藏”。
-/// 只让当前可见的前 42 件参与物理演算，避免大媒体库拖慢界面。
+/// Separate experiences share media, never their playback state.
 struct MoonTreasureMapView: View {
-    var openDirectedSettings = false
+    var openVideoWall = false
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    @State private var voiceOver = UIAccessibility.isVoiceOverRunning
+    @State private var wall = false
+    @State private var initialized = false
     @State private var activeEntry: MediaEntry?
     @State private var actionEntry: MediaEntry?
     @State private var scope = TreasureScope.all
     @AppStorage("treasure-count") private var dropCount = 12
     @AppStorage("treasure-organized") private var organized = false
     @AppStorage("treasure-video-autoplay") private var videoAutoplay = false
+    @AppStorage("treasure-appearance-v23") private var appearanceData = Data()
+    @AppStorage("treasure-directed-v21") private var legacyAppearance = Data()
+    @State private var appearance = TreasureAppearance()
+    @State private var showingAppearance = false
     @StateObject private var videoPreviews = TreasureVideoPreviews()
     @State private var visibleGridVideos = Set<String>()
     @State private var scene = MoonTreasureScene()
-    @State private var controlsVisible = true
+    @State private var glassProjection = TreasureGlassProjection()
+    @State private var sceneDirty = false
     @State private var dragDiagnostics = ""
     @State private var videoDiagnostics = ""
     @State private var pageVisible = false
-    @AppStorage("treasure-directed-v21") private var directedData = Data()
-    @State private var directedOptions = TreasurePlaybackOptions()
-    @State private var showingDirectedSettings = false
-    @State private var directedRequest: TreasurePlaybackRequest?
-    @State private var pendingDirectedRequest: TreasurePlaybackRequest?
-    @State private var initialized = false
-    @State private var targetNotice = ""
 
     private var filteredItems: [MediaEntry] {
         let source: [MediaEntry]
@@ -43,316 +43,259 @@ struct MoonTreasureMapView: View {
         }
         return TreasureRules.unique(source, id: \.id)
     }
-
     private var items: [MediaEntry] { Array(filteredItems.prefix(TreasureRules.count(selected: dropCount, available: filteredItems.count))) }
-
+    private var darkCards: Bool { appearance.isDark(system: colorScheme) }
     var body: some View {
-        ZStack {
-            treasureBackground.ignoresSafeArea()
-            VStack(spacing: 12) {
-                header
-                    .opacity(controlsVisible ? 1 : 0)
-                    .allowsHitTesting(controlsVisible)
-                Picker("藏宝范围", selection: $scope) {
-                    ForEach(TreasureScope.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 18)
-                .opacity(controlsVisible ? 1 : 0)
-                .allowsHitTesting(controlsVisible)
-
-                if organized {
-                    ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))]) {
-                            ForEach(filteredItems) { entry in
-                                TreasureOrganizedCard(entry: entry, player: videoPreviews.players[entry.id],
-                                    onOpen: { activeEntry = entry }, onHold: { actionEntry = entry })
-                                .onAppear {
-                                    if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() }
-                                }
-                                .onDisappear { visibleGridVideos.remove(entry.id); refreshVideoPreviews() }
-                            }
-                        }.padding(14)
-                    }.accessibilityIdentifier("treasure-grid")
-                } else {
-                SpriteView(scene: scene, options: [.allowsTransparency])
-                    .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 30).strokeBorder(treasureForeground.opacity(0.22), lineWidth: 1))
-                    .padding(.horizontal, 14)
-                    .accessibilityIdentifier("moon-treasure-map")
-                    .onAppear { configureScene(); scene.startMotion() }
-                    .onDisappear { scene.stopMotion() }
-                    .onChange(of: scope) { _ in configureScene() }
-                    .onChange(of: dropCount) { _ in configureScene() }
-                    .onChange(of: model.mediaStore.items) { _ in configureScene() }
-                    .overlay(alignment: .topTrailing) {
-                        if !controlsVisible {
-                            Button { withAnimation(.easeOut(duration: 0.2)) { controlsVisible = true } } label: {
-                                Image(systemName: "slider.horizontal.3")
-                                    .frame(width: 38, height: 38)
-                                    .background { MoonGlassBackdrop(radius: 22) }
-                            }.padding(12)
-                        }
-                    }
-                }
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests") {
-                    Text("物理拖拽测试状态")
-                        .font(.system(size: 1)).frame(height: 1).opacity(0.01)
-                        .allowsHitTesting(false)
-                        .accessibilityIdentifier("treasure-physics-probe")
-                        .accessibilityValue(dragDiagnostics)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") {
-                    Text("视频预览测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01)
-                        .allowsHitTesting(false).accessibilityIdentifier("treasure-video-probe")
-                        .accessibilityValue(videoDiagnostics)
-                }
-                #endif
-                VStack(spacing: 4) {
-                HStack {
-                    Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张")
-                        .accessibilityIdentifier("treasure-actual-count")
-                    Spacer()
-                    Button(organized ? "自由" : "整理") {
-                        withAnimation(.easeInOut(duration: 0.15)) { organized.toggle() }
-                    }
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("treasure-layout")
-                    Button("重新散落") { scene.scatterTreasures() }.frame(minHeight: 44).disabled(organized)
-                    Button("重置") { configureScene() }.frame(minHeight: 44).disabled(organized)
-                }.font(.caption).frame(minHeight: 44)
-                HStack {
-                    Button("定向播放") { showingDirectedSettings = true }
-                        .accessibilityIdentifier("treasure-directed-settings")
-                    Spacer()
-                    Button("播放已选目标") { requestDirectedPlayback() }
-                        .disabled(directedOptions.plan(in: model.mediaStore).isEmpty)
-                        .accessibilityIdentifier("treasure-directed-start")
-                }.frame(minHeight: 44)
-                }.buttonStyle(.plain).padding(.horizontal, 12).moonSingleGlass().padding(.horizontal, 14)
-                if !targetNotice.isEmpty { Text(targetNotice).font(.caption).foregroundStyle(.secondary) }
-                if filteredItems.isEmpty {
-                    Text("宝库还是空的，先从发现或相册加入内容。")
-                        .font(.footnote).foregroundStyle(treasureForeground.opacity(0.75)).padding(.bottom, 12)
-                }
+        VStack(spacing: 10) {
+            HStack(spacing: 4) {
+                Button { wall = false } label: {
+                    Text("自由散落").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        .background(!wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
+                }.accessibilityIdentifier("treasure-free-mode").accessibilityAddTraits(!wall ? .isSelected : [])
+                Button { wall = true } label: {
+                    Text("视频墙").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        .background(wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
+                }.accessibilityIdentifier("treasure-wall-mode").accessibilityAddTraits(wall ? .isSelected : [])
+            }.buttonStyle(.plain).padding(4).moonSingleGlass().padding(.horizontal, 14).zIndex(10)
+            ZStack {
+                // Keep the SKView mounted so switching experiences preserves
+                // positions, velocities, camera and independently chosen count.
+                freeContent.opacity(wall ? 0 : 1).allowsHitTesting(!wall).accessibilityHidden(wall)
+                if wall { TreasureVideoWallView().environmentObject(model) }
+            }
+        }
+        .background { TreasureBackgroundSurface(options: appearance).ignoresSafeArea() }
+        .preferredColorScheme(appearance.background == .system ? nil : (darkCards ? .dark : .light))
+        .navigationTitle("月藏图").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() }.accessibilityIdentifier("treasure-map-close") }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showingAppearance = true } label: { Image(systemName: "paintpalette").frame(width: 44, height: 44) }
+                    .accessibilityLabel("月藏图背景").accessibilityIdentifier("treasure-appearance")
+            }
+        }
+        .sheet(isPresented: $showingAppearance) {
+            NavigationStack {
+                TreasureAppearanceSettings(options: $appearance)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showingAppearance = false } } }
             }
         }
         .onAppear {
             pageVisible = true
             if !initialized {
-                directedOptions = TreasurePlaybackOptions.load(directedData)
-                initialized = true
-                if openDirectedSettings {
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 500_000_000)
-                        guard pageVisible else { return }
-                        showingDirectedSettings = true
-                    }
-                }
-                if !openDirectedSettings && directedOptions.confirmed && directedOptions.autoPlayOnReturn {
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 400_000_000)
-                        guard pageVisible, !showingDirectedSettings, directedRequest == nil else { return }
-                        requestDirectedPlayback()
-                    }
-                }
+                appearance = TreasureAppearance.load(appearanceData, legacy: legacyAppearance)
+                wall = openVideoWall; initialized = true
             }
-            scene.setCardContrast(dark: darkTreasureBackground)
-            refreshVideoPreviews()
+            if voiceOver { organized = true }
+            syncFreeState()
         }
-        .onChange(of: directedOptions) { value in
-            directedData = (try? JSONEncoder().encode(value)) ?? Data()
-            scene.setCardContrast(dark: darkTreasureBackground)
+        .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion(); scene.clearHandlers() }
+        .onChange(of: wall) { _ in
+            if !wall && !organized && sceneDirty { configureScene() }
+            syncFreeState()
         }
-        .onChange(of: colorScheme) { _ in scene.setCardContrast(dark: darkTreasureBackground) }
-        .onChange(of: directedRequest?.id) { _ in
-            refreshVideoPreviews()
-            if directedRequest != nil { scene.stopMotion() }
-            else if pageVisible && !organized { scene.startMotion() }
+        .onChange(of: appearance) { value in
+            appearanceData = (try? JSONEncoder().encode(value)) ?? Data()
+            scene.setCardContrast(dark: darkCards)
         }
-        .sheet(isPresented: $showingDirectedSettings, onDismiss: {
-            if let request = pendingDirectedRequest { directedRequest = request; pendingDirectedRequest = nil }
-        }) {
-            NavigationStack {
-                TreasureDirectedSettings(options: $directedOptions) { start in
-                    if start {
-                        let ids = directedOptions.plan(in: model.mediaStore)
-                        if !ids.isEmpty { pendingDirectedRequest = TreasurePlaybackRequest(ids: ids, options: directedOptions) }
-                    }
-                }.environmentObject(model)
-            }.presentationDetents([.medium, .large])
+        .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+            voiceOver = UIAccessibility.isVoiceOverRunning
+            if voiceOver { organized = true }
         }
-        .fullScreenCover(item: $directedRequest) { request in
-            TreasureDirectedPlayer(request: request).environmentObject(model)
+        .onReceive(NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification)) { _ in
+            invalidateScene()
         }
-        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized ? [:] : $0) }
+        .onChange(of: colorScheme) { _ in scene.setCardContrast(dark: darkCards) }
+        .onChange(of: scenePhase) { _ in syncFreeState() }
+        .onChange(of: activeEntry?.id) { _ in syncFreeState() }
+        .onChange(of: scope) { _ in invalidateScene() }
+        .onChange(of: dropCount) { _ in invalidateScene() }
+        .onChange(of: model.mediaStore.items) { _ in
+            invalidateScene()
+        }
         .onChange(of: videoAutoplay) { _ in refreshVideoPreviews() }
         .onChange(of: organized) { _ in
-            videoPreviews.stopAll()
-            scene.setVideoPreviews([:])
-            if !organized { visibleGridVideos.removeAll() }
-            refreshVideoPreviews()
+            videoPreviews.stopAll(); scene.setVideoPreviews([:]); refreshVideoPreviews()
         }
-        .onChange(of: scope) { _ in refreshVideoPreviews() }
-        .onChange(of: model.mediaStore.items) { _ in refreshVideoPreviews() }
-        .onChange(of: scenePhase) { phase in
-            refreshVideoPreviews()
-            if phase == .active, !organized, activeEntry == nil { scene.startMotion() }
-            else { scene.stopMotion() }
-        }
-        .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion() }
-        .task {
-            #if DEBUG
-            guard ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") else { return }
-            while !Task.isCancelled {
-                let values: [String: Int] = [
-                    "players": videoPreviews.players.count,
-                    "advancing": videoPreviews.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count,
-                    "muted": videoPreviews.players.values.allSatisfy(\.isMuted) ? 1 : 0,
-                    "nodes": scene.videoPreviewCount,
-                    "centerIcons": scene.centerPlayIconCount,
-                    "auto": videoAutoplay ? 1 : 0
-                ]
-                if let data = try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys), let text = String(data: data, encoding: .utf8) {
-                    if videoDiagnostics != text { videoDiagnostics = text }
-                }
-                try? await Task.sleep(nanoseconds: 200_000_000)
-            }
-            #endif
-        }
-        .onChange(of: activeEntry?.id) { id in
-            refreshVideoPreviews()
-            if id != nil { scene.stopMotion() }
-            else if !organized { scene.startMotion() }
-        }
-        .preferredColorScheme(directedOptions.background == .system ? nil : (darkTreasureBackground ? .dark : .light))
-        .navigationTitle("月藏图")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() }.accessibilityIdentifier("treasure-map-close") } }
+        .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized || wall ? [:] : $0) }
         .fullScreenCover(item: $activeEntry) { entry in
-            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 })
-                .environmentObject(model)
+            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 }).environmentObject(model)
         }
-        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(
-            get: { actionEntry != nil },
-            set: { if !$0 { actionEntry = nil } }
-        ), titleVisibility: .visible) {
-            Button("打开播放") {
-                activeEntry = actionEntry
-                actionEntry = nil
-            }
-            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") {
-                if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }
-                actionEntry = nil
-            }
-            Button("加入播放队列") {
-                if let entry = actionEntry { model.mediaStore.enqueue([entry]) }
-                actionEntry = nil
-            }
+        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(get: { actionEntry != nil }, set: { if !$0 { actionEntry = nil } }), titleVisibility: .visible) {
+            Button("打开播放") { activeEntry = actionEntry; actionEntry = nil }
+            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") { if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }; actionEntry = nil }
+            Button("加入播放队列") { if let entry = actionEntry { model.mediaStore.enqueue([entry]) }; actionEntry = nil }
             Button("取消", role: .cancel) { actionEntry = nil }
         }
+        .overlay(alignment: .bottomTrailing) { debugLabels }
+        .task { await updateDiagnostics() }
     }
-
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("月藏图").font(.title.bold()).foregroundStyle(treasureForeground)
-                Text("像巨龙宝库一样堆放你的图片与视频").font(.subheadline).foregroundStyle(treasureForeground.opacity(0.72))
-            }
-            Spacer()
-            Menu {
-                Picker("掉落数量", selection: $dropCount) {
-                    ForEach([6, 12, 20, 30, 42], id: \.self) { count in
-                        Text("\(count) 张").tag(count)
+    private var freeContent: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Picker("藏宝范围", selection: $scope) { ForEach(TreasureScope.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
+                Menu {
+                    Picker("掉落数量", selection: $dropCount) { ForEach([6, 12, 20, 30, 42], id: \.self) { Text("\($0) 张").tag($0) } }
+                } label: { Text("\(dropCount) 张").frame(minWidth: 44, minHeight: 44) }
+                    .accessibilityIdentifier("treasure-drop-count")
+                Menu {
+                    Picker("视频预览", selection: $videoAutoplay) {
+                        Text("静止封面").tag(false); Text("自动播放（最多3张）").tag(true)
                     }
-                }
-            } label: {
-                VStack(spacing: 1) {
-                    Text("\(min(dropCount, items.count))").font(.subheadline.bold())
-                    Text("数量").font(.system(size: 9, weight: .medium))
-                }
-                .foregroundStyle(treasureForeground)
-                .frame(width: 44, height: 44)
-                .background { MoonGlassBackdrop(radius: 22) }
-            }
-            .accessibilityIdentifier("treasure-drop-count").buttonStyle(.plain)
-            Menu {
-                Picker("视频预览", selection: $videoAutoplay) {
-                    Text("静止封面").tag(false)
-                    Text("自动播放（最多3张）").tag(true)
-                }
-            } label: {
-                VStack(spacing: 2) {
-                    Image(systemName: "video")
-                    Text(videoAutoplay ? "自动" : "静止").font(.system(size: 9, weight: .medium))
-                }.foregroundStyle(treasureForeground).frame(width: 44, height: 44)
-                    .background { MoonGlassBackdrop(radius: 22) }
-            }
-            .accessibilityLabel("视频预览")
-            .accessibilityValue(videoAutoplay ? "自动播放" : "静止封面")
-            .accessibilityIdentifier("treasure-video-mode").buttonStyle(.plain)
-        }.padding(.horizontal, 22).padding(.top, 8)
-    }
-
-    private var darkTreasureBackground: Bool {
-        switch directedOptions.background {
-        case .system: return colorScheme == .dark
-        case .purple: return true
-        case .solid: return directedOptions.red * 0.2126 + directedOptions.green * 0.7152 + directedOptions.blue * 0.0722 < 0.5
+                } label: { Image(systemName: videoAutoplay ? "video.fill" : "video.slash").frame(width: 44, height: 44) }
+                    .accessibilityLabel("视频预览").accessibilityValue(videoAutoplay ? "自动播放" : "静止封面").accessibilityIdentifier("treasure-video-mode")
+            }.buttonStyle(MoonGlassButtonStyle()).padding(8).moonSingleGlass().padding(.horizontal, 14)
+            freeStage
+            HStack {
+                Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张").font(.caption).accessibilityIdentifier("treasure-actual-count")
+                Spacer()
+                Button(organized ? "自由" : "整理") { organized.toggle() }.disabled(voiceOver).accessibilityIdentifier("treasure-layout")
+                Button("重新散落") { scene.scatterTreasures() }.disabled(organized).accessibilityIdentifier("treasure-scatter")
+                Button("重置") { configureScene() }.disabled(organized).accessibilityIdentifier("treasure-reset")
+            }.frame(minHeight: 44).buttonStyle(MoonGlassButtonStyle()).padding(10).moonSingleGlass().padding(.horizontal, 14)
+            if filteredItems.isEmpty { Text("宝库还是空的，请从库中导入图片或视频。").font(.caption).foregroundStyle(.secondary) }
         }
     }
-    private var treasureForeground: Color { darkTreasureBackground ? .white : .black }
-    @ViewBuilder private var treasureBackground: some View {
-        switch directedOptions.background {
-        case .system: Color(uiColor: .systemBackground)
-        case .solid: Color(red: directedOptions.red, green: directedOptions.green, blue: directedOptions.blue)
-        case .purple:
-            LinearGradient(colors: [.black, Color(red: 0.05, green: 0.07, blue: 0.13), Color(red: 0.15, green: 0.11, blue: 0.25)], startPoint: .top, endPoint: .bottom)
+    @ViewBuilder private var freeStage: some View {
+        if organized {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))]) {
+                    ForEach(filteredItems) { entry in
+                        TreasureOrganizedCard(entry: entry, player: videoPreviews.players[entry.id], onOpen: { activeEntry = entry }, onHold: { actionEntry = entry })
+                            .onAppear { if entry.kind == .video { visibleGridVideos.insert(entry.id); refreshVideoPreviews() } }
+                            .onDisappear { visibleGridVideos.remove(entry.id); refreshVideoPreviews() }
+                    }
+                }.padding(14)
+            }.accessibilityIdentifier("treasure-grid")
+        } else {
+            ZStack {
+                TreasurePhysicsGlass(projection: glassProjection)
+                SpriteView(scene: scene, options: [.allowsTransparency]).contentShape(Rectangle())
+            }
+                .clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14)
+                .accessibilityIdentifier("moon-treasure-map")
+                .onAppear {
+                    if scene.children.isEmpty || sceneDirty { configureScene() }
+                    else if !scene.hasCallbacks { bindSceneHandlers() }
+                    syncFreeState()
+                }
         }
     }
-    private func requestDirectedPlayback() {
-        let ids = directedOptions.plan(in: model.mediaStore)
-        guard !ids.isEmpty else { targetNotice = "目标不存在或不在当前播放列表，请重新选择。"; return }
-        targetNotice = ids.count < directedOptions.count ? "实际可播放 \(ids.count) 项，到列表末尾停止。" : ""
-        directedRequest = TreasurePlaybackRequest(ids: ids, options: directedOptions)
+    private func invalidateScene() {
+        if wall || organized { sceneDirty = true } else { configureScene() }
     }
-
-    private func refreshVideoPreviews() {
-        let candidates = organized ? filteredItems.filter { visibleGridVideos.contains($0.id) } : items
-        videoPreviews.configure(entries: candidates,
-                                enabled: pageVisible && videoAutoplay && scenePhase == .active && activeEntry == nil && directedRequest == nil)
-        scene.setVideoPreviews(organized ? [:] : videoPreviews.players)
-    }
-
-    private func configureScene() {
+    private func bindSceneHandlers(resumeCovers: Bool = true) {
+        scene.onGlassFrames = { [weak projection = glassProjection, weak scene = scene] frames in
+            guard let projection, let scene else { return }
+            projection.snapshot = TreasureGlassSnapshot(frames: frames, sceneSize: scene.size)
+        }
         #if DEBUG
-        scene.onDragDiagnostics = { dragDiagnostics = $0 }
+        let diagnostics = $dragDiagnostics
+        scene.onDragDiagnostics = { diagnostics.wrappedValue = $0 }
         #endif
-        scene.configure(
-            with: items,
-            onSelect: { id in
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                controlsVisible = true
-                activeEntry = model.mediaStore.items.first { $0.id == id }
-            },
-            onLongPress: { id in
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                actionEntry = model.mediaStore.items.first { $0.id == id }
-            }
-        )
-        scene.setCardContrast(dark: darkTreasureBackground)
+        let selected = $activeEntry
+        let held = $actionEntry
+        let store = model.mediaStore
+        scene.setHandlers(onSelect: { [weak store] id in selected.wrappedValue = store?.items.first { $0.id == id } },
+                          onLongPress: { [weak store] id in held.wrappedValue = store?.items.first { $0.id == id } })
+        if resumeCovers { scene.resumeCovers(items) }
+    }
+    private func configureScene() {
+        sceneDirty = false
+        bindSceneHandlers(resumeCovers: false)
+        scene.configure(with: items)
+        scene.setCardContrast(dark: darkCards); syncFreeState()
+    }
+    private func syncFreeState() {
+        if pageVisible && !wall && !organized && scenePhase == .active && activeEntry == nil {
+            if !scene.hasCallbacks { bindSceneHandlers() }
+            scene.startMotion()
+        }
+        else { scene.stopMotion() }
         refreshVideoPreviews()
     }
+    private func refreshVideoPreviews() {
+        let candidates = organized ? filteredItems.filter { visibleGridVideos.contains($0.id) } : items
+        videoPreviews.configure(entries: candidates, enabled: pageVisible && !wall && videoAutoplay && scenePhase == .active && activeEntry == nil)
+        scene.setVideoPreviews(organized || wall ? [:] : videoPreviews.players)
+    }
+    @ViewBuilder private var debugLabels: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests") {
+            Text("物理拖拽测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01).allowsHitTesting(false)
+                .accessibilityIdentifier("treasure-physics-probe").accessibilityValue(dragDiagnostics)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
+            Text("视频预览测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01).allowsHitTesting(false)
+                .accessibilityIdentifier("treasure-video-probe").accessibilityValue(videoDiagnostics)
+        }
+        #endif
+    }
+    private func updateDiagnostics() async {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") else { return }
+        while !Task.isCancelled {
+            let values: [String: Int] = ["players": videoPreviews.players.count,
+                "advancing": videoPreviews.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count,
+                "muted": videoPreviews.players.values.allSatisfy(\.isMuted) ? 1 : 0,
+                "nodes": scene.videoPreviewCount, "centerIcons": scene.centerPlayIconCount, "auto": videoAutoplay ? 1 : 0, "configuration": scene.configurationVersion]
+            videoDiagnostics = String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        #endif
+    }
 }
-
 private enum TreasureScope: String, CaseIterable, Identifiable {
     case all, favorites, videos
     var id: String { rawValue }
     var title: String { switch self { case .all: "全部"; case .favorites: "收藏"; case .videos: "视频" } }
 }
 
+private struct TreasureGlassFrame: Identifiable, Equatable {
+    let id: String
+    let center: CGPoint
+    let size: CGSize
+    let rotation: CGFloat
+    let scale: CGFloat
+    let z: CGFloat
+}
+private struct TreasureGlassSnapshot {
+    var frames: [TreasureGlassFrame] = []
+    var sceneSize = CGSize(width: 390, height: 520)
+}
+@MainActor private final class TreasureGlassProjection: ObservableObject {
+    @Published var snapshot = TreasureGlassSnapshot()
+}
+private struct TreasurePhysicsGlass: View {
+    @ObservedObject var projection: TreasureGlassProjection
+    var body: some View {
+        GeometryReader { geometry in
+            let sx = geometry.size.width / max(1, projection.snapshot.sceneSize.width)
+            let sy = geometry.size.height / max(1, projection.snapshot.sceneSize.height)
+            if #available(iOS 26.0, *) {
+                GlassEffectContainer(spacing: 0) { surfaces(sx: sx, sy: sy, height: geometry.size.height) }
+            } else { surfaces(sx: sx, sy: sy, height: geometry.size.height) }
+        }.allowsHitTesting(false).accessibilityHidden(true)
+            .transaction { $0.animation = nil }
+    }
+    private func surfaces(sx: CGFloat, sy: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            ForEach(projection.snapshot.frames) { frame in
+                MoonGlassBackdrop(radius: 17)
+                    .frame(width: frame.size.width * sx, height: frame.size.height * sy)
+                    .scaleEffect(frame.scale).rotationEffect(.radians(-Double(frame.rotation)))
+                    .position(x: frame.center.x * sx, y: height - frame.center.y * sy)
+                    .zIndex(Double(frame.z))
+            }
+        }
+    }
+}
+
 private final class MoonTreasureScene: SKScene {
+    var onGlassFrames: (([TreasureGlassFrame]) -> Void)?
+    private var lastGlassTime: TimeInterval = 0
+    private var lastGlassFrames: [TreasureGlassFrame] = []
+    var hasCallbacks: Bool { select != nil && longPress != nil }
     var onDragDiagnostics: ((String) -> Void)?
     private var darkCards = true
     private var videoBindings: [String: AVQueuePlayer] = [:]
@@ -367,6 +310,7 @@ private final class MoonTreasureScene: SKScene {
     private var dragAnchors: [ObjectIdentifier: CGPoint] = [:]
     private var savedPhysics: [ObjectIdentifier: (dynamic: Bool, gravity: Bool, rotation: Bool)] = [:]
     #if DEBUG
+    private(set) var configurationVersion = 0
     private var lastDiagnosticsTime: TimeInterval = 0
     private var diagnosticMoves = 0
     private var diagnosticCancellations = 0
@@ -397,11 +341,22 @@ private final class MoonTreasureScene: SKScene {
         view.isMultipleTouchEnabled = true
     }
 
-    func configure(with entries: [MediaEntry],
-                   onSelect: @escaping (String) -> Void,
-                   onLongPress: @escaping (String) -> Void) {
-        select = onSelect
-        longPress = onLongPress
+    func setHandlers(onSelect: @escaping (String) -> Void, onLongPress: @escaping (String) -> Void) {
+        select = onSelect; longPress = onLongPress
+    }
+    func clearHandlers() { select = nil; longPress = nil; onDragDiagnostics = nil; onGlassFrames = nil }
+    func resumeCovers(_ entries: [MediaEntry]) {
+        previewTasks.forEach { $0.cancel() }; previewTasks.removeAll()
+        for entry in entries {
+            guard let crop = children.first(where: { $0.name == entry.id })?.childNode(withName: "preview-crop") as? SKCropNode,
+                  let preview = crop.children.first as? SKSpriteNode, preview.texture == nil else { continue }
+            loadPreview(for: entry, into: preview, fill: preview.size)
+        }
+    }
+    func configure(with entries: [MediaEntry]) {
+        #if DEBUG
+        configurationVersion += 1
+        #endif
         stopMotion()
         previewTasks.forEach { $0.cancel() }
         previewTasks.removeAll()
@@ -461,20 +416,22 @@ private final class MoonTreasureScene: SKScene {
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
+        lastGlassFrames = []
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
     }
 
     private func addTreasure(_ entry: MediaEntry, index: Int) {
-        let width: CGFloat = entry.kind == .video ? 92 : 78
-        let height: CGFloat = entry.kind == .video ? 104 : 86
+        let contentScale = min(1.6, max(1, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 11) / 11))
+        let width: CGFloat = (entry.kind == .video ? 92 : 78) * contentScale
+        let height: CGFloat = (entry.kind == .video ? 104 : 86) * contentScale
         let node = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 17)
         node.name = entry.id
-        // A translucent base plus a frosted metadata strip makes each physical
-        // node read as an individual glass treasure instead of a colored tile.
-        node.fillColor = .white.withAlphaComponent(0.16)
+        // The sole material is a native glass surface behind this scene.
+        // The transparent SpriteKit shape still owns physical hit testing.
+        node.fillColor = .clear
         originalFillColors[ObjectIdentifier(node)] = node.fillColor
-        node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.92) : .white.withAlphaComponent(0.56)
-        node.lineWidth = entry.isFavorite ? 2.1 : 1.2
+        node.strokeColor = entry.isFavorite ? .yellow.withAlphaComponent(0.75) : .clear
+        node.lineWidth = entry.isFavorite ? 1 : 0
         node.position = CGPoint(
             x: 72 + CGFloat(index % max(Int((size.width - 144) / 105) + 1, 1)) * 105,
             y: 80 + CGFloat((index / 3) % max(Int((size.height - 160) / 115) + 1, 1)) * 115
@@ -504,14 +461,14 @@ private final class MoonTreasureScene: SKScene {
 
         let glassStrip = SKShapeNode(rectOf: CGSize(width: width - 7, height: height * 0.30), cornerRadius: 12)
         glassStrip.fillColor = SKColor(white: 0.03, alpha: 0.48)
-        glassStrip.strokeColor = .white.withAlphaComponent(0.16)
+        glassStrip.strokeColor = .clear
         glassStrip.lineWidth = 0.8
         glassStrip.position = CGPoint(x: 0, y: -height * 0.30)
         node.addChild(glassStrip)
 
         if entry.kind == .video {
             let badge = SKLabelNode(fontNamed: "SFProText-Medium")
-            badge.text = "视频"; badge.fontSize = 8; badge.fontColor = .white
+            badge.text = "视频"; badge.fontSize = min(14, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 8)); badge.fontColor = .white
             badge.position = CGPoint(x: width / 2 - 16, y: height / 2 - 14)
             badge.zPosition = 3
             node.addChild(badge)
@@ -523,7 +480,7 @@ private final class MoonTreasureScene: SKScene {
         }
         let title = SKLabelNode(fontNamed: "SFProText-Medium")
         title.text = String(entry.title.prefix(8))
-        title.fontSize = 9; title.fontColor = .white; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -height * 0.31)
+        title.fontSize = min(16, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 9)); title.fontColor = .white; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -height * 0.31)
         title.preferredMaxLayoutWidth = width - 12; title.numberOfLines = 2
         node.addChild(title)
 
@@ -551,9 +508,8 @@ private final class MoonTreasureScene: SKScene {
     func setCardContrast(dark: Bool) {
         darkCards = dark
         for case let card as SKShapeNode in children where card.name != nil {
-            card.fillColor = (dark ? SKColor.white : SKColor.black).withAlphaComponent(dark ? 0.16 : 0.1)
+            card.fillColor = .clear
             originalFillColors[ObjectIdentifier(card)] = card.fillColor
-            if card.lineWidth < 2 { card.strokeColor = (dark ? SKColor.white : SKColor.black).withAlphaComponent(0.4) }
         }
     }
 
@@ -682,9 +638,7 @@ private final class MoonTreasureScene: SKScene {
         stopMotion()
         previewTasks.forEach { $0.cancel() }
         previewTasks.removeAll()
-        select = nil
-        longPress = nil
-        onDragDiagnostics = nil
+        clearHandlers()
         setVideoPreviews([:])
     }
 
@@ -736,13 +690,29 @@ private final class MoonTreasureScene: SKScene {
             #endif
             pinToFinger(node, at: anchor)
         }
+        publishGlassFrames()
         publishDragDiagnostics()
+    }
+    private func publishGlassFrames() {
+        let now = Date.timeIntervalSinceReferenceDate
+        guard now - lastGlassTime >= 1.0 / 30 else { return }
+        lastGlassTime = now
+        let frames = children.compactMap { node -> TreasureGlassFrame? in
+            guard let shape = node as? SKShapeNode, let id = shape.name, let path = shape.path else { return nil }
+            let center = CGPoint(x: (shape.position.x * 2).rounded() / 2, y: (shape.position.y * 2).rounded() / 2)
+            return TreasureGlassFrame(id: id, center: center, size: path.boundingBox.size,
+                rotation: (shape.zRotation * 200).rounded() / 200, scale: shape.xScale, z: shape.zPosition)
+        }
+        guard frames != lastGlassFrames else { return }
+        lastGlassFrames = frames; onGlassFrames?(frames)
     }
 
     private func publishDragDiagnostics() {
         #if DEBUG
         guard ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests"),
-              let view, let card = children.first(where: { $0.name != nil }) else { return }
+              let view, let card = children.first(where: { node in
+                  node.name != nil && treasure(at: node.position) === node
+              }) else { return }
         let now = Date.timeIntervalSinceReferenceDate
         guard now - lastDiagnosticsTime >= 0.1 else { return }
         lastDiagnosticsTime = now

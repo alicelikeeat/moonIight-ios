@@ -1,5 +1,7 @@
 # V2.1 搜索、按钮与玻璃审计
 
+> 本文保留 V2.1 历史审计。V2.3 已删除旧定向播放路径，当前状态以 [V2.3 审计](V23_AUDIT_AND_PLAN.md) 和 [V2.3 验证](V23_VALIDATION.md) 为准；历史数字不代表当前控制总数。
+
 全量静态清单覆盖 307 个控件、提交及自定义手势入口，包含 SpriteKit touches 生命周期；声明在 [CONTROL_INVENTORY.md](CONTROL_INVENTORY.md)，可由 `python3 scripts/audit_controls.py` 重建。静态定位 handler 不代表已逐个真机测试；系统照片选择器、相机、键盘、分享、原生菜单与网页播放器的内部按钮由系统/来源管理，不重复包自绘玻璃。
 
 | 位置 / 控件 | 预期动作 | 实际 handler / 目标状态 | 本次处理 | 验证状态 |

@@ -2,63 +2,105 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
-    func testDirectedPlaybackConfirmsStableTailAndDoesNotAutoReturn() {
-        let app = launch(discover: false, flags: ["--treasure-directed-ui-tests"])
-        func openMap() {
-            let ready = app.staticTexts["background-test-state"]
-            XCTAssertTrue(ready.waitForExistence(timeout: 10))
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 10), .completed)
-            app.buttons["navigation-me"].tap()
-            let library = app.buttons["me-library"]
-            XCTAssertTrue(library.waitForExistence(timeout: 5)); library.tap()
-            let map = app.buttons["library-treasure-map"]
-            XCTAssertTrue(map.waitForExistence(timeout: 8)); map.tap()
-            XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
+    func testVideoWallSelectionLimitModesFocusAndCleanup() {
+        let app = launch(discover: false, flags: ["--treasure-wall-ui-tests"])
+        let ready = app.staticTexts["background-test-state"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 15), .completed)
+        openTreasureMap(app)
+        XCTAssertFalse(app.buttons["treasure-directed-settings"].exists)
+        let freeMode = app.buttons["treasure-free-mode"]
+        let wallMode = app.buttons["treasure-wall-mode"]
+        XCTAssertTrue(freeMode.isSelected)
+        wallMode.tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+        app.buttons["wall-select"].tap()
+        let clear = app.buttons["wall-clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5)); clear.tap()
+        XCTAssertTrue(app.steppers["wall-target-count"].label.contains("4"))
+        for index in 0..<10 {
+            let item = app.buttons["wall-pick-scroll-fixture-\(index)"]
+            guard revealListControl(item, in: app) else { return }
+            item.tap()
+            XCTAssertEqual(item.value as? String, "已选择")
         }
-        func reveal(_ element: XCUIElement) {
-            for _ in 0..<10 { if element.isHittable { break }; app.swipeUp() }
-            XCTAssertTrue(element.isHittable)
+        let eleventh = app.buttons["wall-pick-scroll-fixture-10"]
+        for _ in 0..<6 { if eleventh.exists { break }; app.swipeUp() }
+        XCTAssertTrue(eleventh.waitForExistence(timeout: 5))
+        XCTAssertFalse(eleventh.isEnabled, "The eleventh different video must be disabled")
+        attach(app, name: "review-v23-limit-ten")
+        app.buttons["wall-selection-done"].tap()
+        let modes = app.segmentedControls["wall-mode"]
+        XCTAssertTrue(modes.waitForExistence(timeout: 5))
+        modes.buttons["同时"].tap()
+        if app.switches["wall-loop"].value as? String == "0" { app.switches["wall-loop"].tap() }
+        XCTAssertEqual(app.switches["wall-loop"].value as? String, "1")
+        if app.switches["wall-muted"].value as? String == "1" { app.switches["wall-muted"].tap() }
+        app.buttons["wall-play-pause"].tap()
+        func waitWall(_ predicate: @escaping ([String: Int]) -> Bool) {
+            let probe = app.staticTexts["wall-probe"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            let condition = NSPredicate { _, _ in
+                guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                      let state = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
+                return predicate(state)
+            }
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 15)
+            if result != .completed { print("WALL_TIMEOUT: \(probe.value as? String ?? "missing")"); print(app.debugDescription) }
+            XCTAssertEqual(result, .completed)
         }
-        openMap()
-        app.buttons["treasure-directed-settings"].tap()
-        let count = app.steppers["treasure-sequence-count"]
-        XCTAssertTrue(count.waitForExistence(timeout: 5))
-        for _ in 0..<4 { count.buttons.element(boundBy: 1).tap() }
-        let returnToggle = app.switches["treasure-auto-return"]
-        XCTAssertEqual(returnToggle.value as? String, "0")
-        let reset = app.buttons["treasure-background-reset"]
-        reveal(reset); reset.tap()
-        let target = app.buttons["treasure-target-scroll-fixture-0"]
-        reveal(target); target.tap()
-        XCTAssertFalse(app.buttons["treasure-sequence-close"].exists, "Selection started without confirmation")
-        let confirm = app.buttons["treasure-confirm-target"]
-        reveal(confirm)
-        XCTAssertTrue(app.staticTexts["treasure-planned-count"].label.contains("2"), "Only one video and one image have valid fixture URLs")
-        confirm.tap()
-        let close = app.buttons["treasure-sequence-close"]
-        XCTAssertTrue(close.waitForExistence(timeout: 8))
-        let pause = app.buttons["treasure-sequence-pause"]
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: pause)], timeout: 5), .completed)
-        pause.tap()
-        let position = app.staticTexts["treasure-sequence-position"].label
-        Thread.sleep(forTimeInterval: 1)
-        XCTAssertEqual(app.staticTexts["treasure-sequence-position"].label, position)
-        pause.tap()
-        XCTAssertTrue(app.staticTexts["本次播放完成"].firstMatch.waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["treasure-sequence-position"].label.contains("2/2"))
-        close.tap()
-        app.buttons["treasure-directed-start"].tap()
-        XCTAssertTrue(close.waitForExistence(timeout: 8))
-        app.buttons["treasure-sequence-next"].tap()
-        app.buttons["treasure-sequence-stop"].tap()
-        XCTAssertTrue(app.staticTexts["已停止"].firstMatch.waitForExistence(timeout: 5))
-        close.tap()
-        app.terminate(); app.launch(); openMap()
-        XCTAssertFalse(app.buttons["treasure-sequence-close"].exists)
-        app.buttons["treasure-directed-settings"].tap()
-        XCTAssertTrue(count.waitForExistence(timeout: 5))
-        XCTAssertTrue(count.label.contains("5"), "Continuous count did not persist")
-        attach(app, name: "review-v21-directed-settings")
+        waitWall { $0["selected"] == 10 && $0["loop"] == 1 && ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 11) <= ($0["limit"] ?? 0) && ($0["audible"] ?? 2) <= 1 }
+        let last = app.buttons["wall-tile-scroll-fixture-9"]
+        guard revealListControl(last, in: app) else { return }
+        XCTAssertTrue(last.isHittable, "The tenth cell is scrollable")
+        last.tap()
+        XCTAssertTrue(app.buttons["wall-unfocus"].waitForExistence(timeout: 5))
+        waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 && ($0["audible"] ?? 2) <= 1 }
+        app.buttons["wall-unfocus"].tap()
+        app.switches["wall-muted"].tap()
+        waitWall { $0["audible"] == 0 }
+        app.buttons["wall-play-pause"].tap()
+        waitWall { $0["playing"] == 0 }
+        app.buttons["wall-stop"].tap()
+        waitWall { $0["players"] == 0 }
+        for mode in ["顺序", "随机"] {
+            modes.buttons[mode].tap(); app.buttons["wall-play-pause"].tap()
+            waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 }
+            if mode == "随机" {
+                XCUIDevice.shared.press(.home); app.activate()
+                waitWall { $0["playing"] == 0 && $0["players"] == 0 && $0["ownedTotal"] == 0 }
+            }
+            app.buttons["wall-stop"].tap()
+            waitWall { $0["players"] == 0 }
+        }
+        app.buttons["wall-play-pause"].tap()
+        waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        freeMode.tap()
+        XCTAssertFalse(app.buttons["wall-select"].exists)
+        wallMode.tap()
+        XCTAssertTrue(app.buttons["wall-select"].label.contains("10/10"))
+        waitWall { $0["playing"] == 0 && $0["players"] == 0 && $0["ownedTotal"] == 0 }
+        attach(app, name: "review-v23-stopped-wall")
+        app.buttons["wall-select"].tap()
+        app.buttons["wall-clear"].tap()
+        let single = app.buttons["wall-pick-scroll-fixture-0"]
+        guard revealListControl(single, in: app) else { return }
+        single.tap(); app.buttons["wall-selection-done"].tap()
+        modes.buttons["顺序"].tap()
+        if app.switches["wall-loop"].value as? String == "1" { app.switches["wall-loop"].tap() }
+        XCTAssertEqual(app.switches["wall-loop"].value as? String, "0")
+        app.buttons["wall-play-pause"].tap()
+        let message = app.staticTexts["wall-message"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "本轮播放完成。"), object: message)], timeout: 20), .completed)
+        waitWall { $0["players"] == 0 && $0["playing"] == 0 }
+    }
+
+    @MainActor
+    private func openTreasureMap(_ app: XCUIApplication) {
+        app.buttons["navigation-me"].tap()
+        let entrance = app.buttons["me-treasure-map"]
+        XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -69,14 +111,13 @@ final class ScrollGestureTests: XCTestCase {
         input.tap(); input.typeText("月藏图")
         let command = app.buttons["assistant-command-treasureMap"]
         XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
-        XCTAssertTrue(app.buttons["treasure-directed-settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
         app.buttons["treasure-map-close"].tap()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
-        input.tap(); input.typeText("定向播放")
+        input.tap(); input.typeText("视频墙")
         let settingsCommand = app.buttons["assistant-command-treasurePlayback"]
         XCTAssertTrue(settingsCommand.waitForExistence(timeout: 5)); settingsCommand.tap()
-        XCTAssertTrue(app.steppers["treasure-sequence-count"].waitForExistence(timeout: 8))
-        app.buttons["treasure-settings-close"].tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 8))
         app.buttons["treasure-map-close"].tap()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         input.tap(); input.typeText("搜索图片 猫\n")
@@ -99,15 +140,14 @@ final class ScrollGestureTests: XCTestCase {
             XCTAssertTrue(ready.waitForExistence(timeout: 10))
             let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)
             XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 10), .completed)
-            app.buttons["navigation-me"].press(forDuration: 0.7)
-            let library = app.buttons["打开库"]
-            XCTAssertTrue(library.waitForExistence(timeout: 5))
-            library.tap()
-            app.buttons["library-treasure-map"].tap()
+            openTreasureMap(app)
             XCTAssertTrue(app.buttons["treasure-video-mode"].waitForExistence(timeout: 5))
         }
         func select(_ title: String) {
-            app.buttons["treasure-video-mode"].tap()
+            let menu = app.buttons["treasure-video-mode"]
+            let expected = title == "静止封面" ? "静止封面" : "自动播放"
+            if menu.value as? String == expected { return }
+            menu.tap()
             let option = app.buttons[title]
             XCTAssertTrue(option.waitForExistence(timeout: 3))
             option.tap()
@@ -139,6 +179,15 @@ final class ScrollGestureTests: XCTestCase {
         app.terminate(); app.launch()
         openMap()
         waitForPreview { $0["auto"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        if layout.label == "自由" { layout.tap() }
+        waitForPreview { $0["nodes"] == 3 && ($0["advancing"] ?? 0) > 0 }
+        let before = app.staticTexts["treasure-video-probe"].value as? String ?? ""
+        let beforeState = (try? JSONDecoder().decode([String: Int].self, from: Data(before.utf8))) ?? [:]
+        app.buttons["treasure-wall-mode"].tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 }
+        app.buttons["treasure-free-mode"].tap()
+        waitForPreview { $0["nodes"] == 3 && ($0["advancing"] ?? 0) > 0 && $0["configuration"] == beforeState["configuration"] }
         select("静止封面")
         waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
         attach(app, name: "review-treasure-static-video-no-center-icon")
@@ -147,9 +196,7 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testTreasureDragKeepsTouchAndPhysicsOwnership() {
         let app = launch(discover: false, flags: ["--treasure-drag-ui-tests"])
-        app.buttons["navigation-me"].press(forDuration: 0.7)
-        app.buttons["打开库"].tap()
-        app.buttons["library-treasure-map"].tap()
+        openTreasureMap(app)
         let layout = app.buttons["treasure-layout"]
         XCTAssertTrue(layout.waitForExistence(timeout: 5))
         if layout.label == "自由" { layout.tap() }
@@ -171,8 +218,10 @@ final class ScrollGestureTests: XCTestCase {
             let width = before["width"] ?? 1, height = before["height"] ?? 1
             let screen = app.coordinate(withNormalizedOffset: .zero)
             let start = screen.withOffset(CGVector(dx: before["x"] ?? 0, dy: before["y"] ?? 0))
+            let startFraction = ((before["y"] ?? 0) - (before["originY"] ?? 0)) / max(1, height)
+            let targetFraction = startFraction < 0.5 ? 0.85 : 0.15
             let end = screen.withOffset(CGVector(dx: (before["originX"] ?? 0) + width * x,
-                                                dy: (before["originY"] ?? 0) + height * 0.3))
+                                                dy: (before["originY"] ?? 0) + height * targetFraction))
             start.press(forDuration: 0.05, thenDragTo: end,
                         withVelocity: .slow, thenHoldForDuration: 1.2)
             var after = snapshot()
@@ -197,11 +246,7 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testTreasureGridCanOpenHoldAndSwitchTwentyTimes() {
         let app = launch(discover: false)
-        app.buttons["navigation-me"].press(forDuration: 0.7)
-        app.buttons["打开库"].tap()
-        let entry = app.buttons["library-treasure-map"]
-        XCTAssertTrue(entry.waitForExistence(timeout: 5))
-        entry.tap()
+        openTreasureMap(app)
         let layout = app.buttons["treasure-layout"]
         XCTAssertTrue(layout.waitForExistence(timeout: 5))
         if layout.label == "自由" { layout.tap() }

@@ -321,7 +321,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "定向播放"
+        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "视频墙"
         case .home: "首页"; case .discover: "发现"; case .moments: "朋友圈"; case .me: "我"
         case .library: "打开库"; case .settings: "设置"; case .friends: "朋友"; case .messages: "消息"; case .profile: "编辑资料"
         case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
@@ -425,7 +425,7 @@ extension AppCommand {
         switch self {
         case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
         case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
-        case .treasurePlayback: aliases = ["定向播放", "播放目标", "声音", "音量", "幻灯片", "月藏图设置", "月藏图背景", "自动播放设置"]
+        case .treasurePlayback: aliases = ["视频墙", "顺序播放", "随机播放", "同时播放", "选择视频"]
         case .importMedia: aliases = ["相册", "导入", "照片库"]
         case .favorites: aliases = ["收藏", "我的收藏"]
         case .library: aliases = ["库", "媒体库", "视频库"]
