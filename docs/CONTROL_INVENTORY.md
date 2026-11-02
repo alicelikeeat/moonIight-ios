@@ -1,6 +1,6 @@
 # 控件声明清单
 
-由 `python3 scripts/audit_controls.py` 生成。覆盖根目录所有应用 Swift 源文件中的 SwiftUI 控件、UIKit UIButton、提交与点击入口；包括条件编译声明，系统或第三方控件内部不在源码控制范围内。此清单不等于逐个控件真机通过，预期行为、handler 和关键回归结果见 [按钮审计](BUTTON_AUDIT.md)。
+由 `python3 scripts/audit_controls.py` 生成。覆盖根目录所有应用 Swift 源文件中的 SwiftUI 控件、UIKit UIButton、提交与点击入口；包括条件编译声明，系统或第三方控件内部不在源码控制范围内。此清单不等于逐个控件真机通过，预期行为与 handler 见 [V2.3 审计](V23_AUDIT_AND_PLAN.md)，关键回归结果见 [V2.3 验证](V23_VALIDATION.md)；[V2.1 按钮审计](BUTTON_AUDIT.md) 为历史记录。
 
 共 334 个声明/入口。
 
