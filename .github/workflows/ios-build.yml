@@ -12,7 +12,7 @@ on:
         description: 'UI validation scope (all on pull requests)'
         type: choice
         default: all
-        options: [all, directed, treasure, preview, settings, scroll]
+        options: [all, landlord, directed, treasure, preview, settings, scroll]
 permissions:
   contents: write
 jobs:
@@ -44,7 +44,7 @@ jobs:
       - name: Test treasure interaction policy
         run: |
           mkdir -p build
-          swiftc TreasureRules.swift TreasureVideoSelectionModel.swift AppSearchIntent.swift tests/main.swift -o build/treasure-tests
+          swiftc LandlordRules.swift CardMediaPolicy.swift TreasureRules.swift TreasureVideoSelectionModel.swift AppSearchIntent.swift tests/main.swift -o build/treasure-tests
           build/treasure-tests
       - name: Verify control inventory
         run: |
@@ -75,6 +75,11 @@ jobs:
           # wait is not charged against the gesture-suite deadline.
           xcrun simctl boot "$SIMULATOR_ID" || true
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
+      - name: Run V2.4.1 landlord tests
+        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'landlord')
+        timeout-minutes: 15
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordClassicWholeGameAndNewRound -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordMediaBudgetFocusBackgroundAndModeCleanup -resultBundlePath build/V241Tests.xcresult test
       - name: Run V2.3 wall playback and search tests
         if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'directed')
         timeout-minutes: 15
@@ -116,7 +121,7 @@ jobs:
           SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
           COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
           SKIP=()
-          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference testVideoWallSelectionLimitModesFocusAndCleanup testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI; do
+          for TEST_NAME in testLandlordClassicWholeGameAndNewRound testLandlordMediaBudgetFocusBackgroundAndModeCleanup testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference testVideoWallSelectionLimitModesFocusAndCleanup testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI; do
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
@@ -124,7 +129,7 @@ jobs:
         if: always() && steps.version.outputs.release != 'true'
         shell: bash
         run: |
-          for RESULT in build/V23Tests.xcresult build/TreasureTests.xcresult build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
+          for RESULT in build/V241Tests.xcresult build/V23Tests.xcresult build/TreasureTests.xcresult build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
             if [[ -f "$RESULT/Info.plist" ]]; then
               xcrun xcresulttool export attachments --path "$RESULT" --output-path "build/ui-attachments/$(basename "$RESULT" .xcresult)"
             fi
@@ -143,6 +148,7 @@ jobs:
         with:
           name: ScrollGestureTests-v${{ steps.version.outputs.marketing }}
           path: |
+            build/V241Tests.xcresult
             build/V23Tests.xcresult
             build/TreasureTests.xcresult
             build/SettingsTests*.xcresult

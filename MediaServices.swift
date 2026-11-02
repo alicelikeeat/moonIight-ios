@@ -566,6 +566,10 @@ final class MediaStore: ObservableObject {
     func insertAsyncUITestEntry() {
         discoverItems.insert(MediaEntry(id: "async-source-item", kind: .image, title: "异步到达的新内容", author: "UI verification", platform: "test", source: "ui-test"), at: 0)
     }
+    func prepareCardImageUITest(imageURL: URL) {
+        guard items.count > 11 else { return }
+        items[11].kind = .image; items[11].remoteURL = imageURL; items[11].coverURL = imageURL
+    }
     func prepareTreasureVideoUITest(videoURL: URL, count: Int = 5) {
         for index in items.indices.prefix(count) {
             items[index].kind = .video

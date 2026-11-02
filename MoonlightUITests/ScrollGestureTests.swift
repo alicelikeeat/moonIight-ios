@@ -2,6 +2,93 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    private func waitLandlord(_ app: XCUIApplication, _ condition: @escaping ([String: String]) -> Bool, timeout: TimeInterval = 20) {
+        let probe = app.staticTexts["landlord-probe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        let predicate = NSPredicate { _, _ in
+            let pairs = (probe.value as? String ?? "").split(separator: ";").compactMap { item -> (String, String)? in
+                let pair = item.split(separator: "=", maxSplits: 1)
+                return pair.count == 2 ? (String(pair[0]), String(pair[1])) : nil
+            }
+            return condition(Dictionary(pairs, uniquingKeysWith: { first, _ in first }))
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: probe)], timeout: timeout)
+        if result != .completed { print("LANDLORD_TIMEOUT: \(probe.value as? String ?? "missing")"); print(app.debugDescription) }
+        XCTAssertEqual(result, .completed)
+    }
+    @MainActor
+    func testLandlordClassicWholeGameAndNewRound() {
+        let app = launch(discover: false, flags: ["--treasure-wall-ui-tests", "--landlord-ui-tests"])
+        XCTAssertTrue(app.staticTexts["background-test-state"].waitForExistence(timeout: 15))
+        openTreasureMap(app); app.buttons["treasure-landlord-mode"].tap()
+        XCTAssertTrue(app.buttons["landlord-new-game"].waitForExistence(timeout: 5))
+        app.buttons["landlord-new-game"].tap()
+        app.buttons["landlord-bid-3"].tap()
+        app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
+        waitLandlord(app) { $0["valid"] == "1" && (Int($0["history"] ?? "0") ?? 0) > 0 && $0["players"] == "0" }
+        app.switches["landlord-auto"].tap()
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "1")
+        waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
+        attach(app, name: "review-v241-classic-result")
+        app.buttons["landlord-new-game"].tap()
+        waitLandlord(app) { $0["phase"] == "bidding" && $0["history"] == "0" && $0["cards"] == "51" }
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "0")
+    }
+    @MainActor
+    func testLandlordMediaBudgetFocusBackgroundAndModeCleanup() {
+        let app = launch(discover: false, flags: ["--treasure-wall-ui-tests", "--landlord-ui-tests"])
+        let ready = app.staticTexts["background-test-state"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 15), .completed)
+        openTreasureMap(app); app.buttons["treasure-landlord-mode"].tap()
+        app.buttons["landlord-settings"].tap()
+        app.segmentedControls["landlord-style"].buttons["媒体牌面"].tap()
+        for index in [0, 1, 2, 11] {
+            let item = app.buttons["landlord-media-scroll-fixture-\(index)"]
+            guard revealListControl(item, in: app) else { return }; item.tap()
+        }
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { (Int($0["players"] ?? "0") ?? 0) > 0 && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["advancing"] ?? "0") ?? 0) > 0 && (Int($0["frames"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" && $0["valid"] == "1" }
+        waitLandlord(app) { (Int($0["posters"] ?? "0") ?? 0) > 0 }
+        let videoCards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@", "landlord-hand-", "视频牌面"))
+        guard let card = videoCards.allElementsBoundByIndex.first(where: { $0.isHittable }) else { XCTFail("No visible video card"); return }
+        card.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["landlord-focus-close"].waitForExistence(timeout: 5))
+        waitLandlord(app) { $0["players"] == "1" && $0["history"] == "0" && $0["cards"] == "51" }
+        app.buttons["landlord-focus-sound"].tap()
+        waitLandlord(app) { $0["muted"] == "0" }
+        app.buttons["landlord-focus-close"].tap()
+        waitLandlord(app) { $0["muted"] == "1" && $0["history"] == "0" }
+        XCUIDevice.shared.press(.home); app.activate()
+        waitLandlord(app) { $0["muted"] == "1" && (Int($0["advancing"] ?? "0") ?? 0) > 0 }
+        app.buttons["landlord-settings"].tap()
+        app.buttons["landlord-test-memory"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { $0["pressure"] == "1" && $0["players"] == "0" && $0["owned"] == "0" && (Int($0["cache"] ?? "9999999") ?? 9999999) <= 2097152 && $0["history"] == "0" }
+        app.buttons["landlord-settings"].tap(); app.buttons["landlord-retry"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { (Int($0["advancing"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" }
+        app.buttons["landlord-bid-3"].tap()
+        app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
+        waitLandlord(app) { (Int($0["history"] ?? "0") ?? 0) > 0 && $0["valid"] == "1" && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["owned"] ?? "99") ?? 99) <= 2 }
+        app.switches["landlord-auto"].tap()
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "1")
+        waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
+        attach(app, name: "review-v241-media-result")
+        for _ in 0..<3 {
+            app.buttons["treasure-free-mode"].tap()
+            app.buttons["treasure-wall-mode"].tap()
+            XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+            app.buttons["treasure-landlord-mode"].tap()
+            waitLandlord(app) { (Int($0["players"] ?? "99") ?? 99) <= 2 && $0["valid"] == "1" }
+        }
+        app.buttons["landlord-settings"].tap()
+        app.segmentedControls["landlord-style"].buttons["经典牌面"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { $0["players"] == "0" && $0["cache"] == "0" && $0["phase"] == "finished" }
+    }
+
+    @MainActor
     func testVideoWallSelectionLimitModesFocusAndCleanup() {
         let app = launch(discover: false, flags: ["--treasure-wall-ui-tests"])
         let ready = app.staticTexts["background-test-state"]
