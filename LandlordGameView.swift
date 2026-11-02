@@ -129,34 +129,39 @@ struct LandlordGameView: View {
             ZStack(alignment: .topLeading) {
                 if groups.isEmpty { Text("出牌后按实际顺序叠放于此").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity) }
                 ForEach(Array(groups.enumerated()), id: \.element.id) { level, group in
-                    pileGroup(group, level: level, top: level == groups.count - 1,
+                    pileGroup(group, level: level, layers: groups.count, top: level == groups.count - 1,
                               size: geometry.size, viewport: viewport.intersection(geometry.frame(in: .global)))
                 }
             }
         }.padding(.horizontal, 12).clipped()
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: store.game.history.count)
     }
-    private func pileGroup(_ group: LandlordPlay, level: Int, top: Bool, size: CGSize, viewport: CGRect) -> some View {
+    private func pileGroup(_ group: LandlordPlay, level: Int, layers: Int, top: Bool, size: CGSize, viewport: CGRect) -> some View {
         let cardWidth: CGFloat = 62
         let spaces: CGFloat = CGFloat(max(1, group.cards.count - 1))
         let available: CGFloat = size.width - cardWidth - 16
         let step: CGFloat = min(CGFloat(34), max(CGFloat(5), available / spaces))
         let yStep: CGFloat = min(CGFloat(58), max(CGFloat(22), (size.height - 112) / 2))
+        let contentWidth = cardWidth + CGFloat(max(0, group.cards.count - 1)) * step
+        let x = max(0, (size.width - contentWidth) / 2) + CGFloat(level - 1) * 3
+        let y = max(4, (size.height - 112 - CGFloat(max(0, layers - 1)) * yStep) / 2)
         return VStack(alignment: .leading, spacing: 3) {
-            Text(groupTitle(group)).font(.caption2).padding(3)
+            Text(groupTitle(group)).font(.caption2).padding(3).fixedSize(horizontal: true, vertical: false)
                 .background(Color(uiColor: .systemBackground), in: Capsule())
             ZStack(alignment: .topLeading) {
                 ForEach(Array(group.cards.enumerated()), id: \.element.id) { index, card in
                     face(card, role: top ? .central : .other, z: group.id * 100 + index + 100,
                          viewport: viewport, width: cardWidth, height: 88)
                         .matchedGeometryEffect(id: card.id, in: movement)
+                        .rotationEffect(.degrees(Double(card.id % 3 - 1) * 0.7))
                         .shadow(color: .black.opacity(0.12), radius: 2, y: 2)
                         .offset(x: CGFloat(index) * step).zIndex(Double(index))
                         .onTapGesture { focus = card }
                         .accessibilityAddTraits(.isButton).accessibilityAction { focus = card }
                 }
-            }.frame(width: max(1, size.width - 16), height: 88, alignment: .leading)
-        }.offset(x: CGFloat(level) * 3 + 4, y: CGFloat(level) * yStep).zIndex(Double(level))
+            }.frame(width: contentWidth, height: 88, alignment: .leading)
+        }.frame(width: contentWidth, alignment: .leading)
+            .offset(x: x, y: y + CGFloat(level) * yStep).zIndex(Double(level))
     }
     private func groupTitle(_ group: LandlordPlay) -> String {
         name(group.player) + " · 第 " + String(group.trick) + " 轮 · " + group.pattern.kind.title
