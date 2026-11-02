@@ -27,15 +27,15 @@ struct TreasureVideoSelectionModel: Codable, Equatable {
     }
     enum Result: Equatable { case added, removed, full, unavailable }
     mutating func toggle(_ id: String, available: Set<String>) -> Result {
-        if ids.contains(id) { ids.removeAll { $0 == id }; return .removed }
+        if ids.contains(id) { ids.removeAll { $0 == id }; recoveredOverflow = false; return .removed }
         guard available.contains(id) else { return .unavailable }
         guard ids.count < Self.maximum else { return .full }
-        ids.append(id); return .added
+        ids.append(id); recoveredOverflow = false; return .added
     }
     @discardableResult mutating func prune(available: Set<String>) -> Bool {
         let previous = ids; ids.removeAll { !available.contains($0) }; return previous != ids
     }
-    mutating func clear() { ids.removeAll() }
+    mutating func clear() { ids.removeAll(); recoveredOverflow = false }
 }
 
 struct TreasureWallQueue {

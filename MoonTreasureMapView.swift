@@ -12,6 +12,7 @@ struct MoonTreasureMapView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
+    @State private var voiceOver = UIAccessibility.isVoiceOverRunning
     @State private var wall = false
     @State private var initialized = false
     @State private var activeEntry: MediaEntry?
@@ -86,6 +87,7 @@ struct MoonTreasureMapView: View {
                 appearance = TreasureAppearance.load(appearanceData, legacy: legacyAppearance)
                 wall = openVideoWall; initialized = true
             }
+            if voiceOver { organized = true }
             syncFreeState()
         }
         .onDisappear { pageVisible = false; videoPreviews.stopAll(); scene.stopMotion() }
@@ -96,6 +98,13 @@ struct MoonTreasureMapView: View {
         .onChange(of: appearance) { value in
             appearanceData = (try? JSONEncoder().encode(value)) ?? Data()
             scene.setCardContrast(dark: darkCards)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification)) { _ in
+            voiceOver = UIAccessibility.isVoiceOverRunning
+            if voiceOver { organized = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIContentSizeCategory.didChangeNotification)) { _ in
+            if wall { sceneDirty = true } else { configureScene() }
         }
         .onChange(of: colorScheme) { _ in scene.setCardContrast(dark: darkCards) }
         .onChange(of: scenePhase) { _ in syncFreeState() }
@@ -141,7 +150,7 @@ struct MoonTreasureMapView: View {
             HStack {
                 Text("\(scope.title) · \(organized ? filteredItems.count : items.count) 张").font(.caption).accessibilityIdentifier("treasure-actual-count")
                 Spacer()
-                Button(organized ? "自由" : "整理") { organized.toggle() }.accessibilityIdentifier("treasure-layout")
+                Button(organized ? "自由" : "整理") { organized.toggle() }.disabled(voiceOver).accessibilityIdentifier("treasure-layout")
                 Button("重新散落") { scene.scatterTreasures() }.disabled(organized).accessibilityIdentifier("treasure-scatter")
                 Button("重置") { configureScene() }.disabled(organized).accessibilityIdentifier("treasure-reset")
             }.frame(minHeight: 44).buttonStyle(MoonGlassButtonStyle()).padding(10).moonSingleGlass().padding(.horizontal, 14)
@@ -381,8 +390,9 @@ private final class MoonTreasureScene: SKScene {
     }
 
     private func addTreasure(_ entry: MediaEntry, index: Int) {
-        let width: CGFloat = entry.kind == .video ? 92 : 78
-        let height: CGFloat = entry.kind == .video ? 104 : 86
+        let contentScale = min(1.6, max(1, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 11) / 11))
+        let width: CGFloat = (entry.kind == .video ? 92 : 78) * contentScale
+        let height: CGFloat = (entry.kind == .video ? 104 : 86) * contentScale
         let node = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 17)
         node.name = entry.id
         // The sole material is a native glass surface behind this scene.
@@ -427,7 +437,7 @@ private final class MoonTreasureScene: SKScene {
 
         if entry.kind == .video {
             let badge = SKLabelNode(fontNamed: "SFProText-Medium")
-            badge.text = "视频"; badge.fontSize = 8; badge.fontColor = .white
+            badge.text = "视频"; badge.fontSize = min(14, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 8)); badge.fontColor = .white
             badge.position = CGPoint(x: width / 2 - 16, y: height / 2 - 14)
             badge.zPosition = 3
             node.addChild(badge)
@@ -439,7 +449,7 @@ private final class MoonTreasureScene: SKScene {
         }
         let title = SKLabelNode(fontNamed: "SFProText-Medium")
         title.text = String(entry.title.prefix(8))
-        title.fontSize = 9; title.fontColor = .white; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -height * 0.31)
+        title.fontSize = min(16, UIFontMetrics(forTextStyle: .caption2).scaledValue(for: 9)); title.fontColor = .white; title.verticalAlignmentMode = .center; title.position = CGPoint(x: 0, y: -height * 0.31)
         title.preferredMaxLayoutWidth = width - 12; title.numberOfLines = 2
         node.addChild(title)
 

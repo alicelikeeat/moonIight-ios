@@ -20,6 +20,10 @@ struct TreasureVideoWallView: View {
             controls
             Text(coordinator.message).font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("wall-message")
+            if coordinator.selection.recoveredOverflow {
+                Text("旧记录超过 10 个，已保留前 10 个视频。")
+                    .font(.caption).accessibilityIdentifier("wall-restored-limit-notice")
+            }
             if coordinator.mode == .simultaneous && coordinator.selection.ids.count > coordinator.decoderLimit {
                 Text("已选视频均保留；当前最多加载 \(coordinator.decoderLimit) 路可见画面，滚动可切换。")
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
