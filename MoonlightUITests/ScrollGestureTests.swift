@@ -9,9 +9,10 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 15), .completed)
         openTreasureMap(app)
         XCTAssertFalse(app.buttons["treasure-directed-settings"].exists)
-        let experiences = app.segmentedControls["treasure-experience"]
-        XCTAssertTrue(experiences.buttons["自由散落"].isSelected)
-        experiences.buttons["视频墙"].tap()
+        let freeMode = app.buttons["treasure-free-mode"]
+        let wallMode = app.buttons["treasure-wall-mode"]
+        XCTAssertTrue(freeMode.isSelected)
+        wallMode.tap()
         XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
         app.buttons["wall-select"].tap()
         let clear = app.buttons["wall-clear"]
@@ -68,9 +69,9 @@ final class ScrollGestureTests: XCTestCase {
             app.buttons["wall-stop"].tap()
             waitWall { $0["players"] == 0 }
         }
-        experiences.buttons["自由散落"].tap()
+        freeMode.tap()
         XCTAssertFalse(app.buttons["wall-select"].exists)
-        experiences.buttons["视频墙"].tap()
+        wallMode.tap()
         XCTAssertTrue(app.buttons["wall-select"].label.contains("10/10"))
         waitWall { $0["playing"] == 0 && $0["players"] == 0 }
         attach(app, name: "review-v23-stopped-wall")
@@ -93,7 +94,7 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["navigation-me"].tap()
         let entrance = app.buttons["me-treasure-map"]
         XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()
-        XCTAssertTrue(app.segmentedControls["treasure-experience"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -104,7 +105,7 @@ final class ScrollGestureTests: XCTestCase {
         input.tap(); input.typeText("月藏图")
         let command = app.buttons["assistant-command-treasureMap"]
         XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
-        XCTAssertTrue(app.segmentedControls["treasure-experience"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
         app.buttons["treasure-map-close"].tap()
         XCTAssertTrue(input.waitForExistence(timeout: 5))
         input.tap(); input.typeText("视频墙")

@@ -46,10 +46,17 @@ struct MoonTreasureMapView: View {
     private var darkCards: Bool { appearance.isDark(system: colorScheme) }
     var body: some View {
         VStack(spacing: 10) {
-            Picker("月藏图模式", selection: $wall) {
-                Text("自由散落").tag(false)
-                Text("视频墙").tag(true)
-            }.pickerStyle(.segmented).padding(.horizontal, 14).accessibilityIdentifier("treasure-experience")
+            HStack(spacing: 4) {
+                Button { wall = false } label: {
+                    Text("自由散落").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        .background(!wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
+                }.accessibilityIdentifier("treasure-free-mode").accessibilityAddTraits(!wall ? .isSelected : [])
+                Button { wall = true } label: {
+                    Text("视频墙").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                        .background(wall ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
+                }.accessibilityIdentifier("treasure-wall-mode").accessibilityAddTraits(wall ? .isSelected : [])
+            }.buttonStyle(.plain).padding(4).moonSingleGlass().padding(.horizontal, 14).zIndex(10)
+                .accessibilityIdentifier("treasure-experience")
             ZStack {
                 // Keep the SKView mounted so switching experiences preserves
                 // positions, velocities, camera and independently chosen count.
@@ -155,7 +162,7 @@ struct MoonTreasureMapView: View {
         } else {
             ZStack {
                 TreasurePhysicsGlass(frames: glassFrames, sceneSize: scene.size)
-                SpriteView(scene: scene, options: [.allowsTransparency])
+                SpriteView(scene: scene, options: [.allowsTransparency]).contentShape(Rectangle())
             }
                 .clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14)
                 .accessibilityIdentifier("moon-treasure-map")
