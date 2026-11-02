@@ -59,7 +59,7 @@ for coordinate in ChunkCoordinate.all {
 for coordinate in ChunkCoordinate.all.reversed() { check(generated.chunk(coordinate) == forward[coordinate.id], "generation order independent") }
 check(RPGWorldGenerator(seed: 1).chunk(.init(x: 2, z: 2)) != generated.chunk(.init(x: 2, z: 2)), "seed affects world")
 check(generated.chunk(.init(x: -1, z: 0)) == nil && generated.tile(at: .init(x: 256, z: 0)) == nil, "generator rejects invalid coordinates")
-for seed: UInt64 in [0, 1, 42, UInt64.max] {
+for seed in [UInt64(0), 1, 42, UInt64.max] {
     let value = RPGWorldGenerator(seed: seed)
     check(value.anchorsReachable(), "all six plot anchors reachable")
     check(value.anchors.allSatisfy { value.tile(at: $0.point)?.passable == true && value.protected($0.point) }, "safe anchors reserved before noise")
