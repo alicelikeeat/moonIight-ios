@@ -2,6 +2,70 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGSearchOpensStoryEditorAndDiagnosticsDirectly() {
+        let app=launch(discover:false,flags:["--assistant-dock-ui-tests","--rpg-ui-tests","--rpg-reset-world"])
+        let routes=[("剧情编辑器","rpgEditor","rpg-story-title","rpg-editor-back"),("序章","rpgStory","rpg-story-text","rpg-story-back"),("沙盒运行诊断","rpgDiagnostics","rpg-diagnostics-report","rpg-diagnostics-back")]
+        for (query,command,target,back) in routes {
+            let input=app.textFields["assistant-input"];XCTAssertTrue(input.waitForExistence(timeout:6));input.tap();input.typeText(query)
+            let result=app.buttons["assistant-command-"+command];XCTAssertTrue(result.waitForExistence(timeout:6));result.tap()
+            XCTAssertTrue(app.descendants(matching:.any).matching(identifier:target).firstMatch.waitForExistence(timeout:12))
+            app.buttons[back].tap();app.buttons["rpg-tools-close"].tap();app.buttons["rpg-close"].tap()
+        }
+        XCTAssertFalse(app.navigationBars["智能对话"].exists)
+    }
+
+    @MainActor
+    func testRPGSideCombatAndDiagnostics() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        app.segmentedControls["rpg-mode"].buttons["创造"].tap();app.buttons["rpg-temple"].tap();app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-perspective"].tap()
+        let side=NSPredicate{_,_ in (app.staticTexts["rpg-projection-evidence"].value as? String ?? "").hasPrefix("side:")}
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:side,object:app)],timeout:10),.completed)
+        app.buttons["rpg-tools"].tap()
+        let training=app.buttons["rpg-training"];guard revealListControl(training,in:app) else{return};training.tap();app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-skill"].tap();app.buttons["rpg-attack"].tap()
+        let reward=NSPredicate(format:"label CONTAINS %@","月晶 1")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:10),.completed)
+        app.buttons["rpg-perspective"].tap()
+        app.buttons["rpg-tools"].tap()
+        let diagnostics=app.buttons["rpg-diagnostics"];guard revealListControl(diagnostics,in:app) else{return};diagnostics.tap()
+        let report=app.staticTexts["rpg-diagnostics-report"];XCTAssertTrue(report.waitForExistence(timeout:8))
+        XCTAssertTrue(report.label.contains("p95") && report.label.contains("待验证"));attach(app,name:"review-rpg-p10-diagnostics")
+    }
+
+    @MainActor
+    func testRPGAuthoredCutsceneProducesFramesAndResumesMuted() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
+        let ready=app.staticTexts["background-test-state"];XCTAssertTrue(ready.waitForExistence(timeout:15))
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","背景测试就绪"),object:ready)],timeout:20),.completed)
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        let editor=app.buttons["rpg-story-editor"];guard revealListControl(editor,in:app) else{return};editor.tap()
+        let node=app.buttons["rpg-edit-node-media"];guard revealListControl(node,in:app) else{return};node.tap()
+        let picker=app.buttons["rpg-node-media"];guard revealListControl(picker,in:app) else{return};picker.tap()
+        let video=app.buttons["Scroll fixture 0"];XCTAssertTrue(video.waitForExistence(timeout:6));video.tap()
+        let loop=app.switches["rpg-node-loop"];guard revealListControl(loop,in:app) else{return};if loop.value as? String == "0"{loop.tap()}
+        let apply=app.buttons["rpg-node-apply"];guard revealListControl(apply,in:app) else{return};apply.tap()
+        let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
+        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
+        let probe=app.staticTexts["rpg-cutscene-probe"]
+        func values()->[String:Int]{
+            Dictionary((probe.value as? String ?? "").split(separator:";").compactMap{item in let p=item.split(separator:"=");guard p.count==2,let n=Int(p[1]) else{return nil};return(String(p[0]),n)},uniquingKeysWith:{a,_ in a})
+        }
+        let active=NSPredicate{_,_ in let v=values();return (v["frames"] ?? 0)>0 && (v["players"] ?? 99)<=1 && (v["global"] ?? 99)<=1}
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:active,object:probe)],timeout:25),.completed)
+        let frames=values()["frames"] ?? 0
+        XCUIDevice.shared.press(.home);app.activate()
+        let resumed=NSPredicate{_,_ in let v=values();return (v["frames"] ?? 0)>frames && v["muted"]==1 && (v["global"] ?? 99)<=1}
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:resumed,object:probe)],timeout:25),.completed)
+        attach(app,name:"review-rpg-p10-authored-video")
+        app.buttons["rpg-preview-close"].tap()
+    }
+
+    @MainActor
     func testRPGStoryEditorCanPreviewAndPublishBranch() {
         let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
         app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()

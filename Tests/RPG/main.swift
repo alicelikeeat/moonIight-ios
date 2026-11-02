@@ -403,3 +403,50 @@ let readableOrphan=try await recoveryStore.load(id:orphan.id)
 check(activeAfterFault==durableNext && readableOrphan==orphan,"copy interruption preserves original and recoverable orphan")
 try FileManager.default.removeItem(at:recoveryRoot)
 print("RPG P9: \(checks) total checks passed")
+
+// P10: graph-backed block behavior reuses receipts instead of arbitrary scripts.
+var behaviorWorld=WorldState(seed:42);behaviorWorld.player.mode = .creative
+let behaviorGraph=RPGStoryGraph(id:"behavior-test",title:"方块事件",start:"reward",nodes:[.init(id:"reward",kind:.end,text:"触发成功",actions:[.init(kind:.giveItem,key:"wood",value:2)])])
+try RPGStoryAuthoring.install(behaviorGraph,bindings:[],world:&behaviorWorld)
+let behaviorTarget=WorldEntity(id:"behavior-block",definitionID:"wood",scope:.topDownOnly,surface:.init(x:30,z:30))
+behaviorWorld.entities=[behaviorTarget];behaviorWorld.player.surface = .init(x:29,z:30)
+let tapBinding=RPGBehaviorBinding(entityID:behaviorTarget.id,graphID:behaviorGraph.id)
+try RPGBehaviorRules.bind(tapBinding,target:behaviorTarget,world:&behaviorWorld,generator:arenaGenerator)
+let firstFire=try RPGBehaviorRules.fire(.tap,targetID:behaviorTarget.id,entities:[behaviorTarget],world:&behaviorWorld,generator:arenaGenerator)
+check(firstFire && behaviorWorld.inventory["wood"]==14,"tap executes graph actions once")
+let secondFire=try RPGBehaviorRules.fire(.tap,targetID:behaviorTarget.id,entities:[behaviorTarget],world:&behaviorWorld,generator:arenaGenerator)
+check(!secondFire && behaviorWorld.inventory["wood"]==14,"binding receipt prevents repeat activation")
+let behaviorReload=try RPGWorldCodec.decode(RPGWorldCodec.encode(behaviorWorld))
+check(behaviorReload.behaviors==behaviorWorld.behaviors,"behavior receipt survives world save")
+for trigger in [RPGBehaviorTrigger.proximity,.attack,.timer,.storyEvent] {
+    var scenario=behaviorWorld;scenario.story.progress=[];scenario.behaviors = .init();scenario.inventory["wood"]=12
+    var binding=RPGBehaviorBinding(entityID:behaviorTarget.id,graphID:behaviorGraph.id,trigger:trigger)
+    binding.delay=1
+    try RPGBehaviorRules.bind(binding,target:behaviorTarget,world:&scenario,generator:arenaGenerator)
+    if trigger == .timer {scenario.combat.clock=2}
+    if trigger == .storyEvent {scenario.story.eventCounts["blockDestroyed"]=1}
+    let fired=try RPGBehaviorRules.fire(trigger,targetID:trigger == .attack ? behaviorTarget.id:nil,entities:[behaviorTarget],world:&scenario,generator:arenaGenerator)
+    check(fired && scenario.inventory["wood"]==14,"each declared trigger executes whitelisted graph")
+}
+var gatedBehavior=behaviorWorld;gatedBehavior.behaviors = .init();gatedBehavior.story.progress=[]
+let gatedBinding=RPGBehaviorBinding(entityID:behaviorTarget.id,graphID:behaviorGraph.id,condition:.init(kind:.resource,key:"stone",value:100))
+try RPGBehaviorRules.bind(gatedBinding,target:behaviorTarget,world:&gatedBehavior,generator:arenaGenerator)
+let gatedBefore=gatedBehavior
+let gatedFire=try RPGBehaviorRules.fire(.tap,targetID:behaviorTarget.id,entities:[behaviorTarget],world:&gatedBehavior,generator:arenaGenerator)
+check(!gatedFire && gatedBehavior==gatedBefore,"failed behavior condition keeps world and receipt unchanged")
+let protectedTarget=WorldEntity(id:"protected-anchor",definitionID:"wood",scope:.topDownOnly,surface:arenaGenerator.anchor(.village))
+let protectedBinding=RPGBehaviorBinding(entityID:protectedTarget.id,graphID:behaviorGraph.id)
+do{try RPGBehaviorRules.bind(protectedBinding,target:protectedTarget,world:&gatedBehavior,generator:arenaGenerator);preconditionFailure("protected behavior modified")}catch{checks+=1}
+var metrics=RPGFrameMetrics()
+for frame in 0...1000{metrics.sample(Double(frame)/60)}
+check(metrics.count==600 && metrics.totalFrames==1000 && abs(metrics.framesPerSecond-60)<0.01,"bounded full frame sampling")
+check(metrics.p95Milliseconds>16 && metrics.p95Milliseconds<17,"p95 frame time reports milliseconds")
+let sampled=metrics.totalFrames;metrics.pause();metrics.sample(1000)
+check(metrics.totalFrames==sampled,"background and overlay pauses do not become fake hitches")
+metrics.sample(1000.08)
+check(metrics.hitches==1,"active frame hitch is recorded")
+var schema5JSON=try JSONSerialization.jsonObject(with:RPGWorldCodec.encode(behaviorWorld)) as! [String:Any]
+schema5JSON["schemaVersion"]=5;schema5JSON["behaviors"]=nil
+let schema5Migrated=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:schema5JSON))
+check(schema5Migrated.story==behaviorWorld.story && schema5Migrated.entities==behaviorWorld.entities && schema5Migrated.behaviors.bindings.isEmpty,"schema 5 migration preserves world and story")
+print("RPG P10: \(checks) total checks passed")

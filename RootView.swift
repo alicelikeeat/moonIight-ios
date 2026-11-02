@@ -200,7 +200,7 @@ struct RootView: View {
         // Full-blind mode hides the page layer itself. Search and the explicit
         // exit control remain readable when they are intentionally revealed.
         .buttonStyle(MoonInteractiveButtonStyle(blind: false))
-        .environment(\.moonlightMediaSuspended, treasureRoute == .rpg)
+        .environment(\.moonlightMediaSuspended, treasureRoute?.rpgPage != nil)
         .tint(activeButtonTint)
         .overlay {
             GeometryReader { geometry in
@@ -271,7 +271,7 @@ struct RootView: View {
         }
         .fullScreenCover(item: $treasureRoute, onDismiss: { revealNavigation() }) { command in
             NavigationStack {
-                if command == .rpg { RPGShellView().environmentObject(model) }
+                if let page=command.rpgPage { RPGShellView(initialPage:page).environmentObject(model) }
                 else { MoonTreasureMapView(openVideoWall: command == .treasurePlayback, openLandlord: command == .landlord) }
             }
         }
@@ -633,7 +633,7 @@ struct RootView: View {
                 if let intent { values["query"] = intent.query; values["kind"] = intent.kind }
                 NotificationCenter.default.post(name: .init("moonlight.focusMediaSearch"), object: nil, userInfo: values)
             }
-        case .treasureMap, .treasurePlayback, .landlord, .rpg: treasureRoute = action
+        case .treasureMap, .treasurePlayback, .landlord, .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics: treasureRoute = action
         case .home: selectTab(.home)
         case .discover: selectTab(.discover)
         case .moments: selectTab(.moments)
@@ -676,7 +676,7 @@ struct RootView: View {
 
     @ViewBuilder private func commandDestination(_ action: AppCommand) -> some View {
         switch action {
-        case .rpg: RPGShellView().environmentObject(model)
+        case .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics: RPGShellView(initialPage:action.rpgPage ?? .world).environmentObject(model)
         case .treasureMap, .treasurePlayback, .landlord: MoonTreasureMapView(openVideoWall: action == .treasurePlayback, openLandlord: action == .landlord)
         case .searchMedia: Text("请返回发现页搜索媒体。")
         case .settings: SettingsView()

@@ -167,7 +167,7 @@ private struct RPGStoryNodeEditor:View {
                     Text("清除绑定").tag("clear")
                     ForEach(media.filter{$0.kind != .embed}){Text($0.title).tag($0.id)}
                 }.pickerStyle(.menu).accessibilityIdentifier("rpg-node-media")
-                HStack{Text("循环演出");Spacer();Toggle("循环演出",isOn:$loop).labelsHidden().frame(width:51,height:44)}
+                HStack{Text("循环演出");Spacer();Toggle("循环演出",isOn:$loop).labelsHidden().frame(width:51,height:44).accessibilityIdentifier("rpg-node-loop")}
                 HStack{Text("静音");Spacer();Toggle("静音",isOn:$muted).labelsHidden().frame(width:51,height:44)}
                 Text("节点文字同时作为字幕；用户可跳过，媒体缺失时仍能继续。").font(.caption)
             }

@@ -118,7 +118,9 @@ import UIKit
             if enemyCells[id] != cell { enemyCells[id] = cell; onEnemyPosition?(id,cell) }
         }
     }
+    var reducedMotion=false
     func combatEffect(_ skill: Bool) {
+        guard !reducedMotion else{return}
         let effect = SKShapeNode(circleOfRadius:skill ? 90:42); effect.position = avatar.position
         effect.strokeColor = .systemYellow; effect.lineWidth = 3; effect.zPosition = 15
         addChild(effect); effect.run(.sequence([.fadeOut(withDuration:0.25),.removeFromParent()]))

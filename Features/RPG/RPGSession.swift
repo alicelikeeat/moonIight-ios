@@ -7,6 +7,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var simulating = false
     private var guiding: Task<Void,Never>?
     private var followingRoute = false
+    private var frameMetrics=RPGFrameMetrics()
+    private var behaviorTargets:[WorldEntity]=[]
+    private var lastBehaviorCheck:TimeInterval=0
+    private var switchStarted:Double?
+    private var switchMilliseconds=0.0,saveMilliseconds=0.0,chunkMilliseconds=0.0
+    @Published private(set) var pendingStory=false
     private var lastFrame: TimeInterval?
     private var lastHUD: TimeInterval = 0
     private var combatObstacles: Set<SurfacePoint> = []
@@ -126,13 +132,13 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         notice = "身边是保护区或障碍，请先向外探索，或使用创作副本。"
     }
     private func bindScenes() {
-        scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point) }
+        scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point);self?.tapBehavior() }
         scene.onStroke = { [weak self] points in self?.stroke(points) }
         scene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onSelectCell = { [weak self] point in
             guard let self else { return }; self.selectedSide = point; self.sideScene.select(point)
-            if let region = self.world.sideRegions.first(where: { $0.id == point.regionID }) { self.selected = .init(x: region.origin.x + point.horizontal, z: region.origin.z) }
+            if let region = self.world.sideRegions.first(where: { $0.id == point.regionID }) { self.selected = .init(x: region.origin.x + point.horizontal, z: region.origin.z) }; self.tapBehavior()
         }
         sideScene.onEnemyPosition = { [weak self] id, point in
             guard let self, self.world.player.perspective == .side, let index = self.world.combat.enemies.firstIndex(where:{$0.id == id}) else { return }
@@ -151,7 +157,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
     }
     private func applyScenePause() {
-        lastFrame = nil
+        lastFrame = nil;frameMetrics.pause()
         scene.isPaused = !active || working || overlayVisible || world.player.perspective != .topDown
         sideScene.isPaused = !active || working || overlayVisible || world.player.perspective != .side
     }
@@ -176,6 +182,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard ready, !working else { return }
         if world.player.perspective == .side && !sideScene.isOnGround { notice = "请先落地并回到入口。"; return }
         do {
+            switchStarted=ProcessInfo.processInfo.systemUptime
             try RPGProjectionRules.switchPerspective(world: &world, generator: generator)
             selected = nil; selectedSide = nil
             if world.player.perspective == .side {
@@ -187,7 +194,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             else { loadVisible(force: true) }
             notice = world.player.perspective == .side ? "已进入独立侧视切片；靛色平台为侧视专属。" : "已返回俯视地表。"
             save()
-        } catch { notice = error.localizedDescription }
+        } catch { switchStarted=nil;notice = error.localizedDescription }
     }
     private func updateProjectionEvidence() {
         let ids = world.player.perspective == .side ? sideScene.sharedIDs : scene.sharedIDs
@@ -240,6 +247,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func setVideoBudget(_ value:Int){guard (0...2).contains(value) else{return};world.videoBudget=value;world.revision+=1;syncMedia();save()}
     private func renderCurrent() {
+        behaviorTargets = world.player.perspective == .side ? RPGProjectionRules.sideEntities(world:world,generator:generator) : chunks.flatMap{RPGWorldEditing.entities(in:$0,world:world)}
         combatObstacles = Set(chunks.flatMap { RPGWorldEditing.entities(in:$0,world:world) }.filter { $0.physics.topDownSolid }.compactMap(\.surface))
         if world.player.perspective == .side { sideScene.show(world: world); sideScene.select(selectedSide) }
         else { scene.show(chunks: chunks, world: world); scene.select(selected) }
@@ -257,7 +265,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             switch result {
             case .success(let value):
                 guard self.world.revision == snapshot.revision else { self.notice = RPGEditError.stale.localizedDescription; return }
-                self.world = value; RPGStoryRuntime.recordEvents(world:&self.world); self.renderCurrent()
+                self.world = value
+                if value.behaviors.firedIDs.count > snapshot.behaviors.firedIDs.count { self.pendingStory=true }
+                RPGStoryRuntime.recordEvents(world:&self.world); self.renderCurrent()
                 self.notice = "操作已提交。"; self.save()
             case .failure(let error): self.notice = error.localizedDescription
             }
@@ -273,11 +283,13 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         perform { world, generator in try RPGWorldEditing.place([.init(point: selected, definitionID: definition)], world: &world, generator: generator) }
     }
     func hitSelected(force: Bool = false) {
-        if world.player.perspective == .side, let selectedSide {
-            perform { world, generator in try RPGProjectionRules.hitSide(selectedSide, world: &world, generator: generator, force: force) }; return
+        let surface=selected,side=selectedSide,target=selectedEntity
+        guard surface != nil || side != nil else{return}
+        perform { world,generator in
+            if world.player.perspective == .side,let side {try RPGProjectionRules.hitSide(side,world:&world,generator:generator,force:force)}
+            else if let surface {try RPGWorldEditing.hit(surface,world:&world,generator:generator,force:force)}
+            if let target {try RPGBehaviorRules.fire(.attack,targetID:target.id,entities:[target],world:&world,generator:generator)}
         }
-        guard let selected else { return }
-        perform { world, generator in try RPGWorldEditing.hit(selected, world: &world, generator: generator, force: force) }
     }
     func undo() { perform { world, _ in try RPGWorldEditing.undo(world: &world) } }
     func redo() { perform { world, _ in try RPGWorldEditing.redo(world: &world) } }
@@ -308,8 +320,11 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         saving?.cancel(); let snapshot = world, epoch = generation, storage = storage
         saving = Task { [weak self] in
             do {
+                let started=ProcessInfo.processInfo.systemUptime
                 try await storage.save(snapshot)
+                let elapsed=(ProcessInfo.processInfo.systemUptime-started)*1000
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
+                self.saveMilliseconds=elapsed
                 self.notice = "世界已保存 · 修订 \(snapshot.revision)"
             } catch {
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }; self.notice = error.localizedDescription
@@ -343,6 +358,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func frame(_ time: TimeInterval) {
         media?.frame(time)
         guard active, ready, !working, !overlayVisible else { lastFrame = nil; return }
+        frameMetrics.sample(time)
+        if let started=switchStarted {switchMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000;switchStarted=nil}
         guard let previous = lastFrame else { lastFrame = time; return }
         guard time-previous >= 1.0/30 else { return }
         lastFrame = time
@@ -351,7 +368,15 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         simulating = true
         RPGCombatRules.advance(world:&world,generator:generator,delta:min(0.1,time-previous),passable:{ generator.tile(at:$0)?.passable == true && !obstacles.contains($0) })
         RPGStoryRuntime.recordEvents(world:&world)
+        var fired=false
+        if time-lastBehaviorCheck>=0.25,!world.behaviors.bindings.isEmpty {
+            lastBehaviorCheck=time
+            for trigger in [RPGBehaviorTrigger.proximity,.timer,.storyEvent] {
+                if (try? RPGBehaviorRules.fire(trigger,entities:behaviorTargets,world:&world,generator:generator)) == true {fired=true;break}
+            }
+        }
         simulating = false
+        if fired {pendingStory=true;save()}
         if world.player.perspective == .topDown { scene.showCombat(world) } else { sideScene.showCombat(world) }
         if time-lastHUD > 0.1 || oldHealth != world.player.health { combatHUD.update(world); lastHUD = time }
         if wasCombat != world.player.inCombat || oldHealth > 0 && world.player.health == 0 {
@@ -400,6 +425,26 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         for i in world.combat.enemies.indices { world.combat.enemies[i].aggro = false }
         world.combat.invulnerableRemaining = 2
         returnToSpawn(); refreshCombat(); save()
+    }
+    func acknowledgeStory(){pendingStory=false}
+    private func tapBehavior() {
+        guard let target=selectedEntity,world.behaviors.bindings.contains(where:{$0.entityID==target.id && $0.trigger == .tap && !world.behaviors.firedIDs.contains($0.id)}) else{return}
+        perform{world,generator in try RPGBehaviorRules.fire(.tap,targetID:target.id,entities:[target],world:&world,generator:generator)}
+    }
+    func bindBehavior(_ binding:RPGBehaviorBinding,target:WorldEntity){perform{world,generator in try RPGBehaviorRules.bind(binding,target:target,world:&world,generator:generator)}}
+    func clearBehaviors(_ entityID:String){perform{world,_ in
+        let ids=Set(world.behaviors.bindings.filter{$0.entityID==entityID}.map(\.id))
+        world.behaviors.bindings.removeAll{ids.contains($0.id)};world.behaviors.firedIDs.removeAll{ids.contains($0)};world.revision+=1;try world.validate()
+    }}
+    func setReducedMotion(_ value:Bool){scene.reducedMotion=value;sideScene.reducedMotion=value}
+    func diagnosticReport()->String {
+        let memory=RPGMemoryMetrics.footprintMB.map{String(format:"%.1f MB",$0)} ?? "不可读取"
+        #if targetEnvironment(simulator)
+        let device="iOS Simulator（非真机性能验证）"
+        #else
+        let device=UIDevice.current.model+" / "+UIDevice.current.systemVersion
+        #endif
+        return "设备：\(device)\n视角：\(world.player.perspective.rawValue)\n采样：\(frameMetrics.count)/600，FPS \(String(format:"%.1f",frameMetrics.framesPerSecond))，p95 \(String(format:"%.2f",frameMetrics.p95Milliseconds)) ms\n累计 >50ms 帧：\(frameMetrics.hitches)/\(frameMetrics.totalFrames)\n内存 footprint：\(memory)\n区块：\(loadedChunks)/64\n解码器：\(media?.decoderCount ?? 0)，运行：\(media?.advancing ?? 0)，全局池：\(CardMediaCoordinator.ownedPlayers)\n媒体缓存：\(media?.cacheBytes ?? 0) bytes\n最近区块加载：\(String(format:"%.2f",chunkMilliseconds)) ms\n最近保存：\(String(format:"%.2f",saveMilliseconds)) ms\n最近视角切换首帧：\(String(format:"%.2f",switchMilliseconds)) ms\n敌人：\(world.combat.enemies.count)/128，事件：\(world.events.count)/256，行为：\(world.behaviors.bindings.count)/256\n世界：\(world.id) rev \(world.revision) schema \(world.schemaVersion)\n真实 iPhone Instruments 与持续性能：待验证"
     }
     func installStory(_ graph:RPGStoryGraph,bindings:[MediaBinding])->Bool {
         guard ready,!working else{return false}
@@ -478,8 +523,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         loading?.cancel(); if cache == nil { cache = RPGChunkCache(seed: world.seed) }
         let wanted = generator.priorityChunks(around: world.player.surface), epoch = generation, cache = cache
         loading = Task { [weak self] in
+            let started=ProcessInfo.processInfo.systemUptime
             let chunks = await cache?.load(wanted) ?? []
             guard !Task.isCancelled, let self, self.generation == epoch, self.active else { return }
+            self.chunkMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000
             self.chunks = chunks; self.loadedChunks = chunks.count; self.displayedChunk = self.world.player.surface.chunk
             RPGCombatRules.seedEnemies(world:&self.world,generator:self.generator,coordinates:chunks.map(\.coordinate))
             self.renderCurrent()

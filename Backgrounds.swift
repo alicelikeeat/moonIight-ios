@@ -19,6 +19,7 @@ enum GlassSurfaceSize: String, CaseIterable, Identifiable {
 }
 
 struct MoonGlassButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @Environment(\.moonGlassContainer) private var inGlass
     var prominent = false
     @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
@@ -27,8 +28,8 @@ struct MoonGlassButtonStyle: ButtonStyle {
         configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding).frame(minHeight: 44)
             .contentShape(Rectangle())
             .background { if !inGlass { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) } }
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reducedMotion ? 0.95 : 1)
+            .animation(reducedMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

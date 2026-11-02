@@ -20,6 +20,7 @@ enum RPGWorldCodec {
             let defaults: [String: Any] = ["videoBudget": 2, "backgroundBindingIDs": [String](), "removedGeneratedIDs": [String](),
                 "damage": [String: Int](), "inventory": ["wood":12,"stone":8], "undo": [String](), "redo": [String](), "events": [String](), "isCreativeCopy": false]
             for (key,value) in defaults where object[key] == nil { object[key] = value }
+            if object["behaviors"] == nil { object["behaviors"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RPGBehaviorState())) }
             if object["story"] == nil { object["story"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RPGStoryState())) }
             if var story = object["story"] as? [String: Any] {
                 if story["mediaPositions"] == nil { story["mediaPositions"] = [String: Double]() }; object["story"] = story

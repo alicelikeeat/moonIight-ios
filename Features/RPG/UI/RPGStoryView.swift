@@ -5,6 +5,7 @@ struct RPGStoryView: View {
     @ObservedObject var session: RPGSession
     @EnvironmentObject private var model:AppModel
     let travel: (RPGAnchorID) -> Void
+    var backTitle="返回工具"
     private var graph: RPGStoryGraph { session.world.story.activeGraph }
     private var progress: RPGStoryProgress? { session.world.story.activeProgress }
     private var node: RPGStoryNode? { graph.nodes.first{$0.id == (progress?.current ?? graph.start)} }
@@ -53,7 +54,7 @@ struct RPGStoryView: View {
             }
         }.navigationTitle("剧情与任务").buttonStyle(MoonGlassButtonStyle())
             .navigationBarBackButtonHidden(true)
-            .toolbar { ToolbarItem(placement:.navigationBarLeading) { Button("返回工具") { dismiss() }.accessibilityIdentifier("rpg-story-back") } }
+            .toolbar { ToolbarItem(placement:.navigationBarLeading) { Button(backTitle) { dismiss() }.accessibilityIdentifier("rpg-story-back") } }
             .onAppear { session.prepareStory() }
     }
     private func available(_ condition: RPGStoryCondition?) -> Bool {

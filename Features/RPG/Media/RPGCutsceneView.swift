@@ -16,6 +16,12 @@ struct RPGCutsceneView:View {
             Text(player.notice.isEmpty ? "本地媒体 · 可继续或跳过" : player.notice).font(.caption)
             Button(player.audible ? "关闭演出声音":"开启演出声音"){player.toggleSound()}
                 .accessibilityIdentifier("rpg-cutscene-sound")
+        }.overlay(alignment:.topLeading){
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests"){
+                Text("演出测试状态").font(.system(size:1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("rpg-cutscene-probe").accessibilityValue(player.probe)
+            }
+            #endif
         }.onAppear{player.activate()}
             .onDisappear{progress(player.seconds);player.shutdown()}
             .onReceive(NotificationCenter.default.publisher(for:UIApplication.willResignActiveNotification)){_ in progress(player.seconds);player.pause()}
@@ -31,6 +37,8 @@ struct RPGCutsceneView:View {
     private var activated=false
     private var targets:[RPGMediaNode]=[]
     @Published private(set) var audible=false
+    @Published private(set) var probe=""
+    private var lastProbe=0.0
     @Published private(set) var notice=""
     private var observer:AnyCancellable?
     init(world:WorldState,bindingID:String,store:MediaStore,seconds:Double,loop:Bool?,muted:Bool?){
@@ -46,7 +54,14 @@ struct RPGCutsceneView:View {
         let fallback=SKLabelNode(text:"媒体缺失时仍可阅读字幕并继续");fallback.fontSize=12;fallback.position=CGPoint(x:160,y:90);scene.addChild(fallback)
         let parent=SKNode();parent.position=CGPoint(x:160,y:90);scene.addChild(parent)
         if let target=RPGMediaSprites.attach(ownerID:"cutscene",bindingID:bindingID,role:.cutscene,parent:parent,world:configured,size:CGSize(width:320,height:180)){targets=[target]}
-        scene.onFrame = { [weak media] time in media?.frame(time) }
+        scene.onFrame = { [weak self] time in
+            guard let self else{return};self.media.frame(time)
+            #if DEBUG
+            if time-self.lastProbe>=0.5,ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests"){
+                self.lastProbe=time;self.probe="players=\(self.media.decoderCount);frames=\(self.media.frameCount);muted=\(self.media.muted ? 1:0);global=\(CardMediaCoordinator.ownedPlayers)"
+            }
+            #endif
+        }
         observer=media.$notice.sink{[weak self] value in self?.notice=value}
     }
     var seconds:Double{targets.first.map{media.position($0.binding.mediaID)} ?? initial}
