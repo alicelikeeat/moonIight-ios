@@ -126,7 +126,9 @@ private actor CardFrameRenderer {
         let feed = CardMediaFrameFeed(); feed.show(cache.value(id)); feeds[id] = feed; return feed
     }
     func configure(entries: [MediaEntry], requested: Int, active: Bool) {
+        let oldIDs = Set(self.entries.keys)
         self.entries = Dictionary(entries.filter { $0.kind != .embed }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for id in oldIDs.subtracting(self.entries.keys) { cache.remove(id); feeds[id]?.show(nil) }
         self.requested = requested; self.active = active
         if !active { mute() }
         reconcile()
@@ -145,7 +147,7 @@ private actor CardFrameRenderer {
         let visibleIDs = Set(values.filter { $0.visibility != .hidden }.map(\.cardID))
         for id in Array(snapshots.keys) where !visibleIDs.contains(id) { snapshots[id]?.visibility = .hidden }
         for value in values {
-            var snapshot = snapshots[value.cardID] ?? CardPlaybackSnapshot(mediaID: value.mediaID)
+            var snapshot = snapshots[value.cardID].flatMap { $0.mediaID == value.mediaID ? $0 : nil } ?? CardPlaybackSnapshot(mediaID: value.mediaID)
             snapshot.visibility = value.visibility
             snapshots[value.cardID] = snapshot
         }
@@ -206,7 +208,7 @@ private actor CardFrameRenderer {
         guard let slot = slots.removeValue(forKey: id) else { return }; Self.ownedPlayers -= 1
         let seconds = slot.player.currentTime().seconds
         for key in Array(snapshots.keys) where snapshots[key]?.mediaID == id {
-            if seconds.isFinite { snapshots[key]?.seconds = max(0, seconds) }
+            if seconds.isFinite && snapshots[key]?.visibility != .hidden { snapshots[key]?.seconds = max(0, seconds) }
             if cache.value(id) != nil { snapshots[key]?.frameReference = id }
         }
         if !slot.player.isMuted { mute() }

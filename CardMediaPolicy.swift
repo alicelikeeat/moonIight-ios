@@ -100,5 +100,6 @@ struct CardFrameLRU<Value> {
             cost -= old.cost
         }
     }
+    mutating func remove(_ key: String) { if let old = entries.removeValue(forKey: key) { cost -= old.cost } }
     mutating func removeAll() { entries.removeAll(); cost = 0 }
 }

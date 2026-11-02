@@ -58,7 +58,7 @@ struct LandlordGameView: View {
         .accessibilityIdentifier("landlord-table")
         .onAppear {
             present = true
-            store.preferences.normalize(available: Set(assets.map(\.id)))
+            store.preferences.normalize(available: Set(store.preferences.mediaIDs))
             store.activate(scenePhase == .active); configureMedia()
         }
         .onDisappear { present = false; store.activate(false); media.dispose() }
@@ -68,12 +68,12 @@ struct LandlordGameView: View {
         }
         .onChange(of: store.game.id) { _ in focus = nil; media.stop(clear: true); configureMedia(); updateVisibility() }
         .onChange(of: store.preferences) { _ in
-            store.preferences.normalize(available: Set(assets.map(\.id)))
+            store.preferences.normalize(available: Set(store.preferences.mediaIDs))
             store.persist()
             if store.preferences.style == .classic { media.stop(clear: true) }
             configureMedia(); updateVisibility()
         }
-        .onChange(of: assets) { _ in store.preferences.normalize(available: Set(assets.map(\.id))); configureMedia(); updateVisibility() }
+        .onChange(of: assets) { _ in store.preferences.normalize(available: Set(store.preferences.mediaIDs)); configureMedia(); updateVisibility() }
         .onChange(of: store.automatic) { _ in store.refresh() }
         .onChange(of: focus?.id) { _ in updatePause(); media.mute(); updateVisibility() }
         .onChange(of: settings) { _ in updatePause(); configureMedia(); updateVisibility() }
@@ -228,6 +228,10 @@ struct LandlordGameView: View {
                         .accessibilityIdentifier("landlord-test-memory")
                 }
                 #endif
+                if !Set(store.preferences.mediaIDs).isSubset(of: Set(assets.map(\.id))) {
+                    Text("失效素材对应的牌保持经典牌面，其他映射保持稳定。")
+                    Button("清理失效素材并重新映射") { store.preferences.normalize(available: Set(assets.map(\.id))) }
+                }
                 Section("选择图片或视频（\(store.preferences.mediaIDs.count)/54）") {
                     if assets.isEmpty { Text("请先在库中导入图片或视频；缺失素材自动显示经典牌面。") }
                     ForEach(assets) { entry in
