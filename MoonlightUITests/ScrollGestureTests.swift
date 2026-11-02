@@ -33,6 +33,7 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(modes.waitForExistence(timeout: 5))
         modes.buttons["同时"].tap()
         if app.switches["wall-loop"].value as? String == "0" { app.switches["wall-loop"].tap() }
+        XCTAssertEqual(app.switches["wall-loop"].value as? String, "1")
         if app.switches["wall-muted"].value as? String == "1" { app.switches["wall-muted"].tap() }
         app.buttons["wall-play-pause"].tap()
         func waitWall(_ predicate: @escaping ([String: Int]) -> Bool) {
@@ -47,7 +48,7 @@ final class ScrollGestureTests: XCTestCase {
             if result != .completed { print("WALL_TIMEOUT: \(probe.value as? String ?? "missing")"); print(app.debugDescription) }
             XCTAssertEqual(result, .completed)
         }
-        waitWall { $0["selected"] == 10 && ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 11) <= ($0["limit"] ?? 0) && ($0["audible"] ?? 2) <= 1 }
+        waitWall { $0["selected"] == 10 && $0["loop"] == 1 && ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 11) <= ($0["limit"] ?? 0) && ($0["audible"] ?? 2) <= 1 }
         let last = app.buttons["wall-tile-scroll-fixture-9"]
         guard revealListControl(last, in: app) else { return }
         XCTAssertTrue(last.isHittable, "The tenth cell is scrollable")

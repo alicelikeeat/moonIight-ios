@@ -49,8 +49,11 @@ struct TreasureVideoWallView: View {
                 Button("选择视频 · \(coordinator.selection.ids.count)/10") { selecting = true }
                     .accessibilityIdentifier("wall-select")
                 Spacer()
-                Toggle("循环", isOn: $coordinator.loop).fixedSize()
-                    .accessibilityIdentifier("wall-loop")
+                HStack(spacing: 8) {
+                    Text("循环")
+                    Toggle("循环", isOn: $coordinator.loop).labelsHidden().frame(width: 51, height: 44)
+                        .accessibilityIdentifier("wall-loop")
+                }.fixedSize()
             }
             Picker("播放模式", selection: $coordinator.mode) {
                 ForEach(TreasureWallMode.allCases) { Text($0.title).tag($0) }
@@ -61,8 +64,11 @@ struct TreasureVideoWallView: View {
                 }.disabled(coordinator.selection.ids.isEmpty).accessibilityIdentifier("wall-play-pause")
                 Button("停止") { coordinator.stop() }.accessibilityIdentifier("wall-stop")
                 Spacer()
-                Toggle("全部静音", isOn: $coordinator.muted).fixedSize()
-                    .accessibilityIdentifier("wall-muted")
+                HStack(spacing: 8) {
+                    Text("全部静音")
+                    Toggle("全部静音", isOn: $coordinator.muted).labelsHidden().frame(width: 51, height: 44)
+                        .accessibilityIdentifier("wall-muted")
+                }.fixedSize()
             }
         }.buttonStyle(MoonGlassButtonStyle()).frame(minHeight: 44).padding(12).moonSingleGlass().padding(.horizontal, 14)
     }
@@ -128,6 +134,7 @@ struct TreasureVideoWallView: View {
             let values: [String: Int] = ["selected": coordinator.selection.ids.count, "players": coordinator.players.count,
                 "audible": coordinator.players.values.filter { !$0.isMuted }.count,
                 "limit": coordinator.decoderLimit, "playing": coordinator.playing ? 1 : 0,
+                "loop": coordinator.loop ? 1 : 0, "muted": coordinator.muted ? 1 : 0,
                 "advancing": coordinator.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count]
             diagnosticValue = String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
             try? await Task.sleep(nanoseconds: 200_000_000)
@@ -173,8 +180,19 @@ private final class WallVisibilityView: UIView {
         let visible = !isHidden && frame.width > 0 && frame.height > 0 && !intersection.isNull && intersection.width * intersection.height > frame.width * frame.height * 0.2
         emit(visible)
     }
-    private func emit(_ visible: Bool) { if lastVisible != visible { lastVisible = visible; changed?(visible) } }
-    func detach() { observation?.invalidate(); observation = nil; emit(false); changed = nil }
+    private func emit(_ visible: Bool) {
+        guard lastVisible != visible else { return }
+        lastVisible = visible
+        Task { @MainActor [weak self] in
+            guard let self, self.lastVisible == visible else { return }
+            self.changed?(visible)
+        }
+    }
+    func detach() {
+        observation?.invalidate(); observation = nil; lastVisible = false
+        let callback = changed; changed = nil
+        Task { @MainActor in callback?(false) }
+    }
 }
 
 private struct TreasureVideoSelector: View {
