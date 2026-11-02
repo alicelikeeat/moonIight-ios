@@ -348,7 +348,7 @@ private final class MoonTreasureScene: SKScene {
     func resumeCovers(_ entries: [MediaEntry]) {
         previewTasks.forEach { $0.cancel() }; previewTasks.removeAll()
         for entry in entries {
-            guard let crop = childNode(withName: entry.id)?.childNode(withName: "preview-crop") as? SKCropNode,
+            guard let crop = children.first(where: { $0.name == entry.id })?.childNode(withName: "preview-crop") as? SKCropNode,
                   let preview = crop.children.first as? SKSpriteNode, preview.texture == nil else { continue }
             loadPreview(for: entry, into: preview, fill: preview.size)
         }

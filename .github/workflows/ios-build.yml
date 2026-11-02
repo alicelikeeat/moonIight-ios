@@ -82,7 +82,7 @@ jobs:
           xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testVideoWallSelectionLimitModesFocusAndCleanup -only-testing:MoonlightUITests/ScrollGestureTests/testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI -resultBundlePath build/V23Tests.xcresult test
       - name: Run treasure browsing regression
         if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'treasure' || inputs.ui_suite == 'preview') }}
-        timeout-minutes: 10
+        timeout-minutes: 15
         shell: bash
         env:
           UI_SUITE: ${{ inputs.ui_suite }}

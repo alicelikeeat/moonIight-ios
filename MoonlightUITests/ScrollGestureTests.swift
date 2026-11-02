@@ -144,7 +144,10 @@ final class ScrollGestureTests: XCTestCase {
             XCTAssertTrue(app.buttons["treasure-video-mode"].waitForExistence(timeout: 5))
         }
         func select(_ title: String) {
-            app.buttons["treasure-video-mode"].tap()
+            let menu = app.buttons["treasure-video-mode"]
+            let expected = title == "静止封面" ? "静止封面" : "自动播放"
+            if menu.value as? String == expected { return }
+            menu.tap()
             let option = app.buttons[title]
             XCTAssertTrue(option.waitForExistence(timeout: 3))
             option.tap()
