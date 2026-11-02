@@ -218,7 +218,7 @@ struct MoonTreasureMapView: View {
             let values: [String: Int] = ["players": videoPreviews.players.count,
                 "advancing": videoPreviews.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count,
                 "muted": videoPreviews.players.values.allSatisfy(\.isMuted) ? 1 : 0,
-                "nodes": scene.videoPreviewCount, "centerIcons": scene.centerPlayIconCount, "auto": videoAutoplay ? 1 : 0]
+                "nodes": scene.videoPreviewCount, "centerIcons": scene.centerPlayIconCount, "auto": videoAutoplay ? 1 : 0, "configuration": scene.configurationVersion]
             videoDiagnostics = String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
@@ -290,6 +290,7 @@ private final class MoonTreasureScene: SKScene {
     private var dragAnchors: [ObjectIdentifier: CGPoint] = [:]
     private var savedPhysics: [ObjectIdentifier: (dynamic: Bool, gravity: Bool, rotation: Bool)] = [:]
     #if DEBUG
+    private(set) var configurationVersion = 0
     private var lastDiagnosticsTime: TimeInterval = 0
     private var diagnosticMoves = 0
     private var diagnosticCancellations = 0
@@ -323,6 +324,9 @@ private final class MoonTreasureScene: SKScene {
     func configure(with entries: [MediaEntry],
                    onSelect: @escaping (String) -> Void,
                    onLongPress: @escaping (String) -> Void) {
+        #if DEBUG
+        configurationVersion += 1
+        #endif
         select = onSelect
         longPress = onLongPress
         stopMotion()

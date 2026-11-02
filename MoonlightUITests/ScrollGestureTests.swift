@@ -176,6 +176,15 @@ final class ScrollGestureTests: XCTestCase {
         app.terminate(); app.launch()
         openMap()
         waitForPreview { $0["auto"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        if layout.label == "自由" { layout.tap() }
+        waitForPreview { $0["nodes"] == 3 && ($0["advancing"] ?? 0) > 0 }
+        let before = app.staticTexts["treasure-video-probe"].value as? String ?? ""
+        let beforeState = (try? JSONDecoder().decode([String: Int].self, from: Data(before.utf8))) ?? [:]
+        app.buttons["treasure-wall-mode"].tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 }
+        app.buttons["treasure-free-mode"].tap()
+        waitForPreview { $0["nodes"] == 3 && ($0["advancing"] ?? 0) > 0 && $0["configuration"] == beforeState["configuration"] }
         select("静止封面")
         waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
         attach(app, name: "review-treasure-static-video-no-center-icon")
