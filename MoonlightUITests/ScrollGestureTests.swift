@@ -2,6 +2,24 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGSkeletonCanValidateExitAndPreserveOtherModules() {
+        let app = launch(discover: false)
+        app.buttons["navigation-me"].tap()
+        let entrance = app.buttons["me-rpg-entrance"]
+        XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()
+        XCTAssertTrue(app.buttons["rpg-close"].waitForExistence(timeout: 5))
+        app.buttons["rpg-validate"].tap()
+        XCTAssertTrue(app.staticTexts["世界数据往返校验通过。"].waitForExistence(timeout: 5))
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout: 5))
+        app.buttons["me-treasure-map"].tap()
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
+        app.buttons["treasure-map-close"].tap()
+        app.buttons["navigation-home"].tap()
+        XCTAssertTrue(app.buttons["navigation-me"].exists)
+    }
+
+    @MainActor
     private func waitLandlord(_ app: XCUIApplication, _ condition: @escaping ([String: String]) -> Bool, timeout: TimeInterval = 20) {
         let probe = app.staticTexts["landlord-probe"]
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
