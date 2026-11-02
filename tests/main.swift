@@ -64,4 +64,4 @@ check(MediaSearchIntent.parse("搜索视频 月亮") == MediaSearchIntent(query:
 check(MediaSearchIntent.parse("搜索图片 猫")?.kind == "image", "image search filter")
 check(MediaSearchIntent.parse("搜索")?.query == "", "focus empty search")
 check(MediaSearchIntent.parse("打开库") == nil, "non-search action stays non-search")
-print("V2.1 total: \(checks) checks passed")
+print("V2.3 total: \(checks) checks passed")

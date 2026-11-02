@@ -655,7 +655,9 @@ private final class MoonTreasureScene: SKScene {
     private func publishDragDiagnostics() {
         #if DEBUG
         guard ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests"),
-              let view, let card = children.first(where: { $0.name != nil }) else { return }
+              let view, let card = children.first(where: { node in
+                  node.name != nil && treasure(at: node.position) === node
+              }) else { return }
         let now = Date.timeIntervalSinceReferenceDate
         guard now - lastDiagnosticsTime >= 0.1 else { return }
         lastDiagnosticsTime = now

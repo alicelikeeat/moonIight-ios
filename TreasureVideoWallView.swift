@@ -11,8 +11,7 @@ struct TreasureVideoWallView: View {
     @AppStorage("treasure-wall-loop-v23") private var savedLoop = false
     @AppStorage("treasure-wall-muted-v23") private var savedMuted = false
     @State private var selecting = false
-    @State private var viewport = CGRect.zero
-    @State private var tileBounds: [String: CGRect] = [:]
+    @State private var diagnosticValue = ""
     private var videos: [MediaEntry] { TreasureRules.unique(model.mediaStore.items.filter { TreasurePlaybackCoordinator.playable($0) }, id: \.id) }
     private func entry(_ id: String) -> MediaEntry? { videos.first { $0.id == id } }
 
@@ -42,6 +41,7 @@ struct TreasureVideoWallView: View {
         .onChange(of: coordinator.muted) { savedMuted = $0; coordinator.refreshAudio() }
         .onChange(of: phase) { if $0 != .active { coordinator.suspend("已暂停；回到前台后点击播放，从当前视频开头恢复。") } }
         .overlay(alignment: .bottomLeading) { diagnostics }
+        .task { await updateDiagnostics() }
     }
     private var controls: some View {
         VStack(spacing: 10) {
@@ -57,7 +57,6 @@ struct TreasureVideoWallView: View {
             }.pickerStyle(.segmented).accessibilityIdentifier("wall-mode")
             HStack {
                 Button(coordinator.playing ? "暂停" : "播放") {
-                    updateVisibility()
                     if coordinator.playing { coordinator.pause() } else { coordinator.play() }
                 }.disabled(coordinator.selection.ids.isEmpty).accessibilityIdentifier("wall-play-pause")
                 Button("停止") { coordinator.stop() }.accessibilityIdentifier("wall-stop")
@@ -89,17 +88,13 @@ struct TreasureVideoWallView: View {
                     ForEach(coordinator.selection.ids, id: \.self) { id in
                         if let item = entry(id) {
                             tile(item).background {
-                                GeometryReader { proxy in
-                                    Color.clear.preference(key: WallTileBounds.self, value: [id: proxy.frame(in: .global)])
-                                }.allowsHitTesting(false)
+                                WallVisibilityMarker { visible in coordinator.setVisible(id, visible) }
+                                    .allowsHitTesting(false).accessibilityHidden(true)
                             }
                         }
                     }
                 }.padding(14)
             }
-            .background { GeometryReader { proxy in Color.clear.preference(key: WallViewportBounds.self, value: proxy.frame(in: .global)) }.allowsHitTesting(false) }
-            .onPreferenceChange(WallViewportBounds.self) { viewport = $0; updateVisibility() }
-            .onPreferenceChange(WallTileBounds.self) { tileBounds = $0; updateVisibility() }
             .onDisappear { coordinator.setVisible([]) }
             .accessibilityIdentifier("wall-grid")
         } else {
@@ -116,36 +111,70 @@ struct TreasureVideoWallView: View {
         TreasureWallTile(entry: entry, player: coordinator.players[entry.id], state: coordinator.states[entry.id] ?? "待播放",
             audible: coordinator.audioID == entry.id, open: { coordinator.focus(entry.id) }, sound: { coordinator.setAudio(entry.id) })
     }
-    private func updateVisibility() {
-        let ids = tileBounds.compactMap { id, frame -> String? in
-            let intersection = frame.intersection(viewport)
-            return !intersection.isNull && intersection.width * intersection.height > frame.width * frame.height * 0.2 ? id : nil
-        }
-        coordinator.setVisible(Set(ids))
-    }
     @ViewBuilder private var diagnostics: some View {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
-            let values: [String: Int] = ["selected": coordinator.selection.ids.count, "players": coordinator.players.count,
-                "audible": coordinator.players.values.filter { !$0.isMuted }.count,
-                "limit": coordinator.decoderLimit, "playing": coordinator.playing ? 1 : 0,
-                "advancing": coordinator.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count]
             Text("视频墙测试状态").font(.system(size: 1)).frame(height: 1).opacity(0.01)
                 .accessibilityIdentifier("wall-probe")
-                .accessibilityValue(String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? "")
+                .accessibilityValue(diagnosticValue)
                 .allowsHitTesting(false)
         }
         #endif
     }
+    private func updateDiagnostics() async {
+        #if DEBUG
+        guard ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") else { return }
+        while !Task.isCancelled {
+            let values: [String: Int] = ["selected": coordinator.selection.ids.count, "players": coordinator.players.count,
+                "audible": coordinator.players.values.filter { !$0.isMuted }.count,
+                "limit": coordinator.decoderLimit, "playing": coordinator.playing ? 1 : 0,
+                "advancing": coordinator.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count]
+            diagnosticValue = String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        #endif
+    }
+
 }
 
-private struct WallTileBounds: PreferenceKey {
-    static var defaultValue: [String: CGRect] { [:] }
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue(), uniquingKeysWith: { _, last in last }) }
+/// Native scroll observation avoids treating LazyVGrid prefetch as visibility.
+private struct WallVisibilityMarker: UIViewRepresentable {
+    let changed: (Bool) -> Void
+    func makeUIView(context: Context) -> WallVisibilityView { let view = WallVisibilityView(); view.changed = changed; return view }
+    func updateUIView(_ view: WallVisibilityView, context: Context) { view.changed = changed; view.setNeedsLayout() }
+    static func dismantleUIView(_ view: WallVisibilityView, coordinator: ()) { view.detach() }
 }
-private struct WallViewportBounds: PreferenceKey {
-    static var defaultValue: CGRect { .zero }
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+private final class WallVisibilityView: UIView {
+    var changed: ((Bool) -> Void)?
+    private weak var scroll: UIScrollView?
+    private var observation: NSKeyValueObservation?
+    private var lastVisible = false
+    override init(frame: CGRect) { super.init(frame: frame); isUserInteractionEnabled = false }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        var parent = superview
+        var enclosing: UIScrollView?
+        while let view = parent { if let value = view as? UIScrollView { enclosing = value; break }; parent = view.superview }
+        if scroll !== enclosing {
+            observation?.invalidate(); scroll = enclosing
+            observation = enclosing?.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                Task { @MainActor in self?.measure() }
+            }
+        }
+        measure()
+    }
+    private func measure() {
+        guard let window, let scroll else { emit(false); return }
+        let frame = convert(bounds, to: window)
+        let viewport = scroll.convert(scroll.bounds, to: window).intersection(window.bounds)
+        let intersection = frame.intersection(viewport)
+        let visible = !isHidden && frame.width > 0 && frame.height > 0 && !intersection.isNull && intersection.width * intersection.height > frame.width * frame.height * 0.2
+        emit(visible)
+    }
+    private func emit(_ visible: Bool) { if lastVisible != visible { lastVisible = visible; changed?(visible) } }
+    func detach() { observation?.invalidate(); observation = nil; emit(false); changed = nil }
 }
 
 private struct TreasureVideoSelector: View {
@@ -202,13 +231,13 @@ private struct TreasureWallTile: View {
     var body: some View {
         VStack(spacing: 4) {
             Button(action: open) {
-                ZStack {
+                Color.clear.aspectRatio(16.0 / 9.0, contentMode: .fit).overlay {
                     if let player { TreasureWallVideoSurface(player: player) }
                     else if let url = entry.coverURL {
                         AsyncImage(url: url) { $0.resizable().scaledToFit() } placeholder: { Image(systemName: "video") }
                     } else { Image(systemName: "video").font(.title) }
                     if state == "加载中" { ProgressView() }
-                }.aspectRatio(16 / 9, contentMode: .fit).frame(maxWidth: .infinity).clipped().contentShape(Rectangle())
+                }.frame(maxWidth: .infinity, minHeight: 44).clipped().contentShape(Rectangle())
             }.buttonStyle(.plain).accessibilityLabel("放大 " + entry.title).accessibilityIdentifier("wall-tile-" + entry.id)
             Text(entry.title).font(.caption).lineLimit(2)
             if player == nil || state != "就绪" { Text(state).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
