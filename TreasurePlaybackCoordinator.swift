@@ -28,6 +28,7 @@ import UIKit
     private var monitor: NWPathMonitor?
     private var revisions: [String: UUID] = [:]
     private var finished = Set<String>()
+    private var failedIDs = Set<String>()
     private var started = false
     private var audioOwned = false
     private var memoryLimited = false
@@ -115,7 +116,7 @@ import UIKit
         guard !selection.ids.isEmpty else { message = "请先选择 1–10 个视频。"; return }
         if !started {
             queue = TreasureWallQueue(ids: selection.ids, random: mode == .random)
-            currentID = queue.current; started = true; finished.removeAll()
+            currentID = queue.current; started = true; finished.removeAll(); failedIDs.removeAll()
         }
         playing = true; message = "播放中"; reconcile()
     }
@@ -126,7 +127,7 @@ import UIKit
         releaseAudio(); message = "已暂停，点击播放继续。"
     }
     func stop() {
-        playing = false; started = false; currentID = nil; finished.removeAll(); focusedID = nil
+        playing = false; started = false; currentID = nil; finished.removeAll(); failedIDs.removeAll(); focusedID = nil
         releasePlayers(); message = "已停止。"
     }
     func changeMode() { stop(); message = "已切换为\(mode.title)播放，点击播放开始。" }
@@ -140,8 +141,9 @@ import UIKit
     private var wanted: [String] {
         guard playing else { return [] }
         if mode != .simultaneous { return currentID.map { [$0] } ?? [] }
-        if let focusedID { return [focusedID] }
-        return TreasureWallPolicy.visible(ids: selection.ids, visible: visible, limit: decoderLimit)
+        if let focusedID { return finished.contains(focusedID) || failedIDs.contains(focusedID) ? [] : [focusedID] }
+        let pending = selection.ids.filter { !finished.contains($0) && !failedIDs.contains($0) }
+        return TreasureWallPolicy.visible(ids: pending, visible: visible, limit: decoderLimit)
     }
     private func updateBudget() {
         let process = ProcessInfo.processInfo
@@ -190,18 +192,21 @@ import UIKit
         }
     }
     private func failed(_ id: String) {
+        failedIDs.insert(id)
         states[id] = "播放失败，请检查网络或重新选择。"
         release(id)
         if mode != .simultaneous { playing = false; started = false; releaseAudio() }
         message = "有视频加载失败，可重新选择或停止后重试。"
+        if mode == .simultaneous { reconcile() }
     }
     private func ended(_ id: String) {
         guard playing, players[id] != nil else { return }
         if mode == .simultaneous {
             if loop { players[id]?.seek(to: .zero); players[id]?.play() }
             else {
-                finished.insert(id); states[id] = "已结束"; players[id]?.isMuted = true
+                finished.insert(id); states[id] = "已结束"; release(id)
                 if Set(selection.ids).isSubset(of: finished) { playing = false; started = false; releaseAudio(); message = "本轮播放完成。" }
+                else { reconcile() }
             }
         } else {
             guard currentID == id else { return }

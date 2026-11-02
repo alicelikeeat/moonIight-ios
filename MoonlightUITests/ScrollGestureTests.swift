@@ -74,6 +74,18 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.buttons["wall-select"].label.contains("10/10"))
         waitWall { $0["playing"] == 0 && $0["players"] == 0 }
         attach(app, name: "review-v23-stopped-wall")
+        app.buttons["wall-select"].tap()
+        app.buttons["wall-clear"].tap()
+        let single = app.buttons["wall-pick-scroll-fixture-0"]
+        guard revealListControl(single, in: app) else { return }
+        single.tap(); app.buttons["wall-selection-done"].tap()
+        modes.buttons["顺序"].tap()
+        if app.switches["wall-loop"].value as? String == "1" { app.switches["wall-loop"].tap() }
+        XCTAssertEqual(app.switches["wall-loop"].value as? String, "0")
+        app.buttons["wall-play-pause"].tap()
+        let message = app.staticTexts["wall-message"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "本轮播放完成。"), object: message)], timeout: 20), .completed)
+        waitWall { $0["players"] == 0 && $0["playing"] == 0 }
     }
 
     @MainActor
