@@ -145,7 +145,7 @@ enum RPGWorldEditing {
         try finish(next: &next, changes: [change], inventoryBefore: world.inventory, title: destroyed ? "破坏与掉落" : "方块受击")
         world = next
     }
-    private static func finish(next: inout WorldState, changes: [RPGEntityChange], inventoryBefore: [String: Int], title: String) throws {
+    static func finish(next: inout WorldState, changes: [RPGEntityChange], inventoryBefore: [String: Int], title: String) throws {
         let transaction = RPGEditTransaction(id: UUID().uuidString, changes: changes, inventoryBefore: inventoryBefore, inventoryAfter: next.inventory, title: title)
         next.undo.append(transaction); next.undo = Array(next.undo.suffix(32)); next.redo = []
         next.revision += 1
@@ -172,8 +172,12 @@ enum RPGWorldEditing {
                 let parts = change.id.split(separator: ":")
                 if parts.count == 4, let x = Int(parts[2]), let z = Int(parts[3]), SurfacePoint(x: x, z: z) == world.player.surface { throw RPGEditError.occupied }
             }
+            if restoredGenerated, let player = world.player.side, world.player.perspective == .side,
+               let generated = RPGProjectionRules.sideBaseEntities(world: world, generator: RPGWorldGenerator(seed: world.seed)).first(where: { $0.id == change.id }),
+               generated.physics.sideSolid && RPGProjectionRules.occupies(generated, player) { throw RPGEditError.occupied }
             let value = inverse ? change.before : change.after
             if let value, value.surface == world.player.surface && value.physics.topDownSolid { throw RPGEditError.occupied }
+            if let value, let player = world.player.side, world.player.perspective == .side, value.physics.sideSolid && RPGProjectionRules.occupies(value,player) { throw RPGEditError.occupied }
             next.entities.removeAll { $0.id == change.id }; if let value { next.entities.append(value) }
             next.removedGeneratedIDs.removeAll { $0 == change.id }
             if inverse ? change.removedBefore : change.removedAfter { next.removedGeneratedIDs.append(change.id) }

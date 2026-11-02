@@ -18,10 +18,19 @@ struct RPGShellView: View {
                 Text("256 × 256 · \(session.loadedChunks)/64 区块").font(.caption)
                     .accessibilityIdentifier("rpg-loaded-chunks").accessibilityValue(String(session.loadedChunks))
                 Spacer()
-                Text("x \(session.world.player.surface.x) · z \(session.world.player.surface.z)").font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-position")
+                Text(positionLabel).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-position")
             }
-            SpriteView(scene: session.scene, options: [.allowsTransparency])
-                .clipShape(RoundedRectangle(cornerRadius: 20)).accessibilityLabel("世界场景")
+            Group {
+                if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
+                else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
+            }.clipShape(RoundedRectangle(cornerRadius: 20)).accessibilityLabel("世界场景")
+            HStack {
+                Button(session.world.player.perspective == .topDown ? "进入侧视" : "返回俯视") { session.toggleProjection() }
+                    .accessibilityIdentifier("rpg-perspective")
+                Spacer()
+                Text(session.world.player.perspective == .topDown ? "俯视地表" : "侧视切片")
+                    .font(.caption).accessibilityIdentifier("rpg-projection-evidence").accessibilityValue(session.projectionEvidence)
+            }
             Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
             HStack {
                 Button("放置") { session.placeSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-place")
@@ -49,7 +58,11 @@ struct RPGShellView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.activate() }
             .sheet(isPresented: $tools) { toolPanel }
-            .onChange(of: tools) { visible in session.scene.isPaused = visible || !session.active }
+            .onChange(of: tools) { visible in session.setOverlay(visible) }
+    }
+    private var positionLabel: String {
+        if session.world.player.perspective == .side, let point = session.world.player.side { return "u \(point.horizontal) · y \(point.height)" }
+        return "x \(session.world.player.surface.x) · z \(session.world.player.surface.z)"
     }
     private var toolPanel: some View {
         NavigationStack {
@@ -57,6 +70,8 @@ struct RPGShellView: View {
                 Picker("模式", selection: Binding(get: { session.world.player.mode }, set: { session.setMode($0) })) {
                     Text("冒险").tag(RPGGameMode.adventure); Text("创造").tag(RPGGameMode.creative)
                 }.pickerStyle(.segmented).accessibilityIdentifier("rpg-mode")
+                Button("前往双界入口（创造）") { session.travelToTemple() }.accessibilityIdentifier("rpg-temple")
+                Button("选择映射区空格") { session.chooseMappedSite() }.accessibilityIdentifier("rpg-choose-mapped")
                 Picker("方块", selection: $session.definition) { ForEach(BlockDefinition.all) { Text($0.title).tag($0.id) } }
                 Picker("地表操作", selection: $session.tool) {
                     Text("选择").tag(RPGTool.select); Text("连续绘制").tag(RPGTool.paint); Text("删除").tag(RPGTool.erase)

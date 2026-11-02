@@ -12,6 +12,7 @@ import UIKit
     private let avatar = SKShapeNode(circleOfRadius: 8)
     private let selection = SKShapeNode(rectOf: CGSize(width: 23, height: 23), cornerRadius: 3)
     private let worldCamera = SKCameraNode()
+    private(set) var sharedIDs: [String] = []
     private var maps: [ChunkCoordinate: SKTileMapNode] = [:]
     private var groups: [RPGTerrain: SKTileGroup] = [:]
     override init() {
@@ -35,13 +36,14 @@ import UIKit
             for z in 0..<32 { for x in 0..<32 { map.setTileGroup(groups[chunk.terrain[z * 32 + x]], forColumn: x, row: z) } }
             ground.addChild(map); maps[chunk.coordinate] = map
         }
-        objects.removeAllChildren()
+        objects.removeAllChildren(); sharedIDs = []
         for entity in chunks.flatMap({ RPGWorldEditing.entities(in: $0, world: world) }) {
             guard let point = entity.surface, wanted.contains(point.chunk ?? .init(x: -1, z: -1)) else { continue }
             let node = SKShapeNode(rectOf: CGSize(width: 16, height: 18), cornerRadius: 4)
             node.fillColor = entity.definitionID == "wood" ? .systemBrown : .systemGray
             node.strokeColor = .white.withAlphaComponent(0.5); node.position = Self.position(point); node.name = entity.id
             objects.addChild(node)
+            if entity.scope == .shared { sharedIDs.append(entity.id) }
         }
         let generator = RPGWorldGenerator(seed: world.seed)
         for anchor in generator.anchors where wanted.contains(anchor.point.chunk!) {

@@ -2,6 +2,28 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGSharedEntityAndSafeDualProjection() {
+        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        app.segmentedControls["rpg-mode"].buttons["创造"].tap()
+        app.buttons["rpg-temple"].tap(); app.buttons["rpg-choose-mapped"].tap()
+        app.buttons["rpg-tools-close"].tap(); app.buttons["rpg-place"].tap()
+        let evidence = app.staticTexts["rpg-projection-evidence"]
+        let hasShared = NSPredicate { _,_ in (evidence.value as? String ?? "").contains("placed:") }
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:hasShared,object:evidence)],timeout:15),.completed)
+        let top = evidence.value as? String ?? ""
+        app.buttons["rpg-perspective"].tap()
+        let side = NSPredicate { _,_ in (evidence.value as? String ?? "").hasPrefix("side:") }
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:side,object:evidence)],timeout:10),.completed)
+        XCTAssertEqual((evidence.value as? String ?? "").dropFirst(5),top.dropFirst(8))
+        attach(app,name:"review-rpg-p4-side")
+        app.buttons["rpg-move-0-1"].tap()
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout:5))
+    }
+
+    @MainActor
     func testRPGBuildUndoSaveAndReopen() {
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()

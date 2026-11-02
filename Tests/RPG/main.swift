@@ -139,3 +139,42 @@ var hostile = editing; hostile.id = "../escape"
 do { try await disk.save(hostile); preconditionFailure("path traversal") } catch { checks += 1 }
 try? FileManager.default.removeItem(at:saveRoot)
 print("RPG P3: \(checks) total checks passed")
+
+var dual = WorldState(seed:42)
+dual.generated=true;dual.sideRegions=[generated.sideRegion];dual.player.mode = .creative;dual.player.surface=generated.anchor(.temple)
+let beforeSwitch=dual
+try RPGProjectionRules.switchPerspective(world:&dual,generator:generated)
+check(dual.player.perspective == .side && dual.player.side == generated.sideRegion.landing,"safe mapped entrance")
+try RPGProjectionRules.switchPerspective(world:&dual,generator:generated)
+check(dual.player.perspective == .topDown && dual.player.surface == beforeSwitch.player.surface,"return uses explicit surface entrance")
+dual.player.inCombat=true
+let fighting=dual
+editRejected("combat locks projection") {try RPGProjectionRules.switchPerspective(world:&dual,generator:generated)}
+check(dual==fighting,"combat rejection preserves all state")
+dual.player.inCombat=false;dual.player.surface=generated.anchor(.spawn)
+editRejected("no arbitrary rotation anywhere") {try RPGProjectionRules.switchPerspective(world:&dual,generator:generated)}
+dual.player.surface=generated.anchor(.temple)
+let sharedPoint=(0..<generated.sideRegion.width).map{SurfacePoint(x:generated.sideRegion.origin.x+$0,z:generated.sideRegion.origin.z)}.first{ $0 != dual.player.surface && generated.tile(at:$0)?.passable == true && !generated.protected($0) && RPGWorldEditing.entity(at:$0,world:dual,generator:generated)==nil }!
+try RPGWorldEditing.place([.init(point:sharedPoint,definitionID:"wood")],world:&dual,generator:generated)
+let sharedID=dual.entities[0].id
+check(dual.entities[0].scope == .shared && RPGProjectionRules.sideEntities(world:dual,generator:generated).contains{$0.id==sharedID},"same constructed identity in both projections")
+try RPGProjectionRules.switchPerspective(world:&dual,generator:generated)
+let sharedCell=dual.entities[0].side!
+try RPGProjectionRules.hitSide(sharedCell,world:&dual,generator:generated,force:true)
+check(!dual.entities.contains{$0.id==sharedID} && !RPGProjectionRules.sideEntities(world:dual,generator:generated).contains{$0.id==sharedID},"side destruction reflected in surface data")
+try RPGWorldEditing.undo(world:&dual)
+check(dual.entities.contains{$0.id==sharedID},"undo restores shared identity")
+let sideOnly=SidePlacement(regionID:generated.sideRegion.id,horizontal:24,height:10)
+try RPGProjectionRules.placeSide(sideOnly,definitionID:"platform",world:&dual,generator:generated)
+let sideID=dual.entities.last!.id
+check(dual.entities.last!.scope == .sideOnly && dual.entities.last!.surface == nil && !TopDownProjection().visibleEntities(in:dual).contains{$0.id==sideID},"side height is independent and scoped")
+let savedDual=try RPGWorldCodec.decode(RPGWorldCodec.encode(dual))
+check(savedDual == dual,"both projections share one save")
+var landingBlocked=WorldState(seed:42)
+landingBlocked.generated=true;landingBlocked.sideRegions=[generated.sideRegion];landingBlocked.isCreativeCopy=true;landingBlocked.parentWorldID="original";landingBlocked.player.mode = .creative
+try RPGWorldEditing.place([.init(point:generated.anchor(.temple),definitionID:"wood")],world:&landingBlocked,generator:generated)
+landingBlocked.player.surface=generated.anchor(.temple)
+let blockedBefore=landingBlocked
+editRejected("blocked landing never partially switches") {try RPGProjectionRules.switchPerspective(world:&landingBlocked,generator:generated)}
+check(landingBlocked == blockedBefore,"blocked landing rollback")
+print("RPG P4: \(checks) total checks passed")

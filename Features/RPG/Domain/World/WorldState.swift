@@ -37,7 +37,7 @@ struct SideRegion: Codable, Equatable, Identifiable, Sendable {
         point.z == origin.z && point.x >= origin.x && point.x - origin.x < width
     }
     var valid: Bool {
-        !id.isEmpty && origin.valid && (1...256).contains(width) && width <= 256 - origin.x &&
+        !id.isEmpty && id.count <= 64 && origin.valid && (1...256).contains(width) && width <= 256 - origin.x &&
         landing.regionID == id && (0..<width).contains(landing.horizontal) && (0..<64).contains(landing.height)
     }
 }
