@@ -206,8 +206,10 @@ final class ScrollGestureTests: XCTestCase {
             let width = before["width"] ?? 1, height = before["height"] ?? 1
             let screen = app.coordinate(withNormalizedOffset: .zero)
             let start = screen.withOffset(CGVector(dx: before["x"] ?? 0, dy: before["y"] ?? 0))
+            let startFraction = ((before["y"] ?? 0) - (before["originY"] ?? 0)) / max(1, height)
+            let targetFraction = startFraction < 0.5 ? 0.85 : 0.15
             let end = screen.withOffset(CGVector(dx: (before["originX"] ?? 0) + width * x,
-                                                dy: (before["originY"] ?? 0) + height * 0.3))
+                                                dy: (before["originY"] ?? 0) + height * targetFraction))
             start.press(forDuration: 0.05, thenDragTo: end,
                         withVelocity: .slow, thenHoldForDuration: 1.2)
             var after = snapshot()
