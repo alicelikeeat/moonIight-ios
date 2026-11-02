@@ -22,6 +22,7 @@ struct LandlordGameView: View {
     @State private var history = false
     @State private var focus: LandlordCard?
     @State private var layouts: [CardLayout] = []
+    @State private var visibleCards = Set<Int>()
     @State private var present = false
     @State private var diagnostic = ""
     @Namespace private var movement
@@ -197,7 +198,7 @@ struct LandlordGameView: View {
     }
     private func face(_ card: LandlordCard, role: CardPreviewRole, z: Int, viewport: CGRect, width: CGFloat, height: CGFloat) -> some View {
         let id = store.preferences.style == .media ? mapping.assignments[card.id] : nil
-        return LandlordCardFace(card: card, feed: id.map { media.feed($0) })
+        return LandlordCardFace(card: card, feed: visibleCards.contains(card.id) ? id.map { media.feed($0) } : nil)
             .frame(width: width, height: height)
             .background { GeometryReader { geometry in
                 Color.clear.preference(key: CardLayoutKey.self, value: [CardLayout(card: card.id, rect: geometry.frame(in: .global), viewport: viewport, role: role, z: z)])
@@ -284,11 +285,11 @@ struct LandlordGameView: View {
     }
     private func updatePause() { store.paused = focus != nil || settings || history; store.refresh() }
     private func configureMedia() {
-        media.configure(entries: assets, requested: store.preferences.budget,
+        media.configure(entries: assets.filter { store.preferences.mediaIDs.contains($0.id) }, requested: store.preferences.budget,
                         active: present && scenePhase == .active && store.preferences.style == .media && !settings && !history)
     }
     private func updateVisibility() {
-        guard store.preferences.style == .media else { media.update([], focus: nil); return }
+        guard store.preferences.style == .media else { visibleCards = []; media.update([], focus: nil); return }
         let valid = Set(assets.map(\.id))
         let cardIDs = Set(store.game.hands[0].map(\.id) + store.game.history.suffix(3).flatMap { $0.cards.map(\.id) })
         let source = layouts.filter { cardIDs.contains($0.card) && (focus == nil ? $0.role != .focus : $0.role == .focus) }
@@ -302,6 +303,13 @@ struct LandlordGameView: View {
             let candidate = CardMediaCandidate(cardID: layout.card, mediaID: id, role: layout.role, z: layout.z, visibility: visibility)
             if best[layout.card].map({ $0.role.rawValue < candidate.role.rawValue || $0.z < candidate.z }) ?? true { best[layout.card] = candidate }
         }
+        // Focus may arrive before its geometry preference. Keep the same asset
+        // in its existing slot instead of releasing and recreating it for zoom.
+        if let focus, best[focus.id] == nil, let id = mapping.assignments[focus.id], valid.contains(id) {
+            best[focus.id] = .init(cardID: focus.id, mediaID: id, role: .focus, z: 10000, visibility: .visible)
+        }
+        let visible = Set(best.values.filter { $0.visibility != .hidden }.map(\.cardID))
+        if visibleCards != visible { visibleCards = visible }
         media.update(Array(best.values), focus: focus?.id)
     }
 }
