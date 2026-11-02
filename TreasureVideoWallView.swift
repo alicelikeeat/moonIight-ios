@@ -21,7 +21,7 @@ struct TreasureVideoWallView: View {
             Text(coordinator.message).font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("wall-message")
             if coordinator.selection.recoveredOverflow {
-                Text("旧记录超过 10 个，已保留前 10 个视频。")
+                Text("旧记录超过 10 个，已按上限恢复；当前有效选择 \(coordinator.selection.ids.count) 个。")
                     .font(.caption).accessibilityIdentifier("wall-restored-limit-notice")
             }
             if coordinator.mode == .simultaneous && coordinator.selection.ids.count > coordinator.decoderLimit {
@@ -111,7 +111,7 @@ struct TreasureVideoWallView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     if let id = coordinator.currentID ?? coordinator.selection.ids.first, let item = entry(id) { tile(item) }
-                    Text("队列：\(coordinator.selection.ids.compactMap { entry($0)?.title }.joined(separator: " → "))")
+                    Text("选择顺序：\(coordinator.selection.ids.compactMap { entry($0)?.title }.joined(separator: " → "))")
                         .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
                 }.padding(14)
             }.accessibilityIdentifier("wall-single")
@@ -139,6 +139,7 @@ struct TreasureVideoWallView: View {
                 "audible": coordinator.players.values.filter { !$0.isMuted }.count,
                 "limit": coordinator.decoderLimit, "playing": coordinator.playing ? 1 : 0,
                 "loop": coordinator.loop ? 1 : 0, "muted": coordinator.muted ? 1 : 0,
+                "ownedTotal": TreasurePlaybackCoordinator.ownedPlayerCount,
                 "advancing": coordinator.players.values.filter { $0.rate > 0 && $0.currentTime().seconds > 0.05 }.count]
             diagnosticValue = String(data: (try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)) ?? Data(), encoding: .utf8) ?? ""
             try? await Task.sleep(nanoseconds: 200_000_000)

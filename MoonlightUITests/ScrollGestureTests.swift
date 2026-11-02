@@ -66,14 +66,20 @@ final class ScrollGestureTests: XCTestCase {
         for mode in ["顺序", "随机"] {
             modes.buttons[mode].tap(); app.buttons["wall-play-pause"].tap()
             waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 }
+            if mode == "随机" {
+                XCUIDevice.shared.press(.home); app.activate()
+                waitWall { $0["playing"] == 0 && $0["players"] == 0 && $0["ownedTotal"] == 0 }
+            }
             app.buttons["wall-stop"].tap()
             waitWall { $0["players"] == 0 }
         }
+        app.buttons["wall-play-pause"].tap()
+        waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 }
         freeMode.tap()
         XCTAssertFalse(app.buttons["wall-select"].exists)
         wallMode.tap()
         XCTAssertTrue(app.buttons["wall-select"].label.contains("10/10"))
-        waitWall { $0["playing"] == 0 && $0["players"] == 0 }
+        waitWall { $0["playing"] == 0 && $0["players"] == 0 && $0["ownedTotal"] == 0 }
         attach(app, name: "review-v23-stopped-wall")
         app.buttons["wall-select"].tap()
         app.buttons["wall-clear"].tap()

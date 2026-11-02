@@ -31,6 +31,10 @@ import UIKit
     private var failedIDs = Set<String>()
     private var started = false
     private var audioOwned = false
+    private var previousAudio: (category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions)?
+    #if DEBUG
+    static private(set) var ownedPlayerCount = 0
+    #endif
     private var memoryLimited = false
 
     static func playable(_ entry: MediaEntry) -> Bool {
@@ -175,6 +179,9 @@ import UIKit
             let player = AVPlayer(playerItem: item)
             player.isMuted = true
             self.players[id] = player
+            #if DEBUG
+            Self.ownedPlayerCount += 1
+            #endif
             self.observations[id] = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
                 Task { @MainActor in
                     guard let self, self.revisions[id] == token, let item = self.players[id]?.currentItem else { return }
@@ -222,8 +229,10 @@ import UIKit
         let canSound = playing && !muted && players[audible ?? ""] != nil && !finished.contains(audible ?? "")
         if canSound && !audioOwned {
             do {
-                try AVAudioSession.sharedInstance().setCategory(.soloAmbient, mode: .default)
-                try AVAudioSession.sharedInstance().setActive(true); audioOwned = true
+                let audio = AVAudioSession.sharedInstance()
+                if previousAudio == nil { previousAudio = (audio.category, audio.mode, audio.categoryOptions) }
+                try audio.setCategory(.soloAmbient, mode: .default)
+                try audio.setActive(true); audioOwned = true
             } catch { message = "音频会话不可用，当前静音播放。" }
         } else if !canSound { releaseAudio() }
         for (id, player) in players {
@@ -233,14 +242,24 @@ import UIKit
     }
     private func releaseAudio() {
         if audioOwned { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); audioOwned = false }
+        if let previousAudio {
+            try? AVAudioSession.sharedInstance().setCategory(previousAudio.category, mode: previousAudio.mode, options: previousAudio.options)
+            self.previousAudio = nil
+        }
     }
     private func release(_ id: String) {
         revisions[id] = nil
+        if states[id] == "加载中" { states[id] = "待播放" }
         loads.removeValue(forKey: id)?.cancel(); assets.removeValue(forKey: id)?.cancelLoading()
         observations.removeValue(forKey: id)?.invalidate()
         if let token = endObservers.removeValue(forKey: id) { NotificationCenter.default.removeObserver(token) }
         if let token = failureObservers.removeValue(forKey: id) { NotificationCenter.default.removeObserver(token) }
-        if let player = players.removeValue(forKey: id) { player.isMuted = true; player.pause(); player.replaceCurrentItem(with: nil) }
+        if let player = players.removeValue(forKey: id) {
+            player.isMuted = true; player.pause(); player.replaceCurrentItem(with: nil)
+            #if DEBUG
+            Self.ownedPlayerCount -= 1
+            #endif
+        }
     }
     private func releasePlayers() {
         for id in Set(players.keys).union(loads.keys).union(assets.keys) { release(id) }
