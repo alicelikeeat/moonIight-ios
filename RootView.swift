@@ -337,6 +337,7 @@ struct RootView: View {
                     }
                     if ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
                         model.mediaStore.prepareTreasureVideoUITest(videoURL: backgroundStore.url(for: video), count: ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") ? 11 : 5)
+                        if ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") { model.mediaStore.prepareCardImageUITest(imageURL: backgroundStore.url(for: image)) }
                     }
                 }
             }

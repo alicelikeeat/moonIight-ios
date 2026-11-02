@@ -42,14 +42,16 @@ final class ScrollGestureTests: XCTestCase {
         openTreasureMap(app); app.buttons["treasure-landlord-mode"].tap()
         app.buttons["landlord-settings"].tap()
         app.segmentedControls["landlord-style"].buttons["媒体牌面"].tap()
-        for index in 0..<3 {
+        for index in [0, 1, 2, 11] {
             let item = app.buttons["landlord-media-scroll-fixture-\(index)"]
             guard revealListControl(item, in: app) else { return }; item.tap()
         }
         app.buttons["landlord-settings-done"].tap()
         waitLandlord(app) { (Int($0["players"] ?? "0") ?? 0) > 0 && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["advancing"] ?? "0") ?? 0) > 0 && (Int($0["frames"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" && $0["valid"] == "1" }
-        let card = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "landlord-hand-")).firstMatch
-        XCTAssertTrue(card.waitForExistence(timeout: 5)); card.press(forDuration: 0.7)
+        waitLandlord(app) { (Int($0["posters"] ?? "0") ?? 0) > 0 }
+        let videoCards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@", "landlord-hand-", "视频牌面"))
+        guard let card = videoCards.allElementsBoundByIndex.first(where: { $0.isHittable }) else { XCTFail("No visible video card"); return }
+        card.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["landlord-focus-close"].waitForExistence(timeout: 5))
         waitLandlord(app) { $0["players"] == "1" && $0["history"] == "0" && $0["cards"] == "51" }
         app.buttons["landlord-focus-sound"].tap()

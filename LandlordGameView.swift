@@ -55,7 +55,6 @@ struct LandlordGameView: View {
             }
             .onPreferenceChange(CardLayoutKey.self) { values in layouts = values; updateVisibility() }
         }
-        .accessibilityIdentifier("landlord-table")
         .onAppear {
             present = true
             store.preferences.normalize(available: Set(store.preferences.mediaIDs))
@@ -92,7 +91,7 @@ struct LandlordGameView: View {
             #if DEBUG
             guard ProcessInfo.processInfo.arguments.contains("--landlord-ui-tests") else { return }
             while !Task.isCancelled {
-                diagnostic = "players=\(media.decoderCount);owned=\(CardMediaCoordinator.ownedPlayers);advancing=\(media.advancing);frames=\(media.renderedFrames);muted=\(media.muted ? 1 : 0);cache=\(media.cacheBytes);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);phase=\(store.game.phase.rawValue);valid=\(store.game.conserved ? 1 : 0)"
+                diagnostic = "players=\(media.decoderCount);owned=\(CardMediaCoordinator.ownedPlayers);advancing=\(media.advancing);frames=\(media.renderedFrames);posters=\(media.posterFrames);muted=\(media.muted ? 1 : 0);cache=\(media.cacheBytes);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);phase=\(store.game.phase.rawValue);valid=\(store.game.conserved ? 1 : 0)"
                 try? await Task.sleep(nanoseconds: 200_000_000)
             }
             #endif
@@ -175,7 +174,7 @@ struct LandlordGameView: View {
                             .onTapGesture { store.choose(card.id) }
                             .onLongPressGesture { focus = card }
                             .accessibilityAddTraits(.isButton)
-                            .accessibilityValue(store.selection.contains(card.id) ? "已选" : "未选")
+                            .accessibilityValue((store.selection.contains(card.id) ? "已选" : "未选") + " · " + cardMediaDescription(card.id))
                             .accessibilityAction(named: "预览") { focus = card }
                             .accessibilityIdentifier("landlord-hand-\(card.id)")
                             .zIndex(Double(index))
@@ -183,6 +182,10 @@ struct LandlordGameView: View {
                 }.padding(.horizontal, 14).padding(.vertical, 12)
             }.frame(height: 122).accessibilityIdentifier("landlord-hand")
         }
+    }
+    private func cardMediaDescription(_ cardID: Int) -> String {
+        guard store.preferences.style == .media, let id = mapping.assignments[cardID], let entry = assets.first(where: { $0.id == id }) else { return "经典牌面" }
+        return entry.kind == .video ? "视频牌面" : "图片牌面"
     }
     private func face(_ card: LandlordCard, role: CardPreviewRole, z: Int, viewport: CGRect, width: CGFloat, height: CGFloat) -> some View {
         let id = store.preferences.style == .media ? mapping.assignments[card.id] : nil
@@ -279,7 +282,8 @@ struct LandlordGameView: View {
     private func updateVisibility() {
         guard store.preferences.style == .media else { media.update([], focus: nil); return }
         let valid = Set(assets.map(\.id))
-        let source = layouts.filter { focus == nil ? $0.role != .focus : $0.role == .focus }
+        let cardIDs = Set(store.game.hands[0].map(\.id) + store.game.history.suffix(3).flatMap { $0.cards.map(\.id) })
+        let source = layouts.filter { cardIDs.contains($0.card) && (focus == nil ? $0.role != .focus : $0.role == .focus) }
         var best: [Int: CardMediaCandidate] = [:]
         for layout in source {
             guard let id = mapping.assignments[layout.card], valid.contains(id) else { continue }
