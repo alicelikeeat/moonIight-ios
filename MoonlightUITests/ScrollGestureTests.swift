@@ -2,6 +2,25 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-recovery-ui-tests"])
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        let recovery=app.buttons["rpg-recover-recover-target"]
+        XCTAssertTrue(recovery.waitForExistence(timeout:12));recovery.tap()
+        let reward=NSPredicate(format:"label CONTAINS %@","月晶 7")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:12),.completed)
+        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String,"1")
+        app.buttons["rpg-tools"].tap()
+        let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
+        XCTAssertTrue(app.staticTexts["rpg-story-ended"].waitForExistence(timeout:8))
+        app.buttons["rpg-story-back"].tap();app.buttons["rpg-tools-close"].tap();app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:8));app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:12),.completed)
+        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String,"1")
+        XCTAssertFalse(recovery.exists);attach(app,name:"review-rpg-p9-unindexed-recovery")
+    }
+
+    @MainActor
     func testRPGSearchOpensStoryEditorAndDiagnosticsDirectly() {
         let app=launch(discover:false,flags:["--assistant-dock-ui-tests","--rpg-ui-tests","--rpg-reset-world"])
         let routes=[("剧情编辑器","rpgEditor","rpg-story-title","rpg-editor-back"),("序章","rpgStory","rpg-story-text","rpg-story-back"),("沙盒运行诊断","rpgDiagnostics","rpg-diagnostics-report","rpg-diagnostics-back")]

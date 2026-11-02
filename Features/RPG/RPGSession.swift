@@ -13,6 +13,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var switchStarted:Double?
     private var switchMilliseconds=0.0,saveMilliseconds=0.0,chunkMilliseconds=0.0
     @Published private(set) var pendingStory=false
+    @Published private(set) var recoveryChoices:[RPGRecoveryChoice]=[]
     private var lastFrame: TimeInterval?
     private var lastHUD: TimeInterval = 0
     private var combatObstacles: Set<SurfacePoint> = []
@@ -46,6 +47,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private let storage: RPGWorldDiskStore
     private var clipboard: RPGClipboard?
     private static var testReset = false
+    #if DEBUG
+    private static var testRecoveryPrepared=false
+    #endif
     var generator: RPGWorldGenerator { terrainGenerator }
     init() {
         var root = RPGWorldDiskStore.defaultURL()
@@ -59,6 +63,17 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         #endif
         storage = RPGWorldDiskStore(root: root)
     }
+    func recoverWorld(_ id:String) {
+        guard !ready,!working,recoveryChoices.contains(where:{$0.id==id}) else{return}
+        working=true;let epoch=generation,storage=storage
+        boot=Task{[weak self] in
+            do {
+                let value=try await storage.load(id:id);try await storage.save(value)
+                guard let self,!Task.isCancelled,self.generation==epoch else{return}
+                self.boot=nil;self.assign(value);self.notice="已恢复选中的保留世界。"
+            }catch{guard let self,self.generation==epoch else{return};self.boot=nil;self.working=false;self.notice=error.localizedDescription}
+        }
+    }
     func activate() {
         active = true; silenceMedia(); bindScenes(); applyScenePause()
         if ready { loadVisible(force: true) } else if boot == nil { loadWorld() }
@@ -67,18 +82,39 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         let epoch = generation, storage = storage
         boot = Task { [weak self] in
             do {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--rpg-recovery-ui-tests"),!Self.testRecoveryPrepared {
+                    Self.testRecoveryPrepared=true
+                    let root=await storage.root
+                    enum Interrupted:Error{case beforeIndex}
+                    let interrupted=RPGWorldDiskStore(root:root,fault:{if $0 == .beforePointer{throw Interrupted.beforeIndex}})
+                    for id in ["recover-target","recover-other"] {
+                        var fixture=WorldState(seed:id == "recover-target" ? 42:43);fixture.id=id
+                        let generator=RPGWorldGenerator(seed:fixture.seed);fixture.generated=true;fixture.player.surface=generator.anchor(.spawn);fixture.sideRegions=[generator.sideRegion]
+                        fixture.entities=[.init(id:"recovered-building",definitionID:"wood",scope:.topDownOnly,surface:.init(x:30,z:30))]
+                        let graph=RPGStoryGraph(id:"recovery.graph",title:"恢复回执",start:"end",nodes:[.init(id:"end",kind:.end,text:"奖励已经保存",actions:[.init(kind:.giveItem,key:"moon-shard",value:7)])])
+                        try RPGStoryAuthoring.install(graph,bindings:[],world:&fixture);try RPGStoryRuntime.start(graphID:graph.id,world:&fixture);try RPGStoryRuntime.advance(world:&fixture,generator:generator)
+                        do {try await interrupted.save(fixture)}catch Interrupted.beforeIndex{}
+                    }
+                }
+                #endif
                 let value = try await storage.load() ?? WorldState()
                 let recovered = await storage.recoveredFromBackup
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
                 self.boot = nil; self.assign(value)
-                self.notice = recovered ? "已从上一份有效备份恢复。" : "世界已就绪。"
+                self.notice = recovered ? "已从保留的有效存档恢复。" : "世界已就绪。"
             } catch {
                 guard let self, self.generation == epoch else { return }
                 self.boot = nil; self.notice = error.localizedDescription; self.ready = false
+                if error as? RPGWorldError != .unsupportedVersion {
+                    let choices=(try? await storage.recoverableWorlds()) ?? []
+                    guard !Task.isCancelled,self.generation==epoch else{return};self.recoveryChoices=choices
+                }
             }
         }
     }
     private func assign(_ value: WorldState) {
+        recoveryChoices=[]
         generation = UUID(); loading?.cancel(); saving?.cancel()
         scene.shutdown(); sideScene.shutdown()
         world = value; silenceMedia(); terrainGenerator = .init(seed: world.seed)

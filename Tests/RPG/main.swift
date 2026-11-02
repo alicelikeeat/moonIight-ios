@@ -475,3 +475,58 @@ check(RPGWorldEditing.entity(at:routePoint,world:lookupWorld,generator:arenaGene
 let cancelledRoute=RPGWorldRoute.path(from:routeStart,to:routeEnd,generator:arenaGenerator,entities:[],removedIDs:[],cancelled:{true})
 check(cancelledRoute.isEmpty,"cancelled route cannot continue navigation work")
 print("RPG final: \(checks) total checks passed")
+
+// First save has no old locator: recover a committed orphan instead of a new world.
+for checkpoint in RPGSaveCheckpoint.allCases {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("rpg-first-save-"+UUID().uuidString)
+    let interrupted=RPGWorldDiskStore(root:root,fault:{if $0==checkpoint{throw InjectedSaveFailure.interruption}})
+    do{try await interrupted.save(durableNext);preconditionFailure("first-save fault missing")}catch{checks+=1}
+    let reader=RPGWorldDiskStore(root:root)
+    let restored=try await reader.load()
+    let committed=[RPGSaveCheckpoint.afterPrimary,.beforePointer,.afterPointer].contains(checkpoint)
+    check(restored == (committed ? durableNext:nil),"first save either has no committed state or restores exact world and receipts")
+    if checkpoint == .afterPrimary || checkpoint == .beforePointer {
+        let recovered=await reader.recoveredFromBackup
+        check(recovered,"unindexed committed world is reported as recovery")
+    }
+    try FileManager.default.removeItem(at:root)
+}
+let ambiguousRoot=FileManager.default.temporaryDirectory.appendingPathComponent("rpg-multiple-orphans-"+UUID().uuidString)
+let orphanWriter=RPGWorldDiskStore(root:ambiguousRoot,fault:{if $0 == .beforePointer{throw InjectedSaveFailure.interruption}})
+var otherOrphan=durableNext;otherOrphan.id=UUID().uuidString
+for value in [durableNext,otherOrphan] {do{try await orphanWriter.save(value)}catch InjectedSaveFailure.interruption{}}
+let orphanReader=RPGWorldDiskStore(root:ambiguousRoot)
+do{_=try await orphanReader.load();preconditionFailure("multiple orphans silently selected")}catch{check(error as? RPGSaveError == .ambiguous,"multiple retained worlds require explicit selection")}
+let options=try await orphanReader.recoverableWorlds()
+check(Set(options.map(\.id))==Set([durableNext.id,otherOrphan.id]),"all retained valid worlds are selectable")
+let chosen=try await orphanReader.load(id:durableNext.id);try await orphanReader.save(chosen)
+let selectedAfterRecovery=try await orphanReader.load()
+check(selectedAfterRecovery==durableNext,"selection repairs locator without changing world or receipts")
+var replayedRecovery=selectedAfterRecovery!
+let priorRecoveryReward=replayedRecovery.inventory["moon-shard"]
+try RPGStoryRuntime.advance(world:&replayedRecovery,generator:arenaGenerator)
+check(replayedRecovery.inventory["moon-shard"]==priorRecoveryReward,"first-save recovery cannot replay already committed reward")
+try FileManager.default.removeItem(at:ambiguousRoot)
+let corruptOrphanRoot=FileManager.default.temporaryDirectory.appendingPathComponent("rpg-corrupt-orphan-"+UUID().uuidString)
+let corruptOrphanStore=RPGWorldDiskStore(root:corruptOrphanRoot)
+try await corruptOrphanStore.save(durableNext)
+try FileManager.default.removeItem(at:corruptOrphanRoot.appendingPathComponent("active.json"))
+let corruptOrphanPrimary=corruptOrphanRoot.appendingPathComponent("Worlds").appendingPathComponent(durableNext.id).appendingPathComponent("world.json")
+try Data("corrupt retained world".utf8).write(to:corruptOrphanPrimary)
+do{_=try await corruptOrphanStore.load();preconditionFailure("corrupt unindexed world silently reset")}catch{checks+=1}
+let stillCorrupt=try Data(contentsOf:corruptOrphanPrimary)
+check(stillCorrupt==Data("corrupt retained world".utf8),"unreadable orphan bytes are preserved")
+try FileManager.default.removeItem(at:corruptOrphanRoot)
+print("RPG recovery: \(checks) total checks passed")
+let oversizedRoot=FileManager.default.temporaryDirectory.appendingPathComponent("rpg-oversized-preserve-"+UUID().uuidString)
+let oversizedStore=RPGWorldDiskStore(root:oversizedRoot)
+try await oversizedStore.save(durableBase);try await oversizedStore.save(durableNext)
+let oversizedPrimary=oversizedRoot.appendingPathComponent("Worlds").appendingPathComponent(durableBase.id).appendingPathComponent("world.json")
+let oversizedOriginal=Data(repeating:32,count:RPGWorldCodec.maximumBytes+1)
+try oversizedOriginal.write(to:oversizedPrimary)
+do{_=try await oversizedStore.load();preconditionFailure("oversized primary silently downgraded")}catch{check(error as? RPGWorldError == .oversized,"oversized primary reported without loading an old backup")}
+do{try await oversizedStore.save(durableNext);preconditionFailure("oversized retained file overwritten")}catch{checks+=1}
+let oversizedRetained=try Data(contentsOf:oversizedPrimary)
+check(oversizedRetained==oversizedOriginal,"unreadable oversized file is not overwritten")
+try FileManager.default.removeItem(at:oversizedRoot)
+print("RPG complete: \(checks) total checks passed")

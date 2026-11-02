@@ -36,11 +36,19 @@ struct RPGShellView: View {
                 Text(positionLabel).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-position")
             }
             Group {
-                if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
+                if !session.ready,!session.recoveryChoices.isEmpty {
+                    ScrollView {VStack(spacing:12){
+                        Text("选择保留的世界").font(.headline)
+                        ForEach(session.recoveryChoices){choice in
+                            Button((choice.creative ? "创作副本":"原世界")+" · Seed \(choice.seed) · 修订 \(choice.revision)"){session.recoverWorld(choice.id)}
+                                .accessibilityIdentifier("rpg-recover-"+choice.id)
+                        }
+                    }.padding()}
+                } else if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
                 else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
             }.clipShape(RoundedRectangle(cornerRadius: 20)).accessibilityLabel("世界场景")
-                .overlay(alignment:.bottomLeading){movementPad.padding(6)}
-                .overlay(alignment:.bottomTrailing){combatButtons.padding(6)}
+                .overlay(alignment:.bottomLeading){if session.ready{movementPad.padding(6)}}
+                .overlay(alignment:.bottomTrailing){if session.ready{combatButtons.padding(6)}}
             HStack {
                 Button(session.world.player.perspective == .topDown ? "进入侧视" : "返回俯视") { session.toggleProjection() }
                     .accessibilityIdentifier("rpg-perspective")
