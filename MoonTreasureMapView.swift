@@ -27,7 +27,7 @@ struct MoonTreasureMapView: View {
     @StateObject private var videoPreviews = TreasureVideoPreviews()
     @State private var visibleGridVideos = Set<String>()
     @State private var scene = MoonTreasureScene()
-    @State private var glassFrames: [TreasureGlassFrame] = []
+    @State private var glassProjection = TreasureGlassProjection()
     @State private var sceneDirty = false
     @State private var dragDiagnostics = ""
     @State private var videoDiagnostics = ""
@@ -161,7 +161,7 @@ struct MoonTreasureMapView: View {
             }.accessibilityIdentifier("treasure-grid")
         } else {
             ZStack {
-                TreasurePhysicsGlass(frames: glassFrames, sceneSize: scene.size)
+                TreasurePhysicsGlass(projection: glassProjection)
                 SpriteView(scene: scene, options: [.allowsTransparency]).contentShape(Rectangle())
             }
                 .clipShape(RoundedRectangle(cornerRadius: 24)).padding(.horizontal, 14)
@@ -171,7 +171,10 @@ struct MoonTreasureMapView: View {
     }
     private func configureScene() {
         sceneDirty = false
-        scene.onGlassFrames = { glassFrames = $0 }
+        scene.onGlassFrames = { [weak projection = glassProjection, weak scene = scene] frames in
+            guard let projection, let scene else { return }
+            projection.snapshot = TreasureGlassSnapshot(frames: frames, sceneSize: scene.size)
+        }
         #if DEBUG
         scene.onDragDiagnostics = { dragDiagnostics = $0 }
         #endif
@@ -228,13 +231,19 @@ private struct TreasureGlassFrame: Identifiable, Equatable {
     let scale: CGFloat
     let z: CGFloat
 }
+private struct TreasureGlassSnapshot {
+    var frames: [TreasureGlassFrame] = []
+    var sceneSize = CGSize(width: 390, height: 520)
+}
+@MainActor private final class TreasureGlassProjection: ObservableObject {
+    @Published var snapshot = TreasureGlassSnapshot()
+}
 private struct TreasurePhysicsGlass: View {
-    let frames: [TreasureGlassFrame]
-    let sceneSize: CGSize
+    @ObservedObject var projection: TreasureGlassProjection
     var body: some View {
         GeometryReader { geometry in
-            let sx = geometry.size.width / max(1, sceneSize.width)
-            let sy = geometry.size.height / max(1, sceneSize.height)
+            let sx = geometry.size.width / max(1, projection.snapshot.sceneSize.width)
+            let sy = geometry.size.height / max(1, projection.snapshot.sceneSize.height)
             if #available(iOS 26.0, *) {
                 GlassEffectContainer(spacing: 0) { surfaces(sx: sx, sy: sy, height: geometry.size.height) }
             } else { surfaces(sx: sx, sy: sy, height: geometry.size.height) }
@@ -243,7 +252,7 @@ private struct TreasurePhysicsGlass: View {
     }
     private func surfaces(sx: CGFloat, sy: CGFloat, height: CGFloat) -> some View {
         ZStack {
-            ForEach(frames) { frame in
+            ForEach(projection.snapshot.frames) { frame in
                 MoonGlassBackdrop(radius: 17)
                     .frame(width: frame.size.width * sx, height: frame.size.height * sy)
                     .scaleEffect(frame.scale).rotationEffect(.radians(-Double(frame.rotation)))
@@ -367,6 +376,7 @@ private final class MoonTreasureScene: SKScene {
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
+        lastGlassFrames = []
         physicsBody = SKPhysicsBody(edgeLoopFrom: frame.insetBy(dx: 6, dy: 8))
     }
 
