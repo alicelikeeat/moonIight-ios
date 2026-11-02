@@ -47,7 +47,7 @@ final class ScrollGestureTests: XCTestCase {
             guard revealListControl(item, in: app) else { return }; item.tap()
         }
         app.buttons["landlord-settings-done"].tap()
-        waitLandlord(app) { (Int($0["players"] ?? "0") ?? 0) > 0 && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["advancing"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" && $0["valid"] == "1" }
+        waitLandlord(app) { (Int($0["players"] ?? "0") ?? 0) > 0 && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["advancing"] ?? "0") ?? 0) > 0 && (Int($0["frames"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" && $0["valid"] == "1" }
         let card = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "landlord-hand-")).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5)); card.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["landlord-focus-close"].waitForExistence(timeout: 5))

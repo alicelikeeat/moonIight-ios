@@ -33,7 +33,7 @@ struct CardPlaybackSnapshot: Codable, Equatable {
     var frameReference: String?
     var visibility = CardVisibility.hidden
 }
-enum CardPreviewRole: Int { case other = 1, hand, central, focus }
+enum CardPreviewRole: Int, Sendable { case other = 1, hand, central, focus }
 struct CardMediaCandidate: Equatable {
     let cardID: Int
     let mediaID: String

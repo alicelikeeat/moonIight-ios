@@ -18,6 +18,25 @@ private actor CardFrameRenderer {
         let reduced = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         return context.createCGImage(reduced, from: reduced.extent).map { CardRendered(image: $0) }
     }
+    func loadPoster(_ url: URL) async -> CardRendered? {
+        if Task.isCancelled { return nil }
+        if url.isFileURL {
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+            return poster(data)
+        }
+        guard ["http", "https"].contains(url.scheme ?? ""),
+              let (bytes, response) = try? await URLSession.shared.bytes(from: url),
+              (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
+              response.expectedContentLength <= 8 * 1024 * 1024 else { return nil }
+        var buffer = Data()
+        do {
+            for try await byte in bytes {
+                if buffer.count >= 8 * 1024 * 1024 || Task.isCancelled { return nil }
+                buffer.append(byte)
+            }
+        } catch { return nil }
+        return poster(buffer)
+    }
     func poster(_ data: Data) -> CardRendered? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 320, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { return nil }
@@ -28,7 +47,7 @@ private actor CardFrameRenderer {
 /// One decoder per scheduled asset, shared across every card referencing it.
 /// Views receive bounded thumbnail frames, never individual AVPlayerLayers.
 @MainActor final class CardMediaCoordinator: ObservableObject {
-    private final class Slot {
+    @MainActor private final class Slot {
         let player: AVPlayer
         let output: AVPlayerItemVideoOutput
         var end: NSObjectProtocol?
@@ -54,6 +73,8 @@ private actor CardFrameRenderer {
     private var feeds: [String: CardMediaFrameFeed] = [:]
     private var cache = CardFrameLRU<UIImage>(maxEntries: 24, maxCost: 12 * 1024 * 1024)
     private let renderer = CardFrameRenderer()
+    private(set) var renderedFrames = 0
+    private var lastTick: CFTimeInterval = 0
     private var posterTasks: [String: Task<Void, Never>] = [:]
     private var posterQueue: [String] = []
     private var candidates: [CardMediaCandidate] = []
@@ -192,6 +213,10 @@ private actor CardFrameRenderer {
         slot.close()
     }
     private func tick() {
+        let now = CACurrentMediaTime()
+        let reduced = slow || ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.isLowPowerModeEnabled
+        if reduced && now - lastTick < 1.0 / 6 { return }
+        lastTick = now
         let epoch = generation
         for (id, slot) in Array(slots) {
             if slot.player.currentItem?.status == .failed {
@@ -206,7 +231,7 @@ private actor CardFrameRenderer {
                 let frame = await renderer.render(CardPixel(buffer: pixel))
                 guard let self, let slot, self.generation == epoch, self.slots[id] === slot else { return }
                 slot.rendering = false
-                if let frame { self.publish(frame, id: id) }
+                if let frame { self.renderedFrames += 1; self.publish(frame, id: id) }
                 // Sustained slow rendering reduces the decoder budget. No FPS promise.
                 if CACurrentMediaTime() - started > 0.25 { self.slow = true; self.reconcile() }
             }
@@ -227,19 +252,7 @@ private actor CardFrameRenderer {
         let id = posterQueue.removeFirst(), epoch = generation
         guard let entry = entries[id], let url = entry.kind == .image ? entry.remoteURL : entry.coverURL else { startPoster(); return }
         posterTasks[id] = Task { [weak self, renderer] in
-            var data: Data?
-            if url.isFileURL {
-                // File access is performed off the main actor with thumbnail decoding.
-                data = await Task.detached { try? Data(contentsOf: url, options: .mappedIfSafe) }.value
-            } else if ["http", "https"].contains(url.scheme ?? "") {
-                // Streaming enforces an 8 MB source ceiling, including missing Content-Length.
-                if let (bytes, response) = try? await URLSession.shared.bytes(from: url), response.expectedContentLength <= 8 * 1024 * 1024 {
-                    var buffer = Data()
-                    do { for try await byte in bytes { if buffer.count >= 8 * 1024 * 1024 || Task.isCancelled { break }; buffer.append(byte) }; if buffer.count < 8 * 1024 * 1024 { data = buffer } } catch { }
-                }
-            }
-            let result: CardRendered?
-            if let data, !Task.isCancelled { result = await renderer.poster(data) } else { result = nil }
+            let result = await renderer.loadPoster(url)
             guard let self, self.generation == epoch, !Task.isCancelled else { return }
             self.posterTasks[id] = nil
             if let result { self.publish(result, id: id) } else { self.failed.insert("poster:" + id) }
