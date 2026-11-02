@@ -153,6 +153,7 @@ struct LandlordGameView: View {
                         .shadow(color: .black.opacity(0.12), radius: 2, y: 2)
                         .offset(x: CGFloat(index) * step).zIndex(Double(index))
                         .onTapGesture { focus = card }
+                        .accessibilityAddTraits(.isButton).accessibilityAction { focus = card }
                 }
             }.frame(width: max(1, size.width - 16), height: 88, alignment: .leading)
         }.offset(x: CGFloat(level) * 3 + 4, y: CGFloat(level) * yStep).zIndex(Double(level))
@@ -171,10 +172,12 @@ struct LandlordGameView: View {
                             .overlay { if store.selection.contains(card.id) { RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor, lineWidth: 3) } }
                             .matchedGeometryEffect(id: card.id, in: movement, isSource: true)
                             .offset(y: store.selection.contains(card.id) ? -9 : 0)
-                            .onTapGesture { store.choose(card.id) }
-                            .onLongPressGesture { focus = card }
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                            .modifier(NativeMediaCardInteractions(holdEnabled: true,
+                                onTap: { store.choose(card.id) }, onHold: { focus = card }))
                             .accessibilityAddTraits(.isButton)
                             .accessibilityValue((store.selection.contains(card.id) ? "已选" : "未选") + " · " + cardMediaDescription(card.id))
+                            .accessibilityAction { store.choose(card.id) }
                             .accessibilityAction(named: "预览") { focus = card }
                             .accessibilityIdentifier("landlord-hand-\(card.id)")
                             .zIndex(Double(index))

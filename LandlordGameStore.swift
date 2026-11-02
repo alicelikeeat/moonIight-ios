@@ -22,7 +22,7 @@ import SwiftUI
             game = restored
         } else { game = LandlordGame() }
         preferences = defaults.data(forKey: "landlord-media-v241").flatMap { try? JSONDecoder().decode(CardMediaPreferences.self, from: $0) } ?? CardMediaPreferences()
-        summaries = Array((defaults.array(forKey: "landlord-scores-v241") as? [[Int]] ?? []).suffix(3))
+        summaries = Array((defaults.array(forKey: "landlord-scores-v241") as? [[Int]] ?? []).filter { $0.count == 3 }.suffix(3))
     }
     func persist() {
         defaults.set(try? JSONEncoder().encode(game), forKey: "landlord-game-v241")

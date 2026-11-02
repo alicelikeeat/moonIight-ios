@@ -424,7 +424,7 @@ extension AppCommand {
         let aliases: [String]
         switch self {
         case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
-        case .landlord: aliases = ["斗地主", "叫分", "媒体牌面", "出牌", "托管", "牌桌记录", "牌面声音"]
+        case .landlord: aliases = ["斗地主", "叫分", "媒体牌面", "经典牌面", "出牌", "不出", "提示", "新一局", "托管", "牌桌记录", "牌面声音", "清理失效素材", "动态预览"]
         case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
         case .treasurePlayback: aliases = ["视频墙", "顺序播放", "随机播放", "同时播放", "选择视频"]
         case .importMedia: aliases = ["相册", "导入", "照片库"]
