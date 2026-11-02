@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 enum CardFaceStyle: String, Codable, CaseIterable { case classic, media }
 struct CardMediaPreferences: Codable, Equatable {
@@ -82,6 +83,7 @@ struct CardFrameLRU<Value> {
     var maxCost: Int
     init(maxEntries: Int, maxCost: Int) { self.maxEntries = maxEntries; self.maxCost = maxCost }
     var count: Int { entries.count }
+    func contains(_ key: String) -> Bool { entries[key] != nil }
     mutating func value(_ key: String) -> Value? {
         guard var entry = entries[key] else { return nil }
         clock &+= 1; entry.tick = clock; entries[key] = entry; return entry.value

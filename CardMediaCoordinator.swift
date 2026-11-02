@@ -60,6 +60,7 @@ private actor CardFrameRenderer {
     private var entries: [String: MediaEntry] = [:]
     private var requested = 2
     private var active = false
+    private var resumeAfterInterruption = false
     private var pressure = false
     private var slow = false
     private var generation = UUID()
@@ -81,6 +82,7 @@ private actor CardFrameRenderer {
             observations.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] notification in
                 let isMemory = notification.name == UIApplication.didReceiveMemoryWarningNotification
                 let interrupted = notification.name == AVAudioSession.interruptionNotification
+                let ended = (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.ended.rawValue
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     if isMemory {
@@ -88,7 +90,11 @@ private actor CardFrameRenderer {
                         for (id, feed) in self.feeds { feed.show(self.cache.value(id)) }
                         self.notice = "内存紧张，已切换静态牌面；可在媒体设置中重新启用。"
                     }
-                    if interrupted { self.active = false; self.mute() }
+                    if interrupted {
+                        if ended { self.active = self.resumeAfterInterruption; self.resumeAfterInterruption = false }
+                        else { self.resumeAfterInterruption = self.active; self.active = false }
+                        self.mute()
+                    }
                     self.reconcile()
                 }
             })
@@ -106,6 +112,14 @@ private actor CardFrameRenderer {
     }
     func retry() { pressure = false; slow = false; failed.removeAll(); cache.maxEntries = 24; cache.maxCost = 12 * 1024 * 1024; notice = ""; reconcile() }
     func update(_ values: [CardMediaCandidate], focus: Int?) {
+        let newlyHidden = Set(candidates.filter { $0.visibility != .hidden }.map(\.cardID)).subtracting(values.filter { $0.visibility != .hidden }.map(\.cardID))
+        for id in newlyHidden {
+            if let mediaID = snapshots[id]?.mediaID, let slot = slots[mediaID] {
+                let seconds = slot.player.currentTime().seconds
+                if seconds.isFinite { snapshots[id]?.seconds = max(0, seconds) }
+                snapshots[id]?.frameReference = cache.contains(mediaID) ? mediaID : nil
+            }
+        }
         candidates = values; focusID = focus
         let visibleIDs = Set(values.filter { $0.visibility != .hidden }.map(\.cardID))
         for id in Array(snapshots.keys) where !visibleIDs.contains(id) { snapshots[id]?.visibility = .hidden }
@@ -202,6 +216,7 @@ private actor CardFrameRenderer {
         let image = UIImage(cgImage: frame.image)
         cache.put(image, key: id, cost: frame.image.bytesPerRow * frame.image.height)
         feed(id).show(cache.value(id))
+        for (key, feed) in feeds where !cache.contains(key) && feed.image != nil { feed.show(nil) }
     }
     private func enqueuePoster(_ id: String) {
         guard cache.value(id) == nil, posterTasks[id] == nil, !posterQueue.contains(id), !failed.contains("poster:" + id), let entry = entries[id], entry.kind == .image || entry.coverURL != nil else { return }
@@ -232,7 +247,7 @@ private actor CardFrameRenderer {
         }
     }
     func stop(clear: Bool = false) {
-        active = false; generation = UUID(); mute()
+        active = false; resumeAfterInterruption = false; generation = UUID(); mute()
         timer?.invalidate(); timer = nil
         for id in Array(slots.keys) { release(id) }
         for task in posterTasks.values { task.cancel() }; posterTasks.removeAll(); posterQueue.removeAll()
