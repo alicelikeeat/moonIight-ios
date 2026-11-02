@@ -92,7 +92,7 @@ enum RPGCombatRules {
     }
     static func trainingEncounter(world:inout WorldState,generator:RPGWorldGenerator) {
         guard world.player.health>0,!world.player.inCombat,world.combat.enemies.count<128 else{return}
-        let id="enemy:training:\(world.id):\(world.revision)"
+        let id="enemy:training:\(world.seed):\(world.revision)"
         guard !world.combat.enemies.contains(where:{$0.id==id}) else{return}
         if world.player.perspective == .side,let player=world.player.side,let region=world.sideRegions.first {
             let u=min(region.width-1,player.horizontal+2)

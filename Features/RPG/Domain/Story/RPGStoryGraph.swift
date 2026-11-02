@@ -47,20 +47,22 @@ struct RPGStoryGraph:Codable,Equatable,Identifiable,Sendable {
         let ids=Set(nodes.map(\.id))
         func edges(_ node:RPGStoryNode)->[String]{[node.next,node.failure].compactMap{$0}+node.choices.map(\.target)}
         for node in nodes {
-            guard !node.id.isEmpty,node.id.count<=128,node.text.count<=8000,node.choices.count<=8,node.actions.count<=32,
+            guard !node.id.isEmpty,node.id.count<=128,node.text.count<=8000,(node.mediaBindingID?.count ?? 0)<=128,node.choices.count<=8,node.actions.count<=32,
                   Set(node.choices.map(\.id)).count==node.choices.count,edges(node).allSatisfy({ids.contains($0)}),
                   node.choices.allSatisfy({!$0.id.isEmpty && $0.id.count<=128 && !$0.text.isEmpty && $0.text.count<=512}),
                   node.kind != .choice || !node.choices.isEmpty,
                   node.kind != .condition || node.condition != nil,
                   node.kind != .end || edges(node).isEmpty else{throw RPGStoryError.invalidGraph}
             for condition in [node.condition].compactMap({$0})+node.choices.compactMap(\.condition) {
-                guard condition.key.count<=128,(-1_000_000...1_000_000).contains(condition.value) else{throw RPGStoryError.invalidGraph}
+                guard condition.key.count<=128,([RPGStoryConditionKind.always,.nearAnchor].contains(condition.kind) || !condition.key.isEmpty),(-1_000_000...1_000_000).contains(condition.value) else{throw RPGStoryError.invalidGraph}
             }
             for action in node.actions {
-                guard action.key.count<=128,(-1_000_000...1_000_000).contains(action.value),action.point == nil || action.point?.valid == true else{throw RPGStoryError.invalidGraph}
+                guard !action.key.isEmpty,action.key.count<=128,(-1_000_000...1_000_000).contains(action.value),action.point == nil || action.point?.valid == true else{throw RPGStoryError.invalidGraph}
                 if [.giveItem,.takeItem].contains(action.kind) {
                     guard ["wood","stone","moon-shard","moonBlade","stoneArmor"].contains(action.key),(1...100).contains(action.value) else{throw RPGStoryError.invalidGraph}
                 }
+                if action.kind == .spawnEnemy {guard action.key.count<=80,(1...500).contains(action.value) else{throw RPGStoryError.invalidGraph}}
+                if action.kind == .removeBlock {guard action.point != nil else{throw RPGStoryError.invalidGraph}}
                 if action.kind == .placeBlock {guard BlockDefinition.find(action.key) != nil,action.point != nil else{throw RPGStoryError.invalidGraph}}
             }
         }
@@ -103,7 +105,9 @@ struct RPGStoryState:Codable,Equatable,Sendable {
         guard graphs.contains(where:{$0.id==activeGraphID}) else{throw RPGStoryError.invalidGraph}
         for saved in progress {
             guard let graph=graphs.first(where:{$0.id==saved.id}),saved.version==graph.version,graph.nodes.contains(where:{$0.id==saved.current}),
-                  saved.completed.allSatisfy({id in graph.nodes.contains{$0.id==id}}),saved.receipts.allSatisfy({id in graph.nodes.contains{$0.id==id}}) else{throw RPGStoryError.invalidGraph}
+                  saved.completed.allSatisfy({id in graph.nodes.contains{$0.id==id} && saved.receipts.contains(id)}),
+                  saved.choices.allSatisfy({key,value in graph.nodes.contains{$0.id==key && $0.kind == .choice && $0.choices.contains{$0.id==value}}}),
+                  (Array(saved.variables.keys)+Array(saved.quests.keys)).allSatisfy({!$0.isEmpty && $0.count<=128}),saved.receipts.allSatisfy({id in graph.nodes.contains{$0.id==id}}) else{throw RPGStoryError.invalidGraph}
         }
     }
     var activeGraph:RPGStoryGraph {customGraphs.first{$0.id==activeGraphID} ?? RPGOfficialStory.graph}

@@ -19,11 +19,13 @@ enum RPGStoryRuntime {
         }
     }
     static func recordEvents(world:inout WorldState) {
+        let ids=world.events.map(\.id)
+        guard ids != world.story.observedEventIDs else{return}
         var seen=Set(world.story.observedEventIDs)
         for event in world.events where seen.insert(event.id).inserted {
             if world.story.eventCounts[event.kind] != nil || world.story.eventCounts.count<512 {world.story.eventCounts[event.kind]=min(1_000_000,world.story.eventCounts[event.kind,default:0]+1)}
         }
-        world.story.observedEventIDs=world.events.map(\.id)
+        world.story.observedEventIDs=ids;world.revision+=1
     }
     static func start(graphID:String,world:inout WorldState)throws {
         guard !world.player.inCombat else{throw RPGStoryError.combat}
@@ -80,7 +82,7 @@ enum RPGStoryRuntime {
             guard world.inventory[action.key,default:0]>=action.value else{throw RPGStoryError.resource};world.inventory[action.key,default:0]-=action.value
         case .setQuest:progress.quests[action.key]=action.value
         case .emitEvent:
-            world.events.append(.init(id:"story:\(graph.id):\(node.id):\(world.revision+1)",kind:action.key,entityID:graph.id,definitionID:node.id));world.events=Array(world.events.suffix(256))
+            world.events.append(.init(id:"story-event:"+UUID().uuidString,kind:action.key,entityID:graph.id,definitionID:node.id));world.events=Array(world.events.suffix(256))
         case .placeBlock:
             guard let point=action.point else{throw RPGStoryError.invalidGraph}
             try RPGWorldEditing.place([.init(point:point,definitionID:action.key)],world:&world,generator:generator)

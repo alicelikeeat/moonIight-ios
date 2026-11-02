@@ -345,3 +345,61 @@ var schema4Story=schema4JSON["story"] as! [String:Any];schema4Story["mediaPositi
 let schema4Migrated=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:schema4JSON))
 check(schema4Migrated.story.activeProgress==tale.story.activeProgress && schema4Migrated.story.mediaPositions.isEmpty,"schema 4 migration keeps node receipts and branch choices")
 print("RPG P8: \(checks) total checks passed")
+
+// P9: every injected interruption keeps world deltas and story receipts together.
+enum InjectedSaveFailure:Error{case interruption}
+var durableBase=villageChoiceCheckpoint;durableBase.revision=100
+var durableNext=durableBase
+try RPGStoryRuntime.advance(choiceID:"repair",world:&durableNext,generator:arenaGenerator)
+durableNext.entities.append(.init(id:"durable-construction",definitionID:"wood",scope:.topDownOnly,surface:.init(x:30,z:30)))
+durableNext.inventory["wood",default:0]-=1;durableNext.story.mediaPositions["cutscene-checkpoint"]=3.25;durableNext.revision+=1
+try durableNext.validate()
+for checkpoint in RPGSaveCheckpoint.allCases {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("rpg-fault-"+UUID().uuidString)
+    let baselineStore=RPGWorldDiskStore(root:root);try await baselineStore.save(durableBase)
+    let interrupted=RPGWorldDiskStore(root:root,fault:{point in if point==checkpoint{throw InjectedSaveFailure.interruption}})
+    do{try await interrupted.save(durableNext);preconditionFailure("fault not injected")}catch{checks+=1}
+    let restored=try await RPGWorldDiskStore(root:root).load()
+    let committed=[RPGSaveCheckpoint.afterPrimary,.beforePointer,.afterPointer].contains(checkpoint)
+    check(restored == (committed ? durableNext:durableBase),"interrupted save never mixes construction and reward receipts")
+    if var resumed=restored,committed {
+        let reward=resumed.inventory["moon-shard"]
+        try RPGStoryRuntime.advance(world:&resumed,generator:arenaGenerator)
+        check(resumed.inventory["moon-shard"]==reward,"interrupted node reward never replays")
+    }
+    try FileManager.default.removeItem(at:root)
+}
+let recoveryRoot=FileManager.default.temporaryDirectory.appendingPathComponent("rpg-recovery-"+UUID().uuidString)
+let recoveryStore=RPGWorldDiskStore(root:recoveryRoot)
+try await recoveryStore.save(durableBase);try await recoveryStore.save(durableNext)
+let recoveryFolder=recoveryRoot.appendingPathComponent("Worlds").appendingPathComponent(durableBase.id)
+let recoveryPrimary=recoveryFolder.appendingPathComponent("world.json"),recoveryBackup=recoveryFolder.appendingPathComponent("world.backup.json")
+let goodBackup=try Data(contentsOf:recoveryBackup)
+try Data("broken".utf8).write(to:recoveryPrimary,options:.atomic)
+var staleWorld=durableBase;staleWorld.revision=99
+do{try await recoveryStore.save(staleWorld);preconditionFailure("stale snapshot replaced backup")}catch{checks+=1}
+let preservedBackup=try Data(contentsOf:recoveryBackup)
+check(preservedBackup==goodBackup,"corrupt primary cannot permit stale write over good backup")
+var futureObject=try JSONSerialization.jsonObject(with:RPGWorldCodec.encode(durableNext)) as! [String:Any]
+futureObject["schemaVersion"]=999
+let futureBytes=try JSONSerialization.data(withJSONObject:futureObject)
+try futureBytes.write(to:recoveryPrimary,options:.atomic)
+do{_=try await recoveryStore.load();preconditionFailure("future schema silently downgraded")}catch{check(error as? RPGWorldError == .unsupportedVersion,"future schema surfaced instead of old backup")}
+do{try await recoveryStore.save(durableNext);preconditionFailure("future schema overwritten")}catch{checks+=1}
+let retainedFuture=try Data(contentsOf:recoveryPrimary)
+check(retainedFuture==futureBytes,"future file bytes retained on load and save rejection")
+try RPGWorldCodec.encode(durableNext).write(to:recoveryPrimary,options:.atomic)
+try Data("broken pointer".utf8).write(to:recoveryRoot.appendingPathComponent("active.json"),options:.atomic)
+let recoveredPointer=try await recoveryStore.load()
+let pointerFlag=await recoveryStore.recoveredFromBackup
+check(recoveredPointer==durableNext && pointerFlag,"active pointer backup recovers complete latest world")
+var orphan=durableNext;orphan.id=UUID().uuidString;orphan.parentWorldID=durableBase.id;orphan.isCreativeCopy=true
+let pointerFault=RPGWorldDiskStore(root:recoveryRoot,fault:{if $0 == .beforePointer{throw InjectedSaveFailure.interruption}})
+// Repair locator first; then interrupt a new copy before switching it active.
+try await recoveryStore.save(durableNext)
+do{try await pointerFault.save(orphan);preconditionFailure("copy pointer fault absent")}catch{checks+=1}
+let activeAfterFault=try await recoveryStore.load()
+let readableOrphan=try await recoveryStore.load(id:orphan.id)
+check(activeAfterFault==durableNext && readableOrphan==orphan,"copy interruption preserves original and recoverable orphan")
+try FileManager.default.removeItem(at:recoveryRoot)
+print("RPG P9: \(checks) total checks passed")

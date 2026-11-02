@@ -13,6 +13,9 @@ on:
         type: choice
         default: all
         options: [all, rpg, landlord, directed, treasure, preview, settings, scroll]
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.ui_suite || 'all' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 permissions:
   contents: write
 jobs:

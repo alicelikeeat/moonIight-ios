@@ -78,7 +78,7 @@ struct MediaBinding: Codable, Equatable, Identifiable, Sendable {
     var loop = true
     var muted = true
     var valid: Bool {
-        !id.isEmpty && !mediaID.isEmpty && scale.isFinite && (0.1...8).contains(scale) &&
+        !id.isEmpty && id.count<=128 && !mediaID.isEmpty && mediaID.count<=512 && (coverMediaID?.count ?? 0)<=512 && scale.isFinite && (0.1...8).contains(scale) &&
         [anchorX, anchorY, cropX, cropY, cropWidth, cropHeight].allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         cropWidth > 0 && cropHeight > 0 && cropX + cropWidth <= 1.000001 && cropY + cropHeight <= 1.000001
     }
@@ -132,7 +132,8 @@ struct WorldState: Codable, Equatable, Sendable {
         guard removedGeneratedIDs.count <= 65536, Set(removedGeneratedIDs).count == removedGeneratedIDs.count,
               damage.count <= 65536, damage.values.allSatisfy({ (0...10000).contains($0) }),
               inventory.count <= 128, inventory.values.allSatisfy({ (0...1000000).contains($0) }),
-              undo.count <= 32, redo.count <= 32, events.count <= 256,
+              undo.count <= 32, redo.count <= 32, events.count <= 256, Set(events.map(\.id)).count == events.count,
+              events.allSatisfy({ !$0.id.isEmpty && $0.id.count<=512 && !$0.kind.isEmpty && $0.kind.count<=128 && $0.entityID.count<=128 && $0.definitionID.count<=128 }),
               (undo + redo).allSatisfy({ !$0.id.isEmpty && !$0.changes.isEmpty && $0.changes.count <= 256 && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
               !isCreativeCopy || parentWorldID != nil else { throw RPGWorldError.invalidState }
         guard combat.valid, player.facing.valid, player.weapon != .stoneArmor, player.armor != .moonBlade else { throw RPGWorldError.invalidState }

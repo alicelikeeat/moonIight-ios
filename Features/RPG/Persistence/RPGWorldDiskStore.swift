@@ -12,11 +12,14 @@ enum RPGSaveError: Error, LocalizedError {
 }
 /// Per-world atomic file + previous-good backup. Original and creative copies
 /// never share a world file; the active-world pointer is committed last.
+enum RPGSaveCheckpoint: CaseIterable, Sendable { case beforeBackup, afterBackup, beforePrimary, afterPrimary, beforePointer, afterPointer }
+
 actor RPGWorldDiskStore: RPGWorldStorage {
     private struct Locator: Codable { let id: String }
     let root: URL
     private(set) var recoveredFromBackup = false
-    init(root: URL) { self.root = root }
+    private let fault: (@Sendable (RPGSaveCheckpoint) throws -> Void)?
+    init(root: URL, fault: (@Sendable (RPGSaveCheckpoint) throws -> Void)? = nil) { self.root = root; self.fault = fault }
     static func defaultURL() -> URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("RPG", isDirectory: true)
     }
@@ -40,38 +43,61 @@ actor RPGWorldDiskStore: RPGWorldStorage {
                 let world = try await load(id: locator.id)
                 if index == 1 { recoveredFromBackup = true }
                 return world
-            } catch { continue }
+            } catch {
+                if error as? RPGWorldError == .unsupportedVersion { throw error }
+                continue
+            }
         }
         throw RPGSaveError.corrupt
     }
     func load(id: String) async throws -> WorldState {
         let folder = try directory(id)
+        var candidates: [(Int,WorldState)] = []
         for (index, name) in ["world.json", "world.backup.json"].enumerated() {
             do {
                 let world = try RPGWorldCodec.decode(read(folder.appendingPathComponent(name), limit: RPGWorldCodec.maximumBytes))
                 guard world.id == id else { throw RPGSaveError.invalidID }
-                if index == 1 { recoveredFromBackup = true }
-                return world
-            } catch { continue }
+                candidates.append((index,world))
+            } catch {
+                // Downgrading must never overwrite a future schema or generator.
+                if error as? RPGWorldError == .unsupportedVersion { throw error }
+            }
         }
-        throw RPGSaveError.corrupt
+        guard let selected = candidates.max(by: { lhs,rhs in
+            lhs.1.revision == rhs.1.revision ? lhs.0 > rhs.0 : lhs.1.revision < rhs.1.revision
+        }) else { throw RPGSaveError.corrupt }
+        if selected.0 == 1 { recoveredFromBackup = true }
+        return selected.1
     }
     func save(_ world: WorldState) async throws {
         let data = try RPGWorldCodec.encode(world), folder = try directory(world.id)
         try Task.checkCancellation()
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let primary = folder.appendingPathComponent("world.json"), backup = folder.appendingPathComponent("world.backup.json")
-        // Never replace a previous-good backup with an unreadable primary.
-        if let previous = try? read(primary, limit: RPGWorldCodec.maximumBytes),
-           let decoded = try? RPGWorldCodec.decode(previous), decoded.id == world.id {
-            guard decoded.revision <= world.revision else { throw RPGEditError.stale }
-            try previous.write(to: backup, options: .atomic)
+        // Inspect both copies before writing. A corrupt primary must not make
+        // an old asynchronous snapshot eligible to replace a newer good backup.
+        var validPrimary: Data?
+        for candidate in [primary,backup] {
+            guard let previous = try? read(candidate,limit:RPGWorldCodec.maximumBytes) else { continue }
+            do {
+                let decoded = try RPGWorldCodec.decode(previous)
+                guard decoded.id == world.id else { continue }
+                guard decoded.revision <= world.revision else { throw RPGEditError.stale }
+                if candidate == primary { validPrimary = previous }
+            } catch {
+                if error as? RPGWorldError == .unsupportedVersion || error as? RPGEditError == .stale { throw error }
+            }
         }
+        try fault?(.beforeBackup)
+        if let validPrimary { try validPrimary.write(to:backup,options:.atomic) }
+        try fault?(.afterBackup); try fault?(.beforePrimary)
         try data.write(to: primary, options: .atomic)
+        try fault?(.afterPrimary); try fault?(.beforePointer)
         let pointer = root.appendingPathComponent("active.json"), pointerBackup = root.appendingPathComponent("active.backup.json")
         if let previous = try? read(pointer, limit: 4096), (try? JSONDecoder().decode(Locator.self, from: previous)) != nil {
             try previous.write(to: pointerBackup, options: .atomic)
         }
         try JSONEncoder().encode(Locator(id: world.id)).write(to: pointer, options: .atomic)
+        try fault?(.afterPointer)
     }
 }
