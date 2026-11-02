@@ -306,3 +306,42 @@ let graphData=try RPGStoryCodec.encode(RPGOfficialStory.graph)
 let decodedGraph=try RPGStoryCodec.decode(graphData)
 check(decodedGraph==RPGOfficialStory.graph,"independent story JSON round trip")
 print("RPG P7: \(checks) total checks passed")
+
+// P8: creation, isolated preview, bounded imports and missing media fallback.
+let authored=RPGStoryAuthoring.template()
+try authored.validate()
+let sourceBeforePreview=tale
+var preview=try RPGStoryAuthoring.preview(authored,bindings:[],source:tale)
+try RPGStoryRuntime.advance(world:&preview,generator:arenaGenerator)
+try RPGStoryRuntime.advance(choiceID:"watch",world:&preview,generator:arenaGenerator)
+check(preview.story.activeProgress?.current=="media","authored branch enters media node")
+try RPGStoryRuntime.advance(world:&preview,generator:arenaGenerator)
+check(preview.story.activeProgress?.ended==true && tale==sourceBeforePreview,"preview rewards never mutate source world")
+var publishedWorld=tale
+try RPGStoryAuthoring.install(authored,bindings:[],world:&publishedWorld)
+check(publishedWorld.story.customGraphs.contains{$0.id==authored.id} && publishedWorld.story.progress==tale.story.progress,"publishing keeps official progress")
+let publishedBeforeDuplicate=publishedWorld
+do{try RPGStoryAuthoring.install(authored,bindings:[],world:&publishedWorld);preconditionFailure("duplicate graph accepted")}catch{check(publishedWorld==publishedBeforeDuplicate,"duplicate publication rolls back")}
+var missingCutscene=authored
+let mediaIndex=missingCutscene.nodes.firstIndex{$0.kind == .media}!
+missingCutscene.nodes[mediaIndex].mediaBindingID="missing-local-binding"
+var fallbackPreview=try RPGStoryAuthoring.preview(missingCutscene,bindings:[],source:tale)
+try RPGStoryRuntime.advance(world:&fallbackPreview,generator:arenaGenerator)
+try RPGStoryRuntime.advance(choiceID:"watch",world:&fallbackPreview,generator:arenaGenerator)
+try RPGStoryRuntime.advance(world:&fallbackPreview,generator:arenaGenerator)
+check(fallbackPreview.story.activeProgress?.ended==true,"missing media never blocks subtitles or skip")
+let authoredData=try RPGStoryCodec.encode(authored)
+let authoredRoundTrip=try RPGStoryCodec.decode(authoredData)
+check(authoredRoundTrip==authored,"custom branch exports and imports independently")
+let executableJSON=String(decoding:authoredData,as:UTF8.self).replacingOccurrences(of:"giveItem",with:"runJavaScript")
+do{_=try RPGStoryCodec.decode(Data(executableJSON.utf8));preconditionFailure("script action accepted")}catch{checks+=1}
+do{_=try RPGStoryCodec.decode(Data(repeating:32,count:RPGStoryCodec.maximumBytes+1));preconditionFailure("oversize import accepted")}catch{checks+=1}
+var mediaResumeWorld=tale;mediaResumeWorld.story.mediaPositions["official:media"]=12.5
+let mediaResumeDecoded=try RPGWorldCodec.decode(RPGWorldCodec.encode(mediaResumeWorld))
+check(mediaResumeDecoded.story.mediaPositions["official:media"]==12.5,"cutscene resume time persists without video bytes")
+var schema4JSON=try JSONSerialization.jsonObject(with:RPGWorldCodec.encode(tale)) as! [String:Any]
+schema4JSON["schemaVersion"]=4
+var schema4Story=schema4JSON["story"] as! [String:Any];schema4Story["mediaPositions"]=nil;schema4JSON["story"]=schema4Story
+let schema4Migrated=try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject:schema4JSON))
+check(schema4Migrated.story.activeProgress==tale.story.activeProgress && schema4Migrated.story.mediaPositions.isEmpty,"schema 4 migration keeps node receipts and branch choices")
+print("RPG P8: \(checks) total checks passed")

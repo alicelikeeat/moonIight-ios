@@ -2,6 +2,30 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGStoryEditorCanPreviewAndPublishBranch() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        let editor=app.buttons["rpg-story-editor"];guard revealListControl(editor,in:app) else{return};editor.tap()
+        let title=app.textFields["rpg-story-title"];XCTAssertTrue(title.waitForExistence(timeout:8));title.tap();title.typeText(" UI\n")
+        let validate=app.buttons["rpg-story-validate"];guard revealListControl(validate,in:app) else{return};validate.tap()
+        let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
+        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-preview-text"].label.contains("字幕"));app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-preview-ended"].waitForExistence(timeout:6));app.buttons["rpg-preview-close"].tap()
+        let publish=app.buttons["rpg-story-publish"];guard revealListControl(publish,in:app) else{return};publish.tap()
+        let status=app.staticTexts["rpg-editor-status"];guard revealListControl(status,in:app) else{return}
+        XCTAssertTrue(status.label.contains("已保存"));attach(app,name:"review-rpg-p8-editor")
+        app.buttons["rpg-editor-back"].tap()
+        let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
+        let custom=app.buttons.matching(NSPredicate(format:"label CONTAINS %@"," UI")).firstMatch
+        guard revealListControl(custom,in:app) else{return};custom.tap()
+        let intro=NSPredicate(format:"label CONTAINS %@","你的故事从这里开始")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:intro,object:app.staticTexts["rpg-story-text"])],timeout:8),.completed)
+    }
+
+    @MainActor
     func testRPGStoryChoicePersistsAndWaitsForRealWorldEvent() {
         let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()

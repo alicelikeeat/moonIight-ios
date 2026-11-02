@@ -32,6 +32,8 @@ struct RPGStoryNode:Codable,Equatable,Identifiable,Sendable {
     var condition:RPGStoryCondition?
     var actions:[RPGStoryAction]=[]
     var mediaBindingID:String?
+    var mediaLoop:Bool?
+    var mediaMuted:Bool?
 }
 struct RPGStoryGraph:Codable,Equatable,Identifiable,Sendable {
     var id:String
@@ -88,12 +90,13 @@ struct RPGStoryProgress:Codable,Equatable,Identifiable,Sendable {
 }
 struct RPGStoryState:Codable,Equatable,Sendable {
     var activeGraphID=RPGOfficialStory.graph.id
+    var mediaPositions:[String:Double]=[:]
     var eventCounts:[String:Int]=[:]
     var observedEventIDs:[String]=[]
     var progress:[RPGStoryProgress]=[]
     var customGraphs:[RPGStoryGraph]=[]
     func validate()throws {
-        guard eventCounts.count<=512,eventCounts.values.allSatisfy({(0...1_000_000).contains($0)}),observedEventIDs.count<=256,Set(observedEventIDs).count==observedEventIDs.count,progress.count<=32,customGraphs.count<=16,Set(progress.map(\.id)).count==progress.count,Set(customGraphs.map(\.id)).count==customGraphs.count,
+        guard mediaPositions.count<=4096,mediaPositions.values.allSatisfy({$0.isFinite && (0...10_000_000).contains($0)}),eventCounts.count<=512,eventCounts.values.allSatisfy({(0...1_000_000).contains($0)}),observedEventIDs.count<=256,Set(observedEventIDs).count==observedEventIDs.count,progress.count<=32,customGraphs.count<=16,Set(progress.map(\.id)).count==progress.count,Set(customGraphs.map(\.id)).count==customGraphs.count,
               progress.allSatisfy(\.valid),!customGraphs.contains(where:{$0.id==RPGOfficialStory.graph.id}) else{throw RPGStoryError.invalidGraph}
         for graph in customGraphs{try graph.validate()}
         let graphs=[RPGOfficialStory.graph]+customGraphs

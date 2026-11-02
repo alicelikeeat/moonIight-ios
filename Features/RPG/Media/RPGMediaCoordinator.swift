@@ -42,7 +42,7 @@ import UIKit
             Task{@MainActor [weak self] in self?.textures.maxEntries=6;self?.textures.maxCost=2*1024*1024;self?.textures.trim();self?.clearEvictedTextures()}
         }
     }
-    func install(world:WorldState,targets:[RPGMediaNode],scene:SKScene,active:Bool){
+    func install(world:WorldState,targets:[RPGMediaNode],scene:SKScene,active:Bool,initialPositions:[String:Double]=[:]){
         self.targets=targets;self.scene=scene;self.budget=world.videoBudget;self.active=active
         let mediaIDs=Set(targets.map{$0.binding.mediaID})
         let owners=Set(targets.map(\.ownerID))
@@ -50,6 +50,7 @@ import UIKit
         for id in Array(subscriptions.keys) where !mediaIDs.contains(id){subscriptions[id]=nil}
         for target in targets {
             if ownerIDs[target.ownerID]==nil{ownerIDs[target.ownerID]=nextID;nextID+=1}
+            if let seconds=initialPositions[target.ownerID],let ownerID=ownerIDs[target.ownerID] {pool.restorePlayback(cardID:ownerID,mediaID:target.binding.mediaID,seconds:seconds)}
             let id=target.binding.mediaID
             if subscriptions[id]==nil {
                 let feed=pool.feed(id)
@@ -118,6 +119,7 @@ import UIKit
         }
     }
     private func clearEvictedTextures(){for target in targets where !textures.contains(target.binding.mediaID){target.sprite.texture=nil}}
+    func position(_ mediaID:String)->Double{pool.playbackSeconds(mediaID)}
     func pause(){active=false;pool.stop();lastRequests=[]}
     func retry(){textures.maxEntries=24;textures.maxCost=12*1024*1024;pool.retry();configureAssets();sync(force:true)}
     func stop(){

@@ -401,6 +401,17 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         world.combat.invulnerableRemaining = 2
         returnToSpawn(); refreshCombat(); save()
     }
+    func installStory(_ graph:RPGStoryGraph,bindings:[MediaBinding])->Bool {
+        guard ready,!working else{return false}
+        do {try RPGStoryAuthoring.install(graph,bindings:bindings,world:&world);save();return true}
+        catch{notice=error.localizedDescription;return false}
+    }
+    func recordStoryMedia(_ nodeID:String,seconds:Double) {
+        guard ready,seconds.isFinite,(0...10_000_000).contains(seconds) else{return}
+        let key=world.story.activeGraphID+":"+nodeID
+        guard world.story.mediaPositions[key] != nil || world.story.mediaPositions.count<4096 else{return}
+        world.story.mediaPositions[key]=seconds;world.revision+=1;save()
+    }
     func prepareStory() {
         guard ready, world.story.activeProgress == nil else { return }
         beginStory(world.story.activeGraphID)

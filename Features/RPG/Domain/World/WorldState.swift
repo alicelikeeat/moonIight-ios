@@ -98,8 +98,8 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 4
-    var schemaVersion = 4
+    static let currentSchema = 5
+    var schemaVersion = 5
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64

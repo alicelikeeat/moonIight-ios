@@ -21,6 +21,9 @@ enum RPGWorldCodec {
                 "damage": [String: Int](), "inventory": ["wood":12,"stone":8], "undo": [String](), "redo": [String](), "events": [String](), "isCreativeCopy": false]
             for (key,value) in defaults where object[key] == nil { object[key] = value }
             if object["story"] == nil { object["story"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RPGStoryState())) }
+            if var story = object["story"] as? [String: Any] {
+                if story["mediaPositions"] == nil { story["mediaPositions"] = [String: Double]() }; object["story"] = story
+            }
             if object["combat"] == nil { object["combat"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(RPGCombatState())) }
             if var player = object["player"] as? [String: Any] {
                 if player["facing"] == nil { player["facing"] = ["dx":1,"dz":0] }

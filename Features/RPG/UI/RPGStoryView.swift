@@ -3,6 +3,7 @@ import SwiftUI
 struct RPGStoryView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var session: RPGSession
+    @EnvironmentObject private var model:AppModel
     let travel: (RPGAnchorID) -> Void
     private var graph: RPGStoryGraph { session.world.story.activeGraph }
     private var progress: RPGStoryProgress? { session.world.story.activeProgress }
@@ -12,6 +13,9 @@ struct RPGStoryView: View {
             Section(graph.title) {
                 if let node {
                     Text(node.text.isEmpty ? node.kind.rawValue : node.text).accessibilityIdentifier("rpg-story-text")
+                    if node.kind == .media,let binding=node.mediaBindingID {
+                        RPGCutsceneView(world:session.world,bindingID:binding,store:model.mediaStore,seconds:session.world.story.mediaPositions[graph.id+":"+node.id,default:0],loop:node.mediaLoop,muted:node.mediaMuted,progress:{session.recordStoryMedia(node.id,seconds:$0)}).id(node.id)
+                    }
                     if progress?.ended == true {
                         Text("本段剧情已完成，奖励与选择已存入当前世界。").accessibilityIdentifier("rpg-story-ended")
                     } else if node.kind == .choice {
@@ -21,7 +25,7 @@ struct RPGStoryView: View {
                                 .accessibilityIdentifier("rpg-story-choice-"+choice.id)
                         }
                     } else {
-                        Button(node.condition == nil ? "继续" : "检查任务条件") { session.advanceStory() }
+                        Button(node.kind == .media ? "跳过 / 继续" : node.condition == nil ? "继续" : "检查任务条件") { session.advanceStory() }
                             .accessibilityIdentifier("rpg-story-next")
                         if let condition = node.condition, !available(condition) {
                             Text("等待任务条件满足，可关闭面板继续探索。").font(.caption).foregroundStyle(.secondary)

@@ -148,6 +148,15 @@ private actor CardFrameRenderer {
         loopingMediaIDs = ids
         completed.subtract(ids)
     }
+    // RPG cutscenes restore a bounded snapshot before the slot is created.
+    func restorePlayback(cardID:Int,mediaID:String,seconds:Double) {
+        guard seconds.isFinite,(0...10_000_000).contains(seconds),slots[mediaID] == nil else { return }
+        snapshots[cardID] = CardPlaybackSnapshot(mediaID:mediaID,seconds:seconds)
+    }
+    func playbackSeconds(_ mediaID:String)->Double {
+        let seconds = slots[mediaID]?.player.currentTime().seconds ?? snapshots.values.first(where:{$0.mediaID==mediaID})?.seconds ?? 0
+        return seconds.isFinite ? max(0,min(10_000_000,seconds)):0
+    }
     func retainSnapshots(for ids: Set<Int>) { for id in Array(snapshots.keys) where !ids.contains(id) { snapshots[id] = nil } }
     func retry() {
         for key in Array(snapshots.keys) where completed.contains(snapshots[key]?.mediaID ?? "") { snapshots[key]?.seconds = 0 }
