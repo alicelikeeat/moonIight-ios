@@ -39,9 +39,8 @@ struct RPGMediaEditorView:View {
                     Slider(value:Binding(get:{binding.anchorX},set:{session.changeBinding(binding.id,anchorX:$0)}),in:0...1){Text("水平锚点")}
                     Slider(value:Binding(get:{binding.anchorY},set:{session.changeBinding(binding.id,anchorY:$0)}),in:0...1){Text("垂直锚点")}
                     Slider(value:Binding(get:{binding.cropWidth},set:{session.changeBinding(binding.id,cropWidth:$0)}),in:0.25...1,step:0.05){Text("裁切宽度")}
-                    Toggle("循环",isOn:Binding(get:{binding.loop},set:{session.changeBinding(binding.id,loop:$0)})).accessibilityIdentifier("rpg-binding-loop")
-                    Toggle("静音",isOn:Binding(get:{binding.muted},set:{session.changeBinding(binding.id,muted:$0)}))
-                        .accessibilityIdentifier("rpg-binding-muted")
+                    HStack { Text("循环");Spacer();Toggle("循环",isOn:Binding(get:{binding.loop},set:{session.changeBinding(binding.id,loop:$0)})).labelsHidden().frame(width:51,height:44).accessibilityIdentifier("rpg-binding-loop") }
+                    HStack { Text("静音");Spacer();Toggle("静音",isOn:Binding(get:{binding.muted},set:{session.changeBinding(binding.id,muted:$0)})).labelsHidden().frame(width:51,height:44).accessibilityIdentifier("rpg-binding-muted") }
                     Button("恢复默认外观"){session.clearMedia(owner)}.accessibilityIdentifier("rpg-clear-binding")
                 }
             }

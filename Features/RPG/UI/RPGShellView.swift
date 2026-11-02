@@ -78,7 +78,7 @@ struct RPGShellView: View {
                 #endif
             }
             .onChange(of: tools) { visible in session.setOverlay(visible) }
-            .onChange(of: session.world.backgroundBindingIDs.count) { count in backgroundLayer=min(2,count) }
+            .onChange(of: session.world.backgroundBindingIDs.count) { count in backgroundLayer=min(backgroundLayer,min(2,count)) }
     }
     private var positionLabel: String {
         if session.world.player.perspective == .side, let point = session.world.player.side { return "u \(point.horizontal) · y \(point.height)" }

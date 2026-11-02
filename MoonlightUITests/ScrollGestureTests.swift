@@ -27,7 +27,9 @@ final class ScrollGestureTests: XCTestCase {
                 }
                 return condition(Dictionary(pairs,uniquingKeysWith:{first,_ in first}))
             }
-            XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:predicate,object:probe)],timeout:25),.completed)
+            let result=XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:predicate,object:probe)],timeout:25)
+            if result != .completed { print("RPG_MEDIA_TIMEOUT: \(probe.value as? String ?? "missing")");print(app.debugDescription) }
+            XCTAssertEqual(result,.completed)
         }
         waitMedia{($0["frames"] ?? 0)>0 && ($0["posters"] ?? 0)>0 && ($0["advancing"] ?? 0)>0 && ($0["global"] ?? 99)<=2 && $0["muted"]==1}
         XCUIDevice.shared.press(.home);app.activate()
@@ -36,6 +38,7 @@ final class ScrollGestureTests: XCTestCase {
         let player=app.buttons["rpg-media-player"];guard revealListControl(player,in:app) else{return};player.tap()
         let loop=app.switches["rpg-binding-loop"]
         guard revealListControl(loop,in:app) else{return};if loop.value as? String=="1"{loop.tap()}
+        XCTAssertEqual(loop.value as? String,"0")
         app.buttons["rpg-media-back"].tap();app.buttons["rpg-tools-close"].tap()
         waitMedia{($0["completed"] ?? 0)>0 && $0["players"]==0}
         attach(app,name:"review-rpg-p5-media")
