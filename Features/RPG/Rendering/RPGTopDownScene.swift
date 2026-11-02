@@ -4,6 +4,9 @@ import UIKit
 @MainActor final class RPGTopDownScene: SKScene {
     static let cell: CGFloat = 24
     var onSelectCell: ((SurfacePoint) -> Void)?
+    var onStroke: (([SurfacePoint]) -> Void)?
+    var tool = RPGTool.select
+    private var strokePoints: [SurfacePoint] = []
     private let ground = SKNode()
     private let objects = SKNode()
     private let avatar = SKShapeNode(circleOfRadius: 8)
@@ -33,7 +36,7 @@ import UIKit
             ground.addChild(map); maps[chunk.coordinate] = map
         }
         objects.removeAllChildren()
-        for entity in chunks.flatMap(\.entities) + world.entities {
+        for entity in chunks.flatMap({ RPGWorldEditing.entities(in: $0, world: world) }) {
             guard let point = entity.surface, wanted.contains(point.chunk ?? .init(x: -1, z: -1)) else { continue }
             let node = SKShapeNode(rectOf: CGSize(width: 16, height: 18), cornerRadius: 4)
             node.fillColor = entity.definitionID == "wood" ? .systemBrown : .systemGray
@@ -64,11 +67,25 @@ import UIKit
         }
     }
     static func position(_ point: SurfacePoint) -> CGPoint { CGPoint(x: CGFloat(point.x) * cell + cell / 2, y: CGFloat(point.z) * cell + cell / 2) }
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
+    private func cell(_ touch: UITouch) -> SurfacePoint? {
         let point = touch.location(in: self)
         let cell = SurfacePoint(x: Int(floor(point.x / Self.cell)), z: Int(floor(point.y / Self.cell)))
-        if cell.valid { onSelectCell?(cell) }
+        return cell.valid ? cell : nil
     }
-    func shutdown() { isPaused = true; onSelectCell = nil; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        strokePoints = []; if let touch = touches.first, let point = cell(touch) { strokePoints = [point]; select(point) }
+    }
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, let point = cell(touch), let last = strokePoints.last else { return }
+        for value in RPGWorldEditing.line(last, point) where !strokePoints.contains(value) && strokePoints.count < 256 { strokePoints.append(value) }
+        select(point)
+    }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let touch = touches.first, let point = cell(touch) else { strokePoints = []; return }
+        onSelectCell?(point)
+        if tool != .select { if strokePoints.isEmpty { strokePoints = [point] }; onStroke?(strokePoints) }
+        strokePoints = []
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { strokePoints = [] }
+    func shutdown() { isPaused = true; onSelectCell = nil; onStroke = nil; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
 }

@@ -2,8 +2,29 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGBuildUndoSaveAndReopen() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout: 8)); app.buttons["rpg-tools"].tap()
+        let mode = app.segmentedControls["rpg-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.buttons["创造"].tap()
+        app.buttons["rpg-choose-site"].tap(); app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-place"].tap()
+        let count = app.staticTexts["rpg-placed-count"]
+        func waitCount(_ value: String) {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value),object:count)],timeout:15),.completed)
+        }
+        waitCount("1"); app.buttons["rpg-undo"].tap(); waitCount("0")
+        app.buttons["rpg-redo"].tap(); waitCount("1")
+        app.buttons["rpg-close"].tap()
+        app.buttons["me-rpg-entrance"].tap(); waitCount("1")
+        attach(app,name:"review-rpg-p3-persisted-build")
+        app.buttons["rpg-close"].tap()
+    }
+
+    @MainActor
     func testRPGWorldSeedChunksAndMovement() {
-        let app = launch(discover: false)
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
         let count = app.staticTexts["rpg-loaded-chunks"]
         XCTAssertTrue(count.waitForExistence(timeout: 8))
@@ -21,7 +42,7 @@ final class ScrollGestureTests: XCTestCase {
 
     @MainActor
     func testRPGSkeletonCanValidateExitAndPreserveOtherModules() {
-        let app = launch(discover: false)
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
         app.buttons["navigation-me"].tap()
         let entrance = app.buttons["me-rpg-entrance"]
         XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()

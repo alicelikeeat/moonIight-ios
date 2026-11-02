@@ -70,3 +70,72 @@ generatedState.sideRegions = [generated.sideRegion]
 generatedState.entities = ChunkCoordinate.all.flatMap { forward[$0.id]!.entities }
 try generatedState.validate()
 print("RPG P2: \(checks) total checks passed")
+
+func editRejected(_ title: String, _ operation: () throws -> Void) {
+    do { try operation(); preconditionFailure(title) } catch { checks += 1 }
+}
+var editing = WorldState(seed: 42)
+editing.generated = true; editing.sideRegions = [generated.sideRegion]; editing.player.mode = .creative
+let pair = (60..<230).compactMap { z -> [SurfacePoint]? in
+    let a = SurfacePoint(x: 31,z: z), b = SurfacePoint(x: 32,z: z)
+    return [a,b].allSatisfy({ generated.tile(at: $0)?.passable == true && !generated.protected($0) && RPGWorldEditing.entity(at: $0,world: editing,generator: generated) == nil }) ? [a,b] : nil
+}.first!
+let pristine = editing
+editRejected("protected anchor remains protected in creative") { try RPGWorldEditing.place([.init(point: generated.anchor(.spawn),definitionID: "wood")],world: &editing,generator: generated) }
+check(editing == pristine,"protection failure is atomic")
+try RPGWorldEditing.place(pair.map { .init(point: $0,definitionID: "wood") },world: &editing,generator: generated)
+check(editing.entities.count == 2 && Set(editing.entities.compactMap { $0.surface?.chunk }).count == 2,"batch across chunk boundary")
+let placedIDs = editing.entities.map(\.id)
+try RPGWorldEditing.undo(world: &editing); check(editing.entities.isEmpty,"undo full batch")
+try RPGWorldEditing.redo(world: &editing); check(editing.entities.map(\.id) == placedIDs,"redo preserves identity")
+let occupiedBefore = editing
+editRejected("occupied batch") { try RPGWorldEditing.place(pair.map { .init(point:$0,definitionID:"stone") },world:&editing,generator:generated) }
+check(editing == occupiedBefore,"failed occupied batch rolls back all state")
+let clipboard = try RPGWorldEditing.copy(from: pair[0],to:pair[1],world:editing,generator:generated)
+check(clipboard.cells.count == 2 && clipboard.width == 2,"copy range data")
+try RPGWorldEditing.hit(pair[0],world:&editing,generator:generated)
+check(editing.damage[placedIDs[0]] == 1 && editing.entities.count == 2,"hit changes durability before removal")
+try RPGWorldEditing.hit(pair[0],world:&editing,generator:generated)
+try RPGWorldEditing.hit(pair[0],world:&editing,generator:generated)
+check(editing.entities.count == 1 && editing.inventory["wood"] == pristine.inventory["wood"]! + 1,"destroy removes and drops once")
+let drops = editing.inventory
+try RPGWorldEditing.undo(world:&editing); check(editing.damage[placedIDs[0]] == 2,"undo restores previous damage")
+try RPGWorldEditing.redo(world:&editing); check(editing.inventory == drops,"redo does not duplicate drop")
+var adventure = pristine; adventure.player.mode = .adventure; adventure.player.surface = .init(x:30,z:pair[0].z); adventure.inventory["wood"] = 1
+let poor = adventure
+editRejected("insufficient total resources") { try RPGWorldEditing.place(pair.map { .init(point:$0,definitionID:"wood") },world:&adventure,generator:generated) }
+check(adventure == poor,"resource failure rolls back inventory and world")
+adventure.inventory["wood"] = 2
+try RPGWorldEditing.place(pair.map { .init(point:$0,definitionID:"wood") },world:&adventure,generator:generated)
+check(adventure.inventory["wood"] == 0,"resource cost committed once")
+try RPGWorldEditing.undo(world:&adventure); check(adventure.inventory["wood"] == 2,"undo refunds exactly")
+var removedResource = pristine
+let resource = ChunkCoordinate.all.lazy.compactMap { generated.chunk($0)?.entities.first }.first!
+try RPGWorldEditing.hit(resource.surface!,world:&removedResource,generator:generated,force:true)
+check(removedResource.removedGeneratedIDs.contains(resource.id),"generated removal stored as delta")
+let restoredResource = try RPGWorldCodec.decode(RPGWorldCodec.encode(removedResource))
+check(RPGWorldEditing.entity(at:resource.surface!,world:restoredResource,generator:generated) == nil,"removed generated block stays removed after serialization")
+removedResource.player.surface = resource.surface!
+let occupiedResource = removedResource
+editRejected("cannot restore block through player") { try RPGWorldEditing.undo(world:&removedResource) }
+check(removedResource == occupiedResource,"collision rejection is atomic")
+editRejected("oversize fill") { _ = try RPGWorldEditing.rectangle(.init(x:0,z:0),.init(x:255,z:255)) }
+check(RPGWorldEditing.line(.init(x:31,z:31),.init(x:34,z:34)).count == 4,"continuous paint bridges sampled movement")
+let saveRoot = FileManager.default.temporaryDirectory.appendingPathComponent("rpg-tests-" + UUID().uuidString,isDirectory:true)
+let disk = RPGWorldDiskStore(root: saveRoot)
+try await disk.save(editing)
+let diskRoundTrip = try await disk.load()
+check(diskRoundTrip == editing,"atomic file round trip")
+var later = editing; later.revision += 1; later.inventory["stone",default:0] += 1
+try await disk.save(later)
+let folder = saveRoot.appendingPathComponent("Worlds").appendingPathComponent(editing.id)
+try Data("broken".utf8).write(to:folder.appendingPathComponent("world.json"),options:.atomic)
+let recovered = try await disk.load()
+let usedBackup = await disk.recoveredFromBackup
+check(recovered == editing && usedBackup,"previous-good backup restores corrupted primary")
+try Data("broken".utf8).write(to:folder.appendingPathComponent("world.backup.json"),options:.atomic)
+do { _ = try await disk.load(); preconditionFailure("both corrupt must report failure") } catch { checks += 1 }
+var hostile = editing; hostile.id = "../escape"
+do { try await disk.save(hostile); preconditionFailure("path traversal") } catch { checks += 1 }
+try? FileManager.default.removeItem(at:saveRoot)
+print("RPG P3: \(checks) total checks passed")

@@ -49,7 +49,7 @@ jobs:
       - name: Test RPG pure domain
         run: |
           mkdir -p build
-          swiftc Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
+          swiftc Features/RPG/Domain/Blocks/RPGWorldEditing.swift Features/RPG/Persistence/RPGWorldDiskStore.swift Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
           build/rpg-tests
       - name: Verify control inventory
         run: |
@@ -84,7 +84,7 @@ jobs:
         if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'rpg')
         timeout-minutes: 15
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules -only-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement -resultBundlePath build/RPGTests.xcresult test
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules -only-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement -only-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen -resultBundlePath build/RPGTests.xcresult test
       - name: Run V2.4.1 landlord tests
         if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'landlord')
         timeout-minutes: 15
@@ -130,7 +130,7 @@ jobs:
         run: |
           SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
           COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
-          SKIP=("-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement")
+          SKIP=("-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement")
           for TEST_NAME in testLandlordClassicWholeGameAndNewRound testLandlordMediaBudgetFocusBackgroundAndModeCleanup testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference testVideoWallSelectionLimitModesFocusAndCleanup testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI; do
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done

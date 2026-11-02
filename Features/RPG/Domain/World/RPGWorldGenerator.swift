@@ -87,7 +87,8 @@ struct RPGWorldGenerator: Sendable {
                 let definition = n % 2 == 0 ? "wood" : "stone"
                 entities.append(.init(id: "g1:\(seed):\(point.x):\(point.z)", definitionID: definition,
                     scope: shared ? .shared : .topDownOnly, surface: point,
-                    side: shared ? .init(regionID: sideRegion.id, horizontal: point.x - sideRegion.origin.x, height: 2) : nil))
+                    side: shared ? .init(regionID: sideRegion.id, horizontal: point.x - sideRegion.origin.x, height: 2) : nil,
+                    physics: .init(topDownSolid: true, sideSolid: true, sideGravity: false, pushable: false, hitPoints: definition == "stone" ? 5 : 3, width: 1, height: 1)))
             }
         } }
         return .init(coordinate: coordinate, terrain: tiles, entities: entities)

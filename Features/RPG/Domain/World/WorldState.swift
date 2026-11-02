@@ -106,14 +106,28 @@ struct WorldState: Codable, Equatable, Sendable {
     var mediaBindings: [MediaBinding] = []
     var sideRegions: [SideRegion] = []
     var generated = false
+    var parentWorldID: String?
+    var isCreativeCopy = false
+    var removedGeneratedIDs: [String] = []
+    var damage: [String: Int] = [:]
+    var inventory: [String: Int] = ["wood": 12, "stone": 8]
+    var undo: [RPGEditTransaction] = []
+    var redo: [RPGEditTransaction] = []
+    var events: [RPGWorldEvent] = []
     init(seed: UInt64 = 20261102) { self.seed = seed }
     func validate() throws {
         guard schemaVersion == Self.currentSchema, generatorVersion == 1 else { throw RPGWorldError.unsupportedVersion }
-        guard !id.isEmpty, id.count <= 128, player.surface.valid, (0...100).contains(player.health), (0...100).contains(player.stamina),
+        guard !id.isEmpty, id.count <= 128, revision <= UInt64.max - 65536, player.surface.valid, (0...100).contains(player.health), (0...100).contains(player.stamina),
               entities.count <= 65536, mediaBindings.count <= 1024, sideRegions.count <= 64 else { throw RPGWorldError.invalidState }
         guard Set(entities.map(\.id)).count == entities.count, Set(mediaBindings.map(\.id)).count == mediaBindings.count,
               Set(sideRegions.map(\.id)).count == sideRegions.count else { throw RPGWorldError.duplicateIdentity }
         guard mediaBindings.allSatisfy(\.valid), sideRegions.allSatisfy(\.valid) else { throw RPGWorldError.invalidState }
+        guard removedGeneratedIDs.count <= 65536, Set(removedGeneratedIDs).count == removedGeneratedIDs.count,
+              damage.count <= 65536, damage.values.allSatisfy({ (0...10000).contains($0) }),
+              inventory.count <= 128, inventory.values.allSatisfy({ (0...1000000).contains($0) }),
+              undo.count <= 32, redo.count <= 32, events.count <= 256,
+              (undo + redo).allSatisfy({ !$0.id.isEmpty && !$0.changes.isEmpty && $0.changes.count <= 256 && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
+              !isCreativeCopy || parentWorldID != nil else { throw RPGWorldError.invalidState }
         let bindings = Set(mediaBindings.map(\.id))
         func validSide(_ side: SidePlacement) -> Bool {
             guard let region = sideRegions.first(where: { $0.id == side.regionID }) else { return false }
