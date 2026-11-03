@@ -1322,4 +1322,56 @@ check(base.boxes(x: 90.5, y: 90.5, radius: 0.1).count == 1 && later.boxes(x: 95.
 print("RPG 2.5D world: \(checks) total checks passed")
 }
 
+
+// P23: v1.60 projection, picking and native glass faces.
+do {
+    let size = CGSize(width: 800, height: 400)
+    let camera = SpatialProjection(eye: SpatialVector(100, 90, 10), target: SpatialVector(100, 100, 0), fieldOfView: 30, viewSize: size)
+    let center = camera.project(SpatialVector(100, 100, 0))!
+    check(abs(center.point.x - 400) < 1e-6 && abs(center.point.y - 200) < 1e-6, "target projects to the screen centre")
+    check(camera.project(SpatialVector(100, 80, 10)) == nil, "points behind the camera are not drawn")
+    let right = camera.project(SpatialVector(101, 100, 0))!.point, far = camera.project(SpatialVector(100, 101, 0))!.point
+    check(right.x > 400 && abs(right.y - 200) < 1e-6 && far.y < 200, "map east is screen right, map north is up the screen")
+    for screen in [CGPoint(x: 400, y: 200), CGPoint(x: 120, y: 330), CGPoint(x: 700, y: 50)] {
+        let ray = camera.ray(through: screen)
+        let t = -ray.origin.z / ray.direction.z
+        let back = camera.project(ray.origin + ray.direction * t)!.point
+        check(abs(back.x - screen.x) < 1e-6 && abs(back.y - screen.y) < 1e-6, "ray and projection agree at \(screen)")
+    }
+    let topDown = SpatialProjection(eye: SpatialVector(50, 50, 20), target: SpatialVector(50, 50, 0), fieldOfView: 30, viewSize: size)
+    check(topDown.project(SpatialVector(50, 51, 0))!.point.y < 200, "straight down: north is still up")
+    // Picking: nearest first, stacked blocks, creatures, ground.
+    let stacked = [SpatialBlock(id: "low", x: 100, y: 100, elevation: 0), SpatialBlock(id: "high", x: 100, y: 100, elevation: 3, thickness: 0.5)]
+    let down = topDown.ray(through: CGPoint(x: 400, y: 200))
+    let overhead = SpatialProjection(eye: SpatialVector(100.5, 100.5, 20), target: SpatialVector(100.5, 100.5, 0), fieldOfView: 30, viewSize: size)
+    let ray = overhead.ray(through: CGPoint(x: 400, y: 200))
+    let hits = SpatialPicking.pick(origin: ray.origin, direction: ray.direction, blocks: stacked, frames: [:], creatures: [], pickups: [])
+    check(hits.map(\.kind) == [.block, .block, .ground] && hits.map(\.id).prefix(2) == ["high", "low"], "picks the top block first, then the one below, then the ground")
+    check(abs(hits[0].point.z - 3.5) < 1e-6 && hits[2].cell == SurfacePoint(x: 100, z: 100), "hit point and cell")
+    _ = down
+    let slime = CreatureEntity(id: "s", kind: .enemy, position: SpatialVector(100.5, 100.5, 0), home: .zero, health: 5, maxHealth: 5, damage: 1)
+    check(SpatialPicking.pick(origin: ray.origin, direction: ray.direction, blocks: [], frames: [:], creatures: [slime], pickups: []).first?.kind == .creature, "creatures can be tapped")
+    check(SpatialPicking.pick(origin: ray.origin, direction: ray.direction, blocks: [], frames: [:], creatures: [], pickups: [], groundHoles: [100 * 256 + 100]).isEmpty, "holes in the ground are not ground")
+    let moving = SpatialBlock(id: "m", x: 100, y: 100, elevation: 0, groupID: "g")
+    let shifted = SpatialPicking.pick(origin: ray.origin, direction: ray.direction, blocks: [moving], frames: ["g": GroupFrame(pivot: SpatialVector(100.5, 100.5, 0), offset: SpatialVector(5, 0, 0), yaw: 0)], creatures: [], pickups: [])
+    check(!shifted.contains { $0.kind == .block }, "moving blocks are picked where they are now")
+    // Native glass faces.
+    let box = SpatialBlock(id: "b", x: 10, y: 10, elevation: 1, thickness: 2)
+    let corners = SpatialFaces.corners(box)
+    check(corners.count == 8 && corners[0].z == 1 && corners[7].z == 3 && abs(corners[2].x - 11) < 1e-9, "block corners")
+    let fromAbove = SpatialFaces.visibleFaces(corners, eye: SpatialVector(10.5, 10.5, 20)).map(\.index)
+    check(fromAbove == [0], "straight above: only the top face")
+    let fromSouthEast = Set(SpatialFaces.visibleFaces(corners, eye: SpatialVector(20, 0, 10)).map(\.index))
+    check(fromSouthEast == [0, 2, 3], "from the south-east and above: top, south and east faces")
+    let turned = SpatialFaces.corners(SpatialBlock(id: "t", x: 10, y: 10, elevation: 0, yaw: 45))
+    check(abs(turned[0].x - 10.5) < 1e-9, "turned blocks turn their corners")
+    let clockwise = [CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 10), CGPoint(x: 10, y: 10), CGPoint(x: 10, y: 0)]
+    check(SpatialFaces.signedArea(SpatialFaces.oriented(clockwise)) > 0 && SpatialFaces.signedArea(SpatialFaces.oriented(clockwise.reversed())) > 0, "every face wound the same way")
+    let many = (0..<500).map { SpatialBlock(id: "n\($0)", x: $0 % 50, y: $0 / 50, elevation: 0) }
+    let nearest = SpatialFaces.nearest(many, to: SpatialVector(0.5, 0.5, 0), budget: 10)
+    check(nearest.count == 10 && nearest.first?.id == "n0", "native glass budget keeps the nearest blocks")
+    check(SpatialFaces.budget(.performance) == 0 && SpatialFaces.budget(.high) > SpatialFaces.budget(.standard), "budget follows glass quality")
+    print("RPG projection: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
