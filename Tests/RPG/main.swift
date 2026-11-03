@@ -1,5 +1,16 @@
 import Foundation
 
+extension WorldState {
+    /// The same world as a schema 6 writer would have saved it.
+    func withoutCellStyles() -> WorldState {
+        var copy = self
+        copy.mediaBindings = mediaBindings.filter { $0.kind == .image || $0.kind == .video }.map { var b = $0; b.style = nil; b.fit = nil; b.paused = nil; return b }
+        copy.entities = entities.map { var e = $0; if let id = e.mediaBindingID, !copy.mediaBindings.contains(where: { $0.id == id }) { e.mediaBindingID = nil }; return e }
+        copy.undo = []; copy.redo = []
+        return copy
+    }
+}
+
 var checks = 0
 func check(_ condition: @autoclosure () -> Bool, _ name: String) {
     precondition(condition(), name); checks += 1
@@ -529,4 +540,86 @@ do{try await oversizedStore.save(durableNext);preconditionFailure("oversized ret
 let oversizedRetained=try Data(contentsOf:oversizedPrimary)
 check(oversizedRetained==oversizedOriginal,"unreadable oversized file is not overwritten")
 try FileManager.default.removeItem(at:oversizedRoot)
+
+// P11: independent cell content (schema 7).
+func cellBinding(_ kind: RPGMediaKind, media: String = "", value: String? = nil) -> MediaBinding {
+    var binding = MediaBinding(id: "template", mediaID: media, kind: kind)
+    if let value { binding.style = RPGCellStyle(value: value) }
+    return binding
+}
+check(cellBinding(.image, media: "photo").valid && cellBinding(.gif, media: "anim").valid && cellBinding(.video, media: "clip").valid, "library kinds valid")
+check(!cellBinding(.image).valid && !cellBinding(.gif).valid, "library kinds need media")
+check(cellBinding(.icon, value: "star.fill").valid && cellBinding(.icon, media: "custom-icon", value: "").valid, "symbol or custom icon")
+check(!cellBinding(.icon, value: "Star Fill").valid && !cellBinding(.icon).valid && !cellBinding(.icon, media: "x", value: "star").valid, "icon must be exactly one source")
+check(cellBinding(.number, value: "42").valid && cellBinding(.number, value: "-3.25").valid, "numbers")
+check(!cellBinding(.number, value: "4e2").valid && !cellBinding(.number, value: "").valid && !cellBinding(.number, media: "x", value: "1").valid, "number format")
+check(cellBinding(.text, value: "月光").valid && cellBinding(.text, value: "a\nb\nc").valid, "text")
+check(!cellBinding(.text, value: "").valid && !cellBinding(.text, value: String(repeating: "字", count: 65)).valid && !cellBinding(.text, value: "a\nb\nc\nd").valid, "text limits")
+var badStyle = cellBinding(.text, value: "x"); badStyle.style?.colorHex = "GG0000"; check(!badStyle.valid, "color hex")
+badStyle = cellBinding(.text, value: "x"); badStyle.style?.size = 1.5; check(!badStyle.valid, "text size")
+badStyle = cellBinding(.text, value: "x"); badStyle.style?.backgroundHex = "12345"; check(!badStyle.valid, "background hex")
+
+let cellGenerator = RPGWorldGenerator(seed: 42)
+var cells = WorldState(seed: 42); cells.generated = true; cells.sideRegions = [cellGenerator.sideRegion]; cells.player.mode = .creative
+let cellPoints = Array((0..<256).lazy.flatMap { z in (0..<256).lazy.map { SurfacePoint(x: $0, z: z) } }.filter {
+    $0 != cells.player.surface && cellGenerator.tile(at: $0)?.passable == true && !cellGenerator.protected($0) &&
+    !cellGenerator.sideRegion.contains($0) && RPGWorldEditing.entity(at: $0, world: cells, generator: cellGenerator) == nil
+}.prefix(4))
+check(cellPoints.count == 4, "four free cells")
+try RPGWorldEditing.place(cellPoints.map { .init(point: $0, definitionID: "stone") }, world: &cells, generator: cellGenerator)
+let cellIDs = cells.entities.map(\.id)
+let contents: [MediaBinding] = [cellBinding(.image, media: "shared-photo"), cellBinding(.icon, value: "moon.stars.fill"), cellBinding(.number, value: "7"), cellBinding(.text, value: "门")]
+for (id, content) in zip(cellIDs, contents) { try RPGMediaBindings.assign(content, to: .entity(id), world: &cells, generator: cellGenerator) }
+let kinds = cellIDs.map { id in cells.mediaBindings.first { $0.id == cells.entities.first { $0.id == id }?.mediaBindingID }?.kind }
+check(kinds == [.image, .icon, .number, .text], "adjacent cells keep their own kinds")
+check(Set(cells.entities.compactMap(\.mediaBindingID)).count == 4 && !cells.mediaBindings.contains { $0.id == "template" }, "each cell gets its own binding identity")
+check(cells.entities.allSatisfy { $0.definitionID == "stone" }, "content does not change block material")
+let beforeEdit = cells
+var renamed = cellBinding(.text, value: "窗"); renamed.style?.colorHex = "FFCC00"
+try RPGMediaBindings.assign(renamed, to: .entity(cellIDs[3]), world: &cells, generator: cellGenerator)
+func content(_ world: WorldState, _ id: String) -> MediaBinding? { world.mediaBindings.first { $0.id == world.entities.first { $0.id == id }?.mediaBindingID } }
+check(content(cells, cellIDs[3])?.style?.value == "窗" && content(cells, cellIDs[3])?.style?.colorHex == "FFCC00", "edit one cell")
+check(cellIDs.prefix(3).allSatisfy { content(cells, $0) == content(beforeEdit, $0) }, "editing one cell leaves the others alone")
+try RPGWorldEditing.undo(world: &cells)
+check(content(cells, cellIDs[3])?.style?.value == "门", "content edit is undoable")
+try RPGWorldEditing.redo(world: &cells)
+try RPGMediaBindings.assign(cellBinding(.image, media: "shared-photo"), to: .entity(cellIDs[1]), world: &cells, generator: cellGenerator)
+check(content(cells, cellIDs[0])?.mediaID == content(cells, cellIDs[1])?.mediaID && content(cells, cellIDs[0])?.id != content(cells, cellIDs[1])?.id, "one library file on two cells")
+try RPGMediaBindings.clear(.entity(cellIDs[2]), world: &cells)
+check(content(cells, cellIDs[2]) == nil && cells.entities.contains { $0.id == cellIDs[2] }, "clearing content keeps the block")
+let reopened = try RPGWorldCodec.decode(RPGWorldCodec.encode(cells))
+check(reopened == cells, "cell contents survive save and reload")
+editRejected("invalid content not bound") { try RPGMediaBindings.assign(cellBinding(.number, value: "abc"), to: .entity(cellIDs[0]), world: &cells, generator: cellGenerator) }
+
+// Schema 6 files (no style/fit/paused keys) open unchanged.
+var legacy = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(beforeEdit.withoutCellStyles())) as! [String: Any]
+legacy["schemaVersion"] = 6
+let legacyWorld = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: legacy))
+check(legacyWorld.schemaVersion == 7 && legacyWorld.mediaBindings.count == beforeEdit.withoutCellStyles().mediaBindings.count && legacyWorld.mediaBindings.allSatisfy { $0.fit == nil && $0.paused == nil }, "schema 6 media bindings migrate")
+var future = legacy; future["schemaVersion"] = 8
+do { _ = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: future)); preconditionFailure("future schema accepted") } catch { check(error as? RPGWorldError == .unsupportedVersion, "schema 8 rejected") }
+
+// Shared blocks show the same content in both projections.
+var dualCells = WorldState(seed: 42); dualCells.generated = true; dualCells.sideRegions = [cellGenerator.sideRegion]; dualCells.player.mode = .creative; dualCells.player.surface = cellGenerator.anchor(.temple)
+let rowPoint = (0..<cellGenerator.sideRegion.width).map { SurfacePoint(x: cellGenerator.sideRegion.origin.x + $0, z: cellGenerator.sideRegion.origin.z) }.first {
+    $0 != dualCells.player.surface && cellGenerator.tile(at: $0)?.passable == true && !cellGenerator.protected($0) && RPGWorldEditing.entity(at: $0, world: dualCells, generator: cellGenerator) == nil
+}!
+try RPGWorldEditing.place([.init(point: rowPoint, definitionID: "wood")], world: &dualCells, generator: cellGenerator)
+let rowID = dualCells.entities[0].id
+try RPGMediaBindings.assign(cellBinding(.gif, media: "anim"), to: .entity(rowID), world: &dualCells, generator: cellGenerator)
+let sideCopy = RPGProjectionRules.sideEntities(world: dualCells, generator: cellGenerator).first { $0.id == rowID }
+check(sideCopy?.mediaBindingID == dualCells.entities[0].mediaBindingID && sideCopy?.mediaBindingID != nil, "side view shares the cell content")
+
+// Unreferenced bindings are pruned; anything still referenced stays.
+var crowded = cells
+let referenced = Set(crowded.entities.compactMap(\.mediaBindingID))
+let undoReferenced = Set(crowded.undo.flatMap { $0.changes.flatMap { [$0.before?.mediaBindingID, $0.after?.mediaBindingID] } }.compactMap { $0 })
+for index in 0..<970 { crowded.mediaBindings.append(MediaBinding(id: "orphan-\(index)", mediaID: "x", kind: .image)) }
+try RPGMediaBindings.assign(cellBinding(.number, value: "9"), to: .entity(cellIDs[2]), world: &crowded, generator: cellGenerator)
+let kept = Set(crowded.mediaBindings.map(\.id))
+check(!kept.contains { $0.hasPrefix("orphan-") }, "orphans pruned near limit")
+check(referenced.isSubset(of: kept) && undoReferenced.isSubset(of: kept), "referenced and undo bindings kept")
+check(content(crowded, cellIDs[2])?.style?.value == "9", "assign succeeds after pruning")
+print("RPG cell content: \(checks) total checks passed")
+
 print("RPG complete: \(checks) total checks passed")

@@ -32,9 +32,18 @@ enum RPGMediaBindings {
         }
     }
     static func assign(mediaID:String,kind:RPGMediaKind,to owner:RPGMediaOwner,world:inout WorldState,generator:RPGWorldGenerator)throws {
-        guard !mediaID.isEmpty,world.mediaBindings.count<1024 else{throw RPGWorldError.invalidState}
+        guard !mediaID.isEmpty else{throw RPGWorldError.invalidState}
+        try assign(MediaBinding(id:"",mediaID:mediaID,kind:kind),to:owner,world:&world,generator:generator)
+    }
+    /// Binds a copy of `template` (any content kind) under a fresh identity.
+    /// The previous binding stays in place for undo; unreferenced ones are
+    /// pruned once the world approaches its binding limit.
+    static func assign(_ template:MediaBinding,to owner:RPGMediaOwner,world:inout WorldState,generator:RPGWorldGenerator)throws {
+        var binding=template;binding.id=UUID().uuidString
+        guard binding.valid else{throw RPGWorldError.invalidState}
         var next=world
-        let binding=MediaBinding(id:UUID().uuidString,mediaID:mediaID,kind:kind)
+        if next.mediaBindings.count>=960 {try pruneUnreferenced(&next)}
+        guard next.mediaBindings.count<1024 else{throw RPGWorldError.invalidState}
         next.mediaBindings.append(binding)
         switch owner {
         case .player:next.player.mediaBindingID=binding.id;next.revision+=1
@@ -52,6 +61,15 @@ enum RPGMediaBindings {
             try RPGWorldEditing.finish(next:&next,changes:[change],inventoryBefore:world.inventory,title:"绑定媒体牌面")
         }
         try next.validate();world=next
+    }
+    /// Drops bindings whose identity appears nowhere else in the world
+    /// (entities, undo/redo history, story graphs, backgrounds, player).
+    /// Matching on the raw encoded text is deliberately conservative: a
+    /// binding mentioned anywhere is kept.
+    static func pruneUnreferenced(_ world:inout WorldState)throws {
+        var probe=world;probe.mediaBindings=[]
+        let text=String(decoding:try JSONEncoder().encode(probe),as:UTF8.self)
+        world.mediaBindings.removeAll{!text.contains($0.id)}
     }
     static func clear(_ owner:RPGMediaOwner,world:inout WorldState)throws {
         var next=world

@@ -262,7 +262,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func assignMedia(_ entry:MediaEntry,to owner:RPGMediaOwner) {
         guard entry.kind != .embed else{notice="网页素材不能作为世界纹理。";return}
-        let id=entry.id,kind:RPGMediaKind=entry.kind == .video ? .video : .image
+        let id=entry.id,kind=RPGMediaCatalogKind.kind(for:entry)
         perform{world,generator in try RPGMediaBindings.assign(mediaID:id,kind:kind,to:owner,world:&world,generator:generator)}
     }
     func clearMedia(_ owner:RPGMediaOwner) { perform{world,_ in try RPGMediaBindings.clear(owner,world:&world)} }

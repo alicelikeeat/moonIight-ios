@@ -62,7 +62,41 @@ struct WorldEntity: Codable, Equatable, Identifiable, Sendable {
     var physics = PhysicsProfile()
     var mediaBindingID: String?
 }
-enum RPGMediaKind: String, Codable, Sendable { case image, video }
+enum RPGMediaKind: String, Codable, CaseIterable, Sendable {
+    case image, video, gif, icon, number, text
+    /// Kinds whose pixels come from a library file.
+    var usesLibraryFile: Bool { self == .image || self == .video || self == .gif }
+    var title: String {
+        switch self {
+        case .image: "图片"; case .video: "视频"; case .gif: "GIF"; case .icon: "图标"; case .number: "数字"; case .text: "文字"
+        }
+    }
+}
+enum RPGContentFit: String, Codable, CaseIterable, Sendable { case fill, fit }
+enum RPGTextDesign: String, Codable, CaseIterable, Sendable { case rounded, standard, serif, monospaced }
+enum RPGTextAlignment: String, Codable, CaseIterable, Sendable { case leading, center, trailing }
+/// Glyph content for icon, number and text cells. For an icon, `value` is an
+/// SF Symbol name; a custom icon instead uses the binding's library image
+/// (tinted with `colorHex`) and leaves `value` empty.
+struct RPGCellStyle: Codable, Equatable, Sendable {
+    var value = ""
+    var colorHex = "FFFFFF"
+    var backgroundHex: String?
+    var size = 0.6
+    var design = RPGTextDesign.rounded
+    var alignment = RPGTextAlignment.center
+    var bold = true
+    static func validHex(_ value: String) -> Bool { value.count == 6 && value.allSatisfy(\.isHexDigit) }
+    static func validNumber(_ value: String) -> Bool {
+        value.range(of: #"^-?[0-9]{1,12}(\.[0-9]{1,6})?$"#, options: .regularExpression) != nil
+    }
+    static func validSymbol(_ value: String) -> Bool {
+        (1...128).contains(value.count) && value.allSatisfy { $0.isASCII && ($0.isLowercase || $0.isNumber || $0 == ".") }
+    }
+    var validAppearance: Bool {
+        Self.validHex(colorHex) && (backgroundHex.map(Self.validHex) ?? true) && size.isFinite && (0.2...1).contains(size)
+    }
+}
 struct MediaBinding: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var mediaID: String
@@ -77,8 +111,26 @@ struct MediaBinding: Codable, Equatable, Identifiable, Sendable {
     var cropHeight = 1.0
     var loop = true
     var muted = true
+    // Schema 7. Optional so schema 6 files decode unchanged.
+    var style: RPGCellStyle?
+    var fit: RPGContentFit?
+    var paused: Bool?
+    var contentValid: Bool {
+        switch kind {
+        case .image, .video, .gif: return !mediaID.isEmpty && (style?.validAppearance ?? true)
+        case .icon:
+            guard let style, style.validAppearance else { return false }
+            return mediaID.isEmpty ? RPGCellStyle.validSymbol(style.value) : style.value.isEmpty
+        case .number:
+            guard let style, style.validAppearance else { return false }
+            return mediaID.isEmpty && RPGCellStyle.validNumber(style.value)
+        case .text:
+            guard let style, style.validAppearance else { return false }
+            return mediaID.isEmpty && (1...64).contains(style.value.count) && style.value.filter(\.isNewline).count <= 2
+        }
+    }
     var valid: Bool {
-        !id.isEmpty && id.count<=128 && !mediaID.isEmpty && mediaID.count<=512 && (coverMediaID?.count ?? 0)<=512 && scale.isFinite && (0.1...8).contains(scale) &&
+        !id.isEmpty && id.count<=128 && contentValid && mediaID.count<=512 && (coverMediaID?.count ?? 0)<=512 && scale.isFinite && (0.1...8).contains(scale) &&
         [anchorX, anchorY, cropX, cropY, cropWidth, cropHeight].allSatisfy { $0.isFinite && (0...1).contains($0) } &&
         cropWidth > 0 && cropHeight > 0 && cropX + cropWidth <= 1.000001 && cropY + cropHeight <= 1.000001
     }
@@ -98,8 +150,8 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 6
-    var schemaVersion = 6
+    static let currentSchema = 7
+    var schemaVersion = 7
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64

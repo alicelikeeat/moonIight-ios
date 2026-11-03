@@ -20,6 +20,14 @@ protocol RPGMediaCatalog {
         guard entry.kind != .embed, let url = entry.remoteURL else { return .unsupported }
         guard url.isFileURL else { return .remote }
         guard FileManager.default.fileExists(atPath: url.path) else { return .missing }
-        return .available(.init(id: id, kind: entry.kind == .video ? .video : .image, url: url, coverURL: entry.coverURL))
+        return .available(.init(id: id, kind: RPGMediaCatalogKind.kind(for: entry), url: url, coverURL: entry.coverURL))
+    }
+}
+
+/// Library entries only know image or video; GIF is told apart by file type.
+enum RPGMediaCatalogKind {
+    static func kind(for entry: MediaEntry) -> RPGMediaKind {
+        if entry.kind == .video { return .video }
+        return entry.remoteURL?.pathExtension.lowercased() == "gif" ? .gif : .image
     }
 }
