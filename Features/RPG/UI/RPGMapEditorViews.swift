@@ -34,6 +34,8 @@ struct RPGEditorToolBar: View {
 /// and the multi-select actions.
 struct RPGEditorOptionsBar: View {
     @ObservedObject var session: RPGSession
+    /// Opens the glass shape editor (iOS 26+); nil hides the button.
+    var openShapeEditor: (() -> Void)? = nil
 
     var body: some View {
         Group {
@@ -41,6 +43,7 @@ struct RPGEditorOptionsBar: View {
             case .brush, .fill: brushOptions
             case .terrain: terrainOptions
             case .multi: areaOptions
+            case .shape: shapeOptions
             default: EmptyView()
             }
         }
@@ -70,6 +73,25 @@ struct RPGEditorOptionsBar: View {
         return L10n.t("方块材质", "Block Material")
     }
 
+    private var shapeOptions: some View {
+        HStack(spacing: 10) {
+            Text(L10n.t("形状画笔：", "Shape brush:")).font(.caption)
+            RPGShapeMenu(selection: session.shapeBrush) { session.shapeBrush = $0 } label: {
+                HStack(spacing: 6) {
+                    ShapeThumbnail(outline: session.shapeBrush, size: 20)
+                    Text(RPGShapeMenu.name(of: session.shapeBrush)).font(.caption).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.caption2)
+                }
+            }
+            .accessibilityIdentifier("rpg-editor-shape-brush")
+            if let openShapeEditor {
+                Button { openShapeEditor() } label: { Label(L10n.t("设计形状", "Design"), systemImage: "scribble.variable") }
+                    .font(.caption).accessibilityIdentifier("rpg-editor-shape-designer")
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6).editorSurface(radius: 14)
+    }
+
     private var terrainOptions: some View {
         HStack(spacing: 6) {
             Text(L10n.t("地形：", "Terrain:")).font(.caption)
@@ -96,6 +118,7 @@ struct RPGEditorOptionsBar: View {
                 Button(L10n.t("填充", "Fill")) { session.fillArea() }.accessibilityIdentifier("rpg-editor-area-fill")
                 Button(L10n.t("复制", "Copy")) { session.copyArea() }.accessibilityIdentifier("rpg-editor-area-copy")
                 Button(L10n.t("同类替换", "Replace")) { session.replaceInArea() }.accessibilityIdentifier("rpg-editor-area-replace")
+                Button(L10n.t("套用形状", "Apply Shape")) { session.shapeArea() }.accessibilityIdentifier("rpg-editor-area-shape")
                 Button(L10n.t("取消选区", "Deselect")) { session.clearArea() }
             }.disabled(session.area == nil)
             Button(L10n.t("粘贴到选中格", "Paste at Selection")) { if let point = session.selected { session.pastePreview(at: point) } }
@@ -150,6 +173,10 @@ struct RPGCellPanel: View {
                         .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("rpg-panel-material")
                 }
                 Spacer()
+                RPGShapeMenu(selection: entity?.outline) { session.applyOutline($0, at: point) } label: {
+                    ShapeThumbnail(outline: entity?.outline, size: 20).frame(width: 32, height: 32)
+                }
+                .accessibilityLabel(L10n.t("格子形状", "Cell Shape")).accessibilityIdentifier("rpg-panel-shape")
                 if entity != nil {
                     Button { session.eraseCell(point); onClose() } label: { Image(systemName: "eraser").frame(width: 32, height: 32) }
                         .accessibilityLabel(L10n.t("擦除方块", "Erase Block")).accessibilityIdentifier("rpg-panel-erase")
@@ -197,5 +224,47 @@ extension View {
             self.background(.regularMaterial, in: shape)
                 .overlay(shape.strokeBorder(.white.opacity(0.22), lineWidth: 0.5))
         }
+    }
+}
+
+/// Picks a cell outline: square, the built-in templates, or a shape saved
+/// in the glass shape editor.
+struct RPGShapeMenu<Label: View>: View {
+    let selection: ShapeOutline?
+    let choose: (ShapeOutline?) -> Void
+    @ViewBuilder let label: () -> Label
+    @ObservedObject private var store = GlassShapeStore.shared
+
+    init(selection: ShapeOutline?, choose: @escaping (ShapeOutline?) -> Void, @ViewBuilder label: @escaping () -> Label) {
+        self.selection = selection; self.choose = choose; self.label = label
+    }
+
+    static func name(of outline: ShapeOutline?) -> String {
+        guard let outline else { return L10n.t("方形", "Square") }
+        if let template = ShapeTemplate.allCases.first(where: { $0 != .square && $0.outline == outline }) { return template.title }
+        if let saved = GlassShapeStore.shared.shapes.first(where: { $0.outline == outline }) { return saved.name }
+        return L10n.t("曲线", "Curve")
+    }
+
+    var body: some View {
+        Menu {
+            Button { choose(nil) } label: { SwiftUI.Label(L10n.t("方形（默认）", "Square (default)"), systemImage: selection == nil ? "checkmark" : "square") }
+            Section(L10n.t("模板", "Templates")) {
+                ForEach(ShapeTemplate.allCases.filter { $0 != .square }, id: \.self) { template in
+                    Button { choose(template.outline) } label: {
+                        SwiftUI.Label(template.title, systemImage: selection == template.outline ? "checkmark" : template.symbol)
+                    }
+                }
+            }
+            if !store.shapes.isEmpty {
+                Section(L10n.t("我的形状", "My Shapes")) {
+                    ForEach(store.shapes.prefix(20)) { shape in
+                        Button { choose(shape.outline) } label: {
+                            SwiftUI.Label(shape.name, systemImage: selection == shape.outline ? "checkmark" : "scribble.variable")
+                        }
+                    }
+                }
+            }
+        } label: { label() }
     }
 }

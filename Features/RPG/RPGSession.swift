@@ -50,6 +50,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// What brush and fill write.
     @Published var brushPayload = RPGDraftPayload.block("stone") { didSet { if draft != nil && (editorTool == .brush || editorTool == .fill) { restartDraftPayload() } } }
     @Published var terrainBrush = RPGTerrain.road
+    /// Outline the shape tool paints (nil: back to square cells).
+    @Published var shapeBrush: ShapeOutline? = ShapeTemplate.circle.outline { didSet { if draft != nil && editorTool == .shape { restartDraftPayload() } } }
     /// Unconfirmed edit and what it would do. Never part of the saved world.
     @Published private(set) var draft: RPGEditDraft?
     @Published private(set) var draftPlan: RPGDraftPlan?
@@ -568,6 +570,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         case .erase: .erase
         case .terrain: .terrain(terrainBrush)
         case .brush, .fill: brushPayload
+        case .shape: .outline(shapeBrush)
         default: nil
         }
     }
@@ -638,6 +641,13 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     // Multi-select actions: each becomes a draft to confirm.
     func eraseArea() { draftOverArea(.erase) }
     func fillArea() { draftOverArea(brushPayload) }
+    func shapeArea() { draftOverArea(.outline(shapeBrush)) }
+    /// Gives one cell an outline (cell panel), as a single undoable edit.
+    func applyOutline(_ outline: ShapeOutline?, at point: SurfacePoint) {
+        var single = RPGEditDraft(payload: .outline(outline)); single.add([point])
+        let draft = single
+        perform { world, generator in try RPGDraftCommit.commit(draft, world: &world, generator: generator) }
+    }
     func replaceInArea() {
         guard let from = selectedEntity?.definitionID else { notice = L10n.t("先轻点选区内一个方块，作为要替换的材质。", "Tap a block inside the area first as the material to replace."); return }
         guard case .block(let to) = brushPayload else { notice = L10n.t("画笔需选择一种方块材质作为替换目标。", "Pick a block material for the brush as the replacement."); return }

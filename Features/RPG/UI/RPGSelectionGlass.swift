@@ -6,6 +6,8 @@ import SwiftUI
 /// untouched.
 struct RPGSelectionGlass: View {
     let rect: CGRect
+    /// The cell's curve (schema 9); nil for a square cell.
+    var outline: ShapeOutline? = nil
 
     static var usesNativeGlass: Bool {
         if #available(iOS 26.0, *) { return true }
@@ -13,7 +15,7 @@ struct RPGSelectionGlass: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: max(4, rect.width * 0.22), style: .continuous)
+        let shape = CellOutlineShape(outline: outline)
         let size = CGSize(width: rect.width + 10, height: rect.height + 10)
         // A ring, not a filled lens: a filled glass square rendered as a
         // white block over the SpriteKit map and hid the cell's content.

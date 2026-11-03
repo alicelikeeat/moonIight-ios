@@ -842,8 +842,8 @@ print("RPG playback: \(checks) total checks passed")
 
 
 // P17: editor tools and areas.
-check(RPGEditorTool.allCases.count == 12 && RPGEditorTool.text.contentKind == .text && RPGEditorTool.brush.contentKind == nil, "twelve tools, content tools map to kinds")
-check(RPGEditorTool.allCases.filter(\.draws) == [.terrain, .erase, .brush] && RPGEditorTool.allCases.filter(\.drawsRectangle) == [.multi, .fill], "drawing tools")
+check(RPGEditorTool.allCases.count == 13 && RPGEditorTool.text.contentKind == .text && RPGEditorTool.brush.contentKind == nil, "thirteen tools (shape added), content tools map to kinds")
+check(RPGEditorTool.allCases.filter(\.draws) == [.shape, .terrain, .erase, .brush] && RPGEditorTool.allCases.filter(\.drawsRectangle) == [.multi, .fill], "drawing tools")
 let area = RPGArea(a: SurfacePoint(x: 5, z: 9), b: SurfacePoint(x: 2, z: 7))
 check(area.count == 12 && area.cells.count == 12 && area.origin == SurfacePoint(x: 2, z: 7), "area size and origin")
 print("RPG tools: \(checks) total checks passed")

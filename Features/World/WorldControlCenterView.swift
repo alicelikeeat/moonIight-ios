@@ -12,6 +12,8 @@ struct WorldControlCenterView: View {
     /// Opens the sandbox tools, optionally at a page (story, editor…).
     let onTools: (RPGEntryPage?) -> Void
     let onAppSettings: () -> Void
+    /// Glass shape editor; nil before iOS 26.
+    var onShapeEditor: (() -> Void)? = nil
     @AppStorage("moonlight.world.edgeSwipe") private var edgeSwipe = true
     @AppStorage(L10n.key) private var language = AppLanguage.zh.rawValue
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
@@ -118,6 +120,9 @@ struct WorldControlCenterView: View {
         Group {
             sectionTitle(L10n.t("世界功能", "World Functions"))
             row(L10n.t("地图编辑", "Map Editor"), symbol: "square.grid.3x3.square") { onMapEditor() }.accessibilityIdentifier("world-fn-map-editor")
+            if let onShapeEditor {
+                row(L10n.t("形状编辑器", "Shape Editor"), symbol: "scribble.variable") { onShapeEditor() }.accessibilityIdentifier("world-fn-shape-editor")
+            }
             row(L10n.t("建造", "Build"), symbol: "hammer") { onTools(nil) }.accessibilityIdentifier("world-fn-build")
             row(L10n.t("剧情", "Story"), symbol: "book") { onTools(.story) }.accessibilityIdentifier("world-fn-story")
             row(L10n.t("媒体", "Media"), symbol: "photo.on.rectangle") { onTools(nil) }.accessibilityIdentifier("world-fn-media")

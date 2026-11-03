@@ -35,6 +35,8 @@ struct RPGShellView: View {
     /// Tool the user picked while a draft was unconfirmed.
     @State private var pendingTool: RPGEditorTool?
     @State private var exitPrompt = false
+    /// Glass shape editor (iOS 26+), opened from the shape tool or the control center.
+    @State private var shapeEditor = false
     var body: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
@@ -57,7 +59,8 @@ struct RPGShellView: View {
                         closeControlCenter(); Task { if await session.saveBeforeExit() { onNavigate(tab) } }
                     }, onTools: { page in
                         closeControlCenter(); toolPath = page.map { [$0] } ?? []; tools = true
-                    }, onAppSettings: { closeControlCenter(); appSettings = true })
+                    }, onAppSettings: { closeControlCenter(); appSettings = true },
+                    onShapeEditor: GlassShapeEditorEntry.available ? { closeControlCenter(); shapeEditor = true } : nil)
                     .transition(.opacity)
                 }
             }
@@ -107,6 +110,15 @@ struct RPGShellView: View {
             .sheet(item: $cellEditor) { entity in
                 NavigationStack { RPGCellEditorView(session: session, store: model.mediaStore, entity: entity) }.environmentObject(model)
             }
+            .fullScreenCover(isPresented: $shapeEditor) {
+                GlassShapeEditorEntry { outline in
+                    // "Use on cells": the shape tool paints this outline next.
+                    shapeEditor = false
+                    session.shapeBrush = outline
+                    if session.mapEditorActive { session.selectTool(.shape) }
+                } onClose: { shapeEditor = false }
+            }
+            .onChange(of: shapeEditor) { _ in syncOverlay() }
             .sheet(isPresented: $appSettings) {
                 NavigationStack {
                     SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { appSettings = false }.accessibilityIdentifier("world-app-settings-close") } }
@@ -279,7 +291,7 @@ struct RPGShellView: View {
     private var editorBars: some View {
         VStack(spacing: 6) {
             RPGDraftBar(session: session)
-            RPGEditorOptionsBar(session: session)
+            RPGEditorOptionsBar(session: session, openShapeEditor: GlassShapeEditorEntry.available ? { shapeEditor = true } : nil)
             RPGEditorToolBar(session: session) { tool in
                 if session.draft != nil && tool != session.editorTool { pendingTool = tool } else { session.selectTool(tool) }
             }
@@ -383,7 +395,7 @@ struct RPGShellView: View {
             else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
         }.accessibilityLabel(L10n.t("世界场景", "World Scene"))
             .overlay { if session.ready, !controlCenter { RPGGridGlassOverlay(session: session) } }
-            .overlay { if session.ready, !controlCenter, let rect = session.selectionRect { RPGSelectionGlass(rect: rect) } }
+            .overlay { if session.ready, !controlCenter, let rect = session.selectionRect { RPGSelectionGlass(rect: rect, outline: session.selectedEntity?.outline) } }
     }
 
     private var perspectiveRow: some View {
@@ -438,7 +450,7 @@ struct RPGShellView: View {
     /// Game input and scene simulation stop whenever anything covers the
     /// world; they resume only when every cover is gone.
     private func syncOverlay() {
-        session.setOverlay(tools || storyPlaying || cellEditor != nil || controlCenter || appSettings)
+        session.setOverlay(tools || storyPlaying || cellEditor != nil || controlCenter || appSettings || shapeEditor)
     }
 
     private func showPrologueIfNeeded() {

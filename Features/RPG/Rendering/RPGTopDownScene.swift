@@ -57,12 +57,21 @@ import UIKit
         if let target = RPGMediaSprites.attach(ownerID: "player", bindingID: world.player.mediaBindingID, role: .player, parent: avatar, world: world, size: CGSize(width: 24, height: 32)) { mediaTargets.append(target) }
         for entity in chunks.flatMap({ RPGWorldEditing.entities(in: $0, world: world) }) {
             guard let point = entity.surface, wanted.contains(point.chunk ?? .init(x: -1, z: -1)) else { continue }
-            let node = SKShapeNode(rectOf: CGSize(width: 16, height: 18), cornerRadius: 4)
+            // Curved cells (schema 9) draw their outline; content is clipped to it.
+            let curve = entity.outline.flatMap { $0.valid ? $0 : nil }
+            let node = curve.map { SKShapeNode(path: $0.spriteKitPath(size: CGSize(width: 22, height: 22))) } ?? SKShapeNode(rectOf: CGSize(width: 16, height: 18), cornerRadius: 4)
             let display = entity.definitionID == RPGWorldEditing.displayDefinition
-            node.fillColor = display ? .clear : entity.definitionID == "wood" ? .systemBrown : .systemGray
-            node.strokeColor = .white.withAlphaComponent(display ? 0.25 : 0.5); node.position = Self.position(point); node.name = entity.id
+            node.fillColor = display ? (curve == nil ? .clear : .white.withAlphaComponent(0.12)) : entity.definitionID == "wood" ? .systemBrown : .systemGray
+            node.strokeColor = .white.withAlphaComponent(display && curve == nil ? 0.25 : 0.6); node.position = Self.position(point); node.name = entity.id
+            node.lineWidth = curve == nil ? 1 : 1.2
             objects.addChild(node)
-            if let target = RPGMediaSprites.attach(ownerID: entity.id, bindingID: entity.mediaBindingID, role: .interactive, parent: node, world: world, size: CGSize(width: 24, height: 24)) { mediaTargets.append(target) }
+            var mediaParent: SKNode = node
+            if let curve, entity.mediaBindingID != nil {
+                let crop = SKCropNode(); crop.zPosition = 1
+                let mask = SKShapeNode(path: curve.spriteKitPath(size: CGSize(width: 24, height: 24))); mask.fillColor = .white; mask.strokeColor = .clear
+                crop.maskNode = mask; node.addChild(crop); mediaParent = crop
+            }
+            if let target = RPGMediaSprites.attach(ownerID: entity.id, bindingID: entity.mediaBindingID, role: .interactive, parent: mediaParent, world: world, size: CGSize(width: 24, height: 24)) { mediaTargets.append(target) }
             if entity.scope == .shared { sharedIDs.append(entity.id) }
         }
         let generator = RPGWorldGenerator(seed: world.seed)

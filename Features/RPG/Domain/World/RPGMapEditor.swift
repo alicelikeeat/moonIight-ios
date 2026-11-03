@@ -81,17 +81,17 @@ enum RPGCameraRules {
 
 /// Bottom toolbar tools (task E3).
 enum RPGEditorTool: String, CaseIterable, Sendable {
-    case select, image, video, gif, text, number, icon, terrain, erase, multi, brush, fill
+    case select, image, video, gif, text, number, icon, shape, terrain, erase, multi, brush, fill
     var title: String {
         switch self {
         case .select: L10n.t("选择", "Select"); case .image: L10n.t("图片", "Image"); case .video: L10n.t("视频", "Video"); case .gif: "GIF"; case .text: L10n.t("文字", "Text"); case .number: L10n.t("数字", "Number")
-        case .icon: L10n.t("图标", "Icon"); case .terrain: L10n.t("地形", "Terrain"); case .erase: L10n.t("擦除", "Erase"); case .multi: L10n.t("多选", "Multi"); case .brush: L10n.t("画笔", "Brush"); case .fill: L10n.t("填充", "Fill")
+        case .icon: L10n.t("图标", "Icon"); case .shape: L10n.t("形状", "Shape"); case .terrain: L10n.t("地形", "Terrain"); case .erase: L10n.t("擦除", "Erase"); case .multi: L10n.t("多选", "Multi"); case .brush: L10n.t("画笔", "Brush"); case .fill: L10n.t("填充", "Fill")
         }
     }
     var symbol: String {
         switch self {
         case .select: "hand.point.up.left"; case .image: "photo"; case .video: "video"; case .gif: "sparkles.rectangle.stack"
-        case .text: "textformat"; case .number: "number"; case .icon: "star"; case .terrain: "mountain.2"; case .erase: "eraser"
+        case .text: "textformat"; case .number: "number"; case .icon: "star"; case .shape: "scribble.variable"; case .terrain: "mountain.2"; case .erase: "eraser"
         case .multi: "rectangle.dashed"; case .brush: "paintbrush.pointed"; case .fill: "square.fill.on.square"
         }
     }
@@ -100,7 +100,7 @@ enum RPGEditorTool: String, CaseIterable, Sendable {
         switch self { case .image: .image; case .video: .video; case .gif: .gif; case .text: .text; case .number: .number; case .icon: .icon; default: nil }
     }
     /// Tools whose single-finger drag draws a draft.
-    var draws: Bool { self == .terrain || self == .erase || self == .brush }
+    var draws: Bool { self == .shape || self == .terrain || self == .erase || self == .brush }
     /// Tools whose drag defines a rectangle.
     var drawsRectangle: Bool { self == .fill || self == .multi }
 }
