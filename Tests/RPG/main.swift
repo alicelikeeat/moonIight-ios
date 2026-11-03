@@ -816,7 +816,7 @@ check(RPGWorldEditing.trimmedHistory([history[0]]).count == 1, "the latest trans
 var schema7 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(untouched)) as! [String: Any]
 schema7["schemaVersion"] = 7; schema7["terrainOverrides"] = nil
 let reopened7 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema7))
-check(reopened7.schemaVersion == 8 && reopened7.terrainOverrides == nil, "schema 7 opens as 8")
+check(reopened7.schemaVersion == WorldState.currentSchema && reopened7.terrainOverrides == nil, "schema 7 opens as current")
 var badTerrain = map; badTerrain.terrainOverrides = ["999,1": .sand]; rejected(badTerrain, "terrain keys must be on the map")
 print("RPG drafts: \(checks) total checks passed")
 
@@ -871,5 +871,114 @@ let coveredCells = (zoomedOut.map(\.x).max()! - zoomedOut.map(\.x).min()! + 1) *
 check(CGFloat(coveredCells) * 24 >= 874 * 2.2, "zoomed out view fully covered (\(zoomedOut.count) chunks)")
 check(RPGCameraRules.chunks(center: .zero, viewSize: .zero, zoom: 1).isEmpty, "empty view loads nothing")
 print("RPG coverage: \(checks) total checks passed")
+
+
+// P20: curved cell outlines and the glass shape editor model.
+for template in ShapeTemplate.allCases {
+    let outline = template.outline
+    check(outline.valid && !outline.selfIntersects && outline.cubics.count == outline.anchors.count, "template \(template.rawValue) is a valid closed outline")
+}
+let circle = ShapeTemplate.circle.outline
+check(circle.contains(ShapePoint(0.5, 0.5)) && !circle.contains(ShapePoint(0.02, 0.02)), "circle contains its centre, not its corner")
+check(abs(circle.cubics[0].point(at: 0.5).distance(to: ShapePoint(0.5, 0.5)) - 0.46) < 0.003, "circle segments stay on the radius")
+var edited = circle
+let splitAt = edited.cubics[0].point(at: 0.5)
+check(edited.insertAnchor(at: splitAt) == 1 && edited.anchors.count == 5, "tapping on the outline adds an anchor")
+check(edited.cubics[0].point(at: 1).distance(to: splitAt) < 1e-9 && edited.cubics[0].point(at: 0.5).distance(to: circle.cubics[0].point(at: 0.25)) < 1e-9, "splitting keeps the curve unchanged")
+check(edited.removeAnchor(1) && edited.anchors.count == 4, "remove an anchor")
+var triangle = ShapeOutline(anchors: [ShapeAnchor(ShapePoint(0.5, 0.1)), ShapeAnchor(ShapePoint(0.9, 0.9)), ShapeAnchor(ShapePoint(0.1, 0.9))])
+check(!triangle.removeAnchor(0) && triangle.anchors.count == 3, "never fewer than 3 anchors")
+check(triangle.moveAnchor(0, to: ShapePoint(0.5, -0.4)) && triangle.anchors[0].point == ShapePoint(0.5, 0), "anchors stay inside 0–1")
+check(edited.moveAnchor(0, to: ShapePoint(0.5, 0.2)) && edited.anchors[0].handleOut.y == edited.anchors[0].point.y, "handles move with their anchor")
+edited.anchors[1].smooth = true
+check(edited.moveHandle(1, .outgoing, to: ShapePoint(0.96, 0.7)), "drag a handle")
+let mirrored = edited.anchors[1]
+check(abs(mirrored.handleIn.distance(to: mirrored.point) - mirrored.handleOut.distance(to: mirrored.point)) < 1e-9, "smooth anchors keep symmetric handles")
+edited.toggleSmooth(1)
+check(!edited.anchors[1].smooth && edited.moveHandle(1, .outgoing, to: ShapePoint(0.9, 0.9)) && edited.anchors[1].handleIn == mirrored.handleIn, "corner handles move independently")
+triangle.toggleSmooth(1)
+check(triangle.anchors[1].smooth && triangle.anchors[1].handleIn != triangle.anchors[1].point && triangle.valid, "a bare corner gets handles when made smooth")
+let bowtie = ShapeOutline(anchors: [ShapeAnchor(ShapePoint(0.1, 0.1)), ShapeAnchor(ShapePoint(0.9, 0.9)), ShapeAnchor(ShapePoint(0.9, 0.1)), ShapeAnchor(ShapePoint(0.1, 0.9))])
+check(bowtie.selfIntersects, "self-intersection detected")
+check(!ShapeTemplate.star.outline.sharpCorners(below: 60).isEmpty && ShapeTemplate.circle.outline.sharpCorners().isEmpty, "sharp corners warned, round ones not")
+check(edited.snapped(ShapePoint(0.333, 0.67), step: 0.05) == ShapePoint(0.35, 0.65), "grid snap")
+var tooMany = ShapeTemplate.star.outline
+for _ in 0..<30 { tooMany.insertAnchor(at: ShapePoint(0.5, 0.05)) }
+check(tooMany.anchors.count == ShapeOutline.maximumAnchors, "anchor count capped")
+// Undo history: one entry per gesture, capped.
+var shapeDoc = ShapeDocument(name: "水滴 Drop", outline: ShapeTemplate.droplet.outline)
+var shapeHistory = ShapeHistory()
+for step in 0..<80 { shapeHistory.record(shapeDoc); shapeDoc.outline.moveAnchor(0, to: ShapePoint(0.5, Double(step % 10) / 100)) }
+check(shapeHistory.past.count == ShapeHistory.limit && ShapeHistory.limit >= 50, "at least 50 undo steps kept")
+let beforeUndo = shapeDoc
+if let previous = shapeHistory.undo(shapeDoc) { shapeDoc = previous }
+if let next = shapeHistory.redo(shapeDoc) { shapeDoc = next }
+check(shapeDoc == beforeUndo && shapeHistory.canUndo && !shapeHistory.canRedo, "undo then redo returns to the same shape")
+// Library.
+var library = ShapeLibrary(); library.upsert(shapeDoc)
+let copyDoc = library.duplicate(shapeDoc.id, suffix: " 副本")
+check(library.shapes.count == 2 && library.currentID == copyDoc?.id && copyDoc?.outline == shapeDoc.outline, "duplicate a shape")
+library.remove(copyDoc!.id)
+let libraryData = try JSONEncoder().encode(library)
+check(ShapeLibrary.decode(libraryData) == library && library.currentID == shapeDoc.id, "library round trip")
+// Export.
+check(ShapeCodeExporter.typeName("水滴 Drop") == "DropShape" && ShapeCodeExporter.typeName("3 waves") == "Glass3WavesShape" && ShapeCodeExporter.typeName("") == "GlassShape", "Swift type names")
+check(ShapeCodeExporter.number(0.5) == "0.5" && ShapeCodeExporter.number(1) == "1" && ShapeCodeExporter.number(0.123456) == "0.1235" && ShapeCodeExporter.number(-0.00001) == "0", "number formatting")
+shapeDoc.tintHex = "FF8000"; shapeDoc.interactive = true
+let swiftCode = ShapeCodeExporter.swift(shapeDoc)
+check(swiftCode.contains("struct DropShape: Shape {") && swiftCode.components(separatedBy: "path.addCurve(").count - 1 == shapeDoc.outline.anchors.count && swiftCode.contains("path.closeSubpath()"), "Swift export is a closed Shape")
+check(swiftCode.contains(".regular.tint(Color(red: 1, green: 0.502, blue: 0)).interactive()"), "Swift export names the glass")
+let svgText = ShapeCodeExporter.svg(shapeDoc)
+check(svgText.contains("viewBox=\"0 0 100 100\"") && svgText.contains(" Z\"") && svgText.components(separatedBy: " C ").count - 1 == shapeDoc.outline.anchors.count, "SVG export")
+// Exported numbers redraw the same curve (relative coordinates at any size).
+let firstCurve = shapeDoc.outline.cubics[0]
+check(swiftCode.contains("path.move(to: p(\(ShapeCodeExporter.number(firstCurve.from.x)), \(ShapeCodeExporter.number(firstCurve.from.y))))"), "export starts at the first anchor")
+// Text-to-shape results are checked before use.
+let blob: [GeneratedShapeAnchor] = [.init(x: 0.5, y: 0.05, smooth: true), .init(x: 0.95, y: 0.5, smooth: true), .init(x: 0.5, y: 0.95, smooth: true), .init(x: 0.05, y: 0.5, smooth: true)]
+if case .success(let generatedOutline) = ShapeGeneration.outline(from: blob) { check(generatedOutline.valid && generatedOutline.anchors.count == 4 && generatedOutline.contains(ShapePoint(0.5, 0.5)), "generated anchors become a closed outline") } else { check(false, "generated anchors become a closed outline") }
+check(ShapeGeneration.outline(from: Array(blob.prefix(2))) == .failure(.tooFewAnchors), "too few generated anchors refused")
+check(ShapeGeneration.outline(from: blob + [.init(x: 3, y: 0.5, smooth: false)]) == .failure(.outOfRange), "out-of-range generated anchors refused")
+check(ShapeGeneration.outline(from: [.init(x: 0.1, y: 0.1, smooth: false), .init(x: 0.9, y: 0.9, smooth: false), .init(x: 0.9, y: 0.1, smooth: false), .init(x: 0.1, y: 0.9, smooth: false)]) == .failure(.selfIntersecting), "crossing generated outline refused")
+check(ShapeGeneration.outline(from: blob + [blob[3]]).map(\.anchors.count) == .success(4), "duplicate generated anchors dropped")
+check(ShapeGeneration.partialPoints([(0.2, 0.3), (0.5, nil), (nil, nil)]) == [ShapePoint(0.2, 0.3)], "streaming shows finished anchors only")
+// World cells take outlines: one undoable transaction, kept by copy and replace.
+var curved = map
+let emptyCells = freeRow.filter { RPGWorldEditing.entity(at: $0, world: map, generator: mapGen) == nil }
+check(emptyCells.count >= 4, "empty cells to shape (\(emptyCells.count))")
+let curveCells = Array(emptyCells.prefix(3))
+let blockCell = freeRow[0]
+check(RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen) != nil, "a placed block to shape")
+var shapeDraft = RPGEditDraft(payload: .outline(ShapeTemplate.droplet.outline)); shapeDraft.add([blockCell] + curveCells)
+let shapePlan = RPGDraftCommit.plan(shapeDraft, world: curved, generator: mapGen)
+check(shapePlan.cells.count == 4 && curved == map, "outline draft planned without changing the world")
+let undoBefore = curved.undo.count
+try RPGDraftCommit.commit(shapeDraft, world: &curved, generator: mapGen)
+check(curved.undo.count == undoBefore + 1 && RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen)?.outline == ShapeTemplate.droplet.outline, "outline committed as one transaction")
+check(RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen)?.definitionID == RPGWorldEditing.entity(at: blockCell, world: map, generator: mapGen)?.definitionID, "material kept")
+check(curveCells.allSatisfy { RPGWorldEditing.entity(at: $0, world: curved, generator: mapGen)?.definitionID == RPGWorldEditing.displayDefinition }, "empty cells get display cells with the curve")
+check(RPGDraftCommit.plan(shapeDraft, world: curved, generator: mapGen).skipped[.unchanged] == 4, "same outline again is unchanged")
+let curvedCopy = try RPGWorldCodec.decode(RPGWorldCodec.encode(curved))
+check(curvedCopy == curved && curvedCopy.schemaVersion == 9, "outlines saved and reopened")
+let clip = try RPGWorldEditing.copy(from: blockCell, to: blockCell, world: curved, generator: mapGen)
+check(clip.cells.first?.outline == ShapeTemplate.droplet.outline, "copy keeps the outline")
+var squareDraft = RPGEditDraft(payload: .outline(nil)); squareDraft.add([blockCell, emptyCells[3]])
+let squarePlan = RPGDraftCommit.plan(squareDraft, world: curved, generator: mapGen)
+check(squarePlan.cells == [blockCell] && squarePlan.skipped[.empty] == 1, "back to square only touches shaped blocks")
+try RPGDraftCommit.commit(squareDraft, world: &curved, generator: mapGen)
+check(RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen)?.outline == nil, "back to square")
+try RPGWorldEditing.undo(world: &curved)
+check(RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen)?.outline == ShapeTemplate.droplet.outline, "undo restores the curve")
+try RPGWorldEditing.undo(world: &curved)
+check(RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen)?.outline == nil && curveCells.allSatisfy { RPGWorldEditing.entity(at: $0, world: curved, generator: mapGen) == nil }, "undo removes the curve and its display cells")
+var badOutline = curved; badOutline.entities[0].outline = ShapeOutline(anchors: [ShapeAnchor(ShapePoint(0.5, 2))])
+rejected(badOutline, "invalid outlines refused")
+var schema8 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(map)) as! [String: Any]
+schema8["schemaVersion"] = 8
+let reopened8 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema8))
+check(reopened8.schemaVersion == 9 && reopened8.entities == map.entities, "schema 8 opens as 9 with square cells")
+UserDefaults.standard.set("en", forKey: L10n.key)
+check(ShapeTemplate.droplet.title == "Droplet" && RPGDraftPayload.outline(nil).title == "Shape · Square", "shape titles in English")
+UserDefaults.standard.set("zh", forKey: L10n.key)
+print("RPG curves: \(checks) total checks passed")
 
 print("RPG complete: \(checks) total checks passed")

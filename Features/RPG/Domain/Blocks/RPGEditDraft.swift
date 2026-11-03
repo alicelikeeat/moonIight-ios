@@ -14,6 +14,9 @@ enum RPGDraftPayload: Equatable, Sendable {
     case paste(RPGClipboard)
     /// Swap blocks of one material for another, keeping their content (同类型替换).
     case replace(from: String, to: String)
+    /// Give every covered cell this curved outline (nil: back to square);
+    /// empty cells get a display cell with the outline.
+    case outline(ShapeOutline?)
 
     var title: String {
         switch self {
@@ -23,6 +26,7 @@ enum RPGDraftPayload: Equatable, Sendable {
         case .erase: L10n.t("擦除", "Erase")
         case .paste: L10n.t("粘贴", "Paste")
         case .replace(let from, let to): L10n.t("替换 ", "Replace ") + (BlockDefinition.find(from)?.name ?? from) + " → " + (BlockDefinition.find(to)?.name ?? to)
+        case .outline(let outline): outline == nil ? L10n.t("形状 · 方形", "Shape · Square") : L10n.t("形状 · 曲线", "Shape · Curve")
         }
     }
 }
@@ -136,7 +140,7 @@ enum RPGDraftCommit {
             let wanted = Set(plan.cells)
             let placements = clipboard.cells.compactMap { cell -> RPGPlacement? in
                 let point = SurfacePoint(x: origin.x + cell.dx, z: origin.z + cell.dz)
-                return wanted.contains(point) ? RPGPlacement(point: point, definitionID: cell.definitionID, mediaBindingID: cell.mediaBindingID) : nil
+                return wanted.contains(point) ? RPGPlacement(point: point, definitionID: cell.definitionID, mediaBindingID: cell.mediaBindingID, outline: cell.outline) : nil
             }
             try RPGWorldEditing.place(placements, world: &world, generator: generator)
         case .content(let template):
@@ -147,6 +151,8 @@ enum RPGDraftCommit {
             try commitErase(plan.cells, world: &world, generator: generator)
         case .replace(_, let to):
             try commitReplace(to: to, cells: plan.cells, world: &world, generator: generator)
+        case .outline(let outline):
+            try commitOutline(outline, cells: plan.cells, world: &world, generator: generator)
         }
         return plan
     }
@@ -187,6 +193,14 @@ enum RPGDraftCommit {
             guard let entity else { return .empty }
             if entity.definitionID != from || from == to { return .unchanged }
             if point == playerCell && BlockDefinition.find(to)?.solid == true { return .player }
+        case .outline(let outline):
+            if let entity { if entity.outline == outline { return .unchanged } }
+            else {
+                // Square on an empty cell changes nothing; a curve adds a display cell.
+                if outline == nil { return .empty }
+                if !passable { return .blocked }
+                if point == playerCell { return .player }
+            }
         }
         return nil
     }
@@ -272,12 +286,40 @@ extension RPGDraftCommit {
             changes.append(.init(id: old.id, before: before, after: nil, removedBefore: world.removedGeneratedIDs.contains(old.id),
                                  removedAfter: generated, damageBefore: world.damage[old.id], damageAfter: nil))
             next.damage[old.id] = nil
-            let replacement = RPGWorldEditing.newEntity(at: point, definition: definition, index: index, world: world, generator: generator, mediaBindingID: old.mediaBindingID)
+            var replacement = RPGWorldEditing.newEntity(at: point, definition: definition, index: index, world: world, generator: generator, mediaBindingID: old.mediaBindingID)
+            replacement.outline = old.outline
             next.entities.append(replacement)
             changes.append(.init(id: replacement.id, before: nil, after: replacement, removedBefore: false, removedAfter: false, damageBefore: nil, damageAfter: nil))
         }
         next.removedGeneratedIDs.sort()
         try RPGWorldEditing.finish(next: &next, changes: changes, inventoryBefore: world.inventory, title: "替换 \(changes.count / 2) 格")
+        world = next
+    }
+}
+
+extension RPGDraftCommit {
+    /// Sets the outline on existing blocks (keeping material and content) and
+    /// adds walk-through display cells on empty ones, in one transaction.
+    fileprivate static func commitOutline(_ outline: ShapeOutline?, cells: [SurfacePoint], world: inout WorldState, generator: RPGWorldGenerator) throws {
+        if let outline, !outline.valid { throw RPGWorldError.invalidState }
+        guard let display = BlockDefinition.find(RPGWorldEditing.displayDefinition) else { throw RPGEditError.unknownDefinition }
+        var next = world, changes: [RPGEntityChange] = []
+        for (index, point) in cells.enumerated() {
+            if let existing = RPGWorldEditing.entity(at: point, world: world, generator: generator) {
+                let before = world.entities.first { $0.id == existing.id }
+                var after = existing; after.outline = outline
+                next.entities.removeAll { $0.id == existing.id }; next.entities.append(after)
+                changes.append(.init(id: existing.id, before: before, after: after, removedBefore: false, removedAfter: false,
+                                     damageBefore: world.damage[existing.id], damageAfter: world.damage[existing.id]))
+            } else if let outline {
+                var entity = RPGWorldEditing.newEntity(at: point, definition: display, index: index, world: world, generator: generator, mediaBindingID: nil)
+                entity.outline = outline
+                next.entities.append(entity)
+                changes.append(.init(id: entity.id, before: nil, after: entity, removedBefore: false, removedAfter: false, damageBefore: nil, damageAfter: nil))
+            }
+        }
+        guard !changes.isEmpty else { throw RPGEditError.outside }
+        try RPGWorldEditing.finish(next: &next, changes: changes, inventoryBefore: world.inventory, title: "形状 \(changes.count) 格")
         world = next
     }
 }

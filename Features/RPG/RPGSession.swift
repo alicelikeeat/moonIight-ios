@@ -621,6 +621,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         case .content: .systemCyan
         case .paste: .systemPurple
         case .replace: .systemPink
+        case .outline: .systemTeal
         }
     }
     /// Commits the draft as one transaction; it stays on screen if refused.
