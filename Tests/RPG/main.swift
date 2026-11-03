@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 extension WorldState {
     /// The same world as a schema 6 writer would have saved it.

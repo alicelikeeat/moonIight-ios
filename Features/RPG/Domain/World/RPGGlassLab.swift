@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// Experimental "glass on every cell" modes, for measuring what a phone can
 /// sustain. Pure logic only; drawing lives in the scenes and RPGGridGlass.
