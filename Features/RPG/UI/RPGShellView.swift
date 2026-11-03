@@ -31,6 +31,10 @@ struct RPGShellView: View {
     @State private var appSettings = false
     @State private var prologue: WorldPrologue?
     @AppStorage("moonlight.world.edgeSwipe") private var edgeSwipe = true
+    @AppStorage("moonlight.world.autoplay") private var autoplay = true
+    /// Tool the user picked while a draft was unconfirmed.
+    @State private var pendingTool: RPGEditorTool?
+    @State private var exitPrompt = false
     var body: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
@@ -41,7 +45,15 @@ struct RPGShellView: View {
             // touches; the HUD fades out (see layouts).
             .allowsHitTesting(!controlCenter && prologue == nil)
             .accessibilityHidden(controlCenter)
-            .overlay(alignment: .leading) { if landscape && edgeSwipe && session.ready && !controlCenter { edgeSwipeZone(height: geometry.size.height) } }
+            .overlay(alignment: .leading) { if landscape && edgeSwipe && session.ready && !controlCenter && !session.mapEditorActive { edgeSwipeZone(height: geometry.size.height) } }
+            .overlay(alignment: .trailing) {
+                if session.mapEditorActive, !controlCenter, let point = session.panelPoint {
+                    RPGCellPanel(session: session, store: model.mediaStore, point: point) { session.panelPoint = nil }
+                        .frame(width: min(360, geometry.size.width * (landscape ? 0.42 : 0.92)))
+                        .padding(.top, landscape ? 52 : 120).padding(.bottom, landscape ? 8 : 160).padding(.trailing, 8)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
         }
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
             .overlay { worldBackdrop }
@@ -77,6 +89,26 @@ struct RPGShellView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.activate() }
             .sheet(isPresented: $tools) { toolPanel }
+            .confirmationDialog(session.quickMenuCell.map { "格子 x \($0.x) · z \($0.z)" } ?? "格子",
+                                isPresented: Binding(get: { session.quickMenuCell != nil }, set: { if !$0 { session.quickMenuCell = nil } }), titleVisibility: .visible) {
+                if let cell = session.quickMenuCell {
+                    Button("编辑内容") { session.openPanel(cell) }
+                    Button("复制此格") { session.copyCell(cell) }
+                    if session.hasClipboard { Button("粘贴到这里（预览）") { session.pastePreview(at: cell) } }
+                    if session.entity(at: cell) != nil { Button("擦除（预览）", role: .destructive) { session.eraseCell(cell) } }
+                    Button("取消", role: .cancel) {}
+                }
+            }
+            .alert("有未确认的预览", isPresented: Binding(get: { pendingTool != nil }, set: { if !$0 { pendingTool = nil } })) {
+                Button("确认提交") { session.confirmDraft(); if let tool = pendingTool { session.selectTool(tool) }; pendingTool = nil }
+                Button("放弃预览", role: .destructive) { session.discardDraft(); if let tool = pendingTool { session.selectTool(tool) }; pendingTool = nil }
+                Button("继续编辑", role: .cancel) { pendingTool = nil }
+            } message: { Text(session.draftPlan?.summary ?? "当前预览还没有写入地图。") }
+            .alert("离开地图编辑？", isPresented: $exitPrompt) {
+                Button("确认提交并返回") { session.confirmDraft(); Task { try? await Task.sleep(nanoseconds: 400_000_000); session.exitMapEditor() } }
+                Button("放弃预览并返回", role: .destructive) { session.discardDraft(); session.exitMapEditor() }
+                Button("继续编辑", role: .cancel) {}
+            } message: { Text("有未确认的预览：" + (session.draftPlan?.summary ?? "")) }
             .sheet(isPresented:$storyPlaying) {
                 NavigationStack {RPGStoryView(session:session,travel:{anchor in storyPlaying=false;session.guideTo(anchor)},backTitle:"返回世界")}
             }
@@ -138,7 +170,7 @@ struct RPGShellView: View {
             perspectiveRow
             RPGCombatHUDView(model:session.combatHUD,session:session)
             Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
-            actionRow
+            if session.mapEditorActive { editorBars } else { actionRow }
         }.buttonStyle(MoonGlassButtonStyle()).padding(12).padding(.bottom, 82)
             .opacity(controlCenter ? 0.35 : 1)
     }
@@ -162,6 +194,13 @@ struct RPGShellView: View {
                 HStack(alignment: .bottom, spacing: 10) {
                     if session.ready && showsJoystick { movementPad }
                     Spacer(minLength: 0)
+                    if session.mapEditorActive {
+                        VStack(spacing: 4) {
+                            Text(session.notice).font(.caption).lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
+                                .moonSingleGlass(radius: 10).accessibilityIdentifier("rpg-status")
+                            editorBars
+                        }.frame(maxWidth: 640)
+                    } else {
                     VStack(spacing: 4) {
                         Text(session.notice).font(.caption).lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
                             .moonSingleGlass(radius: 10).accessibilityIdentifier("rpg-status")
@@ -169,6 +208,7 @@ struct RPGShellView: View {
                         actionRow
                         perspectiveRow
                     }.frame(maxWidth: 420)
+                    }
                     Spacer(minLength: 0)
                     if session.ready && !session.mapEditorActive { combatButtons }
                 }
@@ -199,6 +239,17 @@ struct RPGShellView: View {
         }
     }
 
+    /// Draft bar, tool options and the bottom toolbar.
+    private var editorBars: some View {
+        VStack(spacing: 4) {
+            RPGDraftBar(session: session)
+            RPGEditorOptionsBar(session: session)
+            RPGEditorToolBar(session: session) { tool in
+                if session.draft != nil && tool != session.editorTool { pendingTool = tool } else { session.selectTool(tool) }
+            }
+        }
+    }
+
     /// Free edit hides the joystick; character build and play show it.
     private var showsJoystick: Bool { !session.mapEditorActive || session.editorMode == .character }
 
@@ -206,7 +257,7 @@ struct RPGShellView: View {
     private var editorToolbar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                Button { session.exitMapEditor() } label: { Label("返回沙盒", systemImage: "chevron.backward") }
+                Button { if session.draft != nil { exitPrompt = true } else { session.exitMapEditor() } } label: { Label("返回沙盒", systemImage: "chevron.backward") }
                     .accessibilityIdentifier("rpg-editor-exit")
                 Text(session.worldTitle).font(.caption.weight(.semibold)).lineLimit(1)
                 Picker("编辑模式", selection: $session.editorMode) {
@@ -426,6 +477,8 @@ struct RPGShellView: View {
                         NavigationLink("选中方块图片 / 视频") { RPGMediaEditorView(session:session,store:model.mediaStore,owner:.entity(entity.id)) }
                             .accessibilityIdentifier("rpg-media-block")
                     }
+                    Toggle("可见区域自动播放", isOn: $autoplay).accessibilityIdentifier("rpg-autoplay")
+                        .onChange(of: autoplay) { _ in session.media?.retry() }
                     Stepper("同时预览：\(session.world.videoBudget) 路",value:Binding(get:{session.world.videoBudget},set:{session.setVideoBudget($0)}),in:0...2)
                     Text("默认静音。角色、背景与可见互动素材共享预算，其他显示封面或默认外观。3–4 路待实机验证后再评估。")
                         .font(.caption).foregroundStyle(.secondary)

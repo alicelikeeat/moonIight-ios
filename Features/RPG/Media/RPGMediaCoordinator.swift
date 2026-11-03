@@ -31,6 +31,17 @@ import UIKit
     private var gifURLs:[String:URL]=[:]
     private struct GIFClock {var start:TimeInterval;var shown:Int}
     private var gifClocks:[String:GIFClock]=[:]
+    // Task E playback scheduling: selection first, nearest next, edge
+    // hysteresis, covers while the camera moves, system conditions.
+    /// The selected cell's owner ID; it plays before any other cell.
+    var selectedOwnerID:String?{didSet{if selectedOwnerID != oldValue{sync(force:true)}}}
+    private var visibleOwners=Set<String>()
+    private var lastCamera:(CGPoint,CGFloat)=(.zero,1)
+    private var lastCameraMove:TimeInterval=0
+    private var lastSettled=true
+    /// GIFs hold their frame while the camera moves or autoplay is off.
+    private var gifsFrozen=false
+    static var autoplayEnabled:Bool{UserDefaults.standard.object(forKey:"moonlight.world.autoplay") as? Bool ?? true}
     @Published private(set) var notice=""
     var decoderCount:Int{pool.decoderCount}
     var advancing:Int{pool.advancing}
@@ -117,7 +128,7 @@ import UIKit
             guard gifURLs[id] != nil,let animation=gifs.peek(id) else{continue}
             var clock=gifClocks[target.ownerID] ?? GIFClock(start:time,shown:-1)
             let index:Int
-            if target.binding.paused == true {
+            if target.binding.paused == true || gifsFrozen {
                 index=max(clock.shown,0);clock.start=time-RPGGIFTiming.offset(of:index,delays:animation.delays)
             } else {
                 index=RPGGIFTiming.frameIndex(elapsed:time-clock.start,delays:animation.delays,loop:target.binding.loop)
@@ -135,15 +146,29 @@ import UIKit
         guard let scene else{return}
         let camera=scene.camera,scale=camera?.xScale ?? 1,center=camera?.position ?? CGPoint(x:scene.size.width/2,y:scene.size.height/2)
         let viewport=CGRect(x:center.x-scene.size.width*scale/2,y:center.y-scene.size.height*scale/2,width:scene.size.width*scale,height:scene.size.height*scale)
+        let now=ProcessInfo.processInfo.systemUptime
+        if RPGMediaVisibility.moved(from:lastCamera,to:(center,scale)){lastCameraMove=now;lastCamera=(center,scale)}
+        let settled=now-lastCameraMove>=RPGMediaVisibility.settleSeconds
+        let margin=48*scale
         let requests=targets.map{target -> RPGMediaRequest in
             let rect=target.sprite.calculateAccumulatedFrame()
             let parent=target.sprite.parent
             let a=parent?.convert(CGPoint(x:rect.minX,y:rect.minY),to:scene) ?? .zero
             let b=parent?.convert(CGPoint(x:rect.maxX,y:rect.maxY),to:scene) ?? .zero
             let frame=CGRect(x:min(a.x,b.x),y:min(a.y,b.y),width:abs(a.x-b.x),height:abs(a.y-b.y))
-            return .init(ownerID:target.ownerID,mediaID:target.binding.mediaID,role:target.role,visible:active && target.sprite.parent != nil && frame.intersects(viewport))
+            let visible=active && target.sprite.parent != nil && RPGMediaVisibility.visible(frame:frame,viewport:viewport,wasVisible:visibleOwners.contains(target.ownerID),margin:margin)
+            var request=RPGMediaRequest(ownerID:target.ownerID,mediaID:target.binding.mediaID,role:target.role,visible:visible)
+            request.selected=target.ownerID==selectedOwnerID
+            // Rounded so small drifts do not count as a change on their own.
+            request.distance=(hypot(frame.midX-center.x,frame.midY-center.y)/24).rounded()
+            return request
         }
-        guard force || requests != lastRequests else{return};lastRequests=requests
+        visibleOwners=Set(requests.filter(\.visible).map(\.ownerID))
+        let settledChanged=settled != lastSettled;lastSettled=settled
+        guard force || settledChanged || requests != lastRequests else{return};lastRequests=requests
+        let liveBudget=RPGMediaVisibility.budget(base:budget,autoplay:Self.autoplayEnabled,reduceMotion:UIAccessibility.isReduceMotionEnabled,
+                                                 lowPower:ProcessInfo.processInfo.isLowPowerModeEnabled,cameraSettled:settled)
+        gifsFrozen = !settled || !Self.autoplayEnabled || UIAccessibility.isReduceMotionEnabled
         let visibleGIFs=Set(requests.filter{$0.visible && gifURLs[$0.mediaID] != nil}.map(\.mediaID))
         for id in visibleGIFs {
             _=gifs.animation(id)
@@ -156,7 +181,7 @@ import UIKit
         // A paused video cell keeps its frame and does not claim a decoder.
         let paused=Set(targets.filter{$0.binding.paused == true}.map(\.ownerID))
         let videos=requests.filter{request in !paused.contains(request.ownerID) && availableIDs.contains(request.mediaID) && store.items.first{$0.id==request.mediaID}?.kind == .video}
-        let desired=Set(RPGMediaPolicy.schedule(videos,limit:budget))
+        let desired=Set(RPGMediaPolicy.schedule(videos,limit:liveBudget))
         let loops=Set(targets.filter{target in target.binding.loop && requests.contains(where:{$0.ownerID==target.ownerID && $0.visible})}.map{$0.binding.mediaID})
         pool.configureLooping(loops)
         pool.configure(entries:localEntries,requested:desired.count,active:active)

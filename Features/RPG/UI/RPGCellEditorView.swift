@@ -10,7 +10,12 @@ struct RPGCellEditorView: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var session: RPGSession
     @ObservedObject var store: MediaStore
-    let entity: WorldEntity
+    /// The block being edited, or nil for an empty cell (task E, A+: the
+    /// content is placed on a new walk-through display cell).
+    let entity: WorldEntity?
+    let point: SurfacePoint?
+    /// Set when shown in the floating panel instead of a sheet.
+    var onClose: (() -> Void)?
     private let original: MediaBinding?
     @State private var draft: MediaBinding
     @State private var picked: PhotosPickerItem?
@@ -18,11 +23,12 @@ struct RPGCellEditorView: View {
     @State private var importNotice = ""
     @State private var fullscreen: MediaEntry?
 
-    init(session: RPGSession, store: MediaStore, entity: WorldEntity) {
-        self.session = session; self.store = store; self.entity = entity
-        let current = session.mediaBinding(for: .entity(entity.id))
+    init(session: RPGSession, store: MediaStore, entity: WorldEntity?, point: SurfacePoint? = nil, initialKind: RPGMediaKind? = nil, onClose: (() -> Void)? = nil) {
+        self.session = session; self.store = store; self.entity = entity; self.point = point ?? entity?.surface; self.onClose = onClose
+        let current = entity.flatMap { session.mediaBinding(for: .entity($0.id)) }
         original = current
         var start = current ?? MediaBinding(id: "draft", mediaID: "", kind: .icon, style: RPGCellStyle(value: "star.fill"))
+        if current == nil, let initialKind, initialKind != start.kind { start = Self.template(for: initialKind) }
         if start.kind.usesLibraryFile, start.fit == nil { start.fit = .fill }
         _draft = State(initialValue: start)
     }
@@ -41,7 +47,7 @@ struct RPGCellEditorView: View {
             // Near the top so it is reachable without scrolling a long form.
             if original != nil {
                 Section {
-                    Button("删除格子内容", role: .destructive) { session.clearMedia(.entity(entity.id)); dismiss() }
+                    Button("删除格子内容", role: .destructive) { if let entity { session.clearMedia(.entity(entity.id)) }; close() }
                         .accessibilityIdentifier("rpg-cell-delete")
                 }
             }
@@ -59,9 +65,12 @@ struct RPGCellEditorView: View {
         }
         .navigationTitle("格子内容").navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.accessibilityIdentifier("rpg-cell-cancel") }
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { close() }.accessibilityIdentifier("rpg-cell-cancel") }
             ToolbarItem(placement: .confirmationAction) {
-                Button("确认") { session.applyCellContent(draft, to: entity.id); dismiss() }
+                Button("确认") {
+                    if let entity { session.applyCellContent(draft, to: entity.id) } else if let point { session.applyContent(draft, at: point) }
+                    close()
+                }
                     .disabled(!draft.valid || draft == original || session.working).accessibilityIdentifier("rpg-cell-confirm")
             }
         }
@@ -69,6 +78,18 @@ struct RPGCellEditorView: View {
             MediaPlayerView(entry: entry, onShareToMoments: { fullscreen = nil }, onQueueAdvance: { _ in }).environmentObject(model)
         }
         .onChange(of: picked) { value in importPicked(value) }
+    }
+
+    private func close() { if let onClose { onClose() } else { dismiss() } }
+
+    /// Starting content for a content tool (图片 / 文字 / …) on a fresh cell.
+    static func template(for kind: RPGMediaKind) -> MediaBinding {
+        switch kind {
+        case .image, .video, .gif: MediaBinding(id: "draft", mediaID: "", kind: kind, fit: .fill)
+        case .icon: MediaBinding(id: "draft", mediaID: "", kind: .icon, style: RPGCellStyle(value: "star.fill"))
+        case .number: MediaBinding(id: "draft", mediaID: "", kind: .number, style: RPGCellStyle(value: "1"))
+        case .text: MediaBinding(id: "draft", mediaID: "", kind: .text, style: RPGCellStyle(value: "文字", size: 0.4))
+        }
     }
 
     // MARK: Sections

@@ -818,4 +818,32 @@ check(reopened7.schemaVersion == 8 && reopened7.terrainOverrides == nil, "schema
 var badTerrain = map; badTerrain.terrainOverrides = ["999,1": .sand]; rejected(badTerrain, "terrain keys must be on the map")
 print("RPG drafts: \(checks) total checks passed")
 
+
+// P16: playback priority, hysteresis and budget.
+let near = RPGMediaRequest(ownerID: "b", mediaID: "near", role: .interactive, visible: true, distance: 10)
+let farAway = RPGMediaRequest(ownerID: "a", mediaID: "far", role: .interactive, visible: true, distance: 500)
+var pickedCell = RPGMediaRequest(ownerID: "z", mediaID: "pickedCell", role: .interactive, visible: true, distance: 900); pickedCell.selected = true
+check(RPGMediaPolicy.schedule([farAway, near], limit: 2) == ["near", "far"], "nearer cells first")
+check(RPGMediaPolicy.schedule([farAway, near, pickedCell], limit: 2) == ["pickedCell", "near"], "selected cell first, then nearest")
+check(RPGMediaPolicy.schedule([farAway, near, pickedCell], limit: 1) == ["pickedCell"], "budget respected")
+let viewport = CGRect(x: 0, y: 0, width: 100, height: 100)
+let edge = CGRect(x: 110, y: 10, width: 20, height: 20)
+check(!RPGMediaVisibility.visible(frame: edge, viewport: viewport, wasVisible: false, margin: 48), "off-screen cells do not start")
+check(RPGMediaVisibility.visible(frame: edge, viewport: viewport, wasVisible: true, margin: 48), "cells just off screen keep playing")
+check(!RPGMediaVisibility.visible(frame: edge.offsetBy(dx: 100, dy: 0), viewport: viewport, wasVisible: true, margin: 48), "cells well off screen stop")
+check(RPGMediaVisibility.budget(base: 2, autoplay: true, reduceMotion: false, lowPower: false, cameraSettled: true) == 2, "full budget")
+check(RPGMediaVisibility.budget(base: 2, autoplay: true, reduceMotion: false, lowPower: true, cameraSettled: true) == 1, "low power keeps one")
+check(RPGMediaVisibility.budget(base: 2, autoplay: false, reduceMotion: false, lowPower: false, cameraSettled: true) == 0 && RPGMediaVisibility.budget(base: 2, autoplay: true, reduceMotion: true, lowPower: false, cameraSettled: true) == 0, "autoplay off or reduce motion: covers")
+check(RPGMediaVisibility.budget(base: 2, autoplay: true, reduceMotion: false, lowPower: false, cameraSettled: false) == 0, "moving camera: covers")
+check(RPGMediaVisibility.moved(from: (CGPoint(x: 0, y: 0), 1), to: (CGPoint(x: 5, y: 0), 1)) && !RPGMediaVisibility.moved(from: (CGPoint(x: 0, y: 0), 1), to: (CGPoint(x: 1, y: 1), 1)) && RPGMediaVisibility.moved(from: (.zero, 1), to: (.zero, 1.2)), "camera movement detection")
+print("RPG playback: \(checks) total checks passed")
+
+
+// P17: editor tools and areas.
+check(RPGEditorTool.allCases.count == 12 && RPGEditorTool.text.contentKind == .text && RPGEditorTool.brush.contentKind == nil, "twelve tools, content tools map to kinds")
+check(RPGEditorTool.allCases.filter(\.draws) == [.terrain, .erase, .brush] && RPGEditorTool.allCases.filter(\.drawsRectangle) == [.multi, .fill], "drawing tools")
+let area = RPGArea(a: SurfacePoint(x: 5, z: 9), b: SurfacePoint(x: 2, z: 7))
+check(area.count == 12 && area.cells.count == 12 && area.origin == SurfacePoint(x: 2, z: 7), "area size and origin")
+print("RPG tools: \(checks) total checks passed")
+
 print("RPG complete: \(checks) total checks passed")

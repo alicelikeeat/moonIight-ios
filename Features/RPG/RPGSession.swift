@@ -45,6 +45,21 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// Map cell at the centre of the free camera.
     @Published private(set) var editorFocus: SurfacePoint?
     private var gameModeBeforeEditor: RPGGameMode?
+    /// Current bottom-toolbar tool.
+    @Published private(set) var editorTool = RPGEditorTool.select
+    /// What brush and fill write.
+    @Published var brushPayload = RPGDraftPayload.block("stone") { didSet { if draft != nil && (editorTool == .brush || editorTool == .fill) { restartDraftPayload() } } }
+    @Published var terrainBrush = RPGTerrain.road
+    /// Unconfirmed edit and what it would do. Never part of the saved world.
+    @Published private(set) var draft: RPGEditDraft?
+    @Published private(set) var draftPlan: RPGDraftPlan?
+    @Published private(set) var area: RPGArea?
+    /// Cell shown in the floating property panel, and the kind a content tool asked for.
+    @Published var panelPoint: SurfacePoint?
+    @Published private(set) var panelKind: RPGMediaKind?
+    /// Cell whose long-press menu is open.
+    @Published var quickMenuCell: SurfacePoint?
+    private var planTask: Task<Void, Never>?
 
     // MARK: Glass lab (experimental all-cell glass)
     @Published var glassMode = RPGGlassMode(rawValue: UserDefaults.standard.string(forKey: "moonlight.world.glassMode") ?? "") ?? .selected {
@@ -289,9 +304,19 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         // Native glass replaces the yellow outline where it is available.
         scene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
         sideScene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
-        scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point);self?.tapBehavior() }
+        scene.onSelectCell = { [weak self] point in
+            guard let self else { return }
+            self.selected = point; self.scene.select(point); self.syncSelectedMedia()
+            if self.mapEditorActive { self.panelKind = nil; self.panelPoint = point } else { self.tapBehavior() }
+        }
         scene.onStroke = { [weak self] points in self?.stroke(points) }
         scene.onCameraMoved = { [weak self] center, zoom in self?.cameraMoved(center: center, zoom: zoom) }
+        scene.onEditorStroke = { [weak self] a, b in self?.editorStroke(a, b) }
+        scene.onEditorRectangle = { [weak self] a, b, final in self?.editorRectangle(a, b, final: final) }
+        scene.onEditorTap = { [weak self] point in self?.editorTap(point) }
+        scene.onLongPressCell = { [weak self] point in
+            guard let self else { return }; self.selected = point; self.scene.select(point); self.quickMenuCell = point; self.syncSelectedMedia()
+        }
         scene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onSelectCell = { [weak self] point in
@@ -497,6 +522,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         mapEditorActive = false
         if let previous = gameModeBeforeEditor, previous != world.player.mode { world.player.mode = previous; world.revision += 1; save() }
         gameModeBeforeEditor = nil; editorFocus = nil
+        discardDraft(); area = nil; panelPoint = nil; quickMenuCell = nil; scene.showArea(nil)
+        scene.editorTouch = .legacy; scene.editorLongPressEnabled = false; scene.tool = tool
         scene.cameraFollowsPlayer = true; scene.freePan = false; scene.cameraGesturesEnabled = false
         scene.setCamera(center: scene.cameraCenter, zoom: 1); scene.recenterOnPlayer()
         loadVisible(force: true); notice = "已返回沙盒。"
@@ -507,7 +534,11 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         let mode = editorMode.gameMode
         if world.player.mode != mode { world.player.mode = mode; world.revision += 1; save() }
         let free = editorMode == .free
-        scene.cameraFollowsPlayer = !free; scene.freePan = free; scene.cameraGesturesEnabled = true
+        scene.cameraFollowsPlayer = !free; scene.cameraGesturesEnabled = true; scene.editorLongPressEnabled = true
+        applyEditorTouch()
+        // A draft made in free edit is kept; character build shows how much
+        // of it is out of range and will not commit it.
+        refreshPlan()
         if free { editorFocus = RPGCameraRules.cell(at: scene.cameraCenter) ?? world.player.surface }
         else { scene.recenterOnPlayer(); editorFocus = nil }
         loadVisible(force: true)
@@ -517,6 +548,130 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         if editorMode == .free { editorFocus = RPGCameraRules.cell(at: center) ?? editorFocus }
         loadVisible()
     }
+    /// Chooses a tool. Callers handle an unconfirmed draft first.
+    func selectTool(_ tool: RPGEditorTool) {
+        editorTool = tool
+        if !tool.drawsRectangle && tool != .multi { scene.showArea(area) }
+        applyEditorTouch()
+    }
+    private func applyEditorTouch() {
+        guard mapEditorActive else { return }
+        scene.tool = .select
+        let tool = editorTool
+        scene.editorTouch = tool == .select ? (editorMode == .free ? .panSelect : .legacy)
+            : tool.contentKind != nil ? .tapOnly : tool.draws ? .stroke : .rectangle
+    }
+    private func payload(for tool: RPGEditorTool) -> RPGDraftPayload? {
+        switch tool {
+        case .erase: .erase
+        case .terrain: .terrain(terrainBrush)
+        case .brush, .fill: brushPayload
+        default: nil
+        }
+    }
+    private func editorStroke(_ a: SurfacePoint, _ b: SurfacePoint) {
+        guard mapEditorActive, let payload = payload(for: editorTool) else { return }
+        if draft?.payload != payload { draft = RPGEditDraft(payload: payload) }
+        if a == b { draft?.add([a]) } else { draft?.addStroke(from: a, to: b) }
+        showDraft()
+    }
+    private func editorRectangle(_ a: SurfacePoint, _ b: SurfacePoint, final: Bool) {
+        guard mapEditorActive else { return }
+        if editorTool == .multi { area = RPGArea(a: a, b: b); scene.showArea((a, b)); if final { notice = "已选 \(area!.count) 格：可擦除、填充、复制或替换。" }; return }
+        guard let payload = payload(for: editorTool) else { return }
+        var next = RPGEditDraft(payload: payload); next.setRectangle(a, b); draft = next
+        showDraft()
+    }
+    private func editorTap(_ point: SurfacePoint) {
+        selected = point; panelKind = editorTool.contentKind; panelPoint = point; syncSelectedMedia()
+    }
+    private func restartDraftPayload() {
+        guard let cells = draft?.cells, let payload = payload(for: editorTool) else { return }
+        var next = RPGEditDraft(payload: payload); next.add(cells); draft = next; showDraft()
+    }
+    /// Shows the draft cells at once and works out the plan just after, so
+    /// a long stroke never waits on per-cell checks.
+    private func showDraft() {
+        guard let draft else { scene.showPreview([], tint: .clear); return }
+        let cells: [SurfacePoint]
+        if case .paste(let clipboard) = draft.payload, let origin = draft.cells.first { cells = RPGEditDraft.footprint(clipboard, at: origin).filter(\.valid) }
+        else { cells = draft.cells }
+        scene.showPreview(cells, tint: Self.tint(draft.payload))
+        refreshPlan()
+    }
+    private func refreshPlan() {
+        planTask?.cancel()
+        guard let draft else { draftPlan = nil; return }
+        let world = world, generator = generator
+        planTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            let plan = await Task.detached(priority: .userInitiated) { RPGDraftCommit.plan(draft, world: world, generator: generator) }.value
+            guard !Task.isCancelled, let self, self.draft == draft else { return }
+            self.draftPlan = plan
+        }
+    }
+    static func tint(_ payload: RPGDraftPayload) -> UIColor {
+        switch payload {
+        case .erase: .systemRed
+        case .terrain(let terrain): terrain == .water ? .systemBlue : terrain == .cliff ? .darkGray : terrain == .sand ? .systemYellow : terrain == .road ? .brown : .systemGreen
+        case .block: .systemOrange
+        case .content: .systemCyan
+        case .paste: .systemPurple
+        case .replace: .systemPink
+        }
+    }
+    /// Commits the draft as one transaction; it stays on screen if refused.
+    func confirmDraft() {
+        guard let value = draft else { return }
+        perform({ world, generator in try RPGDraftCommit.commit(value, world: &world, generator: generator) }) { [weak self] in
+            guard let self else { return }
+            self.notice = "已提交：" + value.payload.title + " · \(self.draftPlan?.cells.count ?? value.count) 格"
+            self.discardDraft()
+        }
+    }
+    func discardDraft() { planTask?.cancel(); draft = nil; draftPlan = nil; scene.showPreview([], tint: .clear) }
+
+    // Multi-select actions: each becomes a draft to confirm.
+    func eraseArea() { draftOverArea(.erase) }
+    func fillArea() { draftOverArea(brushPayload) }
+    func replaceInArea() {
+        guard let from = selectedEntity?.definitionID else { notice = "先轻点选区内一个方块，作为要替换的材质。"; return }
+        guard case .block(let to) = brushPayload else { notice = "画笔需选择一种方块材质作为替换目标。"; return }
+        draftOverArea(.replace(from: from, to: to))
+    }
+    func copyArea() {
+        guard let area else { return }
+        do { clipboard = try RPGWorldEditing.copy(from: area.a, to: area.b, world: world, generator: generator); hasClipboard = !(clipboard?.cells.isEmpty ?? true); notice = "已复制 \(clipboard?.cells.count ?? 0) 个方块。" }
+        catch { notice = error.localizedDescription }
+    }
+    /// Paste preview with the copied area's corner at `point`.
+    func pastePreview(at point: SurfacePoint) {
+        guard let clipboard, !clipboard.cells.isEmpty else { notice = "没有可粘贴的内容。"; return }
+        var next = RPGEditDraft(payload: .paste(clipboard)); next.add([point]); draft = next; showDraft()
+    }
+    func clearArea() { area = nil; scene.showArea(nil) }
+    private func draftOverArea(_ payload: RPGDraftPayload) {
+        guard let area else { return }
+        var next = RPGEditDraft(payload: payload); next.setRectangle(area.a, area.b); draft = next; showDraft()
+    }
+    /// Long-press menu actions.
+    func eraseCell(_ point: SurfacePoint) { var next = RPGEditDraft(payload: .erase); next.add([point]); draft = next; showDraft() }
+    func copyCell(_ point: SurfacePoint) { area = RPGArea(a: point, b: point); copyArea(); area = nil }
+    func openPanel(_ point: SurfacePoint, kind: RPGMediaKind? = nil) { selected = point; scene.select(point); panelKind = kind; panelPoint = point; syncSelectedMedia() }
+    /// Content for a cell without a block: one display cell plus content,
+    /// as one undoable edit (A+).
+    func applyContent(_ template: MediaBinding, at point: SurfacePoint) {
+        var value = template; if value.kind != .video { value.muted = true }
+        var single = RPGEditDraft(payload: .content(value)); single.add([point])
+        let draft = single
+        perform { world, generator in try RPGDraftCommit.commit(draft, world: &world, generator: generator) }
+    }
+    func entity(at point: SurfacePoint) -> WorldEntity? { RPGWorldEditing.entity(at: point, world: world, generator: generator) }
+    func terrain(at point: SurfacePoint) -> RPGTerrain? { RPGWorldTerrain.tile(at: point, world: world, generator: generator) }
+    /// The selected cell's media plays first.
+    private func syncSelectedMedia() { media?.selectedOwnerID = selectedEntity?.id }
+
     /// The cell the editor toolbar shows: the selection, else the camera centre.
     var editorCoordinate: SurfacePoint? { selected ?? editorFocus ?? world.player.surface }
     func mediaBinding(for owner:RPGMediaOwner)->MediaBinding? {
@@ -551,7 +706,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         else { scene.show(chunks: chunks, world: world); scene.select(selected) }
         updateProjectionEvidence(); refreshCombat()
     }
-    private func perform(_ action: @escaping @Sendable (inout WorldState, RPGWorldGenerator) throws -> Void) {
+    private func perform(_ action: @escaping @Sendable (inout WorldState, RPGWorldGenerator) throws -> Void, onSuccess: (() -> Void)? = nil) {
         guard ready, active, !working, world.player.health > 0 else { return }
         working = true; let snapshot = world, generator = generator, epoch = generation
         edit = Task { [weak self] in
@@ -566,7 +721,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 self.world = value
                 if value.behaviors.firedIDs.count > snapshot.behaviors.firedIDs.count { self.pendingStory=true }
                 RPGStoryRuntime.recordEvents(world:&self.world); self.renderCurrent()
-                self.notice = "操作已提交。"; self.save()
+                self.notice = "操作已提交。"; self.save(); onSuccess?()
             case .failure(let error): self.notice = error.localizedDescription
             }
         }

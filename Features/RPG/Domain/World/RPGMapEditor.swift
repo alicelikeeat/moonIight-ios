@@ -63,3 +63,38 @@ enum RPGCameraRules {
         CGPoint(x: -delta.x * zoom, y: delta.y * zoom)
     }
 }
+
+/// Bottom toolbar tools (task E3).
+enum RPGEditorTool: String, CaseIterable, Sendable {
+    case select, image, video, gif, text, number, icon, terrain, erase, multi, brush, fill
+    var title: String {
+        switch self {
+        case .select: "选择"; case .image: "图片"; case .video: "视频"; case .gif: "GIF"; case .text: "文字"; case .number: "数字"
+        case .icon: "图标"; case .terrain: "地形"; case .erase: "擦除"; case .multi: "多选"; case .brush: "画笔"; case .fill: "填充"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .select: "hand.point.up.left"; case .image: "photo"; case .video: "video"; case .gif: "sparkles.rectangle.stack"
+        case .text: "textformat"; case .number: "number"; case .icon: "star"; case .terrain: "mountain.2"; case .erase: "eraser"
+        case .multi: "rectangle.dashed"; case .brush: "paintbrush.pointed"; case .fill: "square.fill.on.square"
+        }
+    }
+    /// Content tools open the property panel on the tapped cell with this kind.
+    var contentKind: RPGMediaKind? {
+        switch self { case .image: .image; case .video: .video; case .gif: .gif; case .text: .text; case .number: .number; case .icon: .icon; default: nil }
+    }
+    /// Tools whose single-finger drag draws a draft.
+    var draws: Bool { self == .terrain || self == .erase || self == .brush }
+    /// Tools whose drag defines a rectangle.
+    var drawsRectangle: Bool { self == .fill || self == .multi }
+}
+
+/// A rectangular multi-selection.
+struct RPGArea: Equatable, Sendable {
+    var a: SurfacePoint
+    var b: SurfacePoint
+    var cells: [SurfacePoint] { RPGEditDraft.rectangle(a, b) }
+    var count: Int { (abs(a.x - b.x) + 1) * (abs(a.z - b.z) + 1) }
+    var origin: SurfacePoint { SurfacePoint(x: min(a.x, b.x), z: min(a.z, b.z)) }
+}

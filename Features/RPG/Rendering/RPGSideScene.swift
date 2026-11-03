@@ -62,7 +62,8 @@ import UIKit
             let size=CGSize(width:entity.physics.width*24,height:entity.physics.height*24)
             let node=SKShapeNode(rectOf:size,cornerRadius:3)
             node.position=CGPoint(x:CGFloat(side.horizontal)*24+size.width/2,y:CGFloat(side.height)*24+size.height/2)
-            node.fillColor=entity.scope == .sideOnly ? .systemIndigo : entity.definitionID == "wood" ? .systemBrown : .systemGray
+            node.fillColor=entity.definitionID == RPGWorldEditing.displayDefinition ? .clear : entity.scope == .sideOnly ? .systemIndigo : entity.definitionID == "wood" ? .systemBrown : .systemGray
+            if entity.definitionID == RPGWorldEditing.displayDefinition { node.strokeColor = .white.withAlphaComponent(0.25) }
             node.strokeColor = .white.withAlphaComponent(0.5);node.name=entity.id
             if entity.physics.sideSolid { node.physicsBody=SKPhysicsBody(rectangleOf:size);node.physicsBody?.isDynamic=false;node.physicsBody?.categoryBitMask=2 }
             objects.addChild(node)
