@@ -322,7 +322,8 @@ struct Glass3DPending {
         renderer.showPlants(world.plants, chunks: chunks)
         renderer.showCreatures(world.creatures, near: center, radius: reach + 8)
         renderer.showPickups(world.pickups, near: center, radius: reach + 8)
-        visibleMediaIDs = Set(visible.compactMap { $0.media.flatMap { session.world.mediaBindings.first(where: { b in b.id == $0.bindingID })?.mediaID } })
+        let bindings = Dictionary(session.world.mediaBindings.map { ($0.id, $0.mediaID) }, uniquingKeysWith: { first, _ in first })
+        visibleMediaIDs = Set(visible.compactMap { block in block.media.flatMap { bindings[$0.bindingID] } })
         let average = frameTimes.isEmpty ? 0 : frameTimes.reduce(0, +) / Double(frameTimes.count)
         stats = (SpatialCameraRules.visibleCells(camera, aspect: aspect), renderer.blockNodeCount, renderer.creatureNodeCount, stats.activeAI, renderer.media.decoderCount, average > 0 ? 1 / average : 0)
     }
