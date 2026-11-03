@@ -153,7 +153,9 @@ import UIKit
             }
         }
         gifs.trim(keeping:visibleGIFs)
-        let videos=requests.filter{request in availableIDs.contains(request.mediaID) && store.items.first{$0.id==request.mediaID}?.kind == .video}
+        // A paused video cell keeps its frame and does not claim a decoder.
+        let paused=Set(targets.filter{$0.binding.paused == true}.map(\.ownerID))
+        let videos=requests.filter{request in !paused.contains(request.ownerID) && availableIDs.contains(request.mediaID) && store.items.first{$0.id==request.mediaID}?.kind == .video}
         let desired=Set(RPGMediaPolicy.schedule(videos,limit:budget))
         let loops=Set(targets.filter{target in target.binding.loop && requests.contains(where:{$0.ownerID==target.ownerID && $0.visible})}.map{$0.binding.mediaID})
         pool.configureLooping(loops)
@@ -178,6 +180,7 @@ import UIKit
         guard let base=textures.value(id) else{for target in targets where target.binding.mediaID==id{target.sprite.texture=nil};return}
         for target in targets where target.binding.mediaID==id && lastRequests.contains(where:{$0.ownerID==target.ownerID && $0.visible}) {
             let binding=target.binding
+            if binding.paused == true && target.sprite.texture != nil {continue}
             let layout=RPGCellRenderer.layout(binding:binding,base:base,box:RPGMediaSprites.box(of:target.sprite))
             target.sprite.texture=SKTexture(rect:layout.rect,in:base);target.sprite.size=layout.size
             target.sprite.anchorPoint=CGPoint(x:binding.anchorX,y:binding.anchorY)
