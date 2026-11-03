@@ -18,6 +18,9 @@ import UIKit
     private(set) var mediaTargets: [RPGMediaNode] = []
     private(set) var sharedIDs: [String] = []
     private var maps: [ChunkCoordinate: SKTileMapNode] = [:]
+    private var glassMaps: [ChunkCoordinate: SKTileMapNode] = [:]
+    /// Glass lab option A: show the glass-look tile over every loaded cell.
+    var glassTextureVisible = false { didSet { glassMaps.values.forEach { $0.isHidden = !glassTextureVisible } } }
     private var groups: [RPGTerrain: SKTileGroup] = [:]
     override init() {
         super.init(size: CGSize(width: 390, height: 500))
@@ -32,7 +35,7 @@ import UIKit
     func show(chunks: [RPGChunk], world: WorldState) {
         prepareTiles()
         let wanted = Set(chunks.map(\.coordinate))
-        for key in Array(maps.keys) where !wanted.contains(key) { maps.removeValue(forKey: key)?.removeFromParent() }
+        for key in Array(maps.keys) where !wanted.contains(key) { maps.removeValue(forKey: key)?.removeFromParent(); glassMaps.removeValue(forKey: key)?.removeFromParent() }
         let set = SKTileSet(tileGroups: RPGTerrain.allCases.compactMap { groups[$0] })
         for chunk in chunks where maps[chunk.coordinate] == nil {
             let map = SKTileMapNode(tileSet: set, columns: 32, rows: 32, tileSize: CGSize(width: 24, height: 24))
@@ -40,6 +43,12 @@ import UIKit
             map.position = CGPoint(x: CGFloat(chunk.coordinate.x * 32) * Self.cell, y: CGFloat(chunk.coordinate.z * 32) * Self.cell)
             for z in 0..<32 { for x in 0..<32 { map.setTileGroup(groups[chunk.terrain[z * 32 + x]], forColumn: x, row: z) } }
             ground.addChild(map); maps[chunk.coordinate] = map
+        }
+        for chunk in chunks where glassMaps[chunk.coordinate] == nil {
+            let glass = RPGGlassTexture.map(columns: 32, rows: 32)
+            glass.position = CGPoint(x: CGFloat(chunk.coordinate.x * 32) * Self.cell, y: CGFloat(chunk.coordinate.z * 32) * Self.cell)
+            glass.isHidden = !glassTextureVisible
+            addChild(glass); glassMaps[chunk.coordinate] = glass
         }
         objects.removeAllChildren(); sharedIDs = []
         avatar.children.filter { $0.name?.hasPrefix("media:") == true }.forEach { $0.removeFromParent() }
@@ -63,6 +72,8 @@ import UIKit
         movePlayer(world.player.surface)
     }
     func movePlayer(_ point: SurfacePoint) { avatar.position = Self.position(point); worldCamera.position = avatar.position }
+    /// The player's position in SpriteView coordinates (glass lab option C).
+    func playerViewPoint() -> CGPoint? { view == nil ? nil : convertPoint(toView: avatar.position) }
     /// The selected cell in SpriteView (UIKit) coordinates, or nil when
     /// nothing is selected. Used to place the SwiftUI selection glass.
     func selectionRectInView() -> CGRect? {
@@ -137,5 +148,5 @@ import UIKit
         strokePoints = []
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { strokePoints = [] }
-    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll() }
+    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll(); glassMaps.values.forEach { $0.removeFromParent() }; glassMaps.removeAll() }
 }

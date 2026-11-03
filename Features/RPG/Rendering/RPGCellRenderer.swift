@@ -124,3 +124,39 @@ extension UIColor {
         self.init(red: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255, blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 }
+
+/// Option A of the glass lab: a glass-look tile (soft fill, top highlight,
+/// thin light edge, darker lower edge) laid over every cell as a tile map.
+/// One shared texture, batched by SpriteKit; this is a drawn imitation,
+/// not system Liquid Glass.
+@MainActor enum RPGGlassTexture {
+    static let tileSet: SKTileSet = {
+        let side: CGFloat = 24
+        let format = UIGraphicsImageRendererFormat(); format.scale = 3; format.opaque = false
+        let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { context in
+            let cell = CGRect(x: 1.5, y: 1.5, width: side - 3, height: side - 3)
+            let shape = UIBezierPath(roundedRect: cell, cornerRadius: 5)
+            UIColor.white.withAlphaComponent(0.07).setFill(); shape.fill()
+            context.cgContext.saveGState(); shape.addClip()
+            let colors = [UIColor.white.withAlphaComponent(0.32).cgColor, UIColor.white.withAlphaComponent(0).cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                context.cgContext.drawLinearGradient(gradient, start: CGPoint(x: cell.minX, y: cell.minY), end: CGPoint(x: cell.minX, y: cell.midY), options: [])
+            }
+            context.cgContext.restoreGState()
+            UIColor.white.withAlphaComponent(0.42).setStroke(); shape.lineWidth = 0.75; shape.stroke()
+            let lower = UIBezierPath(); lower.move(to: CGPoint(x: cell.minX + 4, y: cell.maxY - 0.6)); lower.addLine(to: CGPoint(x: cell.maxX - 4, y: cell.maxY - 0.6))
+            UIColor.black.withAlphaComponent(0.18).setStroke(); lower.lineWidth = 1; lower.stroke()
+        }
+        let definition = SKTileDefinition(texture: SKTexture(image: image), size: CGSize(width: side, height: side))
+        return SKTileSet(tileGroups: [SKTileGroup(tileDefinition: definition)])
+    }()
+
+    static func map(columns: Int, rows: Int) -> SKTileMapNode {
+        let map = SKTileMapNode(tileSet: tileSet, columns: columns, rows: rows, tileSize: CGSize(width: 24, height: 24))
+        map.anchorPoint = .zero
+        map.fill(with: tileSet.tileGroups.first)
+        map.zPosition = 8
+        map.name = "glass-texture"
+        return map
+    }
+}

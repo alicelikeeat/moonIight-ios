@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import SpriteKit
 
 enum RPGTool: String, CaseIterable { case select, paint, erase }
 @MainActor final class RPGSession: ObservableObject {
@@ -32,6 +33,34 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     @Published private(set) var overlayVisible = false
     /// The selected cell in SpriteView coordinates, for the selection glass.
     @Published private(set) var selectionRect: CGRect?
+
+    // MARK: Glass lab (experimental all-cell glass)
+    @Published var glassMode = RPGGlassMode(rawValue: UserDefaults.standard.string(forKey: "moonlight.world.glassMode") ?? "") ?? .selected {
+        didSet { UserDefaults.standard.set(glassMode.rawValue, forKey: "moonlight.world.glassMode"); updateGlass(force: true) }
+    }
+    @Published var glassNearest = max(16, UserDefaults.standard.integer(forKey: "moonlight.world.glassNearest")) {
+        didSet { UserDefaults.standard.set(glassNearest, forKey: "moonlight.world.glassNearest"); updateGlass(force: true) }
+    }
+    @Published private(set) var glassRender = RPGGlassRender.selectedOnly
+    @Published private(set) var glassReason: String?
+    /// Where a cell corner lands in the SpriteView, the on-screen cell size
+    /// and the view size; only republished once the camera settles.
+    @Published private(set) var glassGrid: (corner: CGPoint, cell: CGFloat, bounds: CGSize, player: CGPoint)?
+    @Published private(set) var glassSamples: [RPGGlassSample] = []
+    @Published private(set) var glassSampleRemaining: Int?
+    private var glassConditions = RPGGlassConditions()
+    private var lastGlassCorner: CGPoint?
+    private var lastGlassMove: TimeInterval = 0
+    private var lastConditionCheck: TimeInterval = 0
+    private var samplePending = false
+    private var sampleStart: TimeInterval?
+    private var sampleThermalStart = 0
+    private var sampleSeconds: Double {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--glass-sample-short") { return 5 }
+        #endif
+        return 60
+    }
     let sideScene = RPGSideScene()
     @Published var definition = "wood"
     @Published var tool = RPGTool.select { didSet { scene.tool = tool } }
@@ -68,6 +97,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
         #endif
         storage = RPGWorldDiskStore(root: root)
+        #if DEBUG
+        // Other UI tests always run with the shipping default.
+        if ProcessInfo.processInfo.arguments.contains("--scroll-ui-tests") && !ProcessInfo.processInfo.arguments.contains("--glass-lab-ui-tests") { glassMode = .selected }
+        #endif
     }
     func recoverWorld(_ id:String) {
         guard !ready,!working,recoveryChoices.contains(where:{$0.id==id}) else{return}
@@ -262,7 +295,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.isPaused = !active || working || overlayVisible || world.player.perspective != .topDown
         sideScene.isPaused = !active || working || overlayVisible || world.player.perspective != .side
     }
-    func setOverlay(_ value: Bool) { overlayVisible = value; if value { silenceMedia(); media?.pause() }; applyScenePause(); syncMedia() }
+    func setOverlay(_ value: Bool) {
+        overlayVisible = value; if value { silenceMedia(); media?.pause() }; applyScenePause(); syncMedia()
+        if !value && samplePending { beginGlassSample() }
+    }
     func travelToTemple() {
         guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { return }
         guard world.player.mode == .creative else { notice = "冒险模式请沿通路探索；创造模式可定位到双界入口。"; return }
@@ -321,6 +357,63 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     var selectedEntity:WorldEntity? {
         if world.player.perspective == .side,let point=selectedSide { return RPGProjectionRules.sideEntities(world:world,generator:generator).first{RPGProjectionRules.occupies($0,point)} }
         guard let selected else{return nil};return RPGWorldEditing.entity(at:selected,world:world,generator:generator)
+    }
+    /// Requests a glass sample; it starts once the world is uncovered, so
+    /// paused time under a sheet is never measured.
+    func startGlassSample() { samplePending = true; if !overlayVisible { beginGlassSample() } }
+    private func beginGlassSample() {
+        samplePending = false; frameMetrics.reset(); sampleStart = nil
+        sampleThermalStart = ProcessInfo.processInfo.thermalState.rawValue
+        glassSampleRemaining = Int(sampleSeconds)
+    }
+    private func glassFrame(_ time: TimeInterval) {
+        if time - lastConditionCheck >= 1 {
+            lastConditionCheck = time
+            var conditions = glassConditions
+            if #available(iOS 26.0, *) { conditions.nativeAvailable = true } else { conditions.nativeAvailable = false }
+            conditions.lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+            conditions.thermal = ProcessInfo.processInfo.thermalState.rawValue
+            conditions.reduceTransparency = UIAccessibility.isReduceTransparencyEnabled
+            if conditions != glassConditions { glassConditions = conditions; updateGlass(force: true) }
+        }
+        if glassMode.isNative { trackGlassCamera(time) }
+        guard glassSampleRemaining != nil else { return }
+        guard active, ready, !overlayVisible else { return }
+        let start = sampleStart ?? time; sampleStart = start
+        let remaining = max(0, Int((sampleSeconds - (time - start)).rounded(.up)))
+        if remaining != glassSampleRemaining { glassSampleRemaining = remaining }
+        guard time - start >= sampleSeconds else { return }
+        glassSamples.append(RPGGlassSample(id: glassSamples.count + 1, mode: glassMode, nearest: glassNearest, effective: glassRender.label,
+                                           seconds: time - start, framesPerSecond: frameMetrics.framesPerSecond, p95Milliseconds: frameMetrics.p95Milliseconds,
+                                           hitches: frameMetrics.hitches, frames: frameMetrics.totalFrames, memoryMB: RPGMemoryMetrics.footprintMB,
+                                           thermalStart: sampleThermalStart, thermalEnd: ProcessInfo.processInfo.thermalState.rawValue,
+                                           device: UIDevice.current.model + " iOS " + UIDevice.current.systemVersion))
+        glassSampleRemaining = nil; sampleStart = nil
+        notice = "玻璃采样完成：" + glassSamples.last!.line
+    }
+    /// Native glass stays aligned only while the camera is still. While it
+    /// moves the texture (A) stands in; the grid is republished on settle.
+    private func trackGlassCamera(_ time: TimeInterval) {
+        let current: SKScene = world.player.perspective == .side ? sideScene : scene
+        guard let view = current.view else { return }
+        let corner = current.convertPoint(toView: .zero), unit = current.convertPoint(toView: CGPoint(x: 24, y: 0))
+        let moved = lastGlassCorner.map { abs($0.x - corner.x) > 0.5 || abs($0.y - corner.y) > 0.5 } ?? true
+        lastGlassCorner = corner
+        if moved {
+            lastGlassMove = time
+            if !glassConditions.cameraMoving { glassConditions.cameraMoving = true; updateGlass(force: true) }
+        } else if glassConditions.cameraMoving && time - lastGlassMove > 0.25 {
+            let player = world.player.perspective == .side ? sideScene.playerViewPoint() : scene.playerViewPoint()
+            glassGrid = (corner, abs(unit.x - corner.x), view.bounds.size, player ?? CGPoint(x: view.bounds.midX, y: view.bounds.midY))
+            glassConditions.cameraMoving = false; updateGlass(force: true)
+        }
+    }
+    private func updateGlass(force: Bool = false) {
+        let result = RPGGlassPolicy.resolve(glassMode, nearest: glassNearest, glassConditions)
+        if result.render != glassRender { glassRender = result.render }
+        if result.reason != glassReason { glassReason = result.reason }
+        let texture = result.render == .texture
+        scene.glassTextureVisible = texture; sideScene.glassTextureVisible = texture
     }
     /// Publishes the selection's on-screen rectangle only when it moves, so
     /// SwiftUI is not invalidated every frame while the camera is still.
@@ -495,6 +588,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func frame(_ time: TimeInterval) {
         media?.frame(time)
         updateSelectionRect()
+        glassFrame(time)
         guard active, ready, !working, !overlayVisible else { lastFrame = nil; return }
         frameMetrics.sample(time)
         if let started=switchStarted {switchMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000;switchStarted=nil}

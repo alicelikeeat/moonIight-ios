@@ -14,9 +14,35 @@ import Darwin
 struct RPGDiagnosticsView:View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var session:RPGSession
+    /// Closes the tools and starts a timed glass sample on the live world.
+    var onRunSample:(() -> Void)?=nil
     @State private var report=""
     var body:some View {
         List {
+            Section {
+                ForEach(RPGGlassMode.allCases,id:\.self){mode in
+                    Button{session.glassMode=mode}label:{
+                        HStack{Text(mode.title);Spacer();if session.glassMode==mode{Image(systemName:"checkmark")}}.frame(minHeight:44).contentShape(Rectangle())
+                    }.accessibilityIdentifier("rpg-glass-mode-"+mode.rawValue).accessibilityValue(session.glassMode==mode ? "已选" : "未选")
+                }
+                if session.glassMode == .nativeNearest {
+                    Picker("逐格数量 N",selection:$session.glassNearest){ForEach(RPGGlassPolicy.nearestChoices,id:\.self){Text("\($0)").tag($0)}}
+                        .pickerStyle(.segmented).accessibilityIdentifier("rpg-glass-nearest")
+                }
+                Text("实际渲染：\(session.glassRender.label)"+(session.glassReason.map{"（降级：\($0)）"} ?? "")).font(.caption)
+                    .accessibilityIdentifier("rpg-glass-effective")
+                if let onRunSample {
+                    Button("开始 \(ProcessInfo.processInfo.arguments.contains("--glass-sample-short") ? 5 : 60) 秒采样"){onRunSample()}
+                        .disabled(session.glassSampleRemaining != nil).accessibilityIdentifier("rpg-glass-run")
+                }
+                ForEach(session.glassSamples){Text($0.line).font(.caption2.monospaced()).textSelection(.enabled)}
+                if !session.glassSamples.isEmpty {
+                    ShareLink(item:session.glassSamples.map(\.line).joined(separator:"\n")){Label("分享采样结果",systemImage:"square.and.arrow.up")}
+                        .accessibilityIdentifier("rpg-glass-share")
+                }
+            } header: { Text("全格子玻璃验证（实验）") } footer: {
+                Text("A 是 SpriteKit 绘制的仿玻璃纹理，不是系统 Liquid Glass。B、C 为 iOS 26 原生玻璃：镜头移动、低电量、发热严重或开启“降低透明度”时自动改用 A。采样在关闭工具后开始，期间请正常移动和操作；模拟器结果不代表 iPhone 性能，请在真机上测量并配合 Instruments。")
+            }
             Section("本次运行观测") {
                 Text(report).font(.caption.monospaced()).textSelection(.enabled).accessibilityIdentifier("rpg-diagnostics-report")
                 Button("复制诊断"){UIPasteboard.general.string=report}

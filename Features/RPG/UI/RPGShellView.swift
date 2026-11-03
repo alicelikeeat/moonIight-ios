@@ -56,6 +56,14 @@ struct RPGShellView: View {
                 }
             }
             .overlay { if let prologue { WorldPrologueView(prologue: prologue) { self.prologue = nil } } }
+            .overlay(alignment: .top) {
+                if let remaining = session.glassSampleRemaining {
+                    Text(remaining > 0 ? "玻璃采样 \(remaining) 秒 · \(session.glassMode.short) · 请正常移动与操作" : "玻璃采样即将开始")
+                        .font(.caption.monospacedDigit()).padding(.horizontal, 12).padding(.vertical, 6)
+                        .moonSingleGlass(radius: 14).padding(.top, 52).allowsHitTesting(false)
+                        .accessibilityIdentifier("rpg-glass-sample")
+                }
+            }
             .animation(reducedMotion ? nil : .easeOut(duration: 0.3), value: controlCenter)
             .onAppear {
                 session.attachMediaStore(model.mediaStore); session.setReducedMotion(reducedMotion); session.activate()
@@ -85,6 +93,9 @@ struct RPGShellView: View {
                         .accessibilityIdentifier("rpg-media-probe").accessibilityValue(mediaDiagnostics)
                     Text("格子内容").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("rpg-cell-content").accessibilityValue(session.selectedCellSummary)
+                    Text("玻璃实验").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("rpg-glass-state")
+                        .accessibilityValue("mode=\(session.glassMode.rawValue);render=\(session.glassRender.label);samples=\(session.glassSamples.count)")
                     Text("世界格子").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("rpg-world-cells").accessibilityValue(session.cellContentSummaries)
                 }
@@ -221,6 +232,7 @@ struct RPGShellView: View {
             } else if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
             else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
         }.accessibilityLabel("世界场景")
+            .overlay { if session.ready, !controlCenter { RPGGridGlassOverlay(session: session) } }
             .overlay { if session.ready, !controlCenter, let rect = session.selectionRect { RPGSelectionGlass(rect: rect) } }
     }
 
@@ -304,7 +316,7 @@ struct RPGShellView: View {
         switch page {
         case .story:RPGStoryView(session:session,travel:{anchor in tools=false;session.guideTo(anchor)})
         case .editor:RPGStoryEditorView(session:session)
-        case .diagnostics:RPGDiagnosticsView(session:session)
+        case .diagnostics:RPGDiagnosticsView(session:session,onRunSample:{tools=false;session.startGlassSample()})
         case .world:EmptyView()
         }
     }
@@ -351,7 +363,7 @@ struct RPGShellView: View {
                     }
                 }
                 Section("运行与辅助") {
-                    NavigationLink("运行诊断") {RPGDiagnosticsView(session:session)}.accessibilityIdentifier("rpg-diagnostics")
+                    NavigationLink("运行诊断") {RPGDiagnosticsView(session:session,onRunSample:{tools=false;session.startGlassSample()})}.accessibilityIdentifier("rpg-diagnostics")
                     Text("Seed \(session.world.seed) · 系统减少动态效果：\(reducedMotion ? "开启":"关闭")").font(.caption)
                     if let target=session.selectedEntity {
                         NavigationLink("选中方块行为") {RPGBehaviorEditorView(session:session,target:target)}.accessibilityIdentifier("rpg-behavior-editor")

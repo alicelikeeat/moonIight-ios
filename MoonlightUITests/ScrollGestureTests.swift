@@ -240,6 +240,66 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["rpg-close"].tap()
     }
 
+    /// Glass lab: each experimental mode switches what renders (B one merged
+    /// native glass layer, C one native glass per nearest cell, A the drawn
+    /// texture), and a timed sample records a result. Functional only:
+    /// simulator frame rates say nothing about iPhone performance.
+    @MainActor
+    func testRPGGlassLabModesAndSample() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--glass-lab-ui-tests", "--glass-sample-short"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let tools = app.buttons["rpg-tools"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 10))
+        let state = app.staticTexts["rpg-glass-state"]
+        func waitState(_ fragment: String, _ timeout: TimeInterval = 10, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", fragment), object: state)], timeout: timeout)
+            XCTAssertEqual(result, .completed, "glass state \(state.value ?? "nil") lacks \(fragment)", line: line)
+        }
+        func choose(_ mode: String, nearest: String? = nil) {
+            tools.tap()
+            let diagnostics = app.buttons["rpg-diagnostics"]
+            guard revealListControl(diagnostics, in: app) else { return }
+            diagnostics.tap()
+            let button = app.buttons["rpg-glass-mode-" + mode]
+            XCTAssertTrue(button.waitForExistence(timeout: 5)); button.tap()
+            if let nearest {
+                let picker = app.segmentedControls["rpg-glass-nearest"]
+                XCTAssertTrue(picker.waitForExistence(timeout: 5)); picker.buttons[nearest].tap()
+            }
+            app.buttons["rpg-diagnostics-back"].tap(); app.buttons["rpg-tools-close"].tap()
+        }
+        let grid = app.descendants(matching: .any)["rpg-grid-glass"]
+
+        choose("nativeMerged")
+        waitState("render=nativeMerged")
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertTrue((grid.value as? String ?? "").hasPrefix("merged:"), "B is one merged glass layer: \(grid.value ?? "nil")")
+        attach(app, name: "review-glass-lab-b-merged")
+
+        choose("nativeNearest", nearest: "64")
+        waitState("render=nativeNearest:64")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "nearest:64"), object: grid)], timeout: 5), .completed)
+        attach(app, name: "review-glass-lab-c-nearest-64")
+
+        choose("texture")
+        waitState("render=texture")
+        XCTAssertFalse(grid.waitForExistence(timeout: 2), "A is drawn by SpriteKit, no native glass views")
+        attach(app, name: "review-glass-lab-a-texture")
+
+        tools.tap()
+        let diagnostics = app.buttons["rpg-diagnostics"]
+        guard revealListControl(diagnostics, in: app) else { return }
+        diagnostics.tap()
+        let run = app.buttons["rpg-glass-run"]
+        XCTAssertTrue(run.waitForExistence(timeout: 5)); run.tap()
+        XCTAssertTrue(app.staticTexts["rpg-glass-sample"].waitForExistence(timeout: 8), "sample runs on the uncovered world")
+        waitState("samples=1", 30)
+
+        choose("selected")
+        waitState("render=selected")
+        app.buttons["rpg-close"].tap()
+    }
+
     /// Task C: the app opens into the most recent world in landscape with
     /// the bottom bar hidden; the prologue is skippable without touching the
     /// world; the control center pauses input and returns the world as it

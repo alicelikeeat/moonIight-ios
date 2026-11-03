@@ -33,6 +33,9 @@ import UIKit
         selection.strokeColor = .systemYellow;selection.fillColor = .clear;selection.zPosition=20;selection.isHidden=true
     }
     required init?(coder:NSCoder){fatalError("init(coder:) has not been implemented")}
+    private var glassMap:SKTileMapNode?
+    /// Glass lab option A over the side slice.
+    var glassTextureVisible=false{didSet{glassMap?.isHidden = !glassTextureVisible}}
     func show(world:WorldState, resetPlayer:Bool=false) {
         guard let selectedRegion=world.sideRegions.first else{return}
         let changed=region?.id != selectedRegion.id;region=selectedRegion
@@ -44,6 +47,9 @@ import UIKit
             ground.physicsBody=SKPhysicsBody(rectangleOf:CGSize(width:width,height:24));ground.physicsBody?.isDynamic=false;ground.physicsBody?.categoryBitMask=2
             floorLayer.addChild(ground)
             physicsBody=SKPhysicsBody(edgeLoopFrom:CGRect(x:0,y:0,width:width,height:64*24));physicsBody?.categoryBitMask=2
+            glassMap?.removeFromParent()
+            let glass=RPGGlassTexture.map(columns:selectedRegion.width,rows:64);glass.isHidden = !glassTextureVisible
+            floorLayer.addChild(glass);glassMap=glass
         }
         objects.removeAllChildren()
         avatar.children.filter{$0.name?.hasPrefix("media:")==true}.forEach{$0.removeFromParent()}
@@ -70,6 +76,8 @@ import UIKit
     }
     func step(_ sign:Int) { direction=CGFloat(sign);movementUntil=tick+0.2 }
     func jump() { if isOnGround { avatar.physicsBody?.velocity.dy=300;isOnGround=false } }
+    /// The player's position in SpriteView coordinates (glass lab option C).
+    func playerViewPoint() -> CGPoint? { view == nil ? nil : convertPoint(toView: avatar.position) }
     /// The selected cell in SpriteView (UIKit) coordinates, or nil when
     /// nothing is selected. Used to place the SwiftUI selection glass.
     func selectionRectInView() -> CGRect? {
@@ -142,5 +150,5 @@ import UIKit
         let p=touch.location(in:self),u=Int(floor(p.x/24)),h=Int(floor(p.y/24))
         if (0..<region.width).contains(u) && (0..<64).contains(h){onSelectCell?(.init(regionID:region.id,horizontal:u,height:h))}
     }
-    func shutdown(){enemyLayer.removeAllChildren();enemyNodes.removeAll();enemyStates.removeAll();enemyCells.removeAll();onEnemyPosition=nil;isPaused=true;onSelectCell=nil;onPosition=nil;onFrame=nil;mediaTargets=[];avatar.physicsBody?.velocity = .zero;objects.removeAllChildren();floorLayer.removeAllChildren();region=nil;sharedIDs=[];removeAllActions()}
+    func shutdown(){enemyLayer.removeAllChildren();enemyNodes.removeAll();enemyStates.removeAll();enemyCells.removeAll();onEnemyPosition=nil;isPaused=true;onSelectCell=nil;onPosition=nil;onFrame=nil;mediaTargets=[];avatar.physicsBody?.velocity = .zero;objects.removeAllChildren();floorLayer.removeAllChildren();glassMap=nil;region=nil;sharedIDs=[];removeAllActions()}
 }

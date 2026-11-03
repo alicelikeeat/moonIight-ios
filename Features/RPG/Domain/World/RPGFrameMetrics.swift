@@ -7,6 +7,8 @@ struct RPGFrameMetrics:Sendable {
     private(set) var hitches=0
     private(set) var totalFrames=0
     mutating func pause(){previous=nil}
+    /// Starts a fresh measurement window (glass lab samples).
+    mutating func reset(){self=RPGFrameMetrics()}
     mutating func sample(_ time:Double){
         guard time.isFinite else{return}
         defer{self.previous=time}

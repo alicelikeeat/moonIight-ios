@@ -637,4 +637,42 @@ check(abs(RPGGIFTiming.offset(of: 2, delays: gifDelays) - 0.3) < 1e-9 && RPGGIFT
 for index in 0..<3 { check(RPGGIFTiming.frameIndex(elapsed: RPGGIFTiming.offset(of: index, delays: gifDelays) + 0.001, delays: gifDelays, loop: true) == index, "pause resumes on the same frame") }
 print("RPG gif timing: \(checks) total checks passed")
 
+
+// P13: glass lab policy.
+let calm = RPGGlassConditions()
+check(RPGGlassPolicy.resolve(.selected, nearest: 64, calm).render == .selectedOnly && RPGGlassPolicy.resolve(.texture, nearest: 64, calm).render == .texture, "non-native modes pass through")
+check(RPGGlassPolicy.resolve(.nativeMerged, nearest: 64, calm).render == .nativeMerged && RPGGlassPolicy.resolve(.nativeNearest, nearest: 64, calm).render == .nativeNearest(64), "native modes when calm")
+check(RPGGlassPolicy.resolve(.nativeNearest, nearest: 999, calm).render == .nativeNearest(256) && RPGGlassPolicy.resolve(.nativeNearest, nearest: 0, calm).render == .nativeNearest(1), "nearest count clamped")
+var harsh = calm; harsh.nativeAvailable = false
+check(RPGGlassPolicy.resolve(.nativeMerged, nearest: 64, harsh).render == .texture && RPGGlassPolicy.resolve(.nativeMerged, nearest: 64, harsh).reason != nil, "no native glass before iOS 26")
+for change in [{ (c: inout RPGGlassConditions) in c.lowPower = true }, { $0.thermal = 2 }, { $0.thermal = 3 }, { $0.reduceTransparency = true }, { $0.cameraMoving = true }] {
+    var conditions = calm; change(&conditions)
+    let result = RPGGlassPolicy.resolve(.nativeNearest, nearest: 16, conditions)
+    check(result.render == .texture && result.reason != nil, "native downgrades to texture with a reason")
+    check(RPGGlassPolicy.resolve(.selected, nearest: 16, conditions).render == .selectedOnly, "default mode never downgraded")
+}
+var warm = calm; warm.thermal = 1
+check(RPGGlassPolicy.resolve(.nativeMerged, nearest: 16, warm).render == .nativeMerged, "fair thermal state keeps native glass")
+let grid = RPGGlassPolicy.gridCells(bounds: CGSize(width: 100, height: 50), corner: CGPoint(x: 7, y: 3), cell: 24)
+check(!grid.isEmpty && grid.allSatisfy { $0.width == 24 && $0.height == 24 }, "grid cells sized")
+check(grid.contains { $0.minX == 7 && $0.minY == 3 }, "grid aligned to the scene corner")
+check(grid.contains { $0.minX <= 0 && $0.maxX > 0 } && grid.contains { $0.maxX >= 100 } && grid.contains { $0.maxY >= 50 }, "grid covers every edge")
+check(Set(grid.map { "\($0.minX),\($0.minY)" }).count == grid.count, "grid has no duplicate cells")
+check(RPGGlassPolicy.gridCells(bounds: CGSize(width: 100, height: 50), corner: CGPoint(x: -1000.5, y: 9999), cell: 24).allSatisfy { $0.maxX > 0 && $0.maxY > 0 && $0.minX < 100 && $0.minY < 50 }, "far corners still produce on-screen cells")
+check(RPGGlassPolicy.gridCells(bounds: CGSize(width: 10000, height: 10000), corner: .zero, cell: 4, limit: 2048).count == 2048, "grid capped")
+check(RPGGlassPolicy.gridCells(bounds: CGSize(width: 100, height: 50), corner: .zero, cell: 2).isEmpty && RPGGlassPolicy.gridCells(bounds: .zero, corner: .zero, cell: 24).isEmpty, "degenerate grid empty")
+let phoneGrid = RPGGlassPolicy.gridCells(bounds: CGSize(width: 874, height: 402), corner: CGPoint(x: 5, y: 11), cell: 24)
+check((600...800).contains(phoneGrid.count), "landscape phone shows roughly 600-800 cells (\(phoneGrid.count))")
+let closest = RPGGlassPolicy.nearest(phoneGrid, to: CGPoint(x: 437, y: 201), count: 16)
+check(closest.count == 16 && closest.contains { $0.contains(CGPoint(x: 437, y: 201)) }, "nearest starts at the player's cell")
+let farthestPicked = closest.map { hypot($0.midX - 437, $0.midY - 201) }.max()!
+check(phoneGrid.filter { !closest.contains($0) }.allSatisfy { hypot($0.midX - 437, $0.midY - 201) >= farthestPicked }, "nearest really is nearest")
+check(RPGGlassPolicy.nearest(phoneGrid, to: .zero, count: 16) == RPGGlassPolicy.nearest(phoneGrid.reversed(), to: .zero, count: 16), "nearest is deterministic")
+check(RPGGlassPolicy.nearest(phoneGrid, to: .zero, count: 5000).count == phoneGrid.count, "nearest never exceeds the grid")
+var lab = RPGFrameMetrics(); lab.sample(1); lab.sample(1.1); lab.reset()
+check(lab.count == 0 && lab.totalFrames == 0 && lab.hitches == 0, "frame metrics reset for a new sample")
+let sampleLine = RPGGlassSample(id: 1, mode: .nativeNearest, nearest: 64, effective: "nativeNearest:64", seconds: 60, framesPerSecond: 59.9, p95Milliseconds: 17.2, hitches: 1, frames: 3594, memoryMB: 210, thermalStart: 0, thermalEnd: 1, device: "iPhone").line
+check(sampleLine.contains("N=64") && sampleLine.contains("FPS 59.9") && sampleLine.contains("正常→温热"), "sample summary line")
+print("RPG glass lab: \(checks) total checks passed")
+
 print("RPG complete: \(checks) total checks passed")
