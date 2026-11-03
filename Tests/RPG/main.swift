@@ -674,8 +674,18 @@ check(RPGGlassPolicy.nearest(phoneGrid, to: .zero, count: 16) == RPGGlassPolicy.
 check(RPGGlassPolicy.nearest(phoneGrid, to: .zero, count: 5000).count == phoneGrid.count, "nearest never exceeds the grid")
 var lab = RPGFrameMetrics(); lab.sample(1); lab.sample(1.1); lab.reset()
 check(lab.count == 0 && lab.totalFrames == 0 && lab.hitches == 0, "frame metrics reset for a new sample")
-let sampleLine = RPGGlassSample(id: 1, mode: .nativeNearest, nearest: 64, effective: "nativeNearest:64", seconds: 60, framesPerSecond: 59.9, p95Milliseconds: 17.2, hitches: 1, frames: 3594, memoryMB: 210, thermalStart: 0, thermalEnd: 1, device: "iPhone").line
-check(sampleLine.contains("N=64") && sampleLine.contains("FPS 59.9") && sampleLine.contains("正常→温热"), "sample summary line")
+let sampleLine = RPGGlassSample(id: 1, mode: .nativeNearest, nearest: 64, effective: "nativeNearest:64", seconds: 60, averageFramesPerSecond: 29.5, measuredSeconds: 58, nativeSeconds: 31, framesPerSecond: 59.9, p95Milliseconds: 17.2, hitches: 1, frames: 3594, memoryMB: 210, thermalStart: 0, thermalEnd: 1, device: "iPhone17,1").line
+check(sampleLine.contains("N=64") && sampleLine.contains("全程 FPS 29.5") && sampleLine.contains("近 10 秒 FPS 59.9") && sampleLine.contains("原生玻璃 31/58 秒") && sampleLine.contains("正常→温热"), "sample summary line")
+// 100 slow frames (30 fps) followed by 600 fast ones (60 fps).
+var whole = RPGFrameMetrics(); var clock = 0.0
+for frame in 0...700 { whole.sample(clock); clock += frame < 100 ? 1.0 / 30 : 1.0 / 60 }
+check(whole.totalFrames == 700 && abs(whole.sampledSeconds - (100.0 / 30 + 600.0 / 60)) < 0.001, "whole-window seconds")
+check(abs(whole.averageFramesPerSecond - 52.5) < 0.1, "whole-window FPS includes the slow start")
+check(whole.averageFramesPerSecond < whole.framesPerSecond && abs(whole.framesPerSecond - 60) < 0.5, "average differs from the recent window when the start was slow")
+whole.pause(); whole.sample(1000); whole.sample(1000 + 1.0/60)
+check(whole.totalFrames == 701 && whole.sampledSeconds < 13.4, "pauses are not counted as measured time")
+let selectedLine = RPGGlassSample(id: 2, mode: .texture, nearest: 64, effective: "texture", seconds: 60, averageFramesPerSecond: 60, measuredSeconds: 60, nativeSeconds: 0, framesPerSecond: 60, p95Milliseconds: 16.7, hitches: 0, frames: 3600, memoryMB: nil, thermalStart: 0, thermalEnd: 0, device: "iPhone").line
+check(!selectedLine.contains("原生玻璃"), "non-native samples omit native time")
 print("RPG glass lab: \(checks) total checks passed")
 
 print("RPG complete: \(checks) total checks passed")

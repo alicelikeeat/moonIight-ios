@@ -117,6 +117,14 @@ struct RPGGlassSample: Equatable, Identifiable, Sendable {
     let nearest: Int
     let effective: String
     let seconds: Double
+    /// Frames per second over the whole measured window.
+    let averageFramesPerSecond: Double
+    /// Seconds the scene was actually drawing (sheets and edits pause it).
+    let measuredSeconds: Double
+    /// For native modes: seconds native glass was on screen, versus the
+    /// texture stand-in while the camera moved or the system forced it.
+    let nativeSeconds: Double
+    /// Frames per second over the last 600 frames (about 10 s).
     let framesPerSecond: Double
     let p95Milliseconds: Double
     let hitches: Int
@@ -129,6 +137,7 @@ struct RPGGlassSample: Equatable, Identifiable, Sendable {
     var line: String {
         let modeText = mode == .nativeNearest ? "\(mode.short) N=\(nearest)" : mode.short
         let memory = memoryMB.map { String(format: "%.0f MB", $0) } ?? "未知"
-        return "#\(id) \(modeText) · 实际 \(effective) · \(String(format: "%.0f", seconds)) 秒 · FPS \(String(format: "%.1f", framesPerSecond)) · p95 \(String(format: "%.1f", p95Milliseconds)) ms · >50ms \(hitches)/\(frames) · 内存 \(memory) · 发热 \(RPGGlassPolicy.thermalTitle(thermalStart))→\(RPGGlassPolicy.thermalTitle(thermalEnd)) · \(device)"
+        let native = mode.isNative ? " · 原生玻璃 \(String(format: "%.0f", nativeSeconds))/\(String(format: "%.0f", measuredSeconds)) 秒" : ""
+        return "#\(id) \(modeText) · 实际 \(effective) · \(String(format: "%.0f", seconds)) 秒（绘制 \(String(format: "%.0f", measuredSeconds)) 秒）\(native) · 全程 FPS \(String(format: "%.1f", averageFramesPerSecond)) · 近 10 秒 FPS \(String(format: "%.1f", framesPerSecond)) · p95 \(String(format: "%.1f", p95Milliseconds)) ms · >50ms \(hitches)/\(frames) · 内存 \(memory) · 发热 \(RPGGlassPolicy.thermalTitle(thermalStart))→\(RPGGlassPolicy.thermalTitle(thermalEnd)) · \(device)"
     }
 }

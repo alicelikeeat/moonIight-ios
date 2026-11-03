@@ -55,6 +55,13 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var samplePending = false
     private var sampleStart: TimeInterval?
     private var sampleThermalStart = 0
+    private var sampleLastTime: TimeInterval?
+    private var sampleNativeSeconds = 0.0
+    /// Exact hardware identifier, e.g. "iPhone17,1" (UIDevice only says "iPhone").
+    private static let deviceModel: String = {
+        var info = utsname(); uname(&info)
+        return withUnsafeBytes(of: &info.machine) { raw in String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self) }
+    }()
     private var sampleSeconds: Double {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--glass-sample-short") { return 5 }
@@ -362,7 +369,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// paused time under a sheet is never measured.
     func startGlassSample() { samplePending = true; if !overlayVisible { beginGlassSample() } }
     private func beginGlassSample() {
-        samplePending = false; frameMetrics.reset(); sampleStart = nil
+        samplePending = false; frameMetrics.reset(); sampleStart = nil; sampleLastTime = nil; sampleNativeSeconds = 0
         sampleThermalStart = ProcessInfo.processInfo.thermalState.rawValue
         glassSampleRemaining = Int(sampleSeconds)
     }
@@ -380,14 +387,19 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard glassSampleRemaining != nil else { return }
         guard active, ready, !overlayVisible else { return }
         let start = sampleStart ?? time; sampleStart = start
+        if let last = sampleLastTime, time > last, time - last < 1 {
+            switch glassRender { case .nativeMerged, .nativeNearest: sampleNativeSeconds += time - last; default: break }
+        }
+        sampleLastTime = time
         let remaining = max(0, Int((sampleSeconds - (time - start)).rounded(.up)))
         if remaining != glassSampleRemaining { glassSampleRemaining = remaining }
         guard time - start >= sampleSeconds else { return }
         glassSamples.append(RPGGlassSample(id: glassSamples.count + 1, mode: glassMode, nearest: glassNearest, effective: glassRender.label,
-                                           seconds: time - start, framesPerSecond: frameMetrics.framesPerSecond, p95Milliseconds: frameMetrics.p95Milliseconds,
+                                           seconds: time - start, averageFramesPerSecond: frameMetrics.averageFramesPerSecond, measuredSeconds: frameMetrics.sampledSeconds,
+                                           nativeSeconds: sampleNativeSeconds, framesPerSecond: frameMetrics.framesPerSecond, p95Milliseconds: frameMetrics.p95Milliseconds,
                                            hitches: frameMetrics.hitches, frames: frameMetrics.totalFrames, memoryMB: RPGMemoryMetrics.footprintMB,
                                            thermalStart: sampleThermalStart, thermalEnd: ProcessInfo.processInfo.thermalState.rawValue,
-                                           device: UIDevice.current.model + " iOS " + UIDevice.current.systemVersion))
+                                           device: Self.deviceModel + " iOS " + UIDevice.current.systemVersion))
         glassSampleRemaining = nil; sampleStart = nil
         notice = "玻璃采样完成：" + glassSamples.last!.line
     }
