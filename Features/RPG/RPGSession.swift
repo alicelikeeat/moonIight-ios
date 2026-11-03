@@ -989,6 +989,39 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     var effectiveGlassQuality: RPGGlassQuality { RPGGlassShader.quality }
 
+    // MARK: 2.5D glass world (V2.8): same save, same player health and shards.
+
+    /// The 2.5D layer; a blank sheet of glass until something is built.
+    var spatialWorld: SpatialWorld { world.spatial ?? .blank() }
+    var playerHealth: Int { world.player.health }
+    var playerStamina: Int { world.player.stamina }
+    var moonShards: Int { world.inventory["moon-shard", default: 0] }
+
+    /// Writes the 2.5D layer (and any new media bindings) into the shared
+    /// world, validated; saved atomically by the world storage.
+    @discardableResult
+    func commitSpatial(_ value: SpatialWorld, addBindings: [MediaBinding] = [], persist: Bool = true) -> Bool {
+        guard ready, !working else { return false }
+        var next = world
+        next.spatial = value
+        for binding in addBindings where !next.mediaBindings.contains(where: { $0.id == binding.id }) { next.mediaBindings.append(binding) }
+        if next.mediaBindings.count > 960 { try? RPGMediaBindings.pruneUnreferenced(&next) }
+        do { try next.validate() } catch { notice = error.localizedDescription; return false }
+        next.revision += 1
+        world = next
+        if persist { save() }
+        return true
+    }
+    /// Health, stamina and shards changed by 2.5D combat and chests.
+    func applySpatialVitals(health: Int, stamina: Int, shardDelta: Int = 0) {
+        guard ready else { return }
+        simulating = true
+        world.player.health = max(0, min(100, health)); world.player.stamina = max(0, min(100, stamina))
+        if shardDelta != 0 { world.inventory["moon-shard", default: 0] = max(0, min(1_000_000, world.inventory["moon-shard", default: 0] + shardDelta)) }
+        simulating = false
+        combatHUD.update(world)
+    }
+
     /// Analog stick (V2.2): a vector in the unit disc, screen axes.
     func setStick(_ x: Double, _ y: Double) {
         let wasIdle = RPGStickRules.step(stick) == nil

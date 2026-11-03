@@ -44,7 +44,9 @@ struct SpatialGeometry: Sendable {
     static let playerHeight = 1.6
     private var cells: [Int: [SpatialBox]] = [:]
     private(set) var moving: [SpatialBox] = []
-    let frames: [String: GroupFrame]
+    private(set) var frames: [String: GroupFrame]
+    /// Blocks of moving groups (re-placed every frame by `moved(frames:)`).
+    private var movingBlocks: [SpatialBlock] = []
 
     init(blocks: [SpatialBlock], plants: [PlantEntity] = [], frames: [String: GroupFrame] = [:]) {
         self.frames = frames
@@ -57,12 +59,27 @@ struct SpatialGeometry: Sendable {
             }
             let box = SpatialBox(id: block.id, minX: center.x - half, maxX: center.x + half, minY: center.y - half, maxY: center.y + half,
                                  minZ: block.elevation + lift, maxZ: block.top + lift, collision: block.collision, groupID: block.groupID, buttonTarget: block.buttonTarget)
-            if block.groupID.map({ frames[$0] != nil }) == true { moving.append(box) } else { insert(box) }
+            if block.groupID.map({ frames[$0] != nil }) == true { moving.append(box); movingBlocks.append(block) } else { insert(box) }
         }
         for plant in plants where plant.kind.solid {
             let r = plant.kind == .tree ? 0.3 : 0.35, cx = Double(plant.x) + 0.5, cy = Double(plant.y) + 0.5
             insert(SpatialBox(id: plant.id, minX: cx - r, maxX: cx + r, minY: cy - r, maxY: cy + r, minZ: plant.z, maxZ: plant.z + (plant.kind == .tree ? 2.4 : 0.9) * plant.scale, collision: .solid))
         }
+    }
+
+    /// The same world with moving groups placed for new frames; static
+    /// blocks are shared, so this is cheap enough to call every frame.
+    func moved(frames newFrames: [String: GroupFrame]) -> SpatialGeometry {
+        var copy = self
+        copy.frames = newFrames
+        copy.moving = movingBlocks.map { block in
+            let half = block.size / 2
+            var center = SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, 0), lift = 0.0
+            if let group = block.groupID, let frame = newFrames[group] { let placed = frame.place(center); center = SpatialVector(placed.x, placed.y, 0); lift = frame.offset.z }
+            return SpatialBox(id: block.id, minX: center.x - half, maxX: center.x + half, minY: center.y - half, maxY: center.y + half,
+                              minZ: block.elevation + lift, maxZ: block.top + lift, collision: block.collision, groupID: block.groupID, buttonTarget: block.buttonTarget)
+        }
+        return copy
     }
 
     private mutating func insert(_ box: SpatialBox) {

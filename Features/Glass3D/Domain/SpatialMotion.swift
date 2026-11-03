@@ -268,3 +268,27 @@ enum SpatialEventRules {
         return SpatialMotionRules.start(&world.motions[index], clock: world.clock)
     }
 }
+
+extension SpatialWorld {
+    /// Rest centre of every group that has a motion (turning pivot).
+    func motionPivots() -> [String: SpatialVector] {
+        let moving = Set(groups.filter { $0.motionID != nil }.map(\.id))
+        var sums: [String: (SpatialVector, Double)] = [:]
+        for block in blocks { guard let group = block.groupID, moving.contains(group) else { continue }
+            let entry = sums[group] ?? (.zero, 0)
+            sums[group] = (entry.0 + SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation), entry.1 + 1)
+        }
+        return sums.mapValues { $0.0 * (1 / max(1, $0.1)) }
+    }
+    /// Where each moving group is at `clock`.
+    func groupFrames(pivots: [String: SpatialVector], clock: Double) -> [String: GroupFrame] {
+        let motions = Dictionary(self.motions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [String: GroupFrame] = [:]
+        for group in groups {
+            guard let motionID = group.motionID, let motion = motions[motionID], let pivot = pivots[group.id] else { continue }
+            let pose = SpatialMotionRules.pose(motion, clock: clock)
+            result[group.id] = GroupFrame(pivot: SpatialVector(pivot.x, pivot.y, 0), offset: pose.offset, yaw: pose.yaw)
+        }
+        return result
+    }
+}

@@ -1311,6 +1311,14 @@ check(history.blocks.isEmpty && history.generation == nil, "undo removes the who
 UserDefaults.standard.set("en", forKey: L10n.key)
 check(BuildingKind.hut.title == "Glass Hut" && WorldStyle.islands.title == "Floating Islands" && CreatureKind.boss.title == "Boss", "2.5D titles in English")
 UserDefaults.standard.set("zh", forKey: L10n.key)
+var movingWorld = SpatialWorld.blank()
+movingWorld.motions = [SpatialMotion.slide(id: "mv", dx: 5, dy: 0)]
+movingWorld.groups = [BuildingGroup(id: "mg", name: "m", motionID: "mv")]
+movingWorld.blocks = [SpatialBlock(id: "mb", x: 90, y: 90, elevation: 0, thickness: 0.3, groupID: "mg"), SpatialBlock(id: "still", x: 92, y: 92, elevation: 0)]
+let pivots = movingWorld.motionPivots()
+let base = SpatialGeometry(blocks: movingWorld.blocks, frames: movingWorld.groupFrames(pivots: pivots, clock: 0))
+let later = base.moved(frames: movingWorld.groupFrames(pivots: pivots, clock: 4))
+check(base.boxes(x: 90.5, y: 90.5, radius: 0.1).count == 1 && later.boxes(x: 95.5, y: 90.5, radius: 0.1).count == 1 && later.boxes(x: 92.5, y: 92.5, radius: 0.1).count == 1, "moving boxes re-placed per frame, static ones kept")
 print("RPG 2.5D world: \(checks) total checks passed")
 }
 

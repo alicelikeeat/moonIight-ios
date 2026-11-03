@@ -37,6 +37,8 @@ struct RPGShellView: View {
     @State private var exitPrompt = false
     /// Glass shape editor (iOS 26+), opened from the shape tool or the control center.
     @State private var shapeEditor = false
+    /// V2.8: the 2.5D glass world on the same save.
+    @State private var glassWorld = false
     var body: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
@@ -61,7 +63,8 @@ struct RPGShellView: View {
                     }, onTools: { page in
                         closeControlCenter(); toolPath = page.map { [$0] } ?? []; tools = true
                     }, onAppSettings: { closeControlCenter(); appSettings = true },
-                    onShapeEditor: GlassShapeEditorEntry.available ? { closeControlCenter(); shapeEditor = true } : nil)
+                    onShapeEditor: GlassShapeEditorEntry.available ? { closeControlCenter(); shapeEditor = true } : nil,
+                    onGlassWorld: { closeControlCenter(); glassWorld = true })
                     .transition(.opacity)
                 }
             }
@@ -120,6 +123,10 @@ struct RPGShellView: View {
                 } onClose: { shapeEditor = false }
             }
             .onChange(of: shapeEditor) { _ in syncOverlay() }
+            .fullScreenCover(isPresented: $glassWorld) {
+                Glass3DScreen(session: session) { glassWorld = false }.environmentObject(model)
+            }
+            .onChange(of: glassWorld) { _ in syncOverlay() }
             .sheet(isPresented: $appSettings) {
                 NavigationStack {
                     SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { appSettings = false }.accessibilityIdentifier("world-app-settings-close") } }
@@ -284,6 +291,7 @@ struct RPGShellView: View {
         HStack {
             Button(L10n.t("校验", "Check")) { session.validateRoundTrip() }.accessibilityIdentifier("rpg-validate").disabled(!session.ready)
             Button(L10n.t("编辑", "Edit")) { session.enterMapEditor() }.accessibilityIdentifier("rpg-map-editor").disabled(!session.ready)
+            Button("2.5D") { glassWorld = true }.accessibilityIdentifier("rpg-glass-world").disabled(!session.ready)
             Button(L10n.t("工具", "Tools")) { toolPath=[];tools = true }.accessibilityIdentifier("rpg-tools")
             Button(L10n.t("完成", "Done")) { Task { if await session.saveBeforeExit() { onExit() } } }.accessibilityIdentifier("rpg-close")
             Button { openControlCenter() } label: { Image(systemName: "square.grid.2x2").frame(width: 24, height: 24) }
@@ -479,7 +487,7 @@ struct RPGShellView: View {
     /// Game input and scene simulation stop whenever anything covers the
     /// world; they resume only when every cover is gone.
     private func syncOverlay() {
-        session.setOverlay(tools || storyPlaying || cellEditor != nil || controlCenter || appSettings || shapeEditor)
+        session.setOverlay(tools || storyPlaying || cellEditor != nil || controlCenter || appSettings || shapeEditor || glassWorld)
     }
 
     private func showPrologueIfNeeded() {
