@@ -21,6 +21,10 @@ on:
         description: 'Version for the device IPA, e.g. 1.52 (build number = digits)'
         type: string
         default: ''
+      publish_release:
+        description: 'With device_ipa: create tag vX.Y at this commit and publish the IPA as a pre-release'
+        type: boolean
+        default: false
 concurrency:
   group: ios-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.ui_suite || 'all' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -38,6 +42,7 @@ jobs:
         env:
           DEVICE_IPA: ${{ inputs.device_ipa }}
           IPA_VERSION: ${{ inputs.ipa_version }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
           # A version tag is the public release (v1.43 -> marketing 1.43, build 143).
           # Other pushes only exercise the simulator and do not publish an IPA.
@@ -55,6 +60,7 @@ jobs:
             echo "build=$(printf '%s' "$IPA_VERSION" | tr -d '.')" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "device=true" >> "$GITHUB_OUTPUT"
+            echo "publish=${PUBLISH_RELEASE}" >> "$GITHUB_OUTPUT"
           else
             BASELINE_RUN=100
             MINOR=$((GITHUB_RUN_NUMBER - BASELINE_RUN))
@@ -332,6 +338,38 @@ jobs:
           else
             gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           fi
+      - name: Publish manual device build as pre-release
+        # The workflow token creates the tag and release, so this works where
+        # pushing a tag is not possible. It never replaces an existing release.
+        if: steps.version.outputs.release != 'true' && steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ steps.version.outputs.marketing }}
+          SIGNED_READY: ${{ steps.signing.outputs.ready }}
+        shell: bash
+        run: |
+          TAG="v${APP_VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1 || gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "${TAG} already exists; refusing to replace it."
+            exit 1
+          fi
+          if [[ "$SIGNED_READY" == "true" ]]; then
+            IPA_PATH="build/ipa/Moonlight-v${APP_VERSION}.ipa"; SIGNING="已签名（Ad Hoc）"
+          else
+            IPA_PATH="build/unsigned-ipa/Moonlight-v${APP_VERSION}.ipa"; SIGNING="未签名，无嵌入描述文件，需要自行重签后安装"
+          fi
+          DIGEST=$(shasum -a 256 "$IPA_PATH" | cut -d' ' -f1)
+          NOTES_PATH="build/release-notes.md"
+          cat .github/RELEASE_NOTES.md > "$NOTES_PATH"
+          {
+            printf '\n验证：本版为手动真机测试构建。GitHub Actions 设备架构归档与元数据校验通过；完整界面回归以分支 %s 的对应运行为准；真机验证尚未执行，自动化通过不等于真机通过。\n\n' "$GITHUB_REF_NAME"
+            printf -- '- 构建记录：%s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf -- '- 源码快照：`%s`（分支 `%s`）\n' "$GITHUB_SHA" "$GITHUB_REF_NAME"
+            printf -- '- 安装包：`Moonlight-v%s.ipa`，版本 %s / 构建 %s，iPhoneOS arm64，最低 iOS 16.0。\n' "$APP_VERSION" "$APP_VERSION" "${{ steps.version.outputs.build }}"
+            printf -- '- 签名：%s。\n' "$SIGNING"
+            printf -- '- SHA-256：`%s`\n' "$DIGEST"
+          } >> "$NOTES_PATH"
+          gh release create "$TAG" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION} · 真机测试版" --notes-file "$NOTES_PATH" --prerelease
       - name: Upload simulator app when signing is absent
         if: steps.version.outputs.release != 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
