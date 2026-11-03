@@ -208,7 +208,7 @@ struct RPGShellView: View {
                 // a world never deletes the unreadable one.
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
-                    Text("世界无法打开").font(.headline)
+                    Text("世界无法打开").font(.headline).accessibilityIdentifier("world-load-failed")
                     Text(error).font(.caption).multilineTextAlignment(.center).foregroundStyle(.secondary)
                     HStack {
                         Button("重试") { session.loadWorld() }.accessibilityIdentifier("world-load-retry")

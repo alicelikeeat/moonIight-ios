@@ -38,6 +38,13 @@ struct RPGCellEditorView: View {
                 }
                 if !draft.valid { Text(problem).font(.caption).foregroundStyle(.orange).accessibilityIdentifier("rpg-cell-problem") }
             } footer: { Text("预览只在这里生效；点“确认”后才写入世界，可撤销。方块材质不变。") }
+            // Near the top so it is reachable without scrolling a long form.
+            if original != nil {
+                Section {
+                    Button("删除格子内容", role: .destructive) { session.clearMedia(.entity(entity.id)); dismiss() }
+                        .accessibilityIdentifier("rpg-cell-delete")
+                }
+            }
             Section("类型") {
                 Picker("类型", selection: kindBinding) {
                     ForEach(RPGMediaKind.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -49,12 +56,6 @@ struct RPGCellEditorView: View {
             case .number, .text: textSection
             }
             displaySection
-            if original != nil {
-                Section {
-                    Button("删除格子内容", role: .destructive) { session.clearMedia(.entity(entity.id)); dismiss() }
-                        .accessibilityIdentifier("rpg-cell-delete")
-                }
-            }
         }
         .navigationTitle("格子内容").navigationBarTitleDisplayMode(.inline)
         .toolbar {

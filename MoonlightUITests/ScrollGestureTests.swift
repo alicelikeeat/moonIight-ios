@@ -319,7 +319,7 @@ final class ScrollGestureTests: XCTestCase {
         app.launch()
         let create = app.buttons["world-load-create"]
         XCTAssertTrue(create.waitForExistence(timeout: 25))
-        XCTAssertTrue(app.staticTexts["世界无法打开"].exists)
+        XCTAssertTrue(app.staticTexts["world-load-failed"].exists)
         XCTAssertTrue(app.buttons["world-load-retry"].exists)
         attach(app, name: "review-sandbox-load-failure")
         create.tap()

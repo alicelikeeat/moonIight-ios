@@ -42,7 +42,10 @@ struct WorldPrologueView: View {
         .accessibilityHint("轻点跳过")
         .task {
             withAnimation(reducedMotion ? nil : .easeOut(duration: 0.25)) { shown = true }
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // UI tests hold the card so they can find and skip it; real
+            // launches show it for about 1.5 s.
+            let hold: UInt64 = ProcessInfo.processInfo.arguments.contains("--prologue-ui-tests") ? 20_000_000_000 : 1_500_000_000
+            try? await Task.sleep(nanoseconds: hold)
             guard !Task.isCancelled else { return }
             onFinish()
         }
