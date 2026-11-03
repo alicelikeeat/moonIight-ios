@@ -34,6 +34,8 @@ struct RPGEditorToolBar: View {
 /// and the multi-select actions.
 struct RPGEditorOptionsBar: View {
     @ObservedObject var session: RPGSession
+    /// Library for the media-grid tool's picker.
+    var store: MediaStore? = nil
     /// Opens the glass shape editor (iOS 26+); nil hides the button.
     var openShapeEditor: (() -> Void)? = nil
 
@@ -44,6 +46,7 @@ struct RPGEditorOptionsBar: View {
             case .terrain: terrainOptions
             case .multi: areaOptions
             case .shape: shapeOptions
+            case .mediaGrid: gridOptions
             default: EmptyView()
             }
         }
@@ -71,6 +74,57 @@ struct RPGEditorOptionsBar: View {
     private var materialTitle: String {
         if case .block(let id) = session.brushPayload { return BlockDefinition.find(id)?.name ?? id }
         return L10n.t("方块材质", "Block Material")
+    }
+
+    /// Smart media grid (V2.2): media, rows × columns, fit; then tap the
+    /// top-left cell on the map to preview.
+    private var gridOptions: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                Menu {
+                    let items = gridCandidates
+                    if items.isEmpty { Text(L10n.t("库中没有可离线使用的图片、视频或 GIF", "No offline pictures, videos or GIFs in the library")) }
+                    ForEach(items) { item in
+                        Button { session.gridMedia = (item.id, item.kind, item.title) } label: {
+                            Label(item.title, systemImage: item.kind == .video ? "video" : item.kind == .gif ? "sparkles.rectangle.stack" : "photo")
+                        }
+                    }
+                } label: {
+                    Label(session.gridMedia?.title ?? L10n.t("选择媒体", "Choose Media"), systemImage: "photo.on.rectangle").lineLimit(1)
+                }
+                .accessibilityIdentifier("rpg-grid-media")
+                Stepper(L10n.t("行 \(session.gridRows)", "Rows \(session.gridRows)"), value: $session.gridRows, in: 1...RPGMediaRegion.maximumSide).fixedSize()
+                    .accessibilityIdentifier("rpg-grid-rows")
+                Stepper(L10n.t("列 \(session.gridColumns)", "Columns \(session.gridColumns)"), value: $session.gridColumns, in: 1...RPGMediaRegion.maximumSide).fixedSize()
+                    .accessibilityIdentifier("rpg-grid-columns")
+                Menu {
+                    ForEach(["2x2", "3x3", "3x4", "4x5", "10x10"], id: \.self) { preset in
+                        let parts = preset.split(separator: "x").compactMap { Int($0) }
+                        Button("\(parts[0])×\(parts[1]) · \(parts[0] * parts[1])") { session.gridRows = parts[0]; session.gridColumns = parts[1] }
+                    }
+                } label: { Text(L10n.t("= \(session.gridRows * session.gridColumns) 格", "= \(session.gridRows * session.gridColumns) cells")).monospacedDigit() }
+                Toggle(L10n.t("拉伸", "Stretch"), isOn: $session.gridStretch).fixedSize()
+                    .accessibilityIdentifier("rpg-grid-stretch")
+                if session.gridMovingGroup != nil {
+                    Button(L10n.t("取消移动", "Cancel Move")) { session.gridMovingGroup = nil; session.discardDraft() }
+                }
+                Text(session.gridMovingGroup != nil ? L10n.t("轻点新的左上角", "Tap the new top-left cell") : L10n.t("轻点地图放置左上角", "Tap the map for the top-left cell"))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption).padding(.horizontal, 10).padding(.vertical, 6)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .editorSurface(radius: 14)
+    }
+
+    private struct GridCandidate: Identifiable { let id: String; let title: String; let kind: RPGMediaKind }
+    private var gridCandidates: [GridCandidate] {
+        guard let store else { return [] }
+        return store.items.compactMap { item in
+            guard item.kind != .embed, item.remoteURL?.isFileURL == true else { return nil }
+            let kind = RPGMediaCatalogKind.kind(for: item)
+            return kind.usesLibraryFile ? GridCandidate(id: item.id, title: item.title, kind: kind) : nil
+        }
     }
 
     private var shapeOptions: some View {
@@ -186,6 +240,7 @@ struct RPGCellPanel: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 12).padding(.vertical, 8)
+            if let group = session.gridGroup(at: point) { groupRow(group) }
             Divider()
             NavigationStack {
                 RPGCellEditorView(session: session, store: store, entity: entity, point: point, initialKind: session.panelKind, onClose: onClose)
@@ -205,6 +260,23 @@ struct RPGCellPanel: View {
         .accessibilityIdentifier("rpg-cell-panel")
     }
 
+    /// V2.2: a media-grid piece offers whole-group actions.
+    private func groupRow(_ group: (id: String, binding: MediaBinding, region: RPGMediaRegion)) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.t("切格组 · \(group.binding.kind.title) \(group.region.rows)×\(group.region.columns) · 第 \(group.region.row + 1) 行第 \(group.region.column + 1) 列",
+                        "Media grid · \(group.binding.kind.title) \(group.region.rows)×\(group.region.columns) · row \(group.region.row + 1), column \(group.region.column + 1)"))
+                .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("rpg-panel-group")
+            HStack(spacing: 14) {
+                Button(L10n.t("移动 / 重新切格", "Move / Re-slice")) { session.moveGroup(group.id) }.accessibilityIdentifier("rpg-panel-group-move")
+                Button(L10n.t("选中整组", "Select Group")) { session.selectGroup(group.id) }
+                Button(L10n.t("整组删除", "Delete Group"), role: .destructive) { session.deleteGroup(group.id) }.accessibilityIdentifier("rpg-panel-group-delete")
+            }
+            .font(.caption).buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 12).padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func materialLine(_ entity: WorldEntity?) -> String {
         let terrain: String = session.terrain(at: point)?.title ?? "—"
         var block = L10n.t("无方块", "No block")
@@ -216,14 +288,9 @@ struct RPGCellPanel: View {
 extension View {
     /// Editor bars: denser than the world's clear glass so labels stay
     /// readable over a busy map.
-    @ViewBuilder func editorSurface(radius: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular, in: shape)
-        } else {
-            self.background(.regularMaterial, in: shape)
-                .overlay(shape.strokeBorder(.white.opacity(0.22), lineWidth: 0.5))
-        }
+    func editorSurface(radius: CGFloat) -> some View {
+        // V2.2: the adaptive HUD panel glass.
+        hudGlass(.panel, radius: radius)
     }
 }
 

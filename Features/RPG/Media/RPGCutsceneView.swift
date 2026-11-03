@@ -68,13 +68,13 @@ struct RPGCutsceneView:View {
     func activate(){
         audible = !activated && targets.first?.binding.muted == false
         activated=true
-        targets=targets.map{target in var binding=target.binding;binding.muted = !audible;return .init(ownerID:target.ownerID,binding:binding,role:target.role,sprite:target.sprite)}
+        targets=targets.map{target in var binding=target.binding;binding.muted = !audible;return .init(ownerID:target.ownerID,binding:binding,role:target.role,sprite:target.sprite,region:target.region)}
         media.install(world:world,targets:targets,scene:scene,active:true,initialPositions:["cutscene":initial]);initial=0
         scene.isPaused=false
     }
     func toggleSound(){
         audible.toggle()
-        targets=targets.map{target in var binding=target.binding;binding.muted = !audible;return .init(ownerID:target.ownerID,binding:binding,role:target.role,sprite:target.sprite)}
+        targets=targets.map{target in var binding=target.binding;binding.muted = !audible;return .init(ownerID:target.ownerID,binding:binding,role:target.role,sprite:target.sprite,region:target.region)}
         media.install(world:world,targets:targets,scene:scene,active:true)
     }
     func pause(){initial=seconds;audible=false;media.pause();scene.isPaused=true}

@@ -51,6 +51,23 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     @Published var brushPayload = RPGDraftPayload.block("stone") { didSet { if draft != nil && (editorTool == .brush || editorTool == .fill) { restartDraftPayload() } } }
     @Published var terrainBrush = RPGTerrain.road
     /// Outline the shape tool paints (nil: back to square cells).
+    // V2.2 smart media grid tool: what to slice and how.
+    @Published var gridMedia: (id: String, kind: RPGMediaKind, title: String)? { didSet { refreshGridDraft() } }
+    @Published var gridRows = 2 { didSet { refreshGridDraft() } }
+    @Published var gridColumns = 2 { didSet { refreshGridDraft() } }
+    @Published var gridStretch = false { didSet { refreshGridDraft() } }
+    /// Group being moved or re-sliced; the next placement replaces it.
+    @Published var gridMovingGroup: String?
+    private var gridAnchor: SurfacePoint?
+    // V2.2 glass and stick.
+    @Published var glassQuality = RPGGlassQuality(rawValue: UserDefaults.standard.string(forKey: "moonlight.world.glassQuality") ?? "") ?? .standard {
+        didSet { UserDefaults.standard.set(glassQuality.rawValue, forKey: "moonlight.world.glassQuality"); refreshGlassQuality() }
+    }
+    @Published private(set) var visibleCells = 0
+    private var reducedMotionSetting = false
+    private var stick: (x: Double, y: Double) = (0, 0)
+    private var lastStickStep: TimeInterval = 0
+    private var lastVisibleCount: TimeInterval = 0
     @Published var shapeBrush: ShapeOutline? = ShapeTemplate.circle.outline { didSet { if draft != nil && editorTool == .shape { restartDraftPayload() } } }
     /// Unconfirmed edit and what it would do. Never part of the saved world.
     @Published private(set) var draft: RPGEditDraft?
@@ -152,7 +169,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
     }
     func activate() {
-        active = true; silenceMedia(); bindScenes(); applyScenePause()
+        active = true; silenceMedia(); bindScenes(); applyScenePause(); refreshGlassQuality()
         if ready { loadVisible(force: true) } else if boot == nil { loadWorld() }
     }
     func loadWorld() {
@@ -470,7 +487,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         if result.render != glassRender { glassRender = result.render }
         if result.reason != glassReason { glassReason = result.reason }
         let texture = result.render == .texture
-        scene.glassTextureVisible = texture; sideScene.glassTextureVisible = texture
+        // V2.2: base glass is always on; the lab only adds native layers.
+        _ = texture; scene.glassTextureVisible = true; sideScene.glassTextureVisible = true
     }
     /// Publishes the selection's on-screen rectangle only when it moves, so
     /// SwiftUI is not invalidated every frame while the camera is still.
@@ -527,8 +545,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         gameModeBeforeEditor = nil; editorFocus = nil
         discardDraft(); area = nil; panelPoint = nil; quickMenuCell = nil; scene.showArea(nil)
         scene.editorTouch = .legacy; scene.editorLongPressEnabled = false; scene.tool = tool
-        scene.cameraFollowsPlayer = true; scene.freePan = false; scene.cameraGesturesEnabled = false
-        scene.setCamera(center: scene.cameraCenter, zoom: 1); scene.recenterOnPlayer()
+        // Pinch zoom stays on in play (within the 300-cell budget).
+        scene.cameraFollowsPlayer = true; scene.freePan = false; scene.cameraGesturesEnabled = true
+        scene.applyZoomBudget(); scene.recenterOnPlayer()
         loadVisible(force: true); notice = L10n.t("已返回沙盒。", "Back to the sandbox.")
     }
     /// Free edit: whole map, free camera, no joystick. Character build:
@@ -553,6 +572,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     /// Chooses a tool. Callers handle an unconfirmed draft first.
     func selectTool(_ tool: RPGEditorTool) {
+        if tool != .mediaGrid { gridMovingGroup = nil; gridAnchor = nil }
         editorTool = tool
         // The area outline belongs to the multi tool only.
         scene.showArea(tool == .multi ? area.map { ($0.a, $0.b) } : nil)
@@ -563,7 +583,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.tool = .select
         let tool = editorTool
         scene.editorTouch = tool == .select ? (editorMode == .free ? .panSelect : .legacy)
-            : tool.contentKind != nil ? .tapOnly : tool.draws ? .stroke : .rectangle
+            : tool.contentKind != nil || tool == .mediaGrid ? .tapOnly : tool.draws ? .stroke : .rectangle
     }
     private func payload(for tool: RPGEditorTool) -> RPGDraftPayload? {
         switch tool {
@@ -588,7 +608,53 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         showDraft()
     }
     private func editorTap(_ point: SurfacePoint) {
+        if editorTool == .mediaGrid { gridAnchor = point; selected = point; refreshGridDraft(); return }
         selected = point; panelKind = editorTool.contentKind; panelPoint = point; syncSelectedMedia()
+    }
+
+    // MARK: Smart media grid (V2.2)
+
+    /// Preview for the media grid at the tapped anchor. Nothing changes
+    /// until the draft is confirmed.
+    private func refreshGridDraft() {
+        guard mapEditorActive, editorTool == .mediaGrid, let anchor = gridAnchor else { return }
+        guard let media = gridMedia else { notice = L10n.t("先选择要切格的图片、视频或 GIF。", "Pick a picture, video or GIF to slice first."); return }
+        let spec = RPGMediaGridSpec(template: MediaBinding(id: "draft", mediaID: media.id, kind: media.kind, fit: .fill),
+                                    rows: gridRows, columns: gridColumns, stretch: gridStretch, anchor: anchor, replacing: gridMovingGroup)
+        guard spec.valid else { notice = L10n.t("行列需在 1–32 之间，且一次最多 \(RPGWorldEditing.maximumBatch) 格。", "Rows and columns must be 1–32, at most \(RPGWorldEditing.maximumBatch) cells."); return }
+        var next = RPGEditDraft(payload: .mediaGrid(spec)); next.add(spec.cells)
+        draft = next; showDraft()
+    }
+    /// The group a cell belongs to, with its shared binding.
+    func gridGroup(at point: SurfacePoint) -> (id: String, binding: MediaBinding, region: RPGMediaRegion)? {
+        guard let entity = entity(at: point), let region = entity.mediaRegion,
+              let binding = world.mediaBindings.first(where: { $0.id == region.groupID }) else { return nil }
+        return (region.groupID, binding, region)
+    }
+    /// Whole-group delete, previewed first.
+    func deleteGroup(_ group: String) {
+        guard mapEditorActive else { return }
+        var next = RPGEditDraft(payload: .clearGroup(group)); next.add(RPGDraftCommit.groupCells(group, world: world))
+        panelPoint = nil; draft = next; showDraft()
+    }
+    /// Move or re-slice a group: the grid tool takes its media and size;
+    /// the next tap places it and replaces the old cells in one edit.
+    func moveGroup(_ group: String) {
+        guard mapEditorActive, let binding = world.mediaBindings.first(where: { $0.id == group }),
+              let region = world.entities.first(where: { $0.mediaRegion?.groupID == group })?.mediaRegion else { return }
+        discardDraft(); panelPoint = nil
+        gridMovingGroup = group; gridAnchor = nil
+        gridMedia = (binding.mediaID, binding.kind, binding.kind.title)
+        gridRows = region.rows; gridColumns = region.columns; gridStretch = region.stretch == true
+        selectTool(.mediaGrid)
+        notice = L10n.t("轻点新的左上角格子放置整组；可先调整行列。", "Tap the new top-left cell; adjust rows and columns first if you like.")
+    }
+    /// Select every cell of a group (multi tool), e.g. to inspect it.
+    func selectGroup(_ group: String) {
+        let cells = RPGDraftCommit.groupCells(group, world: world)
+        guard let minX = cells.map(\.x).min(), let maxX = cells.map(\.x).max(), let minZ = cells.map(\.z).min(), let maxZ = cells.map(\.z).max() else { return }
+        panelPoint = nil; selectTool(.multi)
+        area = RPGArea(a: SurfacePoint(x: minX, z: minZ), b: SurfacePoint(x: maxX, z: maxZ)); scene.showArea((area!.a, area!.b))
     }
     private func restartDraftPayload() {
         guard let cells = draft?.cells, let payload = payload(for: editorTool) else { return }
@@ -625,6 +691,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         case .paste: .systemPurple
         case .replace: .systemPink
         case .outline: .systemTeal
+        case .mediaGrid: .systemIndigo
+        case .clearGroup: .systemRed
         }
     }
     /// Commits the draft as one transaction; it stays on screen if refused.
@@ -634,6 +702,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             guard let self else { return }
             self.notice = L10n.t("已提交：", "Committed: ") + value.payload.title + L10n.t(" · \(self.draftPlan?.cells.count ?? value.count) 格", " · \(self.draftPlan?.cells.count ?? value.count) cells")
             self.discardDraft()
+            if case .mediaGrid = value.payload { self.gridMovingGroup = nil; self.gridAnchor = nil }
         }
     }
     func discardDraft() { planTask?.cancel(); draft = nil; draftPlan = nil; scene.showPreview([], tint: .clear) }
@@ -829,6 +898,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         glassFrame(time)
         guard active, ready, !working, !overlayVisible else { lastFrame = nil; return }
         frameMetrics.sample(time)
+        stepStick(time)
+        if time - lastVisibleCount > 0.5 {
+            lastVisibleCount = time
+            let count = scene.visibleCellCount
+            if count != visibleCells { visibleCells = count }
+        }
         if let started=switchStarted {switchMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000;switchStarted=nil}
         if mapEditorActive { lastFrame = nil; return }
         guard let previous = lastFrame else { lastFrame = time; return }
@@ -907,7 +982,24 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         let ids=Set(world.behaviors.bindings.filter{$0.entityID==entityID}.map(\.id))
         world.behaviors.bindings.removeAll{ids.contains($0.id)};world.behaviors.firedIDs.removeAll{ids.contains($0)};world.revision+=1;try world.validate()
     }}
-    func setReducedMotion(_ value:Bool){scene.reducedMotion=value;sideScene.reducedMotion=value}
+    func setReducedMotion(_ value:Bool){scene.reducedMotion=value;sideScene.reducedMotion=value;reducedMotionSetting=value;refreshGlassQuality()}
+    /// Low Power Mode and Reduce Motion drop the moving highlight, never the base glass.
+    func refreshGlassQuality() {
+        RPGGlassShader.apply(.effective(glassQuality, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, reduceMotion: reducedMotionSetting))
+    }
+    var effectiveGlassQuality: RPGGlassQuality { RPGGlassShader.quality }
+
+    /// Analog stick (V2.2): a vector in the unit disc, screen axes.
+    func setStick(_ x: Double, _ y: Double) {
+        let wasIdle = RPGStickRules.step(stick) == nil
+        stick = (x, y)
+        if wasIdle { lastStickStep = 0 }
+    }
+    private func stepStick(_ time: TimeInterval) {
+        guard let step = RPGStickRules.step(stick), time - lastStickStep >= RPGStickRules.interval(stick) else { return }
+        lastStickStep = time
+        move(dx: step.dx, dz: step.dz)
+    }
     func diagnosticReport()->String {
         let memory=RPGMemoryMetrics.footprintMB.map{String(format:"%.1f MB",$0)} ?? "不可读取"
         #if targetEnvironment(simulator)
@@ -1009,5 +1101,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         let health = world.player.health, stamina = world.player.stamina, shards = world.inventory["moon-shard",default:0], skill = Int(ceil(world.combat.skillRemaining))
         let value = L10n.t("生命 \(health) · 耐力 \(stamina) · 月晶 \(shards) · 技能 \(skill)s", "HP \(health) · Stamina \(stamina) · Shards \(shards) · Skill \(skill)s")
         if text != value { text = value }; if dead != (world.player.health == 0) { dead = world.player.health == 0 }
+        if self.health != health { self.health = health }; if self.stamina != stamina { self.stamina = stamina }
+        let cooldowns = [world.combat.attackRemaining / 0.35, world.combat.skillRemaining / 3, world.combat.rollRemaining / 1.2].map { (max(0, min(1, $0)) * 20).rounded() / 20 }
+        if self.cooldowns != cooldowns { self.cooldowns = cooldowns }
     }
+    /// V2.2 HUD bars and cooldown rings (attack, skill, roll; 0 = ready).
+    @Published private(set) var health = 100
+    @Published private(set) var stamina = 100
+    @Published private(set) var cooldowns: [Double] = [0, 0, 0]
 }

@@ -92,6 +92,15 @@ import UIKit
     /// Sizes a library texture inside the cell box. `nil` keeps the schema 6
     /// behaviour (stretch to the box); `.fill` crops to the box's shape;
     /// `.fit` shrinks the sprite so the whole picture shows.
+    /// A media-grid piece: its row and column of the group's picture,
+    /// filling the cell. Other cells use the binding's own layout.
+    static func layout(binding: MediaBinding, region: RPGMediaRegion?, base: SKTexture, box: CGSize) -> (rect: CGRect, size: CGSize) {
+        guard let region else { return layout(binding: binding, base: base, box: box) }
+        let crop = CGRect(x: binding.cropX, y: binding.cropY, width: binding.cropWidth, height: binding.cropHeight)
+        let group = RPGMediaRegion.groupRect(crop: crop, pixels: base.size(), rows: region.rows, columns: region.columns, stretch: region.stretch == true)
+        return (region.subRect(of: group), box)
+    }
+
     static func layout(binding: MediaBinding, base: SKTexture, box: CGSize) -> (rect: CGRect, size: CGSize) {
         var rect = CGRect(x: binding.cropX, y: binding.cropY, width: binding.cropWidth, height: binding.cropHeight)
         let pixels = base.size()
@@ -155,8 +164,37 @@ extension UIColor {
         let map = SKTileMapNode(tileSet: tileSet, columns: columns, rows: rows, tileSize: CGSize(width: 24, height: 24))
         map.anchorPoint = .zero
         map.fill(with: tileSet.tileGroups.first)
-        map.zPosition = 8
+        // V2.2: the base glass sits on the ground, under blocks and media,
+        // so pictures stay clear; their own glass rim is drawn on top.
+        map.zPosition = 1
         map.name = "glass-texture"
+        map.shader = RPGGlassShader.shader
         return map
+    }
+}
+
+/// One shader shared by every glass tile map: base glass plus a slow
+/// moving highlight and a brighter rim. The highlight strength follows the
+/// quality level; at "performance" only the static base glass is drawn.
+@MainActor enum RPGGlassShader {
+    private static let sheen = SKUniform(name: "u_sheen", float: Float(RPGGlassQuality.standard.sheen))
+    static let shader: SKShader = {
+        let source = """
+        void main() {
+            vec4 base = texture2D(u_texture, v_tex_coord);
+            vec2 uv = v_tex_coord;
+            float phase = fract(uv.x * 0.55 + uv.y * 0.45 - u_time * 0.08);
+            float band = 1.0 - smoothstep(0.0, 0.16, abs(phase - 0.5));
+            float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+            float rim = 1.0 - smoothstep(0.0, 0.1, edge);
+            gl_FragColor = base + vec4(base.a) * u_sheen * (band + rim * 0.6);
+        }
+        """
+        return SKShader(source: source, uniforms: [sheen])
+    }()
+    private(set) static var quality = RPGGlassQuality.standard
+    static func apply(_ value: RPGGlassQuality) {
+        quality = value
+        sheen.floatValue = Float(value.sheen)
     }
 }

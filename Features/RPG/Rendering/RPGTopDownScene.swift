@@ -20,7 +20,7 @@ import UIKit
     private var maps: [ChunkCoordinate: SKTileMapNode] = [:]
     private var glassMaps: [ChunkCoordinate: SKTileMapNode] = [:]
     /// Glass lab option A: show the glass-look tile over every loaded cell.
-    var glassTextureVisible = false { didSet { glassMaps.values.forEach { $0.isHidden = !glassTextureVisible } } }
+    var glassTextureVisible = true { didSet { glassMaps.values.forEach { $0.isHidden = !glassTextureVisible } } }
     private var groups: [RPGTerrain: SKTileGroup] = [:]
     override init() {
         super.init(size: CGSize(width: 390, height: 500))
@@ -66,12 +66,18 @@ import UIKit
             node.lineWidth = curve == nil ? 1 : 1.2
             objects.addChild(node)
             var mediaParent: SKNode = node
+            // Glass rim over content so media cells keep the glass look (V2.2).
+            if entity.mediaBindingID != nil {
+                let rim = curve.map { SKShapeNode(path: $0.spriteKitPath(size: CGSize(width: 23, height: 23))) } ?? SKShapeNode(rectOf: CGSize(width: 22, height: 22), cornerRadius: 5)
+                rim.fillColor = .clear; rim.strokeColor = .white.withAlphaComponent(0.55); rim.lineWidth = 1; rim.glowWidth = 0.6; rim.zPosition = 3
+                node.addChild(rim)
+            }
             if let curve, entity.mediaBindingID != nil {
                 let crop = SKCropNode(); crop.zPosition = 1
                 let mask = SKShapeNode(path: curve.spriteKitPath(size: CGSize(width: 24, height: 24))); mask.fillColor = .white; mask.strokeColor = .clear
                 crop.maskNode = mask; node.addChild(crop); mediaParent = crop
             }
-            if let target = RPGMediaSprites.attach(ownerID: entity.id, bindingID: entity.mediaBindingID, role: .interactive, parent: mediaParent, world: world, size: CGSize(width: 24, height: 24)) { mediaTargets.append(target) }
+            if let target = RPGMediaSprites.attach(ownerID: entity.id, bindingID: entity.mediaBindingID, role: .interactive, parent: mediaParent, world: world, size: CGSize(width: 24, height: 24), region: entity.mediaRegion) { mediaTargets.append(target) }
             if entity.scope == .shared { sharedIDs.append(entity.id) }
         }
         let generator = RPGWorldGenerator(seed: world.seed)
@@ -156,7 +162,7 @@ import UIKit
     /// Free edit with the select tool: a one-finger drag pans the map.
     var freePan: Bool { get { editorTouch == .panSelect } set { editorTouch = newValue ? .panSelect : .legacy } }
     /// Pinch zoom and two-finger pan (both editor modes).
-    var cameraGesturesEnabled = false { didSet { pinch?.isEnabled = cameraGesturesEnabled; twoFingerPan?.isEnabled = cameraGesturesEnabled } }
+    var cameraGesturesEnabled = true { didSet { pinch?.isEnabled = cameraGesturesEnabled; twoFingerPan?.isEnabled = cameraGesturesEnabled } }
     /// Camera centre and zoom after the user moved the camera.
     var onCameraMoved: ((CGPoint, CGFloat) -> Void)?
     var cameraCenter: CGPoint { worldCamera.position }
@@ -181,13 +187,28 @@ import UIKit
         self.pinch = pinch; twoFingerPan = pan; longPress = hold
     }
     func setCamera(center: CGPoint, zoom: CGFloat) {
-        worldCamera.position = RPGCameraRules.clampCenter(center); worldCamera.setScale(RPGCameraRules.clampZoom(zoom))
+        worldCamera.position = RPGCameraRules.clampCenter(center); worldCamera.setScale(RPGCameraRules.clampZoom(zoom, viewSize: size))
     }
+    /// The zoom the user pinched to; nil keeps the default play view.
+    private var userZoom: CGFloat?
+    /// V2.2: at most 300 cells on screen; play starts at about 80.
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        applyZoomBudget()
+    }
+    func applyZoomBudget() {
+        guard size.width > 0, size.height > 0 else { return }
+        worldCamera.setScale(RPGCameraRules.clampZoom(userZoom ?? RPGCameraRules.playZoom(viewSize: size), viewSize: size))
+    }
+    /// Cells on screen now (diagnostics).
+    var visibleCellCount: Int { RPGCameraRules.visibleCells(viewSize: size, zoom: worldCamera.xScale) }
     func recenterOnPlayer() { worldCamera.position = avatar.position }
     @objc private func pinched(_ gesture: UIPinchGestureRecognizer) {
         switch gesture.state {
         case .began: pinchStartZoom = worldCamera.xScale; cancelPan()
-        case .changed: worldCamera.setScale(RPGCameraRules.clampZoom(pinchStartZoom / max(0.01, gesture.scale)))
+        case .changed:
+            let zoom = RPGCameraRules.clampZoom(pinchStartZoom / max(0.01, gesture.scale), viewSize: size)
+            worldCamera.setScale(zoom); userZoom = zoom
         case .ended, .cancelled: onCameraMoved?(worldCamera.position, worldCamera.xScale)
         default: break
         }
@@ -326,5 +347,5 @@ import UIKit
         strokePoints = []
     }
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { cancelPan() }
-    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; onCameraMoved = nil; cameraFollowsPlayer = true; editorTouch = .legacy; cameraGesturesEnabled = false; editorLongPressEnabled = false; onEditorStroke = nil; onEditorRectangle = nil; onEditorTap = nil; onLongPressCell = nil; showPreview([], tint: .clear); showArea(nil); appliedTerrain = [:]; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll(); glassMaps.values.forEach { $0.removeFromParent() }; glassMaps.removeAll() }
+    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; onCameraMoved = nil; cameraFollowsPlayer = true; editorTouch = .legacy; cameraGesturesEnabled = true; editorLongPressEnabled = false; onEditorStroke = nil; onEditorRectangle = nil; onEditorTap = nil; onLongPressCell = nil; showPreview([], tint: .clear); showArea(nil); appliedTerrain = [:]; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll(); glassMaps.values.forEach { $0.removeFromParent() }; glassMaps.removeAll() }
 }

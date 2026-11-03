@@ -842,7 +842,7 @@ print("RPG playback: \(checks) total checks passed")
 
 
 // P17: editor tools and areas.
-check(RPGEditorTool.allCases.count == 13 && RPGEditorTool.text.contentKind == .text && RPGEditorTool.brush.contentKind == nil, "thirteen tools (shape added), content tools map to kinds")
+check(RPGEditorTool.allCases.count == 14 && RPGEditorTool.text.contentKind == .text && RPGEditorTool.brush.contentKind == nil, "thirteen tools (shape added), content tools map to kinds")
 check(RPGEditorTool.allCases.filter(\.draws) == [.shape, .terrain, .erase, .brush] && RPGEditorTool.allCases.filter(\.drawsRectangle) == [.multi, .fill], "drawing tools")
 let area = RPGArea(a: SurfacePoint(x: 5, z: 9), b: SurfacePoint(x: 2, z: 7))
 check(area.count == 12 && area.cells.count == 12 && area.origin == SurfacePoint(x: 2, z: 7), "area size and origin")
@@ -1056,6 +1056,13 @@ try RPGWorldEditing.undo(world: &gridWorld)
 check(gridWorld.entities.filter { $0.mediaRegion?.groupID == groupID }.count == 12, "undo restores the original group")
 try RPGWorldEditing.redo(world: &gridWorld)
 check(gridWorld.entities.filter { $0.mediaRegion != nil }.count == 9, "redo moves it again")
+let liveGroup = gridWorld.entities.first { $0.mediaRegion != nil }!.mediaRegion!.groupID
+var clearDraft = RPGEditDraft(payload: .clearGroup(liveGroup)); clearDraft.add(RPGDraftCommit.groupCells(liveGroup, world: gridWorld) + [openArea[0]])
+var cleared = gridWorld
+let clearPlan = RPGDraftCommit.plan(clearDraft, world: cleared, generator: mapGen)
+check(clearPlan.cells.count == 9 && clearPlan.skipped[.unchanged] == 1, "group delete previews only its own cells")
+try RPGDraftCommit.commit(clearDraft, world: &cleared, generator: mapGen)
+check(!cleared.entities.contains { $0.mediaRegion != nil } && cleared.undo.count == gridWorld.undo.count + 1, "whole group deleted in one edit")
 var mismatched = gridWorld; let mismatchIndex = mismatched.entities.firstIndex { $0.mediaRegion != nil }!
 mismatched.entities[mismatchIndex].mediaRegion?.groupID = "other"; rejected(mismatched, "a piece must point at its own binding")
 let gridClip = try RPGWorldEditing.copy(from: afterMove[0].surface!, to: afterMove[0].surface!, world: gridWorld, generator: mapGen)

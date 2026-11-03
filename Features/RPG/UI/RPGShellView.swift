@@ -49,6 +49,7 @@ struct RPGShellView: View {
             .accessibilityHidden(controlCenter)
             .overlay(alignment: .leading) { if landscape && edgeSwipe && session.ready && !controlCenter && !session.mapEditorActive { edgeSwipeZone(height: geometry.size.height) } }
         }
+            .environment(\.rpgHUDState, RPGHUDState(inCombat: session.world.player.inCombat, editing: session.mapEditorActive))
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
             .overlay { worldBackdrop }
             .overlay {
@@ -173,8 +174,8 @@ struct RPGShellView: View {
             header
             statusRow
             sceneView.clipShape(RoundedRectangle(cornerRadius: 20))
-                .overlay(alignment:.bottomLeading){if session.ready && showsJoystick {movementPad.padding(6)}}
-                .overlay(alignment:.bottomTrailing){if session.ready && !session.mapEditorActive {combatButtons.padding(6)}}
+                .overlay(alignment:.bottomLeading){if session.ready && showsJoystick {stickCluster(size: 112).padding(8)}}
+                .overlay(alignment:.bottomTrailing){if session.ready && !session.mapEditorActive {combatCluster.padding(8)}}
             perspectiveRow
             RPGCombatHUDView(model:session.combatHUD,session:session)
             Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
@@ -190,7 +191,7 @@ struct RPGShellView: View {
             editorToolbar
             editorNotice
             sceneView.clipShape(RoundedRectangle(cornerRadius: 20))
-                .overlay(alignment: .bottomLeading) { if session.ready && showsJoystick { movementPad.buttonStyle(MoonGlassButtonStyle()).padding(6) } }
+                .overlay(alignment: .bottomLeading) { if session.ready && showsJoystick { stickCluster(size: 104).padding(8) } }
             if let point = session.panelPoint {
                 cellPanel(point).frame(height: max(260, size.height * 0.46))
             } else {
@@ -217,7 +218,7 @@ struct RPGShellView: View {
                     editorNotice
                     Spacer(minLength: 0)
                     HStack(alignment: .bottom, spacing: 10) {
-                        if session.ready && showsJoystick { movementPad.buttonStyle(MoonGlassButtonStyle()) }
+                        if session.ready && showsJoystick { stickCluster(size: 120) }
                         Spacer(minLength: 0)
                         editorBars.frame(maxWidth: 640)
                         Spacer(minLength: 0)
@@ -239,26 +240,29 @@ struct RPGShellView: View {
             sceneView.ignoresSafeArea()
             VStack(spacing: 6) {
                 HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(session.worldTitle).font(.subheadline.weight(.semibold))
-                        statusRow
-                    }.padding(.horizontal, 12).padding(.vertical, 6).moonSingleGlass(radius: 14).fixedSize()
+                    VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(session.worldTitle).font(.subheadline.weight(.semibold))
+                            statusRow
+                        }.padding(.horizontal, 12).padding(.vertical, 6).hudGlass(.light, radius: 14).fixedSize()
+                        if session.ready { RPGVitalsBar(hud: session.combatHUD) }
+                    }
                     Spacer(minLength: 8)
                     headerButtons
                 }
                 Spacer(minLength: 0)
                 HStack(alignment: .bottom, spacing: 10) {
-                    if session.ready && showsJoystick { movementPad }
+                    if session.ready && showsJoystick { stickCluster(size: 128) }
                     Spacer(minLength: 0)
                     VStack(spacing: 4) {
                         Text(session.notice).font(.caption).lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
-                            .moonSingleGlass(radius: 10).accessibilityIdentifier("rpg-status")
+                            .hudGlass(.light, radius: 10).accessibilityIdentifier("rpg-status")
                         RPGCombatHUDView(model:session.combatHUD,session:session)
                         actionRow
                         perspectiveRow
                     }.frame(maxWidth: 420)
                     Spacer(minLength: 0)
-                    if session.ready { combatButtons }
+                    if session.ready { combatCluster }
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
@@ -291,7 +295,7 @@ struct RPGShellView: View {
     private var editorBars: some View {
         VStack(spacing: 6) {
             RPGDraftBar(session: session)
-            RPGEditorOptionsBar(session: session, openShapeEditor: GlassShapeEditorEntry.available ? { shapeEditor = true } : nil)
+            RPGEditorOptionsBar(session: session, store: model.mediaStore, openShapeEditor: GlassShapeEditorEntry.available ? { shapeEditor = true } : nil)
             RPGEditorToolBar(session: session) { tool in
                 if session.draft != nil && tool != session.editorTool { pendingTool = tool } else { session.selectTool(tool) }
             }
@@ -318,6 +322,30 @@ struct RPGShellView: View {
             Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34).contentShape(Rectangle())
         }
         .buttonStyle(.borderless).accessibilityLabel(label).accessibilityIdentifier(id)
+    }
+
+    /// UI tests drive the original eight buttons; everyone else gets the stick.
+    private var usesTestPad: Bool {
+        #if DEBUG
+        return ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests")
+        #else
+        return false
+        #endif
+    }
+    @ViewBuilder private func stickCluster(size: CGFloat) -> some View {
+        if usesTestPad { movementPad.buttonStyle(MoonGlassButtonStyle()) } else {
+            HStack(alignment: .bottom, spacing: 6) {
+                RPGJoystick(session: session, size: size)
+                Button { session.returnToSpawn() } label: {
+                    Image(systemName: "location.circle.fill").font(.system(size: 16, weight: .semibold)).frame(width: 38, height: 38).contentShape(Circle())
+                }
+                .buttonStyle(RPGPressStyle()).hudGlass(.interactive, in: Circle())
+                .accessibilityLabel(L10n.t("回到出生地", "Return to Spawn")).accessibilityIdentifier("rpg-spawn")
+            }
+        }
+    }
+    @ViewBuilder private var combatCluster: some View {
+        if usesTestPad { combatButtons.buttonStyle(MoonGlassButtonStyle()) } else { RPGCombatPad(session: session, hud: session.combatHUD) }
     }
 
     /// Free edit hides the joystick; character build and play show it.
@@ -360,6 +388,7 @@ struct RPGShellView: View {
         HStack {
             Text(L10n.t("256 × 256 · \(session.loadedChunks)/64 区块", "256 × 256 · \(session.loadedChunks)/64 chunks")).font(.caption)
                 .accessibilityIdentifier("rpg-loaded-chunks").accessibilityValue(String(session.loadedChunks))
+            Text(L10n.t("可见 \(session.visibleCells) 格", "\(session.visibleCells) visible")).font(.caption).accessibilityIdentifier("rpg-visible-cells").accessibilityValue(String(session.visibleCells))
             Text(L10n.t("自建 \(session.world.entities.count)", "Built \(session.world.entities.count)")).font(.caption).accessibilityIdentifier("rpg-placed-count").accessibilityValue(String(session.world.entities.count))
             Spacer(minLength: 0)
             Text(positionLabel).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-position")
@@ -537,6 +566,13 @@ struct RPGShellView: View {
                     Button(L10n.t("制作 / 装备石甲（石材 6）", "Craft / Equip Stone Armor (Stone 6)")) { session.equip(.stoneArmor) }
                     Button(L10n.t("卸下装备", "Unequip")) { session.equip(.none) }
                     Text(L10n.t("俯视八向攻击、范围技能与翻滚；侧视支持空中攻击和冲刺。训练会开始真实战斗，战斗期间不能切换视角。", "Top-down: 8-way attacks, area skill and roll. Side view: air attacks and dash. Training starts a real fight; you can't switch views during combat.")) .font(.caption)
+                }
+                Section(L10n.t("画面与玻璃", "Display & Glass")) {
+                    Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $session.glassQuality) {
+                        ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.accessibilityIdentifier("rpg-glass-quality")
+                    Text(L10n.t("所有可见格子都保留基础玻璃；高质量增加流动高光。低电量模式和减少动态效果时只显示基础玻璃。当前实际：", "Every visible cell keeps its base glass; higher quality adds a moving highlight. Low Power Mode and Reduce Motion show base glass only. In use: ") + session.effectiveGlassQuality.title + L10n.t(" · 可见 \(session.visibleCells) 格（上限 \(RPGCameraRules.visibleBudget)）", " · \(session.visibleCells) cells visible (limit \(RPGCameraRules.visibleBudget))"))
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section(L10n.t("媒体外观", "Media Look")) {
                     NavigationLink(L10n.t("角色图片 / 视频", "Character Image / Video")) { RPGMediaEditorView(session:session,store:model.mediaStore,owner:.player) }

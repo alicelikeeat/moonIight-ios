@@ -19,6 +19,8 @@ enum RPGDraftPayload: Equatable, Sendable {
     case outline(ShapeOutline?)
     /// Smart media grid: one picture, video or GIF across rows × columns.
     case mediaGrid(RPGMediaGridSpec)
+    /// Remove a media grid: its display cells go, blocks keep their material.
+    case clearGroup(String)
 
     var title: String {
         switch self {
@@ -29,6 +31,7 @@ enum RPGDraftPayload: Equatable, Sendable {
         case .paste: L10n.t("粘贴", "Paste")
         case .replace(let from, let to): L10n.t("替换 ", "Replace ") + (BlockDefinition.find(from)?.name ?? from) + " → " + (BlockDefinition.find(to)?.name ?? to)
         case .mediaGrid(let spec): L10n.t("切格 · ", "Media Grid · ") + spec.template.kind.title + " \(spec.rows)×\(spec.columns)"
+        case .clearGroup: L10n.t("删除切格组", "Delete Media Grid")
         case .outline(let outline): outline == nil ? L10n.t("形状 · 方形", "Shape · Square") : L10n.t("形状 · 曲线", "Shape · Curve")
         }
     }
@@ -165,6 +168,8 @@ enum RPGDraftCommit {
             try commitOutline(outline, cells: plan.cells, world: &world, generator: generator)
         case .mediaGrid(let spec):
             try commitMediaGrid(spec, cells: plan.cells, world: &world, generator: generator)
+        case .clearGroup(let group):
+            try commitClearGroup(group, cells: plan.cells, world: &world, generator: generator)
         }
         return plan
     }
@@ -206,6 +211,8 @@ enum RPGDraftCommit {
             guard let entity else { return .empty }
             if entity.definitionID != from || from == to { return .unchanged }
             if point == playerCell && BlockDefinition.find(to)?.solid == true { return .player }
+        case .clearGroup(let group):
+            if entity?.mediaRegion?.groupID != group { return .unchanged }
         case .outline(let outline):
             if let entity { if entity.outline == outline { return .unchanged } }
             else {
@@ -387,5 +394,32 @@ extension RPGDraftCommit {
         }
         try RPGWorldEditing.finish(next: &next, changes: changes, inventoryBefore: world.inventory, title: "切格 \(cells.count) 格")
         world = next
+    }
+}
+
+extension RPGDraftCommit {
+    fileprivate static func commitClearGroup(_ group: String, cells: [SurfacePoint], world: inout WorldState, generator: RPGWorldGenerator) throws {
+        var next = world, changes: [RPGEntityChange] = []
+        for point in cells {
+            guard let entity = RPGWorldEditing.entity(at: point, world: world, generator: generator), entity.mediaRegion?.groupID == group else { continue }
+            let before = world.entities.first { $0.id == entity.id }
+            next.entities.removeAll { $0.id == entity.id }
+            if entity.definitionID == RPGWorldEditing.displayDefinition {
+                changes.append(.init(id: entity.id, before: before, after: nil, removedBefore: false, removedAfter: false, damageBefore: world.damage[entity.id], damageAfter: nil))
+                next.damage[entity.id] = nil
+            } else {
+                var cleared = entity; cleared.mediaBindingID = nil; cleared.mediaRegion = nil
+                next.entities.append(cleared)
+                changes.append(.init(id: entity.id, before: before, after: cleared, removedBefore: false, removedAfter: false, damageBefore: world.damage[entity.id], damageAfter: world.damage[entity.id]))
+            }
+        }
+        guard !changes.isEmpty else { throw RPGEditError.outside }
+        try RPGWorldEditing.finish(next: &next, changes: changes, inventoryBefore: world.inventory, title: "删除切格 \(changes.count) 格")
+        world = next
+    }
+
+    /// Cells of a media grid, for selecting or clearing the whole group.
+    static func groupCells(_ group: String, world: WorldState) -> [SurfacePoint] {
+        world.entities.filter { $0.mediaRegion?.groupID == group }.compactMap(\.surface)
     }
 }

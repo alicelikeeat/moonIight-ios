@@ -35,7 +35,7 @@ import UIKit
     required init?(coder:NSCoder){fatalError("init(coder:) has not been implemented")}
     private var glassMap:SKTileMapNode?
     /// Glass lab option A over the side slice.
-    var glassTextureVisible=false{didSet{glassMap?.isHidden = !glassTextureVisible}}
+    var glassTextureVisible=true{didSet{glassMap?.isHidden = !glassTextureVisible}}
     func show(world:WorldState, resetPlayer:Bool=false) {
         guard let selectedRegion=world.sideRegions.first else{return}
         let changed=region?.id != selectedRegion.id;region=selectedRegion

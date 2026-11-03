@@ -7,6 +7,8 @@ import UIKit
     let binding:MediaBinding
     let role:RPGMediaRole
     let sprite:SKSpriteNode
+    /// V2.2 smart media grid: this cell's piece of the shared picture.
+    var region:RPGMediaRegion? = nil
 }
 @MainActor final class RPGMediaCoordinator:ObservableObject {
     private let pool=CardMediaCoordinator()
@@ -31,6 +33,8 @@ import UIKit
     private var gifURLs:[String:URL]=[:]
     private struct GIFClock {var start:TimeInterval;var shown:Int}
     private var gifClocks:[String:GIFClock]=[:]
+    /// One start time per media grid, so every piece shows the same GIF frame.
+    private var gifGroupStarts:[String:TimeInterval]=[:]
     // Task E playback scheduling: selection first, nearest next, edge
     // hysteresis, covers while the camera moves, system conditions.
     /// The selected cell's owner ID; it plays before any other cell.
@@ -127,16 +131,19 @@ import UIKit
             let id=target.binding.mediaID
             guard gifURLs[id] != nil,let animation=gifs.peek(id) else{continue}
             var clock=gifClocks[target.ownerID] ?? GIFClock(start:time,shown:-1)
+            let group=target.region?.groupID
+            if let group {if let start=gifGroupStarts[group]{clock.start=start}else{gifGroupStarts[group]=clock.start}}
             let index:Int
             if target.binding.paused == true || gifsFrozen {
                 index=max(clock.shown,0);clock.start=time-RPGGIFTiming.offset(of:index,delays:animation.delays)
+                if let group{gifGroupStarts[group]=clock.start}
             } else {
                 index=RPGGIFTiming.frameIndex(elapsed:time-clock.start,delays:animation.delays,loop:target.binding.loop)
             }
             if index != clock.shown,animation.textures.indices.contains(index) {
-                let layout=RPGCellRenderer.layout(binding:target.binding,base:animation.textures[index],box:RPGMediaSprites.box(of:target.sprite))
+                let layout=RPGCellRenderer.layout(binding:target.binding,region:target.region,base:animation.textures[index],box:RPGMediaSprites.box(of:target.sprite))
                 target.sprite.texture=SKTexture(rect:layout.rect,in:animation.textures[index]);target.sprite.size=layout.size
-                target.sprite.anchorPoint=CGPoint(x:target.binding.anchorX,y:target.binding.anchorY)
+                target.sprite.anchorPoint=target.region == nil ? CGPoint(x:target.binding.anchorX,y:target.binding.anchorY) : CGPoint(x:0.5,y:0.5)
                 clock.shown=index
             }
             gifClocks[target.ownerID]=clock
@@ -206,9 +213,9 @@ import UIKit
         for target in targets where target.binding.mediaID==id && lastRequests.contains(where:{$0.ownerID==target.ownerID && $0.visible}) {
             let binding=target.binding
             if binding.paused == true && target.sprite.texture != nil {continue}
-            let layout=RPGCellRenderer.layout(binding:binding,base:base,box:RPGMediaSprites.box(of:target.sprite))
+            let layout=RPGCellRenderer.layout(binding:binding,region:target.region,base:base,box:RPGMediaSprites.box(of:target.sprite))
             target.sprite.texture=SKTexture(rect:layout.rect,in:base);target.sprite.size=layout.size
-            target.sprite.anchorPoint=CGPoint(x:binding.anchorX,y:binding.anchorY)
+            target.sprite.anchorPoint=target.region == nil ? CGPoint(x:binding.anchorX,y:binding.anchorY) : CGPoint(x:0.5,y:0.5)
             // A custom icon is a library picture tinted with the icon colour.
             if binding.kind == .icon,let style=binding.style {target.sprite.color=UIColor(rpgHex:style.colorHex);target.sprite.colorBlendFactor=1}
         }
@@ -219,19 +226,19 @@ import UIKit
     func retry(){textures.maxEntries=24;textures.maxCost=12*1024*1024;gifs.restoreBudget();pool.retry();configureAssets();sync(force:true)}
     func stop(){
         active=false;pool.dispose();subscriptions.removeAll();storeSubscription=nil;noticeSubscription=nil
-        targets.forEach{$0.sprite.texture=nil};targets=[];textures.removeAll();gifs.removeAll();gifClocks=[:];gifURLs=[:];ownerIDs=[:];lastRequests=[];scene=nil
+        targets.forEach{$0.sprite.texture=nil};targets=[];textures.removeAll();gifs.removeAll();gifClocks=[:];gifGroupStarts=[:];gifURLs=[:];ownerIDs=[:];lastRequests=[];scene=nil
         if let memory{NotificationCenter.default.removeObserver(memory)};memory=nil
     }
 }
 
 @MainActor enum RPGMediaSprites {
-    static func attach(ownerID:String,bindingID:String?,role:RPGMediaRole,parent:SKNode,world:WorldState,size:CGSize)->RPGMediaNode? {
+    static func attach(ownerID:String,bindingID:String?,role:RPGMediaRole,parent:SKNode,world:WorldState,size:CGSize,region:RPGMediaRegion?=nil)->RPGMediaNode? {
         guard let bindingID,let binding=world.mediaBindings.first(where:{$0.id==bindingID}) else{return nil}
         let box=CGSize(width:size.width*binding.scale,height:size.height*binding.scale)
         let sprite=SKSpriteNode(color:.clear,size:box)
         sprite.userData=["boxWidth":box.width,"boxHeight":box.height]
         sprite.zPosition=1;sprite.name="media:"+ownerID;parent.addChild(sprite)
-        return .init(ownerID:ownerID,binding:binding,role:role,sprite:sprite)
+        return .init(ownerID:ownerID,binding:binding,role:role,sprite:sprite,region:region)
     }
     /// The cell area a sprite was created for, before any fit adjustment.
     static func box(of sprite:SKSpriteNode)->CGSize {

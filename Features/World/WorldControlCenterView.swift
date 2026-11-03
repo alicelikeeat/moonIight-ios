@@ -150,13 +150,9 @@ struct WorldControlCenterView: View {
 extension View {
     /// Native Liquid Glass on iOS 26+, a light material with a thin edge on
     /// iOS 16-25. The fallback is a material, not system Liquid Glass.
-    @ViewBuilder func worldGlass(radius: CGFloat) -> some View {
-        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.clear, in: shape)
-        } else {
-            self.background(.ultraThinMaterial.opacity(0.75), in: shape)
-                .overlay(shape.strokeBorder(.white.opacity(0.28), lineWidth: 0.5))
-        }
+    func worldGlass(radius: CGFloat) -> some View {
+        // V2.2: control center modules use the adaptive HUD glass (clear,
+        // thicker with Increase Contrast, solid with Reduce Transparency).
+        hudGlass(.light, radius: radius)
     }
 }
