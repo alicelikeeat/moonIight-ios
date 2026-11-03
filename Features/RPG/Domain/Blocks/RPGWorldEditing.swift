@@ -14,6 +14,9 @@ struct BlockDefinition: Codable, Equatable, Sendable, Identifiable {
         .init(id: "door", title: "门", durability: 3, cost: "wood", drop: "wood", solid: true),
         .init(id: "platform", title: "平台", durability: 4, cost: "wood", drop: "wood", solid: true),
         .init(id: "trigger", title: "触发方块", durability: 2, cost: "stone", drop: "stone", solid: false),
+        // Task E (A+): a see-through, walk-through cell that only carries
+        // content, so content can be painted onto empty ground.
+        .init(id: RPGWorldEditing.displayDefinition, title: "展示格", durability: 1, cost: nil, drop: nil, solid: false),
     ]
     static func find(_ id: String) -> Self? { all.first { $0.id == id } }
 }
@@ -32,6 +35,36 @@ struct RPGEditTransaction: Codable, Equatable, Sendable, Identifiable {
     let inventoryBefore: [String: Int]
     let inventoryAfter: [String: Int]
     let title: String
+    /// Schema 8: terrain edits in the same transaction (nil before).
+    var terrainChanges: [RPGTerrainChange]? = nil
+}
+struct RPGTerrainChange: Codable, Equatable, Sendable {
+    let point: SurfacePoint
+    /// Override before/after; nil means the generated terrain.
+    let before: RPGTerrain?
+    let after: RPGTerrain?
+}
+/// Terrain as the world sees it: map-editor overrides over the generator.
+enum RPGWorldTerrain {
+    static func key(_ point: SurfacePoint) -> String { "\(point.x),\(point.z)" }
+    static func point(_ key: String) -> SurfacePoint? {
+        let parts = key.split(separator: ",")
+        guard parts.count == 2, let x = Int(parts[0]), let z = Int(parts[1]) else { return nil }
+        let point = SurfacePoint(x: x, z: z)
+        return point.valid ? point : nil
+    }
+    static func tile(at point: SurfacePoint, world: WorldState, generator: RPGWorldGenerator) -> RPGTerrain? {
+        guard point.valid else { return nil }
+        return world.terrainOverrides?[key(point)] ?? generator.tile(at: point)
+    }
+    static func passable(_ point: SurfacePoint, world: WorldState, generator: RPGWorldGenerator) -> Bool {
+        tile(at: point, world: world, generator: generator)?.passable == true
+    }
+    /// For closures that run while the world is being mutated.
+    static func passable(_ point: SurfacePoint, overrides: [String: RPGTerrain], generator: RPGWorldGenerator) -> Bool {
+        guard point.valid else { return false }
+        return (overrides[key(point)] ?? generator.tile(at: point))?.passable == true
+    }
 }
 struct RPGWorldEvent: Codable, Equatable, Sendable, Identifiable {
     let id: String
@@ -39,8 +72,8 @@ struct RPGWorldEvent: Codable, Equatable, Sendable, Identifiable {
     let entityID: String
     let definitionID: String
 }
-struct RPGClipboard: Sendable {
-    struct Cell: Sendable { let dx: Int; let dz: Int; let definitionID: String; let mediaBindingID: String? }
+struct RPGClipboard: Equatable, Sendable {
+    struct Cell: Equatable, Sendable { let dx: Int; let dz: Int; let definitionID: String; let mediaBindingID: String? }
     let width: Int
     let height: Int
     let cells: [Cell]
@@ -53,9 +86,9 @@ enum RPGEditError: Error, LocalizedError, Equatable {
         case .occupied: "位置已被占用，或会挡住玩家。"
         case .protectedArea: "官方剧情保护区不可修改；可创建独立创作副本。"
         case .resources: "资源不足。"
-        case .tooFar: "冒险模式只能操作身边 4 格内的方块。"
+        case .tooFar: "角色建造只能修改角色身边 4 格内的格子；请切换到自由编辑或重新选择。"
         case .unknownDefinition: "未知方块定义。"
-        case .tooLarge: "一次最多操作 256 格。"
+        case .tooLarge: "一次最多操作 1024 格。"
         case .stale: "相关世界状态已变化，本次操作未提交。"
         case .nothingToUndo: "没有可撤销的操作。"
         case .nothingToRedo: "没有可重做的操作。"
@@ -68,7 +101,13 @@ struct RPGPlacement: Sendable {
     var mediaBindingID: String? = nil
 }
 enum RPGWorldEditing {
-    static let maximumBatch = 256
+    static let maximumBatch = 1024
+    /// Undo depth target (task E: 50), further limited by `undoChangeBudget`.
+    static let undoLimit = 50
+    /// Total entity + terrain changes kept across undo history, so large
+    /// fills cannot grow the save without bound.
+    static let undoChangeBudget = 8192
+    static let displayDefinition = "display"
     static func entities(in chunk: RPGChunk, world: WorldState) -> [WorldEntity] {
         let overrides = Set(world.entities.map(\.id)), removed = Set(world.removedGeneratedIDs)
         return chunk.entities.filter { !overrides.contains($0.id) && !removed.contains($0.id) } + world.entities.filter { $0.surface?.chunk == chunk.coordinate }
@@ -110,7 +149,7 @@ enum RPGWorldEditing {
         for (index, request) in placements.enumerated() {
             try check(request.point, world: world, generator: generator)
             guard let definition = BlockDefinition.find(request.definitionID) else { throw RPGEditError.unknownDefinition }
-            guard generator.tile(at: request.point)?.passable == true else { throw RPGEditError.outside }
+            guard RPGWorldTerrain.passable(request.point, world: next, generator: generator) else { throw RPGEditError.outside }
             let sidePoint = SidePlacement(regionID: generator.sideRegion.id, horizontal: request.point.x - generator.sideRegion.origin.x, height: 2)
             let playerCollision = world.player.perspective == .topDown ? request.point == world.player.surface : world.player.side == sidePoint
             guard !world.combat.enemies.contains(where: { $0.health > 0 && (world.player.perspective == .topDown ? $0.surface == request.point : $0.side == sidePoint) }), !playerCollision, entity(at: request.point, world: next, generator: generator) == nil else { throw RPGEditError.occupied }
@@ -119,16 +158,21 @@ enum RPGWorldEditing {
                 guard next.inventory[cost, default: 0] > 0 else { throw RPGEditError.resources }
                 next.inventory[cost, default: 0] -= 1
             }
-            let id = "placed:\(world.id):\(world.revision + 1):\(index)"
-            let shared = generator.sideRegion.contains(request.point)
-            let entity = WorldEntity(id: id, definitionID: definition.id, scope: shared ? .shared : .topDownOnly, surface: request.point,
-                side: shared ? .init(regionID: generator.sideRegion.id, horizontal: request.point.x - generator.sideRegion.origin.x, height: 2) : nil,
-                physics: .init(topDownSolid: definition.solid, sideSolid: definition.solid, sideGravity: false, pushable: false, hitPoints: definition.durability, width: 1, height: 1), mediaBindingID: request.mediaBindingID)
+            let entity = newEntity(at: request.point, definition: definition, index: index, world: world, generator: generator, mediaBindingID: request.mediaBindingID)
             next.entities.append(entity)
-            changes.append(.init(id: id, before: nil, after: entity, removedBefore: false, removedAfter: false, damageBefore: nil, damageAfter: nil))
+            changes.append(.init(id: entity.id, before: nil, after: entity, removedBefore: false, removedAfter: false, damageBefore: nil, damageAfter: nil))
         }
         try finish(next: &next, changes: changes, inventoryBefore: inventory, title: "放置 \(placements.count) 格")
         world = next
+    }
+    /// A newly placed block, shared with the side slice when it sits on the
+    /// mapped row so both projections show the same identity and content.
+    static func newEntity(at point: SurfacePoint, definition: BlockDefinition, index: Int, world: WorldState, generator: RPGWorldGenerator, mediaBindingID: String?) -> WorldEntity {
+        let id = "placed:\(world.id):\(world.revision + 1):\(index)"
+        let shared = generator.sideRegion.contains(point)
+        return WorldEntity(id: id, definitionID: definition.id, scope: shared ? .shared : .topDownOnly, surface: point,
+            side: shared ? .init(regionID: generator.sideRegion.id, horizontal: point.x - generator.sideRegion.origin.x, height: 2) : nil,
+            physics: .init(topDownSolid: definition.solid, sideSolid: definition.solid, sideGravity: false, pushable: false, hitPoints: definition.durability, width: 1, height: 1), mediaBindingID: mediaBindingID)
     }
     static func hit(_ point: SurfacePoint, world: inout WorldState, generator: RPGWorldGenerator, force: Bool = false) throws {
         try check(point, world: world, generator: generator)
@@ -148,11 +192,23 @@ enum RPGWorldEditing {
         try finish(next: &next, changes: [change], inventoryBefore: world.inventory, title: destroyed ? "破坏与掉落" : "方块受击")
         world = next
     }
-    static func finish(next: inout WorldState, changes: [RPGEntityChange], inventoryBefore: [String: Int], title: String) throws {
-        let transaction = RPGEditTransaction(id: UUID().uuidString, changes: changes, inventoryBefore: inventoryBefore, inventoryAfter: next.inventory, title: title)
-        next.undo.append(transaction); next.undo = Array(next.undo.suffix(32)); next.redo = []
+    static func finish(next: inout WorldState, changes: [RPGEntityChange], inventoryBefore: [String: Int], title: String, terrainChanges: [RPGTerrainChange] = []) throws {
+        let transaction = RPGEditTransaction(id: UUID().uuidString, changes: changes, inventoryBefore: inventoryBefore, inventoryAfter: next.inventory, title: title,
+                                             terrainChanges: terrainChanges.isEmpty ? nil : terrainChanges)
+        next.undo.append(transaction); next.undo = trimmedHistory(next.undo); next.redo = []
         next.revision += 1
         try next.validate()
+    }
+    /// Keeps the newest transactions within the depth and change budgets;
+    /// the latest one is always kept.
+    static func trimmedHistory(_ history: [RPGEditTransaction]) -> [RPGEditTransaction] {
+        var kept: [RPGEditTransaction] = [], total = 0
+        for transaction in history.reversed() {
+            let size = transaction.changes.count + (transaction.terrainChanges ?? []).count
+            if !kept.isEmpty && (kept.count >= undoLimit || total + size > undoChangeBudget) { break }
+            kept.append(transaction); total += size
+        }
+        return kept.reversed()
     }
     static func undo(world: inout WorldState) throws {
         guard let transaction = world.undo.last else { throw RPGEditError.nothingToUndo }
@@ -185,6 +241,13 @@ enum RPGWorldEditing {
             next.removedGeneratedIDs.removeAll { $0 == change.id }
             if inverse ? change.removedBefore : change.removedAfter { next.removedGeneratedIDs.append(change.id) }
             next.damage[change.id] = inverse ? change.damageBefore : change.damageAfter
+        }
+        for change in transaction.terrainChanges ?? [] {
+            let key = RPGWorldTerrain.key(change.point)
+            guard world.terrainOverrides?[key] == (inverse ? change.after : change.before) else { throw RPGEditError.stale }
+            var overrides = next.terrainOverrides ?? [:]
+            overrides[key] = inverse ? change.before : change.after
+            next.terrainOverrides = overrides.isEmpty ? nil : overrides
         }
         next.removedGeneratedIDs.sort(); next.inventory = inverse ? transaction.inventoryBefore : transaction.inventoryAfter
         if inverse { next.undo.removeLast(); next.redo.append(transaction) } else { next.redo.removeLast(); next.undo.append(transaction) }

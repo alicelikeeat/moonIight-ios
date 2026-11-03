@@ -97,7 +97,7 @@ enum RPGStoryRuntime {
             guard world.combat.enemies.count<128 else{throw RPGStoryError.resource}
             let anchor=generator.anchor(action.anchor)
             let p=action.point ?? SurfacePoint(x:anchor.x+2,z:anchor.z)
-            guard p.valid,generator.tile(at:p)?.passable==true,RPGWorldEditing.entity(at:p,world:world,generator:generator)?.physics.topDownSolid != true else{throw RPGStoryError.condition}
+            guard p.valid,RPGWorldTerrain.passable(p,world:world,generator:generator),RPGWorldEditing.entity(at:p,world:world,generator:generator)?.physics.topDownSolid != true else{throw RPGStoryError.condition}
             world.combat.enemies.append(.init(id:id,surface:p,health:max(1,min(500,action.value)),maximumHealth:max(1,min(500,action.value)),aggro:true));world.player.inCombat=true
         }
     }

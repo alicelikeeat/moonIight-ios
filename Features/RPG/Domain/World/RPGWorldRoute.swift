@@ -1,12 +1,12 @@
 import Foundation
 
 enum RPGWorldRoute {
-    static func path(from origin:SurfacePoint,to target:SurfacePoint,generator:RPGWorldGenerator,entities:[WorldEntity],removedIDs:[String],cancelled:()->Bool={false})->[SurfacePoint] {
+    static func path(from origin:SurfacePoint,to target:SurfacePoint,generator:RPGWorldGenerator,entities:[WorldEntity],removedIDs:[String],terrainOverrides:[String:RPGTerrain]=[:],cancelled:()->Bool={false})->[SurfacePoint] {
         guard origin.valid,target.valid,origin != target else{return []}
         let overrides=Set(entities.map(\.id)),removed=Set(removedIDs)
         let occupied=Set(entities.filter{$0.physics.topDownSolid}.compactMap(\.surface))
         func walkable(_ point:SurfacePoint)->Bool {
-            guard generator.tile(at:point)?.passable==true,!occupied.contains(point) else{return false}
+            guard (terrainOverrides[RPGWorldTerrain.key(point)] ?? generator.tile(at:point))?.passable==true,!occupied.contains(point) else{return false}
             guard let entity=generator.baseEntity(at:point) else{return true}
             return removed.contains(entity.id) || overrides.contains(entity.id) || !entity.physics.topDownSolid
         }

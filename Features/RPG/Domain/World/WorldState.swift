@@ -150,8 +150,8 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 7
-    var schemaVersion = 7
+    static let currentSchema = 8
+    var schemaVersion = 8
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64
@@ -174,6 +174,9 @@ struct WorldState: Codable, Equatable, Sendable {
     var undo: [RPGEditTransaction] = []
     var redo: [RPGEditTransaction] = []
     var events: [RPGWorldEvent] = []
+    /// Schema 8: map-editor terrain edits, "x,z" -> terrain. Optional so
+    /// schema 7 files decode unchanged; nil means the generated terrain.
+    var terrainOverrides: [String: RPGTerrain]?
     init(seed: UInt64 = 20261102) { self.seed = seed }
     func validate() throws {
         guard schemaVersion == Self.currentSchema, generatorVersion == 1 else { throw RPGWorldError.unsupportedVersion }
@@ -185,10 +188,11 @@ struct WorldState: Codable, Equatable, Sendable {
         guard removedGeneratedIDs.count <= 65536, Set(removedGeneratedIDs).count == removedGeneratedIDs.count,
               damage.count <= 65536, damage.values.allSatisfy({ (0...10000).contains($0) }),
               inventory.count <= 128, inventory.values.allSatisfy({ (0...1000000).contains($0) }),
-              undo.count <= 32, redo.count <= 32, events.count <= 256, Set(events.map(\.id)).count == events.count,
+              undo.count <= RPGWorldEditing.undoLimit, redo.count <= RPGWorldEditing.undoLimit, events.count <= 256, Set(events.map(\.id)).count == events.count,
               events.allSatisfy({ !$0.id.isEmpty && $0.id.count<=512 && !$0.kind.isEmpty && $0.kind.count<=128 && $0.entityID.count<=128 && $0.definitionID.count<=128 }),
-              (undo + redo).allSatisfy({ !$0.id.isEmpty && !$0.changes.isEmpty && $0.changes.count <= 256 && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
-              !isCreativeCopy || parentWorldID != nil else { throw RPGWorldError.invalidState }
+              (undo + redo).allSatisfy({ !$0.id.isEmpty && (!$0.changes.isEmpty || !($0.terrainChanges ?? []).isEmpty) && $0.changes.count <= RPGWorldEditing.maximumBatch && ($0.terrainChanges ?? []).count <= RPGWorldEditing.maximumBatch && ($0.terrainChanges ?? []).allSatisfy({ $0.point.valid }) && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
+              !isCreativeCopy || parentWorldID != nil,
+              (terrainOverrides ?? [:]).count <= 65536, (terrainOverrides ?? [:]).keys.allSatisfy({ RPGWorldTerrain.point($0) != nil }) else { throw RPGWorldError.invalidState }
         guard combat.valid, player.facing.valid, player.weapon != .stoneArmor, player.armor != .moonBlade else { throw RPGWorldError.invalidState }
         try story.validate()
         try behaviors.validate(graphIDs:Set(([RPGOfficialStory.graph]+story.customGraphs).map(\.id)))

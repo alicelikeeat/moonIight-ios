@@ -598,9 +598,9 @@ editRejected("invalid content not bound") { try RPGMediaBindings.assign(cellBind
 var legacy = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(beforeEdit.withoutCellStyles())) as! [String: Any]
 legacy["schemaVersion"] = 6
 let legacyWorld = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: legacy))
-check(legacyWorld.schemaVersion == 7 && legacyWorld.mediaBindings.count == beforeEdit.withoutCellStyles().mediaBindings.count && legacyWorld.mediaBindings.allSatisfy { $0.fit == nil && $0.paused == nil }, "schema 6 media bindings migrate")
-var future = legacy; future["schemaVersion"] = 8
-do { _ = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: future)); preconditionFailure("future schema accepted") } catch { check(error as? RPGWorldError == .unsupportedVersion, "schema 8 rejected") }
+check(legacyWorld.schemaVersion == WorldState.currentSchema && legacyWorld.mediaBindings.count == beforeEdit.withoutCellStyles().mediaBindings.count && legacyWorld.mediaBindings.allSatisfy { $0.fit == nil && $0.paused == nil }, "schema 6 media bindings migrate")
+var future = legacy; future["schemaVersion"] = WorldState.currentSchema + 1
+do { _ = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: future)); preconditionFailure("future schema accepted") } catch { check(error as? RPGWorldError == .unsupportedVersion, "future schema rejected") }
 
 // Shared blocks show the same content in both projections.
 var dualCells = WorldState(seed: 42); dualCells.generated = true; dualCells.sideRegions = [cellGenerator.sideRegion]; dualCells.player.mode = .creative; dualCells.player.surface = cellGenerator.anchor(.temple)
@@ -705,5 +705,117 @@ let worldSideCells = Int(RPGCameraRules.worldSide / RPGCameraRules.cell)
 check(worldSideCells == WorldGeometry.width, "camera rules match the 256 map")
 check(RPGSaveState.failed("x").title == "保存失败" && RPGSaveState.saving.title == "保存中…", "save state titles")
 print("RPG map editor: \(checks) total checks passed")
+
+
+// P15: drafts, terrain, schema 8 and undo budget.
+var map = WorldState(seed: 42); map.generated = true; map.sideRegions = [ringGenerator.sideRegion]; map.player.mode = .creative
+let mapGen = ringGenerator
+let freeRow = Array((0..<256).lazy.flatMap { z in (0..<256).lazy.map { SurfacePoint(x: $0, z: z) } }.filter {
+    $0 != map.player.surface && mapGen.tile(at: $0)?.passable == true && !mapGen.protected($0) && !mapGen.sideRegion.contains($0) &&
+    RPGWorldEditing.entity(at: $0, world: map, generator: mapGen) == nil
+}.prefix(12))
+check(freeRow.count == 12, "free cells for drafts")
+var draft = RPGEditDraft(payload: .block("stone"))
+draft.add(Array(freeRow.prefix(6))); draft.add(Array(freeRow.prefix(3)))
+check(draft.count == 6, "draft cells counted once")
+let untouched = map
+let plan = RPGDraftCommit.plan(draft, world: map, generator: mapGen)
+check(plan.cells.count == 6 && plan.skippedTotal == 0 && map == untouched, "planning never changes the world")
+try RPGDraftCommit.commit(draft, world: &map, generator: mapGen)
+check(map.entities.count == 6 && map.undo.count == 1 && map.undo[0].changes.count == 6, "a whole stroke is one transaction")
+var again = RPGEditDraft(payload: .block("wood")); again.add(Array(freeRow.prefix(8)))
+let overlap = RPGDraftCommit.plan(again, world: map, generator: mapGen)
+check(overlap.cells.count == 2 && overlap.skipped[.occupied] == 6 && overlap.summary.contains("已有方块 6"), "occupied cells skipped and reported")
+try RPGWorldEditing.undo(world: &map)
+check(map.entities.isEmpty, "undo removes the whole stroke")
+try RPGWorldEditing.redo(world: &map)
+check(map.entities.count == 6, "redo restores it")
+// Stroke interpolation: a fast swipe fills the cells in between.
+var swipe = RPGEditDraft(payload: .erase); swipe.addStroke(from: SurfacePoint(x: 10, z: 10), to: SurfacePoint(x: 20, z: 10))
+check(swipe.count == 11, "fast stroke fills gaps")
+var box = RPGEditDraft(payload: .erase); box.setRectangle(SurfacePoint(x: 250, z: 250), SurfacePoint(x: 300, z: 300))
+check(box.count == 36, "rectangles clipped to the map")
+var huge = RPGEditDraft(payload: .erase); huge.setRectangle(SurfacePoint(x: 0, z: 0), SurfacePoint(x: 100, z: 100))
+check(huge.count == RPGWorldEditing.maximumBatch && huge.truncated, "draft capped at the batch limit")
+// Content brush: existing blocks keep their identity; empty cells get display cells.
+var paint = RPGEditDraft(payload: .content(cellBinding(.text, value: "月")))
+paint.add(Array(freeRow.prefix(8)))
+try RPGDraftCommit.commit(paint, world: &map, generator: mapGen)
+let painted = freeRow.prefix(8).compactMap { RPGWorldEditing.entity(at: $0, world: map, generator: mapGen) }
+check(painted.count == 8 && painted.filter { $0.definitionID == RPGWorldEditing.displayDefinition }.count == 2, "display cells only where empty")
+check(Set(painted.compactMap(\.mediaBindingID)).count == 1 && map.mediaBindings.contains { $0.style?.value == "月" }, "stroke shares one binding")
+check(BlockDefinition.find(RPGWorldEditing.displayDefinition)?.solid == false, "display cells are walk-through")
+try RPGMediaBindings.assign(cellBinding(.number, value: "8"), to: .entity(painted[0].id), world: &map, generator: mapGen)
+check(content(map, painted[0].id)?.style?.value == "8" && content(map, painted[1].id)?.style?.value == "月", "editing one painted cell leaves the others")
+try RPGWorldEditing.undo(world: &map); try RPGWorldEditing.undo(world: &map)
+check(map.entities.count == 6 && map.entities.allSatisfy { $0.mediaBindingID == nil }, "content stroke undone as one")
+// Terrain.
+let roadCell = freeRow[10]
+var terrainDraft = RPGEditDraft(payload: .terrain(.water)); terrainDraft.add([roadCell, map.player.surface])
+let terrainPlan = RPGDraftCommit.plan(terrainDraft, world: map, generator: mapGen)
+check(terrainPlan.cells == [roadCell] && terrainPlan.skippedTotal == 1, "player cell skipped")
+var onPlayer = map; onPlayer.player.surface = freeRow[9]
+var underPlayer = RPGEditDraft(payload: .terrain(.water)); underPlayer.add([freeRow[9]])
+check(RPGDraftCommit.plan(underPlayer, world: onPlayer, generator: mapGen).skipped[.player] == 1, "water never painted under the player")
+try RPGDraftCommit.commit(terrainDraft, world: &map, generator: mapGen)
+check(RPGWorldTerrain.tile(at: roadCell, world: map, generator: mapGen) == .water && !RPGWorldTerrain.passable(roadCell, world: map, generator: mapGen), "terrain override applies")
+editRejected("cannot build on painted water") { try RPGWorldEditing.place([.init(point: roadCell, definitionID: "stone")], world: &map, generator: mapGen) }
+let terrainSaved = try RPGWorldCodec.decode(RPGWorldCodec.encode(map))
+check(terrainSaved.terrainOverrides == map.terrainOverrides && terrainSaved.undo.last?.terrainChanges?.count == 1, "terrain and its history survive saving")
+try RPGWorldEditing.undo(world: &map)
+check(map.terrainOverrides == nil && RPGWorldTerrain.tile(at: roadCell, world: map, generator: mapGen) == mapGen.tile(at: roadCell), "terrain undo restores generated ground")
+try RPGWorldEditing.redo(world: &map)
+var back = RPGEditDraft(payload: .terrain(mapGen.tile(at: roadCell)!)); back.add([roadCell])
+try RPGDraftCommit.commit(back, world: &map, generator: mapGen)
+check(map.terrainOverrides == nil, "painting the original terrain clears the override")
+var same = RPGEditDraft(payload: .terrain(mapGen.tile(at: roadCell)!)); same.add([roadCell])
+check(RPGDraftCommit.plan(same, world: map, generator: mapGen).skipped[.unchanged] == 1, "no-op terrain cells skipped")
+// Protected cells and character build range.
+let protectedCell = (0..<256).lazy.flatMap { z in (0..<256).lazy.map { SurfacePoint(x: $0, z: z) } }.first { mapGen.protected($0) }!
+var guarded = RPGEditDraft(payload: .terrain(.water)); guarded.add([protectedCell])
+check(RPGDraftCommit.plan(guarded, world: map, generator: mapGen).skipped[.protected] == 1, "protected story cells never edited")
+var character = map; character.player.mode = .adventure
+var far = RPGEditDraft(payload: .erase); far.add(Array(freeRow.prefix(6)))
+if RPGDraftCommit.plan(far, world: character, generator: mapGen).outOfRange > 0 {
+    let before = character
+    editRejected("character build refuses out-of-range drafts") { try RPGDraftCommit.commit(far, world: &character, generator: mapGen) }
+    check(character == before, "refused draft leaves the world as it was")
+}
+// Erase: no drops, no story events, undoable.
+let inventoryBeforeErase = map.inventory, eventsBeforeErase = map.events
+var wipe = RPGEditDraft(payload: .erase); wipe.add(Array(freeRow.prefix(6)))
+try RPGDraftCommit.commit(wipe, world: &map, generator: mapGen)
+check(map.entities.isEmpty && map.inventory == inventoryBeforeErase && map.events == eventsBeforeErase, "editor erase gives no drops or events")
+try RPGWorldEditing.undo(world: &map)
+check(map.entities.count == 6, "erase undone")
+// Same-type replace keeps content in one transaction.
+try RPGMediaBindings.assign(cellBinding(.icon, value: "star.fill"), to: .entity(map.entities[0].id), world: &map, generator: mapGen)
+var swap = RPGEditDraft(payload: .replace(from: "stone", to: "wood")); swap.add(Array(freeRow.prefix(6)))
+let undoDepth = map.undo.count
+try RPGDraftCommit.commit(swap, world: &map, generator: mapGen)
+check(map.entities.count == 6 && map.entities.allSatisfy { $0.definitionID == "wood" } && map.undo.count == undoDepth + 1, "replace in one transaction")
+check(map.entities.contains { content(map, $0.id)?.style?.value == "star.fill" }, "replace keeps content")
+try RPGWorldEditing.undo(world: &map)
+check(map.entities.allSatisfy { $0.definitionID == "stone" }, "replace undone")
+// Paste preview.
+let copied = try RPGWorldEditing.copy(from: freeRow[0], to: freeRow[0], world: map, generator: mapGen)
+var pasteDraft = RPGEditDraft(payload: .paste(copied)); pasteDraft.add([freeRow[11]])
+let pastePlan = RPGDraftCommit.plan(pasteDraft, world: map, generator: mapGen)
+check(pastePlan.cells == [freeRow[11]], "paste footprint previewed")
+try RPGDraftCommit.commit(pasteDraft, world: &map, generator: mapGen)
+check(RPGWorldEditing.entity(at: freeRow[11], world: map, generator: mapGen)?.definitionID == "stone", "paste committed")
+// Undo history: depth and change budget.
+var history: [RPGEditTransaction] = (0..<70).map { RPGEditTransaction(id: "t\($0)", changes: [], inventoryBefore: [:], inventoryAfter: [:], title: "t", terrainChanges: [.init(point: SurfacePoint(x: 1, z: 1), before: nil, after: .sand)]) }
+check(RPGWorldEditing.trimmedHistory(history).count == RPGWorldEditing.undoLimit && RPGWorldEditing.trimmedHistory(history).last?.id == "t69", "undo depth 50, newest kept")
+history = (0..<20).map { index in RPGEditTransaction(id: "big\(index)", changes: [], inventoryBefore: [:], inventoryAfter: [:], title: "t", terrainChanges: (0..<1000).map { .init(point: SurfacePoint(x: $0 % 256, z: $0 / 256), before: nil, after: .sand) }) }
+check(RPGWorldEditing.trimmedHistory(history).count == 8, "change budget limits large histories")
+check(RPGWorldEditing.trimmedHistory([history[0]]).count == 1, "the latest transaction is always kept")
+// Schema 7 worlds open; old terrain-less transactions still replay.
+var schema7 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(untouched)) as! [String: Any]
+schema7["schemaVersion"] = 7; schema7["terrainOverrides"] = nil
+let reopened7 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema7))
+check(reopened7.schemaVersion == 8 && reopened7.terrainOverrides == nil, "schema 7 opens as 8")
+var badTerrain = map; badTerrain.terrainOverrides = ["999,1": .sand]; rejected(badTerrain, "terrain keys must be on the map")
+print("RPG drafts: \(checks) total checks passed")
 
 print("RPG complete: \(checks) total checks passed")

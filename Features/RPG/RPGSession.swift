@@ -257,10 +257,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
         if dx != 0 || dz != 0 { world.player.facing = .init(dx: dx, dz: dz) }
         let old = world.player.surface, next = SurfacePoint(x: old.x + dx, z: old.z + dz)
-        guard generator.tile(at: next)?.passable == true else { notice = "前方无法通行。"; return }
+        guard RPGWorldTerrain.passable(next, world: world, generator: generator) else { notice = "前方无法通行。"; return }
         if dx != 0 && dz != 0 {
-            guard generator.tile(at: .init(x: old.x + dx, z: old.z))?.passable == true,
-                  generator.tile(at: .init(x: old.x, z: old.z + dz))?.passable == true else { return }
+            guard RPGWorldTerrain.passable(.init(x: old.x + dx, z: old.z), world: world, generator: generator),
+                  RPGWorldTerrain.passable(.init(x: old.x, z: old.z + dz), world: world, generator: generator) else { return }
         }
         guard RPGWorldEditing.entity(at: next, world: world, generator: generator)?.physics.topDownSolid != true else { notice = "前方有方块。"; return }
         world.player.surface = next; world.revision += 1; scene.movePlayer(next); loadVisible()
@@ -279,7 +279,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         for radius in 1...8 { for dz in -radius...radius { for dx in -radius...radius where max(abs(dx),abs(dz)) == radius {
             let point = SurfacePoint(x: p.x+dx, z: p.z+dz)
             if world.player.mode == .adventure && abs(dx)+abs(dz)>4 { continue }
-            if point.valid && generator.tile(at: point)?.passable == true && (world.isCreativeCopy || !generator.protected(point)) && RPGWorldEditing.entity(at: point, world: world, generator: generator) == nil {
+            if point.valid && RPGWorldTerrain.passable(point, world: world, generator: generator) && (world.isCreativeCopy || !generator.protected(point)) && RPGWorldEditing.entity(at: point, world: world, generator: generator) == nil {
                 selected = point; scene.select(point); notice = "已选附近可建造空地。"; return
             }
         } } }
@@ -333,7 +333,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         let region = generator.sideRegion
         for offset in 3...15 {
             let point = SurfacePoint(x: generator.anchor(.temple).x + offset, z: region.origin.z)
-            if generator.tile(at: point)?.passable == true && (world.isCreativeCopy || !generator.protected(point)) && RPGWorldEditing.entity(at: point, world: world, generator: generator) == nil {
+            if RPGWorldTerrain.passable(point, world: world, generator: generator) && (world.isCreativeCopy || !generator.protected(point)) && RPGWorldEditing.entity(at: point, world: world, generator: generator) == nil {
                 selected = point; scene.select(point); notice = "已选共享映射行上的空格。"; return
             }
         }
@@ -666,10 +666,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard let previous = lastFrame else { lastFrame = time; return }
         guard time-previous >= 1.0/30 else { return }
         lastFrame = time
-        let obstacles = combatObstacles, generator = generator
+        let obstacles = combatObstacles, generator = generator, terrain = world.terrainOverrides ?? [:]
         let wasCombat = world.player.inCombat, oldHealth = world.player.health
         simulating = true
-        RPGCombatRules.advance(world:&world,generator:generator,delta:min(0.1,time-previous),passable:{ generator.tile(at:$0)?.passable == true && !obstacles.contains($0) })
+        RPGCombatRules.advance(world:&world,generator:generator,delta:min(0.1,time-previous),passable:{ RPGWorldTerrain.passable($0, overrides: terrain, generator: generator) && !obstacles.contains($0) })
         RPGStoryRuntime.recordEvents(world:&world)
         var fired=false
         if time-lastBehaviorCheck>=0.25,!world.behaviors.bindings.isEmpty {
@@ -692,9 +692,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func combatAction(_ action: RPGCombatAction) {
         guard ready, active, !working, !overlayVisible else { return }
-        let obstacles = combatObstacles, generator = generator
+        let obstacles = combatObstacles, generator = generator, terrain = world.terrainOverrides ?? [:]
         do {
-            try RPGCombatRules.action(action,world:&world,generator:generator,passable:{ generator.tile(at:$0)?.passable == true && !obstacles.contains($0) })
+            try RPGCombatRules.action(action,world:&world,generator:generator,passable:{ RPGWorldTerrain.passable($0, overrides: terrain, generator: generator) && !obstacles.contains($0) })
             if action == .roll {
                 if world.player.perspective == .side { sideScene.dash(world.player.facing.dx) }
                 else { scene.movePlayer(world.player.surface); loadVisible() }
@@ -780,10 +780,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { notice = "请在俯视且非战斗时导航。"; return }
         guiding?.cancel()
         let generator = generator, origin = world.player.surface, target = generator.anchor(anchor), epoch = generation
-        let entities=world.entities,removed=world.removedGeneratedIDs
+        let entities=world.entities,removed=world.removedGeneratedIDs,terrain=world.terrainOverrides ?? [:]
         guiding = Task { [weak self] in
             let planner=Task.detached(priority:.userInitiated){
-                RPGWorldRoute.path(from:origin,to:target,generator:generator,entities:entities,removedIDs:removed,cancelled:{Task.isCancelled})
+                RPGWorldRoute.path(from:origin,to:target,generator:generator,entities:entities,removedIDs:removed,terrainOverrides:terrain,cancelled:{Task.isCancelled})
             }
             let path=await withTaskCancellationHandler(operation:{await planner.value},onCancel:{planner.cancel()})
             guard let self, !Task.isCancelled, self.generation == epoch, self.world.player.surface == origin else { return }
