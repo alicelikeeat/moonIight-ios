@@ -551,7 +551,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// Chooses a tool. Callers handle an unconfirmed draft first.
     func selectTool(_ tool: RPGEditorTool) {
         editorTool = tool
-        if !tool.drawsRectangle && tool != .multi { scene.showArea(area) }
+        if !tool.drawsRectangle && tool != .multi { scene.showArea(area.map { ($0.a, $0.b) }) }
         applyEditorTouch()
     }
     private func applyEditorTouch() {
