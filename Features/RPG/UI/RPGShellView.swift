@@ -568,8 +568,43 @@ struct RPGShellView: View {
     }
 }
 
+/// Compact combat readout shared by portrait and landscape play layouts.
+/// The HUD observes the existing session; no combat or movement logic changes.
 private struct RPGCombatHUDView: View {
-    @ObservedObject var model:RPGCombatHUDModel
-    let session:RPGSession
-    var body:some View {Text(model.text).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-combat-stats")}
+    @ObservedObject var model: RPGCombatHUDModel
+    let session: RPGSession
+
+    private var health: Int { max(0, session.world.player.health) }
+    private var defeated: Bool { health == 0 }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: defeated ? "heart.slash.fill" : "heart.fill")
+                .foregroundStyle(defeated ? Color.secondary : Color.red)
+                .accessibilityHidden(true)
+
+            Text("\(health)")
+                .font(.subheadline.monospacedDigit().weight(.bold))
+                .accessibilityIdentifier("rpg-hud-health")
+                .accessibilityLabel(L10n.t("生命值", "Health"))
+                .accessibilityValue("\(health)")
+
+            Rectangle()
+                .fill(Color.primary.opacity(0.18))
+                .frame(width: 1, height: 18)
+                .accessibilityHidden(true)
+
+            Text(model.text)
+                .font(.caption.monospacedDigit())
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .accessibilityIdentifier("rpg-combat-stats")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .moonSingleGlass(radius: 14)
+        .frame(maxWidth: 420, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("rpg-combat-hud")
+    }
 }
