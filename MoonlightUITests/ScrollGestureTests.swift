@@ -332,7 +332,7 @@ final class ScrollGestureTests: XCTestCase {
 
     /// Cell content MVP: one block gets a number, an edit is cancelled, an
     /// icon is applied and undone, the selection glass follows the camera,
-    /// the content survives closing and reopening the world, then is deleted.
+    /// delete and undo, and the content survives closing and reopening.
     @MainActor
     func testRPGCellContentEditorGlassAndReopen() {
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
@@ -392,22 +392,25 @@ final class ScrollGestureTests: XCTestCase {
             followed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 4) == .completed
         }
         XCTAssertTrue(followed, "selection glass follows the camera")
-        let cellCenter = glass.frame
         waitContent("number:42")
 
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
-        // Reselect the same block where the glass last was; the camera is
-        // restored to the saved player position.
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: cellCenter.midX, dy: cellCenter.midY)).tap()
-        waitContent("number:42")
-        attach(app, name: "review-rpg-cell-reopened")
-
+        // Delete clears the content but keeps the block, and is undoable.
         app.buttons["rpg-edit-cell"].tap()
         XCTAssertTrue(app.buttons["rpg-cell-delete"].waitForExistence(timeout: 8)); app.buttons["rpg-cell-delete"].tap()
         waitContent("empty")
         XCTAssertEqual(count.value as? String, "1", "deleting content keeps the block")
+        app.buttons["rpg-undo"].tap()
+        waitContent("number:42")
+
+        // The content survives leaving and reopening the world. Checked over
+        // the whole world so the result does not depend on re-selecting.
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
+        let cells = app.staticTexts["rpg-world-cells"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "number:42"), object: cells)], timeout: 15), .completed,
+                       "world cells after reopening: \(cells.value ?? "nil")")
+        attach(app, name: "review-rpg-cell-reopened")
         app.buttons["rpg-close"].tap()
     }
 

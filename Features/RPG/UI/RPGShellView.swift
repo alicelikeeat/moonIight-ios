@@ -85,6 +85,8 @@ struct RPGShellView: View {
                         .accessibilityIdentifier("rpg-media-probe").accessibilityValue(mediaDiagnostics)
                     Text("格子内容").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("rpg-cell-content").accessibilityValue(session.selectedCellSummary)
+                    Text("世界格子").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("rpg-world-cells").accessibilityValue(session.cellContentSummaries)
                 }
                 #endif
             }

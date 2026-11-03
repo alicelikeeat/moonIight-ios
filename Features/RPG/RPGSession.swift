@@ -338,6 +338,14 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard let id = entity.mediaBindingID, let binding = world.mediaBindings.first(where: { $0.id == id }) else { return "empty" }
         return binding.kind.rawValue + ":" + (binding.style?.value.isEmpty == false ? binding.style!.value : binding.mediaID) + (binding.paused == true ? ":paused" : "")
     }
+    /// Every block's content in the world, sorted, e.g. "number:42,text:门".
+    /// Lets tests check saved content without depending on a selection.
+    var cellContentSummaries: String {
+        world.entities.compactMap { entity -> String? in
+            guard let id = entity.mediaBindingID, let binding = world.mediaBindings.first(where: { $0.id == id }) else { return nil }
+            return binding.kind.rawValue + ":" + (binding.style?.value.isEmpty == false ? binding.style!.value : binding.mediaID)
+        }.sorted().joined(separator: ",")
+    }
     /// Replaces the selected block's content with `draft` as one undoable edit.
     func applyCellContent(_ draft: MediaBinding, to entityID: String) {
         var value = draft
