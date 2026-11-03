@@ -64,6 +64,11 @@ jobs:
           mkdir -p build
           swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Media/RPGGIFLibrary.swift tests/gif/main.swift -o build/gif-tests
           build/gif-tests
+      - name: Test media import index
+        run: |
+          mkdir -p build
+          swiftc Shared/Persistence/MediaImportIndex.swift tests/import/main.swift -o build/import-tests
+          build/import-tests
       - name: Verify control inventory
         run: |
           python3 scripts/audit_controls.py
