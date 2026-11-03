@@ -28,6 +28,13 @@ struct Glass3DScreen: View {
                             .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false).accessibilityIdentifier("glass3d-notice")
                     }
                     if let boss = controller.bossBar { bossBar(boss) }
+                    if controller.world.blocks.isEmpty && controller.world.creatures.isEmpty {
+                        Button { generator = true } label: {
+                            Label(L10n.t("这是一片空白玻璃世界 · 点这里一键生成", "A blank glass world · tap to generate one"), systemImage: "wand.and.stars")
+                                .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+                        }
+                        .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-generate-blank")
+                    }
                     Spacer(minLength: 0)
                     if controller.mode == .play { playHUD } else { designBars(width: geometry.size.width) }
                 }
@@ -62,8 +69,18 @@ struct Glass3DScreen: View {
     private var topBar: some View {
         HStack(spacing: 6) {
             icon("chevron.backward", L10n.t("返回沙盒", "Back to Sandbox"), id: "glass3d-close") { controller.stop(); onClose() }
-            Picker(L10n.t("模式", "Mode"), selection: $controller.mode) { ForEach(Glass3DMode.allCases, id: \.self) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).frame(width: 150).accessibilityIdentifier("glass3d-mode")
+            HStack(spacing: 2) {
+                ForEach(Glass3DMode.allCases, id: \.self) { mode in
+                    Button { controller.mode = mode } label: {
+                        Text(mode.title).font(.caption.weight(.semibold)).padding(.horizontal, 12).frame(height: 30)
+                            .foregroundStyle(controller.mode == mode ? Color.white : Color.primary)
+                            .background(controller.mode == mode ? Color.accentColor : Color.clear, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain).accessibilityIdentifier("glass3d-mode-" + mode.rawValue)
+                }
+            }
+            .padding(2).background(Color.primary.opacity(0.08), in: Capsule())
             Spacer(minLength: 4)
             Text(L10n.t("可见 \(controller.stats.visibleCells) 格 · 方块 \(controller.stats.blocks) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS",
                         "\(controller.stats.visibleCells) cells · \(controller.stats.blocks) blocks · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS"))
@@ -71,8 +88,13 @@ struct Glass3DScreen: View {
             if controller.mode == .edit {
                 icon("arrow.uturn.backward", L10n.t("撤销", "Undo"), id: "glass3d-undo") { controller.undo() }.disabled(!controller.canUndo)
                 icon("arrow.uturn.forward", L10n.t("重做", "Redo"), id: "glass3d-redo") { controller.redo() }.disabled(!controller.canRedo)
-                icon("wand.and.stars", L10n.t("一键随机生成世界", "Generate World"), id: "glass3d-generate") { generator = true }
             }
+            // Available in both modes: preview first, one undo step.
+            Button { generator = true } label: {
+                Label(L10n.t("一键生成", "Generate"), systemImage: "wand.and.stars").font(.caption.weight(.semibold))
+                    .padding(.horizontal, 8).frame(height: 34).contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless).accessibilityIdentifier("glass3d-generate")
             icon("scope", L10n.t("恢复默认视角", "Reset View"), id: "glass3d-reset-camera") { controller.resetCamera() }
             Menu {
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }

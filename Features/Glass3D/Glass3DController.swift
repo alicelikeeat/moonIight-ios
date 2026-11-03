@@ -43,10 +43,14 @@ struct Glass3DPending {
     let renderer = Glass3DRenderer()
     weak var view: SCNView?
 
-    @Published private(set) var world: SpatialWorld
+    /// The world changes every frame (clock, positions); SwiftUI only
+    /// redraws on edits (`revision`), never 60 times a second.
+    private(set) var world: SpatialWorld
+    @Published private(set) var revision = 0
     @Published var mode = Glass3DMode.play { didSet { modeChanged() } }
     @Published var tool = Glass3DTool.select { didSet { pending = nil; trackPoints = [] } }
-    @Published var camera = SpatialCameraState()
+    /// Moves every frame while following the player, so not published.
+    var camera = SpatialCameraState()
     @Published var pending: Glass3DPending? { didSet { renderer.showPreview(pending?.preview ?? [], conflicts: pending?.conflicts ?? []) } }
     @Published var selection: [String] = [] { didSet { renderer.showSelection(selectedBlocks) } }
     @Published var notice = ""
@@ -71,6 +75,8 @@ struct Glass3DPending {
     @Published var trackClosed = false
 
     private var link: CADisplayLink?
+    private var activeAI = 0
+    private var staminaBuffer = 0.0
     private var lastTime: CFTimeInterval?
     private var stick = (x: 0.0, y: 0.0)
     private var jumpRequested = false
@@ -171,8 +177,10 @@ struct Glass3DPending {
         }
         invulnerable = max(0, invulnerable - dt)
         localCooldowns = (max(0, localCooldowns.strike - dt), max(0, localCooldowns.skill - dt), max(0, localCooldowns.roll - dt))
-        cooldowns = [localCooldowns.strike / 0.35, localCooldowns.skill / 3, localCooldowns.roll / 1.2].map { ($0 * 20).rounded() / 20 }
-        if alive, stamina < 100 { stamina = min(100, stamina + Int((dt * 14).rounded(.up))) }
+        let rings = [localCooldowns.strike / 0.35, localCooldowns.skill / 3, localCooldowns.roll / 1.2].map { ($0 * 10).rounded() / 10 }
+        if rings != cooldowns { cooldowns = rings }
+        staminaBuffer += dt * 14
+        if alive, stamina < 100, staminaBuffer >= 1 { stamina = min(100, stamina + Int(staminaBuffer)); staminaBuffer = 0 }
         // Creatures: near ones every frame, far ones twice a second.
         farTimer += dt
         let far = farTimer >= 0.5
@@ -192,9 +200,10 @@ struct Glass3DPending {
             if creature.kind.isBoss, creature.state == .chase || creature.state == .attack || creature.state == .alert, distance < 14 { boss = creature }
             dirtyRuntime = true
         }
-        bossBar = boss.map { ($0.kind.title, $0.health, $0.maxHealth, $0.phase) }
-        stats.activeAI = active
-        session.applySpatialVitals(health: health, stamina: stamina)
+        let bar = boss.map { ($0.kind.title, $0.health, $0.maxHealth, $0.phase) }
+        if bar?.0 != bossBar?.name || bar?.1 != bossBar?.health || bar?.3 != bossBar?.phase { bossBar = bar }
+        activeAI = active
+        if health != session.playerHealth || stamina != session.playerStamina { session.applySpatialVitals(health: health, stamina: stamina) }
     }
 
     private func handle(_ event: CreatureEvent, from creature: CreatureEntity) {
@@ -325,7 +334,7 @@ struct Glass3DPending {
         let bindings = Dictionary(session.world.mediaBindings.map { ($0.id, $0.mediaID) }, uniquingKeysWith: { first, _ in first })
         visibleMediaIDs = Set(visible.compactMap { block in block.media.flatMap { bindings[$0.bindingID] } })
         let average = frameTimes.isEmpty ? 0 : frameTimes.reduce(0, +) / Double(frameTimes.count)
-        stats = (SpatialCameraRules.visibleCells(camera, aspect: aspect), renderer.blockNodeCount, renderer.creatureNodeCount, stats.activeAI, renderer.media.decoderCount, average > 0 ? 1 / average : 0)
+        stats = (SpatialCameraRules.visibleCells(camera, aspect: aspect), renderer.blockNodeCount, renderer.creatureNodeCount, activeAI, renderer.media.decoderCount, average > 0 ? 1 / average : 0)
     }
 
     /// Media on moving blocks set to "plays while moving" pauses while the
@@ -370,19 +379,19 @@ struct Glass3DPending {
         next.edit(title, body)
         guard next != world else { return }
         guard session.commitSpatial(next, addBindings: bindings) else { notice = session.notice; return }
-        world = next
+        world = next; revision += 1
         notice = L10n.t("已提交：", "Committed: ") + title
         rebuildAll(); renderer.showSelection(selectedBlocks)
     }
     func undo() {
         var next = world
         guard let title = next.undoLast(), session.commitSpatial(next) else { return }
-        world = next; notice = L10n.t("已撤销：", "Undone: ") + title; selection = []; rebuildAll()
+        world = next; revision += 1; notice = L10n.t("已撤销：", "Undone: ") + title; selection = []; rebuildAll()
     }
     func redo() {
         var next = world
         guard let title = next.redoLast(), session.commitSpatial(next) else { return }
-        world = next; notice = L10n.t("已重做：", "Redone: ") + title; selection = []; rebuildAll()
+        world = next; revision += 1; notice = L10n.t("已重做：", "Redone: ") + title; selection = []; rebuildAll()
     }
     var canUndo: Bool { !world.history.undo.isEmpty }
     var canRedo: Bool { !world.history.redo.isEmpty }
