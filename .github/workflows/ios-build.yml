@@ -22,9 +22,14 @@ on:
         type: string
         default: ''
       publish_release:
-        description: 'With device_ipa: create tag vX.Y at this commit and publish the IPA as a pre-release'
+        description: 'With device_ipa: create tag vX.Y at this commit and publish the IPA as a release'
         type: boolean
         default: false
+      release_type:
+        description: 'With publish_release: pre-release (device test) or the latest official release'
+        type: choice
+        default: prerelease
+        options: [prerelease, latest]
 concurrency:
   group: ios-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.ui_suite || 'all' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -339,7 +344,7 @@ jobs:
           else
             gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           fi
-      - name: Publish manual device build as pre-release
+      - name: Publish manual device build as a release
         # The workflow token creates the tag and release, so this works where
         # pushing a tag is not possible. It never replaces an existing release.
         if: steps.version.outputs.release != 'true' && steps.version.outputs.publish == 'true'
@@ -347,6 +352,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           SIGNED_READY: ${{ steps.signing.outputs.ready }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
         shell: bash
         run: |
           TAG="v${APP_VERSION}"
@@ -370,7 +376,11 @@ jobs:
             printf -- '- 签名：%s。\n' "$SIGNING"
             printf -- '- SHA-256：`%s`\n' "$DIGEST"
           } >> "$NOTES_PATH"
-          gh release create "$TAG" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION} · 真机测试版" --notes-file "$NOTES_PATH" --prerelease
+          if [[ "$RELEASE_TYPE" == "latest" ]]; then
+            gh release create "$TAG" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH" --latest
+          else
+            gh release create "$TAG" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION} · 真机测试版" --notes-file "$NOTES_PATH" --prerelease
+          fi
       - name: Upload simulator app when signing is absent
         if: steps.version.outputs.release != 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
