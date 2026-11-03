@@ -1,4 +1,6 @@
 import Foundation
+// Domain titles are bilingual; these checks read the Chinese ones.
+UserDefaults.standard.set("zh", forKey: "moonlight.language")
 #if canImport(CoreGraphics)
 import CoreGraphics
 #endif
@@ -845,5 +847,29 @@ check(RPGEditorTool.allCases.filter(\.draws) == [.terrain, .erase, .brush] && RP
 let area = RPGArea(a: SurfacePoint(x: 5, z: 9), b: SurfacePoint(x: 2, z: 7))
 check(area.count == 12 && area.cells.count == 12 && area.origin == SurfacePoint(x: 2, z: 7), "area size and origin")
 print("RPG tools: \(checks) total checks passed")
+
+
+// P18: bilingual titles.
+UserDefaults.standard.set("en", forKey: L10n.key)
+check(RPGEditorTool.brush.title == "Brush" && RPGEditorMode.free.title == "Free Edit" && RPGTerrain.water.title == "Water" && RPGSaveState.saved.title == "Saved", "English titles")
+check(BlockDefinition.find("stone")?.name == "Stone" && RPGMediaKind.gif.title == "GIF" && RPGEditError.tooLarge.errorDescription == "At most 1024 cells at once.", "English names and errors")
+var englishPlan = RPGDraftPlan(); englishPlan.cells = [SurfacePoint(x: 1, z: 1)]; englishPlan.skipped[.occupied] = 2
+check(englishPlan.summary == "1 cells; skipped occupied 2", "English draft summary")
+UserDefaults.standard.set("zh", forKey: L10n.key)
+check(RPGEditorTool.brush.title == "画笔" && BlockDefinition.find("stone")?.name == "石块" && englishPlan.summary == "影响 1 格，跳过 已有方块 2", "back to Chinese")
+UserDefaults.standard.removeObject(forKey: L10n.key)
+check(L10n.language == .zh && !L10n.isEnglish, "Chinese by default")
+UserDefaults.standard.set("zh", forKey: L10n.key)
+print("RPG languages: \(checks) total checks passed")
+
+
+// P19: chunks cover the screen.
+let wideScreen = RPGCameraRules.chunks(center: CGPoint(x: 20 * 24, y: 5 * 24), viewSize: CGSize(width: 874, height: 402), zoom: 1)
+check(Set(wideScreen) == Set([ChunkCoordinate(x: 0, z: 0), ChunkCoordinate(x: 1, z: 0)]) && wideScreen.first == ChunkCoordinate(x: 0, z: 0), "landscape view near the map edge loads both chunks it shows")
+let zoomedOut = RPGCameraRules.chunks(center: CGPoint(x: 128 * 24, y: 128 * 24), viewSize: CGSize(width: 874, height: 402), zoom: 2.2)
+let coveredCells = (zoomedOut.map(\.x).max()! - zoomedOut.map(\.x).min()! + 1) * 32
+check(CGFloat(coveredCells) * 24 >= 874 * 2.2, "zoomed out view fully covered (\(zoomedOut.count) chunks)")
+check(RPGCameraRules.chunks(center: .zero, viewSize: .zero, zoom: 1).isEmpty, "empty view loads nothing")
+print("RPG coverage: \(checks) total checks passed")
 
 print("RPG complete: \(checks) total checks passed")

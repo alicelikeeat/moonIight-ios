@@ -6,10 +6,12 @@ import Combine
 struct MoonlightApp: App {
     @UIApplicationDelegateAdaptor(MoonlightOrientationDelegate.self) private var orientationDelegate
     @StateObject private var model = AppModel()
+    /// Changing the language rebuilds the interface so every string updates.
+    @AppStorage(L10n.key) private var language = AppLanguage.zh.rawValue
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model).environmentObject(BackgroundStore.shared)
+            RootView().id(language).environmentObject(model).environmentObject(BackgroundStore.shared)
         }
     }
 }
@@ -516,12 +518,12 @@ enum AppTab: String, CaseIterable, Identifiable {
     var barTab: AppTab { self == .discover ? .home : self }
     var title: String {
         switch self {
-        case .sandbox: "沙盒"
-        case .home: "首页"
-        case .discover: "发现"
-        case .camera: "拍摄"
-        case .moments: "朋友圈"
-        case .me: "我"
+        case .sandbox: L10n.t("沙盒", "Sandbox")
+        case .home: L10n.t("首页", "Home")
+        case .discover: L10n.t("发现", "Discover")
+        case .camera: L10n.t("拍摄", "Camera")
+        case .moments: L10n.t("朋友圈", "Moments")
+        case .me: L10n.t("我", "Me")
         }
     }
     var symbol: String {

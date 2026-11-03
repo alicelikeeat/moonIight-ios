@@ -13,6 +13,7 @@ struct WorldControlCenterView: View {
     let onTools: (RPGEntryPage?) -> Void
     let onAppSettings: () -> Void
     @AppStorage("moonlight.world.edgeSwipe") private var edgeSwipe = true
+    @AppStorage(L10n.key) private var language = AppLanguage.zh.rawValue
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @State private var worlds: [RPGRecoveryChoice] = []
     @State private var confirmCreate = false
@@ -52,20 +53,20 @@ struct WorldControlCenterView: View {
             withAnimation(reducedMotion ? nil : .easeOut(duration: 0.3)) { shown = true }
             worlds = await session.listWorlds()
         }
-        .confirmationDialog("创建新世界？", isPresented: $confirmCreate, titleVisibility: .visible) {
-            Button("保存当前世界并创建") { onClose(); session.createWorld() }.accessibilityIdentifier("world-create-confirm")
-            Button("取消", role: .cancel) {}
-        } message: { Text("当前世界会先保存，并保留在世界列表中。") }
+        .confirmationDialog(L10n.t("创建新世界？", "Create a new world?"), isPresented: $confirmCreate, titleVisibility: .visible) {
+            Button(L10n.t("保存当前世界并创建", "Save Current World and Create")) { onClose(); session.createWorld() }.accessibilityIdentifier("world-create-confirm")
+            Button(L10n.t("取消", "Cancel"), role: .cancel) {}
+        } message: { Text(L10n.t("当前世界会先保存，并保留在世界列表中。", "The current world is saved first and kept in the world list.")) }
     }
 
     private var topBar: some View {
         HStack {
-            Label("世界控制中心", systemImage: "square.grid.2x2").font(.headline)
+            Label(L10n.t("世界控制中心", "World Control Center"), systemImage: "square.grid.2x2").font(.headline)
             Spacer()
-            Button("继续世界") { onClose() }.accessibilityIdentifier("world-continue")
+            Button(L10n.t("继续世界", "Resume World")) { onClose() }.accessibilityIdentifier("world-continue")
                 .padding(.horizontal, 14).frame(minHeight: 40).worldGlass(radius: 20)
             Button { onClose() } label: { Image(systemName: "xmark").frame(width: 40, height: 40) }
-                .accessibilityLabel("关闭").accessibilityIdentifier("world-control-close").worldGlass(radius: 20)
+                .accessibilityLabel(L10n.t("关闭", "Close")).accessibilityIdentifier("world-control-close").worldGlass(radius: 20)
         }
         .buttonStyle(.plain)
         .opacity(shown ? 1 : 0)
@@ -84,45 +85,49 @@ struct WorldControlCenterView: View {
 
     private var worldColumn: some View {
         Group {
-            sectionTitle("世界")
+            sectionTitle(L10n.t("世界", "World"))
             Text(session.worldTitle).font(.headline).accessibilityIdentifier("world-title")
             Text("\(session.modeTitle) · \(session.perspectiveTitle)").font(.caption)
             Text(session.questSummary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-            Text("存档修订 \(session.world.revision) · 自建 \(session.world.entities.count)").font(.caption2).foregroundStyle(.secondary)
+            Text(L10n.t("存档修订 \(session.world.revision) · 自建 \(session.world.entities.count)", "Revision \(session.world.revision) · \(session.world.entities.count) built")).font(.caption2).foregroundStyle(.secondary)
             Divider()
-            sectionTitle("切换世界")
+            sectionTitle(L10n.t("切换世界", "Switch World"))
             let others = worlds.filter { $0.id != session.world.id }
-            if others.isEmpty { Text("暂无其他世界").font(.caption).foregroundStyle(.secondary) }
+            if others.isEmpty { Text(L10n.t("暂无其他世界", "No other worlds yet")).font(.caption).foregroundStyle(.secondary) }
             ForEach(others.prefix(4)) { choice in
-                row((choice.creative ? "创作副本" : "原世界") + " · Seed \(choice.seed)", symbol: "globe") {
+                row((choice.creative ? L10n.t("创作副本", "Creative Copy") : L10n.t("原世界", "Original World")) + " · Seed \(choice.seed)", symbol: "globe") {
                     onClose(); session.switchWorld(choice.id)
                 }.accessibilityIdentifier("world-switch-" + choice.id)
             }
-            row("创建世界", symbol: "plus") { confirmCreate = true }.accessibilityIdentifier("world-create")
+            row(L10n.t("创建世界", "Create World"), symbol: "plus") { confirmCreate = true }.accessibilityIdentifier("world-create")
         }
     }
 
     private var navigationColumn: some View {
         Group {
             sectionTitle("App")
-            row("首页 · 推荐", symbol: AppTab.home.symbol) { onNavigate(.home) }.accessibilityIdentifier("world-nav-home")
-            row("首页 · 发现", symbol: AppTab.discover.symbol) { onNavigate(.discover) }.accessibilityIdentifier("world-nav-discover")
-            row("拍摄", symbol: AppTab.camera.symbol) { onNavigate(.camera) }.accessibilityIdentifier("world-nav-camera")
-            row("朋友圈", symbol: AppTab.moments.symbol) { onNavigate(.moments) }.accessibilityIdentifier("world-nav-moments")
-            row("我", symbol: AppTab.me.symbol) { onNavigate(.me) }.accessibilityIdentifier("world-nav-me")
+            row(L10n.t("首页 · 推荐", "Home · For You"), symbol: AppTab.home.symbol) { onNavigate(.home) }.accessibilityIdentifier("world-nav-home")
+            row(L10n.t("首页 · 发现", "Home · Discover"), symbol: AppTab.discover.symbol) { onNavigate(.discover) }.accessibilityIdentifier("world-nav-discover")
+            row(L10n.t("拍摄", "Camera"), symbol: AppTab.camera.symbol) { onNavigate(.camera) }.accessibilityIdentifier("world-nav-camera")
+            row(L10n.t("朋友圈", "Moments"), symbol: AppTab.moments.symbol) { onNavigate(.moments) }.accessibilityIdentifier("world-nav-moments")
+            row(L10n.t("我", "Me"), symbol: AppTab.me.symbol) { onNavigate(.me) }.accessibilityIdentifier("world-nav-me")
         }
     }
 
     private var functionColumn: some View {
         Group {
-            sectionTitle("世界功能")
-            row("地图编辑", symbol: "square.grid.3x3.square") { onMapEditor() }.accessibilityIdentifier("world-fn-map-editor")
-            row("建造", symbol: "hammer") { onTools(nil) }.accessibilityIdentifier("world-fn-build")
-            row("剧情", symbol: "book") { onTools(.story) }.accessibilityIdentifier("world-fn-story")
-            row("媒体", symbol: "photo.on.rectangle") { onTools(nil) }.accessibilityIdentifier("world-fn-media")
-            row("世界设置", symbol: "slider.horizontal.3") { onTools(nil) }.accessibilityIdentifier("world-fn-settings")
-            row("应用设置", symbol: "gearshape") { onAppSettings() }.accessibilityIdentifier("world-fn-app-settings")
-            Toggle("左边缘滑动打开", isOn: $edgeSwipe).font(.caption).accessibilityIdentifier("world-edge-swipe")
+            sectionTitle(L10n.t("世界功能", "World Functions"))
+            row(L10n.t("地图编辑", "Map Editor"), symbol: "square.grid.3x3.square") { onMapEditor() }.accessibilityIdentifier("world-fn-map-editor")
+            row(L10n.t("建造", "Build"), symbol: "hammer") { onTools(nil) }.accessibilityIdentifier("world-fn-build")
+            row(L10n.t("剧情", "Story"), symbol: "book") { onTools(.story) }.accessibilityIdentifier("world-fn-story")
+            row(L10n.t("媒体", "Media"), symbol: "photo.on.rectangle") { onTools(nil) }.accessibilityIdentifier("world-fn-media")
+            row(L10n.t("世界设置", "World Settings"), symbol: "slider.horizontal.3") { onTools(nil) }.accessibilityIdentifier("world-fn-settings")
+            row(L10n.t("应用设置", "App Settings"), symbol: "gearshape") { onAppSettings() }.accessibilityIdentifier("world-fn-app-settings")
+            Toggle(L10n.t("左边缘滑动打开", "Open with Left-Edge Swipe"), isOn: $edgeSwipe).font(.caption).accessibilityIdentifier("world-edge-swipe")
+            Picker(selection: $language) {
+                ForEach(AppLanguage.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+            } label: { Label(L10n.t("语言", "Language"), systemImage: "globe") }
+                .pickerStyle(.menu).font(.caption).accessibilityIdentifier("world-language")
         }
     }
 

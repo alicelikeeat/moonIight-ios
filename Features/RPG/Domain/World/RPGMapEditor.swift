@@ -9,7 +9,7 @@ import CoreGraphics
 /// resources spent). Gameplay simulation is paused in both.
 enum RPGEditorMode: String, CaseIterable, Sendable {
     case free, character
-    var title: String { self == .free ? "自由编辑" : "角色建造" }
+    var title: String { self == .free ? L10n.t("自由编辑", "Free Edit") : L10n.t("角色建造", "Character Build") }
     var gameMode: RPGGameMode { self == .free ? .creative : .adventure }
 }
 
@@ -18,10 +18,10 @@ enum RPGSaveState: Equatable, Sendable {
     case saved, saving, unsaved, failed(String)
     var title: String {
         switch self {
-        case .saved: "已保存"
-        case .saving: "保存中…"
-        case .unsaved: "未保存"
-        case .failed: "保存失败"
+        case .saved: L10n.t("已保存", "Saved")
+        case .saving: L10n.t("保存中…", "Saving…")
+        case .unsaved: L10n.t("未保存", "Unsaved")
+        case .failed: L10n.t("保存失败", "Save failed")
         }
     }
 }
@@ -53,6 +53,21 @@ enum RPGCameraRules {
     /// Chunk ring loaded around the focus: zoomed out shows more of the map.
     static func chunkRadius(zoom: CGFloat) -> Int { zoom > 1.3 ? 2 : 1 }
 
+    /// Chunks covering the visible map plus a margin, nearest first, so a
+    /// wide landscape screen never shows unloaded ground at its edges.
+    static func chunks(center: CGPoint, viewSize: CGSize, zoom: CGFloat, margin: CGFloat = cell * 8) -> [ChunkCoordinate] {
+        guard viewSize.width > 0, viewSize.height > 0, center.x.isFinite, center.y.isFinite else { return [] }
+        let halfWidth = viewSize.width * clampZoom(zoom) / 2 + margin, halfHeight = viewSize.height * clampZoom(zoom) / 2 + margin
+        let chunkSide = cell * CGFloat(WorldGeometry.chunkSide)
+        func index(_ value: CGFloat) -> Int { min(WorldGeometry.chunkColumns - 1, max(0, Int((value / chunkSide).rounded(.down)))) }
+        let xs = index(center.x - halfWidth)...index(center.x + halfWidth), zs = index(center.y - halfHeight)...index(center.y + halfHeight)
+        let middle = (x: center.x / chunkSide, z: center.y / chunkSide)
+        return zs.flatMap { z in xs.map { ChunkCoordinate(x: $0, z: z) } }.sorted { a, b in
+            let da = hypot(CGFloat(a.x) + 0.5 - middle.x, CGFloat(a.z) + 0.5 - middle.z), db = hypot(CGFloat(b.x) + 0.5 - middle.x, CGFloat(b.z) + 0.5 - middle.z)
+            return da == db ? a.id < b.id : da < db
+        }
+    }
+
     /// A one-finger drag pans the map only after it has moved this far, so
     /// a small wobble during a tap still selects the cell.
     static let panSlop: CGFloat = 8
@@ -69,8 +84,8 @@ enum RPGEditorTool: String, CaseIterable, Sendable {
     case select, image, video, gif, text, number, icon, terrain, erase, multi, brush, fill
     var title: String {
         switch self {
-        case .select: "选择"; case .image: "图片"; case .video: "视频"; case .gif: "GIF"; case .text: "文字"; case .number: "数字"
-        case .icon: "图标"; case .terrain: "地形"; case .erase: "擦除"; case .multi: "多选"; case .brush: "画笔"; case .fill: "填充"
+        case .select: L10n.t("选择", "Select"); case .image: L10n.t("图片", "Image"); case .video: L10n.t("视频", "Video"); case .gif: "GIF"; case .text: L10n.t("文字", "Text"); case .number: L10n.t("数字", "Number")
+        case .icon: L10n.t("图标", "Icon"); case .terrain: L10n.t("地形", "Terrain"); case .erase: L10n.t("擦除", "Erase"); case .multi: L10n.t("多选", "Multi"); case .brush: L10n.t("画笔", "Brush"); case .fill: L10n.t("填充", "Fill")
         }
     }
     var symbol: String {

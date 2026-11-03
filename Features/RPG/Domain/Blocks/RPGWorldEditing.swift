@@ -19,6 +19,15 @@ struct BlockDefinition: Codable, Equatable, Sendable, Identifiable {
         .init(id: RPGWorldEditing.displayDefinition, title: "展示格", durability: 1, cost: nil, drop: nil, solid: false),
     ]
     static func find(_ id: String) -> Self? { all.first { $0.id == id } }
+    /// Name in the current app language.
+    var name: String {
+        switch id {
+        case "wood": L10n.t("木块", "Wood"); case "stone": L10n.t("石块", "Stone"); case "lamp": L10n.t("月灯", "Moon lamp")
+        case "door": L10n.t("门", "Door"); case "platform": L10n.t("平台", "Platform"); case "trigger": L10n.t("触发方块", "Trigger block")
+        case RPGWorldEditing.displayDefinition: L10n.t("展示格", "Display cell")
+        default: title
+        }
+    }
 }
 struct RPGEntityChange: Codable, Equatable, Sendable {
     let id: String
@@ -82,16 +91,16 @@ enum RPGEditError: Error, LocalizedError, Equatable {
     case outside, occupied, protectedArea, resources, tooFar, unknownDefinition, tooLarge, stale, nothingToUndo, nothingToRedo
     var errorDescription: String? {
         switch self {
-        case .outside: "位置越界或地形无法建造。"
-        case .occupied: "位置已被占用，或会挡住玩家。"
-        case .protectedArea: "官方剧情保护区不可修改；可创建独立创作副本。"
-        case .resources: "资源不足。"
-        case .tooFar: "角色建造只能修改角色身边 4 格内的格子；请切换到自由编辑或重新选择。"
-        case .unknownDefinition: "未知方块定义。"
-        case .tooLarge: "一次最多操作 1024 格。"
-        case .stale: "相关世界状态已变化，本次操作未提交。"
-        case .nothingToUndo: "没有可撤销的操作。"
-        case .nothingToRedo: "没有可重做的操作。"
+        case .outside: L10n.t("位置越界或地形无法建造。", "Out of bounds, or the terrain cannot be built on.")
+        case .occupied: L10n.t("位置已被占用，或会挡住玩家。", "The cell is occupied or would block the player.")
+        case .protectedArea: L10n.t("官方剧情保护区不可修改；可创建独立创作副本。", "Protected story area; make a creative copy to change it.")
+        case .resources: L10n.t("资源不足。", "Not enough resources.")
+        case .tooFar: L10n.t("角色建造只能修改角色身边 4 格内的格子；请切换到自由编辑或重新选择。", "Character build only edits cells within 4 of the player; switch to Free Edit or reselect.")
+        case .unknownDefinition: L10n.t("未知方块定义。", "Unknown block.")
+        case .tooLarge: L10n.t("一次最多操作 1024 格。", "At most 1024 cells at once.")
+        case .stale: L10n.t("相关世界状态已变化，本次操作未提交。", "The world changed; this edit was not applied.")
+        case .nothingToUndo: L10n.t("没有可撤销的操作。", "Nothing to undo.")
+        case .nothingToRedo: L10n.t("没有可重做的操作。", "Nothing to redo.")
         }
     }
 }

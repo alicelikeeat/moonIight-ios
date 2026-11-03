@@ -15,21 +15,18 @@ struct RPGSelectionGlass: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: max(4, rect.width * 0.22), style: .continuous)
         let size = CGSize(width: rect.width + 10, height: rect.height + 10)
-        Group {
-            if #available(iOS 26.0, *) {
-                // Clear glass keeps the cell's picture, GIF or video visible
-                // through the lens.
-                Color.clear.frame(width: size.width, height: size.height)
-                    .glassEffect(.clear, in: shape)
-            } else {
-                shape.fill(.ultraThinMaterial).opacity(0.35)
-                    .overlay(shape.strokeBorder(Color.yellow, lineWidth: 2))
-                    .frame(width: size.width, height: size.height)
-            }
+        // A ring, not a filled lens: a filled glass square rendered as a
+        // white block over the SpriteKit map and hid the cell's content.
+        ZStack {
+            shape.strokeBorder(Color.black.opacity(0.35), lineWidth: 4)
+            shape.strokeBorder(Color.white, lineWidth: 2.5)
+            shape.inset(by: 2.5).strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 1)
         }
+        .frame(width: size.width, height: size.height)
+        .shadow(color: Color.accentColor.opacity(0.6), radius: 4)
         // Accessibility first so its frame is the glass, not the overlay.
         .accessibilityElement()
-        .accessibilityLabel("选中格")
+        .accessibilityLabel(L10n.t("选中格", "Selected Cell"))
         .accessibilityIdentifier("rpg-selection-glass")
         .accessibilityValue(Self.usesNativeGlass ? "native" : "fallback")
         .position(x: rect.midX, y: rect.midY)

@@ -7,8 +7,15 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @AppStorage(L10n.key) private var language = AppLanguage.zh.rawValue
     var body: some View {
             Form {
+                Section {
+                    Picker(selection: $language) {
+                        ForEach(AppLanguage.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+                    } label: { Label("语言 / Language", systemImage: "globe") }
+                        .accessibilityIdentifier("settings-language")
+                } footer: { Text(L10n.t("目前沙盒、地图编辑器和世界控制中心已支持英文，其他页面会陆续支持。", "The sandbox, map editor and world control center are in English now; other pages will follow.")) }
                 Section("外观与媒体") {
                     NavigationLink { ContextMenuSettingsView() } label: { Label("长按菜单与底栏", systemImage: "hand.point.up.left") }
                         .accessibilityIdentifier("context-menu-settings-entry")

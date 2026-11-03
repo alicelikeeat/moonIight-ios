@@ -17,19 +17,19 @@ enum RPGDraftPayload: Equatable, Sendable {
 
     var title: String {
         switch self {
-        case .block(let id): "放置" + (BlockDefinition.find(id)?.title ?? id)
-        case .content(let binding): "内容 · " + binding.kind.title
-        case .terrain(let terrain): "地形 · " + terrain.title
-        case .erase: "擦除"
-        case .paste: "粘贴"
-        case .replace(let from, let to): "替换 " + (BlockDefinition.find(from)?.title ?? from) + " → " + (BlockDefinition.find(to)?.title ?? to)
+        case .block(let id): L10n.t("放置", "Place ") + (BlockDefinition.find(id)?.name ?? id)
+        case .content(let binding): L10n.t("内容 · ", "Content · ") + binding.kind.title
+        case .terrain(let terrain): L10n.t("地形 · ", "Terrain · ") + terrain.title
+        case .erase: L10n.t("擦除", "Erase")
+        case .paste: L10n.t("粘贴", "Paste")
+        case .replace(let from, let to): L10n.t("替换 ", "Replace ") + (BlockDefinition.find(from)?.name ?? from) + " → " + (BlockDefinition.find(to)?.name ?? to)
         }
     }
 }
 
 extension RPGTerrain {
     var title: String {
-        switch self { case .grass: "草地"; case .sand: "沙地"; case .water: "水面"; case .cliff: "崖壁"; case .road: "道路" }
+        switch self { case .grass: L10n.t("草地", "Grass"); case .sand: L10n.t("沙地", "Sand"); case .water: L10n.t("水面", "Water"); case .cliff: L10n.t("崖壁", "Cliff"); case .road: L10n.t("道路", "Road") }
     }
 }
 
@@ -77,12 +77,12 @@ enum RPGDraftSkip: String, CaseIterable, Sendable {
     case protected, blocked, occupied, empty, player, unchanged
     var title: String {
         switch self {
-        case .protected: "保护区"
-        case .blocked: "地形不可建造"
-        case .occupied: "已有方块"
-        case .empty: "没有方块"
-        case .player: "角色所在格"
-        case .unchanged: "无变化"
+        case .protected: L10n.t("保护区", "protected")
+        case .blocked: L10n.t("地形不可建造", "unbuildable terrain")
+        case .occupied: L10n.t("已有方块", "occupied")
+        case .empty: L10n.t("没有方块", "no block")
+        case .player: L10n.t("角色所在格", "player cell")
+        case .unchanged: L10n.t("无变化", "unchanged")
         }
     }
 }
@@ -96,10 +96,10 @@ struct RPGDraftPlan: Equatable, Sendable {
     var outOfRange = 0
     var skippedTotal: Int { skipped.values.reduce(0, +) }
     var summary: String {
-        var text = "影响 \(cells.count) 格"
+        var text = L10n.t("影响 \(cells.count) 格", "\(cells.count) cells")
         let reasons = RPGDraftSkip.allCases.compactMap { reason in skipped[reason].map { "\(reason.title) \($0)" } }
-        if !reasons.isEmpty { text += "，跳过 " + reasons.joined(separator: "、") }
-        if outOfRange > 0 { text += "，\(outOfRange) 格超出角色建造范围" }
+        if !reasons.isEmpty { text += L10n.t("，跳过 ", "; skipped ") + reasons.joined(separator: L10n.t("、", ", ")) }
+        if outOfRange > 0 { text += L10n.t("，\(outOfRange) 格超出角色建造范围", "; \(outOfRange) out of character range") }
         return text
     }
 }

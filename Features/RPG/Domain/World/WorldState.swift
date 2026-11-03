@@ -68,7 +68,7 @@ enum RPGMediaKind: String, Codable, CaseIterable, Sendable {
     var usesLibraryFile: Bool { self == .image || self == .video || self == .gif }
     var title: String {
         switch self {
-        case .image: "图片"; case .video: "视频"; case .gif: "GIF"; case .icon: "图标"; case .number: "数字"; case .text: "文字"
+        case .image: L10n.t("图片", "Image"); case .video: L10n.t("视频", "Video"); case .gif: "GIF"; case .icon: L10n.t("图标", "Icon"); case .number: L10n.t("数字", "Number"); case .text: L10n.t("文字", "Text")
         }
     }
 }

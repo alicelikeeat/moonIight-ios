@@ -22,7 +22,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var lastHUD: TimeInterval = 0
     private var combatObstacles: Set<SurfacePoint> = []
     let combatHUD = RPGCombatHUDModel()
-    @Published private(set) var notice = "正在读取世界…"
+    @Published private(set) var notice = L10n.t("正在读取世界…", "Loading world…")
     @Published private(set) var active = false
     @Published private(set) var ready = false
     @Published private(set) var working = false { didSet { applyScenePause() } }
@@ -112,6 +112,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var generation = UUID()
     private var displayedChunk: ChunkCoordinate?
     private var displayedRadius = 1
+    private var displayedKey = ""
     private var terrainGenerator = RPGWorldGenerator(seed: 20261102)
     private let storage: RPGWorldDiskStore
     private var clipboard: RPGClipboard?
@@ -144,7 +145,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             do {
                 let value=try await storage.load(id:id);try await storage.save(value)
                 guard let self,!Task.isCancelled,self.generation==epoch else{return}
-                self.boot=nil;self.assign(value);self.notice="已恢复选中的保留世界。"
+                self.boot=nil;self.assign(value);self.notice=L10n.t("已恢复选中的保留世界。", "Restored the selected saved world.")
             }catch{guard let self,self.generation==epoch else{return};self.boot=nil;self.working=false;self.notice=error.localizedDescription}
         }
     }
@@ -191,7 +192,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 let recovered = await storage.recoveredFromBackup
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
                 self.boot = nil; self.assign(value)
-                self.notice = recovered ? "已从保留的有效存档恢复。" : "世界已就绪。"
+                self.notice = recovered ? L10n.t("已从保留的有效存档恢复。", "Restored from the last valid save.") : L10n.t("世界已就绪。", "World ready.")
             } catch {
                 guard let self, self.generation == epoch else { return }
                 self.boot = nil; self.notice = error.localizedDescription; self.ready = false; self.loadError = error.localizedDescription
@@ -210,20 +211,20 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.shutdown(); sideScene.shutdown()
         world = value; silenceMedia(); terrainGenerator = .init(seed: world.seed)
         if !world.generated { world.player.surface = generator.anchor(.spawn); world.sideRegions = [generator.sideRegion]; world.generated = true }
-        cache = RPGChunkCache(seed: world.seed); chunks = []; displayedChunk = nil; selected = nil; rangeStart = nil
+        cache = RPGChunkCache(seed: world.seed); chunks = []; displayedChunk = nil; displayedKey = ""; selected = nil; rangeStart = nil
         ready = true; working = false
         bindScenes(); applyScenePause(); scene.tool = tool
         loadVisible(force: true)
     }
     /// Name shown for the current world. Saves have no name field, so it is
     /// derived from what identifies the world.
-    var worldTitle: String { (world.isCreativeCopy ? "创作副本" : "原世界") + " · Seed \(world.seed)" }
-    var modeTitle: String { world.player.mode == .creative ? "创造模式" : "冒险模式" }
-    var perspectiveTitle: String { world.player.perspective == .side ? "侧视切片" : "俯视地表" }
+    var worldTitle: String { (world.isCreativeCopy ? L10n.t("创作副本", "Creative Copy") : L10n.t("原世界", "Original World")) + " · Seed \(world.seed)" }
+    var modeTitle: String { world.player.mode == .creative ? L10n.t("创造模式", "Creative") : L10n.t("冒险模式", "Adventure") }
+    var perspectiveTitle: String { world.player.perspective == .side ? L10n.t("侧视切片", "Side Slice") : L10n.t("俯视地表", "Top-Down") }
     /// The active story and the step the player is on.
     var questSummary: String {
         let graph = world.story.activeGraph, progress = world.story.activeProgress
-        if progress?.ended == true { return graph.title + " · 已完成" }
+        if progress?.ended == true { return graph.title + L10n.t(" · 已完成", " · Done") }
         guard let node = graph.nodes.first(where: { $0.id == (progress?.current ?? graph.start) }) else { return graph.title }
         let text = node.text.isEmpty ? node.kind.rawValue : node.text
         return graph.title + " · " + (text.count > 28 ? String(text.prefix(28)) + "…" : text)
@@ -249,7 +250,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 if let current { try await storage.save(current) }
                 let value = try await next(storage); try await storage.save(value)
                 guard let self, !Task.isCancelled, self.generation == epoch else { return }
-                self.boot = nil; self.assign(value); self.notice = "已打开：" + self.worldTitle
+                self.boot = nil; self.assign(value); self.notice = L10n.t("已打开：", "Opened: ") + self.worldTitle
             } catch {
                 guard let self, self.generation == epoch else { return }
                 self.boot = nil; self.working = false; self.notice = error.localizedDescription
@@ -260,7 +261,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     func shutdown() {
         guiding?.cancel()
         silenceMedia(); save(); active = false; media?.stop(); media=nil; mediaNotice=nil; generation = UUID(); loading?.cancel(); boot?.cancel(); edit?.cancel(); boot = nil
-        scene.shutdown(); sideScene.shutdown(); let old = cache; Task { await old?.clear() }; cache = nil; chunks = []; displayedChunk = nil
+        scene.shutdown(); sideScene.shutdown(); let old = cache; Task { await old?.clear() }; cache = nil; chunks = []; displayedChunk = nil; displayedKey = ""
     }
     func move(dx: Int, dz: Int) {
         if mapEditorActive && editorMode == .free { return }
@@ -272,12 +273,12 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
         if dx != 0 || dz != 0 { world.player.facing = .init(dx: dx, dz: dz) }
         let old = world.player.surface, next = SurfacePoint(x: old.x + dx, z: old.z + dz)
-        guard RPGWorldTerrain.passable(next, world: world, generator: generator) else { notice = "前方无法通行。"; return }
+        guard RPGWorldTerrain.passable(next, world: world, generator: generator) else { notice = L10n.t("前方无法通行。", "The way ahead is blocked."); return }
         if dx != 0 && dz != 0 {
             guard RPGWorldTerrain.passable(.init(x: old.x + dx, z: old.z), world: world, generator: generator),
                   RPGWorldTerrain.passable(.init(x: old.x, z: old.z + dz), world: world, generator: generator) else { return }
         }
-        guard RPGWorldEditing.entity(at: next, world: world, generator: generator)?.physics.topDownSolid != true else { notice = "前方有方块。"; return }
+        guard RPGWorldEditing.entity(at: next, world: world, generator: generator)?.physics.topDownSolid != true else { notice = L10n.t("前方有方块。", "A block is in the way."); return }
         world.player.surface = next; world.revision += 1; scene.movePlayer(next); loadVisible()
     }
     func returnToSpawn() {
@@ -295,10 +296,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             let point = SurfacePoint(x: p.x+dx, z: p.z+dz)
             if world.player.mode == .adventure && abs(dx)+abs(dz)>4 { continue }
             if point.valid && RPGWorldTerrain.passable(point, world: world, generator: generator) && (world.isCreativeCopy || !generator.protected(point)) && RPGWorldEditing.entity(at: point, world: world, generator: generator) == nil {
-                selected = point; scene.select(point); notice = "已选附近可建造空地。"; return
+                selected = point; scene.select(point); notice = L10n.t("已选附近可建造空地。", "Selected a nearby buildable cell."); return
             }
         } } }
-        notice = "身边是保护区或障碍，请先向外探索，或使用创作副本。"
+        notice = L10n.t("身边是保护区或障碍，请先向外探索，或使用创作副本。", "Protected area or obstacle nearby. Explore outward or use a creative copy.")
     }
     private func bindScenes() {
         // Native glass replaces the yellow outline where it is available.
@@ -350,7 +351,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func travelToTemple() {
         guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { return }
-        guard world.player.mode == .creative else { notice = "冒险模式请沿通路探索；创造模式可定位到双界入口。"; return }
+        guard world.player.mode == .creative else { notice = L10n.t("冒险模式请沿通路探索；创造模式可定位到双界入口。", "In adventure mode follow the paths; creative mode can jump to the portal."); return }
         world.player.surface = generator.anchor(.temple); world.revision += 1; loadVisible(force: true)
     }
     func chooseMappedSite() {
@@ -359,14 +360,14 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         for offset in 3...15 {
             let point = SurfacePoint(x: generator.anchor(.temple).x + offset, z: region.origin.z)
             if RPGWorldTerrain.passable(point, world: world, generator: generator) && (world.isCreativeCopy || !generator.protected(point)) && RPGWorldEditing.entity(at: point, world: world, generator: generator) == nil {
-                selected = point; scene.select(point); notice = "已选共享映射行上的空格。"; return
+                selected = point; scene.select(point); notice = L10n.t("已选共享映射行上的空格。", "Selected an empty cell on the shared row."); return
             }
         }
-        notice = "映射行暂无空地。"
+        notice = L10n.t("映射行暂无空地。", "No empty cell on the shared row.")
     }
     func toggleProjection() {
         guard ready, !working else { return }
-        if world.player.perspective == .side && !sideScene.isOnGround { notice = "请先落地并回到入口。"; return }
+        if world.player.perspective == .side && !sideScene.isOnGround { notice = L10n.t("请先落地并回到入口。", "Land first and return to the portal."); return }
         do {
             switchStarted=ProcessInfo.processInfo.systemUptime
             try RPGProjectionRules.switchPerspective(world: &world, generator: generator)
@@ -378,7 +379,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             applyScenePause(); refreshCombat()
             if world.player.perspective == .side { sideScene.show(world: world, resetPlayer: true); updateProjectionEvidence() }
             else { loadVisible(force: true) }
-            notice = world.player.perspective == .side ? "已进入独立侧视切片；靛色平台为侧视专属。" : "已返回俯视地表。"
+            notice = world.player.perspective == .side ? L10n.t("已进入独立侧视切片；靛色平台为侧视专属。", "Entered the side slice; indigo platforms exist only here.") : L10n.t("已返回俯视地表。", "Back to the top-down surface.")
             save()
         } catch { switchStarted=nil;notice = error.localizedDescription }
     }
@@ -443,7 +444,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                                            thermalStart: sampleThermalStart, thermalEnd: ProcessInfo.processInfo.thermalState.rawValue,
                                            device: Self.deviceModel + " iOS " + UIDevice.current.systemVersion))
         glassSampleRemaining = nil; sampleStart = nil
-        notice = "玻璃采样完成：" + glassSamples.last!.line
+        notice = L10n.t("玻璃采样完成：", "Glass sampling done: ") + glassSamples.last!.line
     }
     /// Native glass stays aligned only while the camera is still. While it
     /// moves the texture (A) stands in; the grid is republished on settle.
@@ -497,7 +498,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     func applyCellContent(_ draft: MediaBinding, to entityID: String) {
         var value = draft
         if value.kind != .video { value.muted = true }
-        if !value.muted && world.videoBudget == 0 { notice = "动态预览已关闭，请先增加播放预算。"; return }
+        if !value.muted && world.videoBudget == 0 { notice = L10n.t("动态预览已关闭，请先增加播放预算。", "Live preview is off. Raise the playback budget first."); return }
         let content = value
         perform { world, generator in
             // Only one cell may play sound; unmuting this one mutes the rest.
@@ -509,11 +510,11 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// free camera and painting work on the surface map.
     func enterMapEditor() {
         guard ready, !working, !mapEditorActive else { return }
-        guard world.player.perspective == .topDown else { notice = "请先返回俯视，再进入地图编辑。"; return }
+        guard world.player.perspective == .topDown else { notice = L10n.t("请先返回俯视，再进入地图编辑。", "Return to top-down view before editing the map."); return }
         gameModeBeforeEditor = world.player.mode
         mapEditorActive = true
         applyEditorMode()
-        notice = "地图编辑 · " + editorMode.title + "：敌人、战斗与剧情已暂停。"
+        notice = L10n.t("地图编辑 · ", "Map Editor · ") + editorMode.title + L10n.t("：敌人、战斗与剧情已暂停。", ": enemies, combat and story are paused.")
     }
     /// Leaves the editor: restores the game mode it was opened in, puts the
     /// camera back on the player and resumes gameplay.
@@ -526,7 +527,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.editorTouch = .legacy; scene.editorLongPressEnabled = false; scene.tool = tool
         scene.cameraFollowsPlayer = true; scene.freePan = false; scene.cameraGesturesEnabled = false
         scene.setCamera(center: scene.cameraCenter, zoom: 1); scene.recenterOnPlayer()
-        loadVisible(force: true); notice = "已返回沙盒。"
+        loadVisible(force: true); notice = L10n.t("已返回沙盒。", "Back to the sandbox.")
     }
     /// Free edit: whole map, free camera, no joystick. Character build:
     /// camera follows the player, edits limited to cells near the player.
@@ -551,7 +552,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// Chooses a tool. Callers handle an unconfirmed draft first.
     func selectTool(_ tool: RPGEditorTool) {
         editorTool = tool
-        if !tool.drawsRectangle && tool != .multi { scene.showArea(area.map { ($0.a, $0.b) }) }
+        // The area outline belongs to the multi tool only.
+        scene.showArea(tool == .multi ? area.map { ($0.a, $0.b) } : nil)
         applyEditorTouch()
     }
     private func applyEditorTouch() {
@@ -577,7 +579,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     private func editorRectangle(_ a: SurfacePoint, _ b: SurfacePoint, final: Bool) {
         guard mapEditorActive else { return }
-        if editorTool == .multi { area = RPGArea(a: a, b: b); scene.showArea((a, b)); if final { notice = "已选 \(area!.count) 格：可擦除、填充、复制或替换。" }; return }
+        if editorTool == .multi { area = RPGArea(a: a, b: b); scene.showArea((a, b)); if final { notice = L10n.t("已选 \(area!.count) 格：可擦除、填充、复制或替换。", "\(area!.count) cells selected: erase, fill, copy or replace.") }; return }
         guard let payload = payload(for: editorTool) else { return }
         var next = RPGEditDraft(payload: payload); next.setRectangle(a, b); draft = next
         showDraft()
@@ -626,7 +628,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard let value = draft else { return }
         perform({ world, generator in try RPGDraftCommit.commit(value, world: &world, generator: generator) }) { [weak self] in
             guard let self else { return }
-            self.notice = "已提交：" + value.payload.title + " · \(self.draftPlan?.cells.count ?? value.count) 格"
+            self.notice = L10n.t("已提交：", "Committed: ") + value.payload.title + L10n.t(" · \(self.draftPlan?.cells.count ?? value.count) 格", " · \(self.draftPlan?.cells.count ?? value.count) cells")
             self.discardDraft()
         }
     }
@@ -636,18 +638,18 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     func eraseArea() { draftOverArea(.erase) }
     func fillArea() { draftOverArea(brushPayload) }
     func replaceInArea() {
-        guard let from = selectedEntity?.definitionID else { notice = "先轻点选区内一个方块，作为要替换的材质。"; return }
-        guard case .block(let to) = brushPayload else { notice = "画笔需选择一种方块材质作为替换目标。"; return }
+        guard let from = selectedEntity?.definitionID else { notice = L10n.t("先轻点选区内一个方块，作为要替换的材质。", "Tap a block inside the area first as the material to replace."); return }
+        guard case .block(let to) = brushPayload else { notice = L10n.t("画笔需选择一种方块材质作为替换目标。", "Pick a block material for the brush as the replacement."); return }
         draftOverArea(.replace(from: from, to: to))
     }
     func copyArea() {
         guard let area else { return }
-        do { clipboard = try RPGWorldEditing.copy(from: area.a, to: area.b, world: world, generator: generator); hasClipboard = !(clipboard?.cells.isEmpty ?? true); notice = "已复制 \(clipboard?.cells.count ?? 0) 个方块。" }
+        do { clipboard = try RPGWorldEditing.copy(from: area.a, to: area.b, world: world, generator: generator); hasClipboard = !(clipboard?.cells.isEmpty ?? true); notice = L10n.t("已复制 \(clipboard?.cells.count ?? 0) 个方块。", "Copied \(clipboard?.cells.count ?? 0) blocks.") }
         catch { notice = error.localizedDescription }
     }
     /// Paste preview with the copied area's corner at `point`.
     func pastePreview(at point: SurfacePoint) {
-        guard let clipboard, !clipboard.cells.isEmpty else { notice = "没有可粘贴的内容。"; return }
+        guard let clipboard, !clipboard.cells.isEmpty else { notice = L10n.t("没有可粘贴的内容。", "Nothing to paste."); return }
         var next = RPGEditDraft(payload: .paste(clipboard)); next.add([point]); draft = next; showDraft()
     }
     func clearArea() { area = nil; scene.showArea(nil) }
@@ -678,7 +680,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard let id=RPGMediaBindings.bindingID(for:owner,in:world) else{return nil};return world.mediaBindings.first{$0.id==id}
     }
     func assignMedia(_ entry:MediaEntry,to owner:RPGMediaOwner) {
-        guard entry.kind != .embed else{notice="网页素材不能作为世界纹理。";return}
+        guard entry.kind != .embed else{notice=L10n.t("网页素材不能作为世界纹理。", "Web items can't be used as world textures.");return}
         let id=entry.id,kind=RPGMediaCatalogKind.kind(for:entry)
         perform{world,generator in try RPGMediaBindings.assign(mediaID:id,kind:kind,to:owner,world:&world,generator:generator)}
     }
@@ -692,7 +694,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         if let loop{next.mediaBindings[index].loop=loop}
         if let cropWidth{next.mediaBindings[index].cropWidth=cropWidth;next.mediaBindings[index].cropX=(1-cropWidth)/2}
         if let muted {
-            if !muted && world.videoBudget==0 {notice="动态预览已关闭，请先增加播放预算。";return}
+            if !muted && world.videoBudget==0 {notice=L10n.t("动态预览已关闭，请先增加播放预算。", "Live preview is off. Raise the playback budget first.");return}
             if !muted {for i in next.mediaBindings.indices{next.mediaBindings[i].muted=true}}
             next.mediaBindings[index].muted=muted
         }
@@ -721,7 +723,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 self.world = value
                 if value.behaviors.firedIDs.count > snapshot.behaviors.firedIDs.count { self.pendingStory=true }
                 RPGStoryRuntime.recordEvents(world:&self.world); self.renderCurrent()
-                self.notice = "操作已提交。"; self.save(); onSuccess?()
+                self.notice = L10n.t("操作已提交。", "Done."); self.save(); onSuccess?()
             case .failure(let error): self.notice = error.localizedDescription
             }
         }
@@ -731,7 +733,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             let definition = definition
             perform { world, generator in try RPGProjectionRules.placeSide(selectedSide, definitionID: definition, world: &world, generator: generator) }; return
         }
-        guard let selected else { notice = "先轻点地表或选择附近空地。"; return }
+        guard let selected else { notice = L10n.t("先轻点地表或选择附近空地。", "Tap the ground or pick a nearby empty cell first."); return }
         let definition = definition
         perform { world, generator in try RPGWorldEditing.place([.init(point: selected, definitionID: definition)], world: &world, generator: generator) }
     }
@@ -746,14 +748,14 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func undo() { perform { world, _ in try RPGWorldEditing.undo(world: &world) } }
     func redo() { perform { world, _ in try RPGWorldEditing.redo(world: &world) } }
-    func markRange() { rangeStart = selected; notice = selected == nil ? "先选择范围起点。" : "已标记起点；再轻点终点。" }
+    func markRange() { rangeStart = selected; notice = selected == nil ? L10n.t("先选择范围起点。", "Pick the range start first.") : L10n.t("已标记起点；再轻点终点。", "Start marked; now tap the end.") }
     func fillRange() {
         guard let a = rangeStart, let b = selected else { return }; let definition = definition
         perform { world, generator in let points = try RPGWorldEditing.rectangle(a,b); try RPGWorldEditing.place(points.map { .init(point: $0, definitionID: definition) }, world: &world, generator: generator) }
     }
     func copyRange() {
         guard let a = rangeStart ?? selected, let b = selected else { return }
-        do { clipboard = try RPGWorldEditing.copy(from: a, to: b, world: world, generator: generator); hasClipboard = !(clipboard?.cells.isEmpty ?? true); notice = "已复制 \(clipboard?.cells.count ?? 0) 个方块。" } catch { notice = error.localizedDescription }
+        do { clipboard = try RPGWorldEditing.copy(from: a, to: b, world: world, generator: generator); hasClipboard = !(clipboard?.cells.isEmpty ?? true); notice = L10n.t("已复制 \(clipboard?.cells.count ?? 0) 个方块。", "Copied \(clipboard?.cells.count ?? 0) blocks.") } catch { notice = error.localizedDescription }
     }
     func paste() { guard let clipboard, let selected else { return }; perform { world, generator in try RPGWorldEditing.paste(clipboard, at: selected, world: &world, generator: generator) } }
     private func stroke(_ points: [SurfacePoint]) {
@@ -763,7 +765,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func saveBeforeExit() async -> Bool {
         guard ready else { return true }
-        guard !working else { notice = "请等待当前操作完成。"; return false }
+        guard !working else { notice = L10n.t("请等待当前操作完成。", "Please wait for the current action to finish."); return false }
         silenceMedia(); saving?.cancel(); working = true
         do { try await storage.save(world); active = false; working = false; return true }
         catch { working = false; notice = error.localizedDescription; return false }
@@ -779,7 +781,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 let elapsed=(ProcessInfo.processInfo.systemUptime-started)*1000
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
                 self.saveMilliseconds=elapsed
-                self.notice = "世界已保存 · 修订 \(snapshot.revision)"; self.saveState = .saved
+                self.notice = L10n.t("世界已保存 · 修订 \(snapshot.revision)", "World saved · revision \(snapshot.revision)"); self.saveState = .saved
             } catch {
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }; self.notice = error.localizedDescription
                 self.saveState = .failed(error.localizedDescription)
@@ -796,7 +798,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 copy.isCreativeCopy = true; copy.player.mode = .creative; copy.player.surface = RPGWorldGenerator(seed: copy.seed).anchor(.creation)
                 copy.undo = []; copy.redo = []; copy.events = []; copy.revision = 0
                 try await storage.save(copy)
-                guard let self, self.generation == epoch else { return }; self.assign(copy); self.notice = "已进入独立创作副本，原世界保留。"
+                guard let self, self.generation == epoch else { return }; self.assign(copy); self.notice = L10n.t("已进入独立创作副本，原世界保留。", "Entered a creative copy; the original world is kept.")
             } catch { guard let self, self.generation == epoch else { return }; self.working = false; self.notice = error.localizedDescription }
         }
     }
@@ -806,7 +808,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         Task { [weak self] in
             do {
                 try await storage.save(snapshot); let original = try await storage.load(id: id); try await storage.save(original)
-                guard let self, self.generation == epoch else { return }; self.assign(original); self.notice = "已返回原世界。"
+                guard let self, self.generation == epoch else { return }; self.assign(original); self.notice = L10n.t("已返回原世界。", "Back to the original world.")
             } catch { guard let self, self.generation == epoch else { return }; self.working = false; self.notice = error.localizedDescription }
         }
     }
@@ -838,7 +840,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         if world.player.perspective == .topDown { scene.showCombat(world) } else { sideScene.showCombat(world) }
         if time-lastHUD > 0.1 || oldHealth != world.player.health { combatHUD.update(world); lastHUD = time }
         if wasCombat != world.player.inCombat || oldHealth > 0 && world.player.health == 0 {
-            objectWillChange.send(); notice = world.player.health == 0 ? "生命耗尽，请在安全入口复苏。" : world.player.inCombat ? "战斗开始，暂时不能切换视角。":"战斗结束，掉落已记录。"; save()
+            objectWillChange.send(); notice = world.player.health == 0 ? L10n.t("生命耗尽，请在安全入口复苏。", "Out of health. Revive at the safe portal.") : world.player.inCombat ? L10n.t("战斗开始，暂时不能切换视角。", "Combat started; view switching is paused."):L10n.t("战斗结束，掉落已记录。", "Combat over; loot recorded."); save()
         }
     }
     private func refreshCombat() {
@@ -863,14 +865,14 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         RPGCombatRules.trainingEncounter(world:&world,generator:generator); refreshCombat(); save()
     }
     func equip(_ equipment: RPGEquipment) {
-        guard ready, !working, !world.player.inCombat else { notice = "请在战斗结束后装备。"; return }
+        guard ready, !working, !world.player.inCombat else { notice = L10n.t("请在战斗结束后装备。", "Equip after combat ends."); return }
         if equipment == .none { world.player.weapon = .none; world.player.armor = .none }
         else {
             let owned = world.inventory[equipment.rawValue,default:0] > 0
             if !owned {
                 let cost = equipment == .moonBlade ? 4:6
                 let resource = equipment == .moonBlade ? "wood":"stone"
-                guard world.inventory[resource,default:0] >= cost else { notice = "材料不足。"; return }
+                guard world.inventory[resource,default:0] >= cost else { notice = L10n.t("材料不足。", "Not enough materials."); return }
                 world.inventory[resource,default:0] -= cost; world.inventory[equipment.rawValue] = 1
             }
             if equipment == .moonBlade { world.player.weapon = equipment } else { world.player.armor = equipment }
@@ -932,7 +934,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         perform { world, generator in try RPGStoryRuntime.advance(choiceID:choice,world:&world,generator:generator) }
     }
     func guideTo(_ anchor: RPGAnchorID) {
-        guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { notice = "请在俯视且非战斗时导航。"; return }
+        guard ready, !working, !world.player.inCombat, world.player.perspective == .topDown else { notice = L10n.t("请在俯视且非战斗时导航。", "Navigate in top-down view, outside combat."); return }
         guiding?.cancel()
         let generator = generator, origin = world.player.surface, target = generator.anchor(anchor), epoch = generation
         let entities=world.entities,removed=world.removedGeneratedIDs,terrain=world.terrainOverrides ?? [:]
@@ -949,14 +951,14 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 let old = self.world.player.surface
                 guard abs(point.x-old.x)+abs(point.z-old.z)==1 else { return }
                 self.followingRoute = true; self.move(dx:point.x-old.x,dz:point.z-old.z); self.followingRoute = false
-                guard self.world.player.surface == point else { self.notice = "导航被障碍挡住，请手动绕行。"; return }
+                guard self.world.player.surface == point else { self.notice = L10n.t("导航被障碍挡住，请手动绕行。", "Navigation blocked; walk around manually."); return }
                 try? await Task.sleep(nanoseconds:90_000_000)
             }
-            self.notice = self.world.player.surface == target ? "已沿通路抵达"+anchor.title : "暂无可通行路线。"; self.save()
+            self.notice = self.world.player.surface == target ? L10n.t("已沿通路抵达", "Arrived at ")+anchor.title : L10n.t("暂无可通行路线。", "No passable route."); self.save()
         }
     }
     func validateRoundTrip() {
-        do { let decoded = try RPGWorldCodec.decode(RPGWorldCodec.encode(world)); notice = decoded == world ? "世界数据往返校验通过。" : "世界数据校验失败。" }
+        do { let decoded = try RPGWorldCodec.decode(RPGWorldCodec.encode(world)); notice = decoded == world ? L10n.t("世界数据往返校验通过。", "World data round-trip check passed.") : L10n.t("世界数据校验失败。", "World data check failed.") }
         catch { notice = error.localizedDescription }
     }
     private func loadVisible(force: Bool = false) {
@@ -965,18 +967,26 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         // Free edit loads around the camera; otherwise around the player.
         let focus = mapEditorActive && editorMode == .free ? (editorFocus ?? world.player.surface) : world.player.surface
         let radius = RPGCameraRules.chunkRadius(zoom: scene.cameraZoom)
-        guard force || displayedChunk != focus.chunk || displayedRadius != radius else { return }
+        // Free edit covers the whole visible screen (wide landscape views
+        // showed unloaded ground at the edges with a fixed ring).
+        var wanted = generator.priorityChunks(around: focus, radius: radius)
+        if mapEditorActive && editorMode == .free {
+            let viewport = RPGCameraRules.chunks(center: scene.cameraCenter, viewSize: scene.size, zoom: scene.cameraZoom)
+            if !viewport.isEmpty { wanted = Array(viewport.prefix(36)) }
+        }
+        let key = wanted.map(\.id).sorted().map(String.init).joined(separator: ",")
+        guard force || displayedKey != key else { return }
         loading?.cancel(); if cache == nil { cache = RPGChunkCache(seed: world.seed) }
-        let wanted = generator.priorityChunks(around: focus, radius: radius), epoch = generation, cache = cache
+        let epoch = generation, cache = cache
         loading = Task { [weak self] in
             let started=ProcessInfo.processInfo.systemUptime
             let chunks = await cache?.load(wanted) ?? []
             guard !Task.isCancelled, let self, self.generation == epoch, self.active else { return }
             self.chunkMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000
-            self.chunks = chunks; self.loadedChunks = chunks.count; self.displayedChunk = focus.chunk; self.displayedRadius = radius
+            self.chunks = chunks; self.loadedChunks = chunks.count; self.displayedChunk = focus.chunk; self.displayedRadius = radius; self.displayedKey = key
             RPGCombatRules.seedEnemies(world:&self.world,generator:self.generator,coordinates:chunks.map(\.coordinate))
             self.renderCurrent()
-            self.notice = "世界已就绪 · \(self.loadedChunks)/64 区块在附近。"
+            self.notice = L10n.t("世界已就绪 · \(self.loadedChunks)/64 区块在附近。", "World ready · \(self.loadedChunks)/64 chunks nearby.")
         }
     }
 }
@@ -985,7 +995,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     @Published private(set) var text = "生命 100 · 耐力 100"
     @Published private(set) var dead = false
     func update(_ world: WorldState) {
-        let value = "生命 \(world.player.health) · 耐力 \(world.player.stamina) · 月晶 \(world.inventory["moon-shard",default:0]) · 技能 \(Int(ceil(world.combat.skillRemaining)))s"
+        let health = world.player.health, stamina = world.player.stamina, shards = world.inventory["moon-shard",default:0], skill = Int(ceil(world.combat.skillRemaining))
+        let value = L10n.t("生命 \(health) · 耐力 \(stamina) · 月晶 \(shards) · 技能 \(skill)s", "HP \(health) · Stamina \(stamina) · Shards \(shards) · Skill \(skill)s")
         if text != value { text = value }; if dead != (world.player.health == 0) { dead = world.player.health == 0 }
     }
 }

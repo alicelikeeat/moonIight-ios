@@ -26,7 +26,7 @@ struct WorldPrologueView: View {
                     Label(prologue.mode, systemImage: "hammer")
                     Label(prologue.perspective, systemImage: "eye")
                 }.font(.caption)
-                Text("轻点跳过").font(.caption2).foregroundStyle(.secondary)
+                Text(L10n.t("轻点跳过", "Tap to skip")).font(.caption2).foregroundStyle(.secondary)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 28).padding(.vertical, 20)
@@ -39,7 +39,7 @@ struct WorldPrologueView: View {
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("world-prologue")
         .accessibilityAddTraits(.isButton)
-        .accessibilityHint("轻点跳过")
+        .accessibilityHint(L10n.t("轻点跳过", "Tap to skip"))
         .task {
             withAnimation(reducedMotion ? nil : .easeOut(duration: 0.25)) { shown = true }
             // UI tests hold the card so they can find and skip it; real
