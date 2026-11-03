@@ -622,4 +622,19 @@ check(referenced.isSubset(of: kept) && undoReferenced.isSubset(of: kept), "refer
 check(content(crowded, cellIDs[2])?.style?.value == "9", "assign succeeds after pruning")
 print("RPG cell content: \(checks) total checks passed")
 
+
+// P12: GIF timing.
+let gifDelays = [0.1, 0.2, 0.3]
+check(RPGGIFTiming.frameIndex(elapsed: 0, delays: gifDelays, loop: true) == 0, "gif starts at frame 0")
+check(RPGGIFTiming.frameIndex(elapsed: 0.15, delays: gifDelays, loop: true) == 1, "gif second frame")
+check(RPGGIFTiming.frameIndex(elapsed: 0.35, delays: gifDelays, loop: true) == 2, "gif third frame")
+check(RPGGIFTiming.frameIndex(elapsed: 0.65, delays: gifDelays, loop: true) == 0, "gif loops")
+check(RPGGIFTiming.frameIndex(elapsed: 0.65, delays: gifDelays, loop: false) == 2, "gif without loop holds last frame")
+check(RPGGIFTiming.frameIndex(elapsed: 1000.15, delays: gifDelays, loop: true) == 2 && (0..<3).contains(RPGGIFTiming.frameIndex(elapsed: 123456.789, delays: gifDelays, loop: true)), "long-running gif stays in range")
+check(RPGGIFTiming.frameIndex(elapsed: .nan, delays: gifDelays, loop: true) == 0 && RPGGIFTiming.frameIndex(elapsed: 1, delays: [], loop: true) == 0, "gif bad input")
+check(RPGGIFTiming.normalizedDelay(0.005) == 0.1 && RPGGIFTiming.normalizedDelay(nil) == 0.1 && RPGGIFTiming.normalizedDelay(0.04) == 0.04 && RPGGIFTiming.normalizedDelay(99) == 10, "gif delay normalisation")
+check(abs(RPGGIFTiming.offset(of: 2, delays: gifDelays) - 0.3) < 1e-9 && RPGGIFTiming.offset(of: 0, delays: gifDelays) == 0 && abs(RPGGIFTiming.offset(of: 9, delays: gifDelays) - 0.6) < 1e-9, "gif resume offset")
+for index in 0..<3 { check(RPGGIFTiming.frameIndex(elapsed: RPGGIFTiming.offset(of: index, delays: gifDelays) + 0.001, delays: gifDelays, loop: true) == index, "pause resumes on the same frame") }
+print("RPG gif timing: \(checks) total checks passed")
+
 print("RPG complete: \(checks) total checks passed")
