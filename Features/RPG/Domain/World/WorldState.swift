@@ -156,8 +156,8 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 10
-    var schemaVersion = 10
+    static let currentSchema = 11
+    var schemaVersion = 11
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64
@@ -183,6 +183,9 @@ struct WorldState: Codable, Equatable, Sendable {
     /// Schema 8: map-editor terrain edits, "x,z" -> terrain. Optional so
     /// schema 7 files decode unchanged; nil means the generated terrain.
     var terrainOverrides: [String: RPGTerrain]?
+    /// Schema 11 (V2.8): the 2.5D glass world on the same save. nil until
+    /// the 2.5D view is first opened; a blank sheet of glass then.
+    var spatial: SpatialWorld?
     init(seed: UInt64 = 20261102) { self.seed = seed }
     func validate() throws {
         guard schemaVersion == Self.currentSchema, generatorVersion == 1 else { throw RPGWorldError.unsupportedVersion }
@@ -199,6 +202,7 @@ struct WorldState: Codable, Equatable, Sendable {
               (undo + redo).allSatisfy({ !$0.id.isEmpty && (!$0.changes.isEmpty || !($0.terrainChanges ?? []).isEmpty) && $0.changes.count <= RPGWorldEditing.maximumBatch && ($0.terrainChanges ?? []).count <= RPGWorldEditing.maximumBatch && ($0.terrainChanges ?? []).allSatisfy({ $0.point.valid }) && Set($0.changes.map(\.id)).count == $0.changes.count && $0.changes.allSatisfy { change in (change.before == nil || change.before?.id == change.id) && (change.after == nil || change.after?.id == change.id) } }),
               !isCreativeCopy || parentWorldID != nil,
               (terrainOverrides ?? [:]).count <= 65536, (terrainOverrides ?? [:]).keys.allSatisfy({ RPGWorldTerrain.point($0) != nil }) else { throw RPGWorldError.invalidState }
+        if let spatial { try spatial.validate(bindings: Set(mediaBindings.map(\.id))) }
         guard combat.valid, player.facing.valid, player.weapon != .stoneArmor, player.armor != .moonBlade else { throw RPGWorldError.invalidState }
         try story.validate()
         try behaviors.validate(graphIDs:Set(([RPGOfficialStory.graph]+story.customGraphs).map(\.id)))

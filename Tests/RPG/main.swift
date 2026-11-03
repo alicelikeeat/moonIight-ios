@@ -1041,7 +1041,7 @@ check(Set(gridEntities.map { "\($0.mediaRegion!.row),\($0.mediaRegion!.column)" 
 let topLeft = RPGWorldEditing.entity(at: openArea[0], world: gridWorld, generator: mapGen)?.mediaRegion
 check(topLeft?.row == 0 && topLeft?.column == 0, "anchor cell is the top-left piece")
 let gridCopy = try RPGWorldCodec.decode(RPGWorldCodec.encode(gridWorld))
-check(gridCopy == gridWorld && gridCopy.schemaVersion == 10, "media grids saved and reopened")
+check(gridCopy == gridWorld && gridCopy.schemaVersion == WorldState.currentSchema, "media grids saved and reopened")
 // Overwrite reported, then a move replaces the old group in one edit.
 let overPlan = RPGDraftCommit.plan(RPGEditDraft(payload: .mediaGrid(RPGMediaGridSpec(template: videoTemplate, rows: 1, columns: 1, anchor: openArea[0]))), world: gridWorld, generator: mapGen)
 check(overPlan.overwrites == 1 && overPlan.summary.contains("覆盖已有内容 1 格"), "replacing content is reported")
@@ -1071,10 +1071,247 @@ check(!RPGMediaGridSpec(template: MediaBinding(id: "d", mediaID: "", kind: .imag
 var schema9 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(map)) as! [String: Any]
 schema9["schemaVersion"] = 9
 let reopened9 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema9))
-check(reopened9.schemaVersion == 10, "schema 9 opens as 10")
+check(reopened9.schemaVersion == WorldState.currentSchema, "schema 9 opens as current")
 UserDefaults.standard.set("en", forKey: L10n.key)
 check(RPGGlassQuality.performance.title == "Performance" && overPlan.summary.contains("replaces content in 1"), "V2.2 strings in English")
 UserDefaults.standard.set("zh", forKey: L10n.key)
 print("RPG glass world: \(checks) total checks passed")
+
+
+// P22: V2.8 2.5D glass world.
+do {
+var sw = SpatialWorld.blank()
+check(sw.blocks.isEmpty && sw.creatures.isEmpty && sw.plants.isEmpty && sw.generation == nil, "a new 2.5D world is plain glass")
+var spatialHost = map; spatialHost.spatial = sw
+check((try? RPGWorldCodec.decode(RPGWorldCodec.encode(spatialHost)))?.spatial == sw, "2.5D layer saved and reopened")
+var schema10 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(map)) as! [String: Any]
+schema10["schemaVersion"] = 10
+let reopened10 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema10))
+check(reopened10.schemaVersion == 11 && reopened10.spatial == nil && reopened10.entities == map.entities, "schema 10 opens as 11, 2D data untouched")
+// Free height, stacking in one cell, floating.
+sw.edit("stack") { w in
+    w.blocks.append(SpatialBlock(id: "low", x: 10, y: 10, elevation: 0, thickness: 1))
+    w.blocks.append(SpatialBlock(id: "float", x: 10, y: 10, elevation: 3.37, thickness: 0.4, collision: .oneWay))
+    w.blocks.append(SpatialBlock(id: "high", x: 10, y: 10, elevation: 7.25, thickness: 2.5))
+}
+check(SpatialIndex(blocks: sw.blocks).blocks(atX: 10, y: 10).count == 3 && sw.history.undo.count == 1, "three objects in one cell at free heights, one undo step")
+check(abs(sw.blocks.first { $0.id == "float" }!.top - 3.77) < 1e-9, "top = bottom + thickness")
+sw.edit("remove below") { w in w.blocks.removeAll { $0.id == "low" } }
+check(sw.blocks.first { $0.id == "high" }?.elevation == 7.25, "removing a block below never drops the ones above")
+sw.undoLast()
+check(sw.blocks.count == 3, "undo brings it back")
+sw.redoLast(); sw.undoLast()
+check(SpatialBuilder.conflicts([SpatialBlock(id: "new", x: 10, y: 10, elevation: 0.5, thickness: 1)], in: sw) == ["new"] && SpatialBuilder.conflicts([SpatialBlock(id: "new", x: 10, y: 10, elevation: 1, thickness: 1)], in: sw).isEmpty, "solid overlap reported, touching is fine")
+check(!SpatialBlock(id: "x", x: 300, y: 1, elevation: 0).valid && !SpatialBlock(id: "x", x: 1, y: 1, elevation: 0, thickness: 0).valid, "invalid blocks refused")
+// Physics: walk, step up, blocked, jump, stand on a one-way platform, fall back.
+let flat = SpatialGeometry(blocks: [SpatialBlock(id: "step", x: 21, y: 20, elevation: 0, thickness: 0.4), SpatialBlock(id: "wall", x: 21, y: 22, elevation: 0, thickness: 2)])
+var body = SpatialPlayer(); body.position = SpatialVector(20.5, 20.5, 0); body.lastSafe = body.position
+for _ in 0..<20 { SpatialPhysics.step(&body, input: SpatialInput(dx: 1, dy: 0), dt: 1.0 / 60, geometry: flat, previous: flat) }
+check(body.position.x > 21 && abs(body.position.z - 0.4) < 1e-6 && body.grounded, "walks up a low step (\(body.position))")
+var walker = SpatialPlayer(); walker.position = SpatialVector(21.5, 21.2, 0)
+for _ in 0..<60 { SpatialPhysics.step(&walker, input: SpatialInput(dx: 0, dy: 1), dt: 1.0 / 60, geometry: flat, previous: flat) }
+check(walker.position.y < 21.75, "a 2-high wall blocks (\(walker.position.y))")
+var jumper = SpatialPlayer(); jumper.position = SpatialVector(40.5, 40.5, 0)
+let shelf = SpatialGeometry(blocks: [SpatialBlock(id: "shelf", x: 40, y: 40, elevation: 1.0, thickness: 0.2, collision: .oneWay)])
+SpatialPhysics.step(&jumper, input: SpatialInput(jump: true), dt: 1.0 / 60, geometry: shelf, previous: shelf)
+var peak = 0.0
+for _ in 0..<120 { SpatialPhysics.step(&jumper, input: SpatialInput(), dt: 1.0 / 60, geometry: shelf, previous: shelf); peak = max(peak, jumper.position.z) }
+check(peak > 1.2 && abs(jumper.position.z - 1.2) < 1e-6 && jumper.grounded, "jumps up through a one-way platform and lands on it (peak \(peak))")
+check(SpatialPhysics.jumpHeight > 1.4 && SpatialPhysics.jumpHeight < 1.7, "jump height about 1.5 cells")
+var faller = SpatialPlayer(); faller.position = SpatialVector(60.5, 60.5, -9); faller.lastSafe = SpatialVector(61.5, 61.5, 0); faller.grounded = false
+SpatialPhysics.step(&faller, input: SpatialInput(), dt: 1.0 / 60, geometry: flat, previous: flat)
+check(faller.position == SpatialVector(61.5, 61.5, 0), "falling off the world returns to the last safe spot")
+// Moving platform carries its rider.
+var lift = SpatialMotion.lift(id: "m", height: 4)
+lift.trigger = .always
+let platformBlock = SpatialBlock(id: "p", x: 50, y: 50, elevation: 0, thickness: 0.3, collision: .oneWay, groupID: "g")
+func frame(_ t: Double) -> [String: GroupFrame] {
+    let pose = SpatialMotionRules.pose(lift, clock: t)
+    return ["g": GroupFrame(pivot: SpatialVector(50.5, 50.5, 0), offset: pose.offset, yaw: pose.yaw)]
+}
+var rider = SpatialPlayer(); rider.position = SpatialVector(50.5, 50.5, 0.3)
+var previousGeometry = SpatialGeometry(blocks: [platformBlock], frames: frame(0))
+var t = 0.0
+for _ in 0..<240 {
+    t += 1.0 / 60
+    let now = SpatialGeometry(blocks: [platformBlock], frames: frame(t))
+    SpatialPhysics.step(&rider, input: SpatialInput(), dt: 1.0 / 60, geometry: now, previous: previousGeometry)
+    previousGeometry = now
+}
+let liftPose = SpatialMotionRules.pose(lift, clock: t)
+check(abs(rider.position.z - (0.3 + liftPose.offset.z)) < 0.05 && liftPose.offset.z > 1, "a rider goes up with the lift (\(rider.position.z) vs \(0.3 + liftPose.offset.z))")
+var spinner = SpatialMotion.rotate(id: "r", degrees: 90); spinner.segmentDuration = 1
+let before = GroupFrame(pivot: SpatialVector(0, 0, 0), offset: .zero, yaw: 0), after = GroupFrame(pivot: SpatialVector(0, 0, 0), offset: .zero, yaw: 90)
+let carried = after.carry(SpatialVector(1, 0, 0), from: before)
+check(abs(carried.x) < 1e-9 && abs(carried.y - 1) < 1e-9, "turning platforms turn their riders")
+// Motion: ping-pong, loop, once, track, elevator, events.
+let slide = SpatialMotion.slide(id: "s", dx: 6, dy: 0)
+check(SpatialMotionRules.passLength(slide) == 5 && SpatialMotionRules.pose(slide, clock: 0.5).offset == .zero && !SpatialMotionRules.pose(slide, clock: 0.5).moving, "dwell at rest first")
+check(SpatialMotionRules.pose(slide, clock: 2.5).offset.x == 3 && SpatialMotionRules.pose(slide, clock: 4).offset.x == 6, "travels to the end")
+check(SpatialMotionRules.pose(slide, clock: 7.5).offset.x == 3 && SpatialMotionRules.pose(slide, clock: 5.5).offset.x == 6, "pauses at the far end, then comes back")
+var once = slide; once.repeatMode = .once; once.trigger = .button
+check(SpatialMotionRules.pose(once, clock: 3).offset == .zero, "a triggered motion waits")
+check(SpatialMotionRules.start(&once, clock: 10) && !SpatialMotionRules.start(&once, clock: 10.2), "started once; re-trigger inside the cooldown ignored")
+check(SpatialMotionRules.pose(once, clock: 20).offset.x == 6 && !SpatialMotionRules.pose(once, clock: 20).moving, "a single run stops at the end")
+let loopTrack = SpatialMotion.track(id: "t", points: [.zero, SpatialVector(4, 0, 0), SpatialVector(4, 4, 2)], smooth: true, closed: true)
+let atKey = SpatialMotionRules.pose(loopTrack, clock: 2.75).offset
+check(loopTrack.valid && (atKey - SpatialVector(4, 0, 0)).flatLength < 1e-9 && SpatialMotionRules.pose(loopTrack, clock: 5.25).offset.z == 2, "closed smooth 3D track passes through its points")
+var elevator = SpatialMotion.elevator(id: "e", floors: [0, 4, 8])
+SpatialMotionRules.call(&elevator, floor: 2, clock: 0)
+check(abs(SpatialMotionRules.pose(elevator, clock: 2.5).offset.z - 4) < 1e-9 && SpatialMotionRules.pose(elevator, clock: 6).offset.z == 8, "elevator rides to the chosen floor")
+SpatialMotionRules.settle(&elevator, clock: 9)
+check(elevator.restIndex == 2 && elevator.startedAt == nil, "elevator settles at the stop")
+SpatialMotionRules.call(&elevator, floor: 0, clock: 10)
+check(SpatialMotionRules.pose(elevator, clock: 15).offset.z == 0, "and comes back down")
+var eventWorld = SpatialWorld.blank()
+var near = SpatialMotion.slide(id: "near", dx: 3, dy: 0); near.trigger = .proximity; near.repeatMode = .once
+eventWorld.motions = [near] + (0..<60).map { var m = SpatialMotion.slide(id: "tm\($0)", dx: 1, dy: 0); m.trigger = .timer; m.interval = 1; return m }
+eventWorld.groups = [BuildingGroup(id: "ng", name: "n", motionID: "near")]
+eventWorld.clock = 5
+let fired = SpatialEventRules.step(&eventWorld, player: SpatialVector(10, 10, 0), groupCenters: ["ng": SpatialVector(11, 10, 0)])
+check(fired == SpatialEventRules.actionsPerFrame && eventWorld.motions[0].startedAt == 5, "proximity trigger fires; actions capped per frame")
+check(SpatialEventRules.step(&eventWorld, player: SpatialVector(10, 10, 0), groupCenters: ["ng": SpatialVector(11, 10, 0)]) <= SpatialEventRules.actionsPerFrame && eventWorld.motions[0].startedAt == 5, "no runaway re-triggering")
+// Buildings and group operations.
+for kind in BuildingKind.allCases {
+    let blocks = SpatialBuilder.building(kind, x: 100, y: 100, elevation: 0, groupID: "g-\(kind.rawValue)", idPrefix: kind.rawValue)
+    check(!blocks.isEmpty && blocks.allSatisfy { $0.valid && $0.groupID == "g-\(kind.rawValue)" } && Set(blocks.map(\.id)).count == blocks.count, "\(kind.rawValue) template is ordinary blocks")
+}
+var town = SpatialWorld.blank()
+town.edit("hut") { w in
+    w.groups.append(BuildingGroup(id: "hut", name: "Hut"))
+    w.blocks += SpatialBuilder.building(.hut, x: 30, y: 30, elevation: 0, groupID: "hut", idPrefix: "hut")
+}
+let hutCount = town.blocks.count
+town.edit("copy") { w in SpatialBuilder.copy(group: "hut", dx: 8, dy: 0, dz: 2, newGroup: "hut2", idPrefix: "hut2", world: &w) }
+check(town.blocks.count == hutCount * 2 && town.blocks.filter { $0.groupID == "hut2" }.allSatisfy { $0.elevation >= 2 }, "copy a building, raised 2")
+town.edit("move") { w in SpatialBuilder.move(group: "hut2", dx: 0, dy: 5, dz: 0.5, world: &w) }
+check(town.blocks.filter { $0.groupID == "hut2" }.map(\.y).min() == 35, "move a whole group")
+let beforeTurn = Set(town.blocks.filter { $0.groupID == "hut" }.map { "\($0.x),\($0.y)" })
+town.edit("turn") { w in SpatialBuilder.rotateQuarter(group: "hut", world: &w) }
+check(Set(town.blocks.filter { $0.groupID == "hut" }.map { "\($0.x),\($0.y)" }) == beforeTurn && town.blocks.filter { $0.groupID == "hut" }.allSatisfy { $0.yaw == 90 } && town.blocks.filter { $0.groupID == "hut" }.count == hutCount, "quarter turn keeps every block (square hut keeps its footprint)")
+var stairWorld = SpatialWorld.blank(); stairWorld.groups = [BuildingGroup(id: "st", name: "st")]
+stairWorld.blocks = SpatialBuilder.building(.stairs, x: 40, y: 40, elevation: 0, groupID: "st", idPrefix: "st")
+SpatialBuilder.rotateQuarter(group: "st", world: &stairWorld)
+check(Set(stairWorld.blocks.map(\.x)).count == 2 && Set(stairWorld.blocks.map(\.y)).count == 8, "a long stair turns to run the other way")
+let ids = Set(town.blocks.filter { $0.groupID == "hut2" }.map(\.id))
+let relative = town.blocks.filter { $0.groupID == "hut2" }.map(\.elevation)
+town.edit("raise") { w in SpatialBuilder.raise(ids, by: 1.25, world: &w) }
+check(zip(relative, town.blocks.filter { $0.groupID == "hut2" }.map(\.elevation)).allSatisfy { abs($1 - $0 - 1.25) < 1e-9 }, "raise keeps relative heights")
+town.edit("gradient") { w in SpatialBuilder.gradient(Set(["hut2:0", "hut2:1", "hut2:2"]), from: 0, to: 4, world: &w) }
+check(Set(town.blocks.filter { ["hut2:0", "hut2:1", "hut2:2"].contains($0.id) }.map(\.elevation)) == [0, 2, 4], "height gradient")
+let template = SpatialBuilder.template(from: "hut", name: "My hut", id: "tpl", world: town)!
+let stamped = SpatialBuilder.stamp(template, x: 60, y: 60, elevation: 1, groupID: "hut3", idPrefix: "hut3")
+check(stamped.count == hutCount && stamped.map(\.x).min() == 60 && stamped.map(\.elevation).min() == 1, "templates save and stamp")
+check(SpatialBuilder.snap(1.37, step: 0.25) == 1.25, "height snapping")
+for _ in 0..<4 { town.undoLast() }
+check(town.blocks.count == hutCount * 2 && town.blocks.filter { $0.groupID == "hut2" }.map(\.y).min() == 30, "undo steps back through group edits")
+town.undoLast()
+check(town.blocks.count == hutCount, "undo the copy too")
+// Media across blocks: one binding, a row and column each.
+var wall = SpatialWorld.blank()
+wall.blocks = SpatialBuilder.building(.mediaWall, x: 5, y: 5, elevation: 0, groupID: "w", idPrefix: "w"); wall.groups = [BuildingGroup(id: "w", name: "w")]
+SpatialBuilder.mediaGrid(bindingID: "vid", blocks: wall.blocks.map(\.id), face: .front, stretch: false, world: &wall)
+let regions = wall.blocks.compactMap(\.media?.region)
+check(regions.count == 12 && Set(regions.map { "\($0.row),\($0.column)" }).count == 12 && regions.allSatisfy { $0.rows == 3 && $0.columns == 4 }, "video wall: 3×4 pieces of one binding")
+check(wall.blocks.first { $0.elevation == 2 }?.media?.region?.row == 0, "the top row of the wall shows the top of the picture")
+var missingMedia = map; missingMedia.spatial = wall; rejected(missingMedia, "block media must reference a binding")
+// Legacy 2D blocks appear at ground height.
+let legacy = SpatialLegacy.blocks(from: map.entities)
+check(legacy.count == map.entities.filter { $0.surface != nil }.count && legacy.allSatisfy { $0.elevation == 0 }, "2D blocks map to the ground of the 2.5D world")
+// Camera: tilt limits and the 300-cell budget.
+for tilt in [0.0, 30, 45, 65] {
+    let distance = SpatialCameraRules.maxDistance(tilt: tilt, aspect: 874.0 / 402)
+    let count = SpatialCameraRules.visibleCells(SpatialCameraState(tilt: tilt, distance: distance), aspect: 874.0 / 402)
+    check(count <= 300 && SpatialCameraRules.visibleCells(SpatialCameraState(tilt: tilt, distance: distance + 1), aspect: 874.0 / 402) > 300, "tilt \(Int(tilt))°: at most 300 ground cells (\(count) at \(String(format: "%.1f", distance)))")
+}
+check(SpatialCameraRules.clampTilt(80) == 65 && SpatialCameraRules.clampTilt(-5) == 0, "tilt kept within 0–65°")
+let ahead = SpatialCameraRules.worldDirection(stickX: 0, stickY: -1, yaw: 0), turned = SpatialCameraRules.worldDirection(stickX: 0, stickY: -1, yaw: 90)
+check(abs(ahead.dx) < 1e-9 && abs(ahead.dy - 1) < 1e-9 && abs(turned.dx + 1) < 1e-9, "stick up walks away from the camera at any turn")
+// Navigation and AI.
+let mazeGeometry = SpatialGeometry(blocks: (0..<9).map { SpatialBlock(id: "w\($0)", x: 70, y: 66 + $0, elevation: 0, thickness: 2) } + [SpatialBlock(id: "ramp1", x: 72, y: 70, elevation: 0, thickness: 0.5), SpatialBlock(id: "ramp2", x: 73, y: 70, elevation: 0, thickness: 1.0), SpatialBlock(id: "top", x: 74, y: 70, elevation: 0, thickness: 1.5)])
+let navigator = SpatialNavigator(geometry: mazeGeometry)
+let around = navigator.path(from: SpatialVector(68.5, 70.5, 0), to: SpatialVector(71.5, 70.5, 0))
+check(around != nil && around!.count > 4, "path goes around a wall")
+check(navigator.path(from: SpatialVector(71.5, 70.5, 0), to: SpatialVector(74.5, 70.5, 1.5))?.last?.z == 1.5, "path climbs steps by height")
+check(navigator.surfaces(x: 70, y: 70) == [2.0] && navigator.surfaces(x: 75, y: 70) == [0], "standable surfaces include block tops")
+var goblin = CreatureEntity(id: "e1", kind: .enemy, position: SpatialVector(80.5, 80.5, 0), home: SpatialVector(80.5, 80.5, 0), health: 30, maxHealth: 30, damage: 6)
+var brain = CreatureBrain()
+let open = SpatialGeometry(blocks: [])
+_ = SpatialAI.step(&goblin, brain: &brain, player: SpatialVector(95.5, 80.5, 0), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.5)
+check(goblin.state == .idle, "far player not noticed")
+var events: [CreatureEvent] = []
+for _ in 0..<80 { events += SpatialAI.step(&goblin, brain: &brain, player: SpatialVector(84.5, 80.5, 0), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.5) }
+check(events.contains(.hitPlayer(id: "e1", damage: 6)), "enemy notices, chases and hits (\(goblin.state))")
+var floating = goblin; floating.state = .idle; floating.windUp = nil
+check(SpatialAI.step(&floating, brain: &brain, player: SpatialVector(81.5, 80.5, 6), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.5).isEmpty && floating.state == .idle, "a player far above is out of reach")
+for _ in 0..<300 { _ = SpatialAI.step(&goblin, brain: &brain, player: SpatialVector(140.5, 80.5, 0), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.5) }
+check((goblin.position - goblin.home).flatLength < 1 && goblin.state == .idle, "returns to its area when the player leaves")
+var boss = CreatureEntity(id: "b", kind: .boss, position: SpatialVector(150.5, 150.5, 0), home: SpatialVector(150.5, 150.5, 0), health: 400, maxHealth: 400, damage: 16)
+var bossBrain = CreatureBrain(); bossBrain.areaCooldown = 0
+check(SpatialAI.step(&boss, brain: &bossBrain, player: SpatialVector(165.5, 150.5, 0), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.3).isEmpty, "boss waits until the player enters its arena")
+var bossEvents: [CreatureEvent] = []
+for _ in 0..<40 { bossEvents += SpatialAI.step(&boss, brain: &bossBrain, player: SpatialVector(152.5, 150.5, 0), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.3) }
+check(bossEvents.contains { if case .telegraph = $0 { return true }; return false } && bossEvents.contains { if case .areaHit = $0 { return true }; return false }, "boss area attack is telegraphed before it lands")
+let telegraphIndex = bossEvents.firstIndex { if case .telegraph = $0 { return true }; return false }!, hitIndex = bossEvents.firstIndex { if case .areaHit = $0 { return true }; return false }!
+check(telegraphIndex < hitIndex, "warning first, hit after")
+boss.health = 150; _ = SpatialAI.step(&boss, brain: &bossBrain, player: SpatialVector(152.5, 150.5, 0), playerAlive: true, dt: 0.1, geometry: open, navigator: nil, random: 0.3)
+check(boss.phase == 2, "boss enters phase 2 below half health")
+var targets = [goblin, CreatureEntity(id: "behind", kind: .enemy, position: SpatialVector(79.0, 80.5, 0), home: .zero, health: 30, maxHealth: 30, damage: 6),
+               CreatureEntity(id: "above", kind: .enemy, position: SpatialVector(81.5, 80.5, 3), home: .zero, health: 30, maxHealth: 30, damage: 6)]
+targets[0].position = SpatialVector(81.5, 80.5, 0); targets[0].state = .idle
+let struck = SpatialCombat.attack(.strike, from: SpatialVector(80.5, 80.5, 0), facing: 0, damage: 12, creatures: &targets, geometry: open)
+check(struck == ["e1"], "a strike hits in front, not behind or far above")
+let walled = SpatialGeometry(blocks: [SpatialBlock(id: "pillar", x: 81, y: 80, elevation: 0, thickness: 2)])
+var hidden = [CreatureEntity(id: "h", kind: .enemy, position: SpatialVector(82.5, 80.5, 0), home: .zero, health: 30, maxHealth: 30, damage: 6)]
+check(SpatialCombat.attack(.skill, from: SpatialVector(80.5, 80.5, 0), facing: 0, damage: 25, creatures: &hidden, geometry: walled).isEmpty, "walls block hits")
+// Random generation: deterministic, valid, editable, keeps user work.
+let maze = { var r = SpatialRandom(seed: 9); return SpatialMaze.generate(width: 6, height: 6, random: &r) }()
+check(maze.solve() != nil && !maze.deadEnds.isEmpty, "maze has a way from entrance to exit")
+var r1 = SpatialRandom(seed: 42), r2 = SpatialRandom(seed: 42)
+check((0..<10).map { _ in r1.next() } == (0..<10).map { _ in r2.next() }, "seeded random repeats")
+var userWorld = SpatialWorld.blank()
+userWorld.blocks = [SpatialBlock(id: "mine", x: 5, y: 250, elevation: 2, thickness: 1)]
+let config = WorldGenerationConfiguration()
+let first = SpatialWorldGenerator.generate(config, keeping: userWorld)
+let second = SpatialWorldGenerator.generate(config, keeping: userWorld)
+check(first.world.blocks == second.world.blocks && first.world.creatures == second.world.creatures && first.world.plants == second.world.plants, "same seed and settings: same world")
+check(first.summary.problems.isEmpty, "generated world passes validation (\(first.summary.problems), attempts \(first.summary.attempts))")
+let s1 = first.summary
+check(s1.buildings > 0 && s1.plants > 50 && s1.neutral > 0 && s1.enemies > 0 && s1.guards > 0 && s1.miniBosses == 1 && s1.bosses == 1 && s1.mazes == 1 && s1.pickups > 0, "every kind of content generated (\(s1))")
+check(first.world.blocks.contains { $0.id == "mine" } && s1.keptUser == 1, "the user's own block is kept")
+check(first.world.generation?.version == SpatialWorldGenerator.version && first.world.generation?.configuration == config, "seed, settings and version saved")
+var other = config; other.seed = 7
+check(SpatialWorldGenerator.generate(other, keeping: userWorld).world.blocks != first.world.blocks, "another seed gives another world")
+let regenerated = SpatialWorldGenerator.generate(other, keeping: first.world)
+check(regenerated.summary.replacedGenerated > 0 && regenerated.world.blocks.contains { $0.id == "mine" } && !regenerated.world.blocks.contains { $0.id.hasPrefix("gen\(config.seed % 1_000_000)") }, "regenerating replaces only generated objects")
+var hostWithGen = map; hostWithGen.spatial = first.world
+check((try? RPGWorldCodec.decode(RPGWorldCodec.encode(hostWithGen)))?.spatial == first.world, "generated world saved and reopened as-is")
+var edited = first.world
+edited.edit("generate") { _ in }
+edited.edit("edit") { w in w.blocks[0].elevation += 1 }
+check(edited.history.undo.count == 1, "generated objects are ordinary editable blocks")
+for style in WorldStyle.allCases {
+    var c = config; c.style = style; c.seed = 1000 + UInt64(style.hashValue & 0xFF)
+    c.seed = 1234
+    let result = SpatialWorldGenerator.generate(c, keeping: .blank())
+    check(result.summary.problems.isEmpty, "\(style.rawValue) world passes validation (\(result.summary.problems))")
+}
+var bare = config; bare.maze = false; bare.miniBoss = false; bare.bigBoss = false
+let bareResult = SpatialWorldGenerator.generate(bare, keeping: .blank())
+check(bareResult.summary.mazes == 0 && bareResult.summary.bosses == 0 && bareResult.summary.miniBosses == 0, "maze and bosses can be switched off")
+var hard = config; hard.difficulty = .hard
+let hardBoss = SpatialWorldGenerator.generate(hard, keeping: .blank()).world.creatures.first { $0.kind == .boss }!
+let normalBoss = first.world.creatures.first { $0.kind == .boss }!
+check(hardBoss.maxHealth > normalBoss.maxHealth && hardBoss.damage <= 60, "difficulty scales bosses within caps")
+var history = SpatialWorld.blank()
+history.edit("gen") { w in w = SpatialWorldGenerator.generate(config, keeping: w).world }
+check(history.history.undo.count == 1 && !history.blocks.isEmpty, "generation is one undo step")
+history.undoLast()
+check(history.blocks.isEmpty && history.generation == nil, "undo removes the whole generation")
+UserDefaults.standard.set("en", forKey: L10n.key)
+check(BuildingKind.hut.title == "Glass Hut" && WorldStyle.islands.title == "Floating Islands" && CreatureKind.boss.title == "Boss", "2.5D titles in English")
+UserDefaults.standard.set("zh", forKey: L10n.key)
+print("RPG 2.5D world: \(checks) total checks passed")
+}
 
 print("RPG complete: \(checks) total checks passed")
