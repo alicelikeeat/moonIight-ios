@@ -288,7 +288,7 @@ struct ShapeOutline: Codable, Equatable, Sendable {
         let n = points.count
         let anchors = points.indices.map { index -> ShapeAnchor in
             let p = points[index], previous = points[(index + n - 1) % n], next = points[(index + 1) % n]
-            let isSmooth = smooth?[safe: index] ?? true
+            let isSmooth = smooth.map { $0.indices.contains(index) ? $0[index] : true } ?? true
             if isSmooth {
                 let tangent = (next - previous) * (tension / 6)
                 return ShapeAnchor(p, handleIn: clampAlong(p, p - tangent), handleOut: clampAlong(p, p + tangent), smooth: true)
@@ -310,9 +310,6 @@ struct ShapeOutline: Codable, Equatable, Sendable {
     }
 }
 
-extension Array {
-    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
-}
 
 /// Built-in starting shapes, available on every iOS version.
 enum ShapeTemplate: String, CaseIterable, Sendable {
