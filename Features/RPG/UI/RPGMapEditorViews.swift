@@ -79,7 +79,7 @@ struct RPGEditorOptionsBar: View {
             RPGShapeMenu(selection: session.shapeBrush) { session.shapeBrush = $0 } label: {
                 HStack(spacing: 6) {
                     ShapeThumbnail(outline: session.shapeBrush, size: 20)
-                    Text(RPGShapeMenu.name(of: session.shapeBrush)).font(.caption).lineLimit(1)
+                    Text(RPGShapeName.of(session.shapeBrush)).font(.caption).lineLimit(1)
                     Image(systemName: "chevron.down").font(.caption2)
                 }
             }
@@ -239,13 +239,6 @@ struct RPGShapeMenu<Label: View>: View {
         self.selection = selection; self.choose = choose; self.label = label
     }
 
-    static func name(of outline: ShapeOutline?) -> String {
-        guard let outline else { return L10n.t("方形", "Square") }
-        if let template = ShapeTemplate.allCases.first(where: { $0 != .square && $0.outline == outline }) { return template.title }
-        if let saved = GlassShapeStore.shared.shapes.first(where: { $0.outline == outline }) { return saved.name }
-        return L10n.t("曲线", "Curve")
-    }
-
     var body: some View {
         Menu {
             Button { choose(nil) } label: { SwiftUI.Label(L10n.t("方形（默认）", "Square (default)"), systemImage: selection == nil ? "checkmark" : "square") }
@@ -266,5 +259,15 @@ struct RPGShapeMenu<Label: View>: View {
                 }
             }
         } label: { label() }
+    }
+}
+
+/// A readable name for a cell outline: square, a template, or a saved shape.
+@MainActor enum RPGShapeName {
+    static func of(_ outline: ShapeOutline?) -> String {
+        guard let outline else { return L10n.t("方形", "Square") }
+        if let template = ShapeTemplate.allCases.first(where: { $0 != .square && $0.outline == outline }) { return template.title }
+        if let saved = GlassShapeStore.shared.shapes.first(where: { $0.outline == outline }) { return saved.name }
+        return L10n.t("曲线", "Curve")
     }
 }
