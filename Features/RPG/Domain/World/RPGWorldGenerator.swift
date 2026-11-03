@@ -102,9 +102,10 @@ struct RPGWorldGenerator: Sendable {
             }
         return nil
     }
-    func priorityChunks(around point: SurfacePoint) -> [ChunkCoordinate] {
+    func priorityChunks(around point: SurfacePoint, radius: Int = 1) -> [ChunkCoordinate] {
         guard let center = point.chunk else { return [] }
-        return ChunkCoordinate.all.filter { abs($0.x - center.x) <= 1 && abs($0.z - center.z) <= 1 }.sorted {
+        let radius = max(0, min(7, radius))
+        return ChunkCoordinate.all.filter { abs($0.x - center.x) <= radius && abs($0.z - center.z) <= radius }.sorted {
             let a = abs($0.x - center.x) + abs($0.z - center.z), b = abs($1.x - center.x) + abs($1.z - center.z)
             return a == b ? $0.id < $1.id : a < b
         }

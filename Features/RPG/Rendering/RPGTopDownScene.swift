@@ -71,7 +71,61 @@ import UIKit
         }
         movePlayer(world.player.surface)
     }
-    func movePlayer(_ point: SurfacePoint) { avatar.position = Self.position(point); worldCamera.position = avatar.position }
+    func movePlayer(_ point: SurfacePoint) { avatar.position = Self.position(point); if cameraFollowsPlayer { worldCamera.position = avatar.position } }
+
+    // MARK: Map editor camera (task E)
+
+    /// Off in free edit: the camera stays where the user left it.
+    var cameraFollowsPlayer = true
+    /// Free edit with the select tool: a one-finger drag pans the map.
+    var freePan = false
+    /// Pinch zoom and two-finger pan (both editor modes).
+    var cameraGesturesEnabled = false { didSet { pinch?.isEnabled = cameraGesturesEnabled; twoFingerPan?.isEnabled = cameraGesturesEnabled } }
+    /// Camera centre and zoom after the user moved the camera.
+    var onCameraMoved: ((CGPoint, CGFloat) -> Void)?
+    var cameraCenter: CGPoint { worldCamera.position }
+    var cameraZoom: CGFloat { worldCamera.xScale }
+    private var pinch: UIPinchGestureRecognizer?
+    private var twoFingerPan: UIPanGestureRecognizer?
+    private var pinchStartZoom: CGFloat = 1
+    private var panStart: CGPoint?
+    private var panLast: CGPoint?
+    private var panning = false
+
+    override func didMove(to view: SKView) {
+        super.didMove(to: view)
+        guard pinch == nil else { return }
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:)))
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(twoFingerPanned(_:)))
+        pan.minimumNumberOfTouches = 2; pan.maximumNumberOfTouches = 2
+        pinch.isEnabled = cameraGesturesEnabled; pan.isEnabled = cameraGesturesEnabled
+        view.addGestureRecognizer(pinch); view.addGestureRecognizer(pan)
+        self.pinch = pinch; twoFingerPan = pan
+    }
+    func setCamera(center: CGPoint, zoom: CGFloat) {
+        worldCamera.position = RPGCameraRules.clampCenter(center); worldCamera.setScale(RPGCameraRules.clampZoom(zoom))
+    }
+    func recenterOnPlayer() { worldCamera.position = avatar.position }
+    @objc private func pinched(_ gesture: UIPinchGestureRecognizer) {
+        switch gesture.state {
+        case .began: pinchStartZoom = worldCamera.xScale; cancelPan()
+        case .changed: worldCamera.setScale(RPGCameraRules.clampZoom(pinchStartZoom / max(0.01, gesture.scale)))
+        case .ended, .cancelled: onCameraMoved?(worldCamera.position, worldCamera.xScale)
+        default: break
+        }
+    }
+    @objc private func twoFingerPanned(_ gesture: UIPanGestureRecognizer) {
+        guard let view else { return }
+        if gesture.state == .began { cancelPan() }
+        let delta = gesture.translation(in: view); gesture.setTranslation(.zero, in: view)
+        if !cameraFollowsPlayer { moveCamera(by: delta) }
+        if gesture.state == .ended || gesture.state == .cancelled { onCameraMoved?(worldCamera.position, worldCamera.xScale) }
+    }
+    private func moveCamera(by viewDelta: CGPoint) {
+        let shift = RPGCameraRules.panTranslation(viewDelta: viewDelta, zoom: worldCamera.xScale)
+        worldCamera.position = RPGCameraRules.clampCenter(CGPoint(x: worldCamera.position.x + shift.x, y: worldCamera.position.y + shift.y))
+    }
+    private func cancelPan() { panStart = nil; panLast = nil; panning = false; strokePoints = [] }
     /// The player's position in SpriteView coordinates (glass lab option C).
     func playerViewPoint() -> CGPoint? { view == nil ? nil : convertPoint(toView: avatar.position) }
     /// The selected cell in SpriteView (UIKit) coordinates, or nil when
@@ -134,19 +188,36 @@ import UIKit
         return cell.valid ? cell : nil
     }
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // Each touch is either a tap/pan (free edit, select tool) or a
+        // selection/stroke, decided here and never both.
+        if freePan && tool == .select, let touch = touches.first, let view {
+            panStart = touch.location(in: view); panLast = panStart; panning = false; return
+        }
         strokePoints = []; if let touch = touches.first, let point = cell(touch) { strokePoints = [point]; select(point) }
     }
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if freePan && tool == .select {
+            guard let touch = touches.first, let view, let start = panStart, let last = panLast else { return }
+            let now = touch.location(in: view)
+            if !panning && hypot(now.x - start.x, now.y - start.y) < RPGCameraRules.panSlop { return }
+            panning = true; moveCamera(by: CGPoint(x: now.x - last.x, y: now.y - last.y)); panLast = now; return
+        }
         guard let touch = touches.first, let point = cell(touch), let last = strokePoints.last else { return }
         for value in RPGWorldEditing.line(last, point) where !strokePoints.contains(value) && strokePoints.count < 256 { strokePoints.append(value) }
         select(point)
     }
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if freePan && tool == .select {
+            defer { cancelPan() }
+            if panning { onCameraMoved?(worldCamera.position, worldCamera.xScale) }
+            else if let touch = touches.first, let point = cell(touch) { select(point); onSelectCell?(point) }
+            return
+        }
         guard let touch = touches.first, let point = cell(touch) else { strokePoints = []; return }
         onSelectCell?(point)
         if tool != .select { if strokePoints.isEmpty { strokePoints = [point] }; onStroke?(strokePoints) }
         strokePoints = []
     }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { strokePoints = [] }
-    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll(); glassMaps.values.forEach { $0.removeFromParent() }; glassMaps.removeAll() }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { cancelPan() }
+    func shutdown() { enemies.removeAllChildren(); enemyNodes.removeAll(); isPaused = true; onSelectCell = nil; onStroke = nil; onFrame = nil; onCameraMoved = nil; cameraFollowsPlayer = true; freePan = false; cameraGesturesEnabled = false; mediaTargets = []; removeAllActions(); objects.removeAllChildren(); maps.values.forEach { $0.removeFromParent() }; maps.removeAll(); glassMaps.values.forEach { $0.removeFromParent() }; glassMaps.removeAll() }
 }

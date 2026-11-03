@@ -688,4 +688,22 @@ let selectedLine = RPGGlassSample(id: 2, mode: .texture, nearest: 64, effective:
 check(!selectedLine.contains("原生玻璃"), "non-native samples omit native time")
 print("RPG glass lab: \(checks) total checks passed")
 
+
+// P14: map editor rules.
+check(RPGEditorMode.free.gameMode == .creative && RPGEditorMode.character.gameMode == .adventure, "editor modes map onto existing edit rules")
+check(RPGCameraRules.clampZoom(0.1) == RPGCameraRules.minZoom && RPGCameraRules.clampZoom(9) == RPGCameraRules.maxZoom && RPGCameraRules.clampZoom(.nan) == 1 && RPGCameraRules.clampZoom(1.5) == 1.5, "zoom clamped")
+check(RPGCameraRules.clampCenter(CGPoint(x: -50, y: 99999)) == CGPoint(x: 0, y: RPGCameraRules.worldSide), "camera stays on the map")
+check(RPGCameraRules.cell(at: CGPoint(x: 24 * 10 + 1, y: 24 * 7 + 23)) == SurfacePoint(x: 10, z: 7), "scene point to cell")
+check(RPGCameraRules.cell(at: CGPoint(x: -1, y: 5)) == nil && RPGCameraRules.cell(at: CGPoint(x: RPGCameraRules.worldSide + 1, y: 5)) == nil && RPGCameraRules.cell(at: CGPoint(x: CGFloat.nan, y: 1)) == nil, "off-map points have no cell")
+check(RPGCameraRules.panTranslation(viewDelta: CGPoint(x: 10, y: 10), zoom: 2) == CGPoint(x: -20, y: 20), "map follows the finger at any zoom")
+check(RPGCameraRules.chunkRadius(zoom: 1) == 1 && RPGCameraRules.chunkRadius(zoom: 2) == 2, "more chunks when zoomed out")
+let ringGenerator = RPGWorldGenerator(seed: 42)
+check(ringGenerator.priorityChunks(around: SurfacePoint(x: 128, z: 128)).count == 9 && ringGenerator.priorityChunks(around: SurfacePoint(x: 128, z: 128), radius: 2).count == 25, "chunk rings")
+check(ringGenerator.priorityChunks(around: SurfacePoint(x: 0, z: 0), radius: 2).count == 9 && ringGenerator.priorityChunks(around: SurfacePoint(x: 128, z: 128), radius: 2).first == ChunkCoordinate(x: 4, z: 4), "rings clipped at the edge, nearest first")
+check(ringGenerator.priorityChunks(around: SurfacePoint(x: 128, z: 128), radius: 99).count == 64 && ringGenerator.priorityChunks(around: SurfacePoint(x: -5, z: 0)).isEmpty, "ring radius bounded")
+let worldSideCells = Int(RPGCameraRules.worldSide / RPGCameraRules.cell)
+check(worldSideCells == WorldGeometry.width, "camera rules match the 256 map")
+check(RPGSaveState.failed("x").title == "保存失败" && RPGSaveState.saving.title == "保存中…", "save state titles")
+print("RPG map editor: \(checks) total checks passed")
+
 print("RPG complete: \(checks) total checks passed")

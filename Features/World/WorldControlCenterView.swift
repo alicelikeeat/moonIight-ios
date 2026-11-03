@@ -6,6 +6,8 @@ import SwiftUI
 struct WorldControlCenterView: View {
     @ObservedObject var session: RPGSession
     let onClose: () -> Void
+    /// Opens the map editor (task E).
+    let onMapEditor: () -> Void
     let onNavigate: (AppTab) -> Void
     /// Opens the sandbox tools, optionally at a page (story, editor…).
     let onTools: (RPGEntryPage?) -> Void
@@ -114,6 +116,7 @@ struct WorldControlCenterView: View {
     private var functionColumn: some View {
         Group {
             sectionTitle("世界功能")
+            row("地图编辑", symbol: "square.grid.3x3.square") { onMapEditor() }.accessibilityIdentifier("world-fn-map-editor")
             row("建造", symbol: "hammer") { onTools(nil) }.accessibilityIdentifier("world-fn-build")
             row("剧情", symbol: "book") { onTools(.story) }.accessibilityIdentifier("world-fn-story")
             row("媒体", symbol: "photo.on.rectangle") { onTools(nil) }.accessibilityIdentifier("world-fn-media")

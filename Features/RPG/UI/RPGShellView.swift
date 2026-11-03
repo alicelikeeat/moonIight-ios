@@ -47,7 +47,9 @@ struct RPGShellView: View {
             .overlay { worldBackdrop }
             .overlay {
                 if controlCenter {
-                    WorldControlCenterView(session: session, onClose: { closeControlCenter() }, onNavigate: { tab in
+                    WorldControlCenterView(session: session, onClose: { closeControlCenter() }, onMapEditor: {
+                        closeControlCenter(); session.enterMapEditor()
+                    }, onNavigate: { tab in
                         closeControlCenter(); Task { if await session.saveBeforeExit() { onNavigate(tab) } }
                     }, onTools: { page in
                         closeControlCenter(); toolPath = page.map { [$0] } ?? []; tools = true
@@ -128,11 +130,11 @@ struct RPGShellView: View {
     /// rotation request is refused, and by the existing portrait UI tests.
     private var portraitLayout: some View {
         VStack(spacing: 8) {
-            header
+            if session.mapEditorActive { editorToolbar } else { header }
             statusRow
             sceneView.clipShape(RoundedRectangle(cornerRadius: 20))
-                .overlay(alignment:.bottomLeading){if session.ready{movementPad.padding(6)}}
-                .overlay(alignment:.bottomTrailing){if session.ready{combatButtons.padding(6)}}
+                .overlay(alignment:.bottomLeading){if session.ready && showsJoystick {movementPad.padding(6)}}
+                .overlay(alignment:.bottomTrailing){if session.ready && !session.mapEditorActive {combatButtons.padding(6)}}
             perspectiveRow
             RPGCombatHUDView(model:session.combatHUD,session:session)
             Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
@@ -146,6 +148,7 @@ struct RPGShellView: View {
         ZStack {
             sceneView.ignoresSafeArea()
             VStack(spacing: 6) {
+                if session.mapEditorActive { editorToolbar } else {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(session.worldTitle).font(.subheadline.weight(.semibold))
@@ -154,9 +157,10 @@ struct RPGShellView: View {
                     Spacer(minLength: 8)
                     headerButtons
                 }
+                }
                 Spacer(minLength: 0)
                 HStack(alignment: .bottom, spacing: 10) {
-                    if session.ready { movementPad }
+                    if session.ready && showsJoystick { movementPad }
                     Spacer(minLength: 0)
                     VStack(spacing: 4) {
                         Text(session.notice).font(.caption).lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
@@ -166,7 +170,7 @@ struct RPGShellView: View {
                         perspectiveRow
                     }.frame(maxWidth: 420)
                     Spacer(minLength: 0)
-                    if session.ready { combatButtons }
+                    if session.ready && !session.mapEditorActive { combatButtons }
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
@@ -187,11 +191,47 @@ struct RPGShellView: View {
     private var headerButtons: some View {
         HStack {
             Button("校验") { session.validateRoundTrip() }.accessibilityIdentifier("rpg-validate").disabled(!session.ready)
+            Button("编辑") { session.enterMapEditor() }.accessibilityIdentifier("rpg-map-editor").disabled(!session.ready)
             Button("工具") { toolPath=[];tools = true }.accessibilityIdentifier("rpg-tools")
             Button("完成") { Task { if await session.saveBeforeExit() { onExit() } } }.accessibilityIdentifier("rpg-close")
             Button { openControlCenter() } label: { Image(systemName: "square.grid.2x2").frame(width: 24, height: 24) }
                 .accessibilityLabel("世界控制中心").accessibilityIdentifier("rpg-menu")
         }
+    }
+
+    /// Free edit hides the joystick; character build and play show it.
+    private var showsJoystick: Bool { !session.mapEditorActive || session.editorMode == .character }
+
+    /// Map editor top bar (task E). Scrolls sideways on narrow screens.
+    private var editorToolbar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                Button { session.exitMapEditor() } label: { Label("返回沙盒", systemImage: "chevron.backward") }
+                    .accessibilityIdentifier("rpg-editor-exit")
+                Text(session.worldTitle).font(.caption.weight(.semibold)).lineLimit(1)
+                Picker("编辑模式", selection: $session.editorMode) {
+                    ForEach(RPGEditorMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }.pickerStyle(.segmented).frame(width: 176).accessibilityIdentifier("rpg-editor-mode")
+                Text(session.editorCoordinate.map { "x \($0.x) · z \($0.z)" } ?? "—").font(.caption.monospacedDigit())
+                    .accessibilityIdentifier("rpg-editor-coordinate")
+                Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .disabled(session.world.undo.isEmpty || session.working).accessibilityLabel("撤销").accessibilityIdentifier("rpg-editor-undo")
+                Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                    .disabled(session.world.redo.isEmpty || session.working).accessibilityLabel("重做").accessibilityIdentifier("rpg-editor-redo")
+                Label(session.saveState.title, systemImage: saveSymbol).font(.caption2)
+                    .foregroundStyle(saveTint).accessibilityIdentifier("rpg-editor-save-state")
+                Button { toolPath = []; tools = true } label: { Image(systemName: "gearshape") }
+                    .accessibilityLabel("设置").accessibilityIdentifier("rpg-editor-settings")
+            }.padding(.horizontal, 10).padding(.vertical, 6)
+        }
+        .worldGlass(radius: 16)
+    }
+    private var saveSymbol: String {
+        switch session.saveState { case .saved: "checkmark.icloud"; case .saving: "arrow.triangle.2.circlepath"; case .unsaved: "pencil"; case .failed: "exclamationmark.triangle" }
+    }
+    private var saveTint: Color {
+        if case .failed = session.saveState { return .orange }
+        return .secondary
     }
 
     private var statusRow: some View {

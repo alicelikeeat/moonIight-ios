@@ -12,7 +12,7 @@ on:
         description: 'UI validation scope (all on pull requests)'
         type: choice
         default: all
-        options: [all, rpg, landlord, directed, treasure, preview, settings, scroll]
+        options: [all, rpg, landlord, directed, treasure, preview, settings, scroll, none]
       device_ipa:
         description: 'Also archive a device IPA and attach it to this run (no GitHub Release)'
         type: boolean
@@ -78,7 +78,7 @@ jobs:
       - name: Test RPG pure domain
         run: |
           mkdir -p build
-          swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Domain/World/RPGGlassLab.swift Features/RPG/Domain/World/RPGWorldRoute.swift Features/RPG/Domain/World/RPGFrameMetrics.swift Features/RPG/Domain/Blocks/RPGBehaviorRules.swift Features/RPG/Domain/Story/RPGStoryAuthoring.swift Features/RPG/Domain/Story/RPGStoryGraph.swift Features/RPG/Domain/Story/RPGOfficialStory.swift Features/RPG/Domain/Story/RPGStoryRuntime.swift Features/RPG/Domain/Combat/RPGCombatRules.swift Features/RPG/Media/RPGMediaPolicy.swift Features/RPG/Domain/World/RPGProjectionRules.swift Features/RPG/Domain/Blocks/RPGWorldEditing.swift Features/RPG/Persistence/RPGWorldDiskStore.swift Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
+          swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Domain/World/RPGGlassLab.swift Features/RPG/Domain/World/RPGMapEditor.swift Features/RPG/Domain/World/RPGWorldRoute.swift Features/RPG/Domain/World/RPGFrameMetrics.swift Features/RPG/Domain/Blocks/RPGBehaviorRules.swift Features/RPG/Domain/Story/RPGStoryAuthoring.swift Features/RPG/Domain/Story/RPGStoryGraph.swift Features/RPG/Domain/Story/RPGOfficialStory.swift Features/RPG/Domain/Story/RPGStoryRuntime.swift Features/RPG/Domain/Combat/RPGCombatRules.swift Features/RPG/Media/RPGMediaPolicy.swift Features/RPG/Domain/World/RPGProjectionRules.swift Features/RPG/Domain/Blocks/RPGWorldEditing.swift Features/RPG/Persistence/RPGWorldDiskStore.swift Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
           build/rpg-tests
       - name: Test versioned file persistence
         run: |
@@ -113,7 +113,8 @@ jobs:
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
       - name: Boot iOS simulator
         id: simulator
-        if: steps.version.outputs.release != 'true'
+        # ui_suite=none: compile and pure checks only, no simulator or UI tests.
+        if: steps.version.outputs.release != 'true' && inputs.ui_suite != 'none'
         timeout-minutes: 10
         shell: bash
         run: |

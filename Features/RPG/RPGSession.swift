@@ -34,6 +34,18 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     /// The selected cell in SpriteView coordinates, for the selection glass.
     @Published private(set) var selectionRect: CGRect?
 
+    // MARK: Map editor (task E)
+    /// The map editor is open: gameplay simulation (enemies, combat, story
+    /// and block triggers) is paused while the world keeps drawing.
+    @Published private(set) var mapEditorActive = false
+    @Published var editorMode = RPGEditorMode(rawValue: UserDefaults.standard.string(forKey: "moonlight.mapEditor.mode") ?? "") ?? .free {
+        didSet { UserDefaults.standard.set(editorMode.rawValue, forKey: "moonlight.mapEditor.mode"); if mapEditorActive { applyEditorMode() } }
+    }
+    @Published private(set) var saveState = RPGSaveState.saved
+    /// Map cell at the centre of the free camera.
+    @Published private(set) var editorFocus: SurfacePoint?
+    private var gameModeBeforeEditor: RPGGameMode?
+
     // MARK: Glass lab (experimental all-cell glass)
     @Published var glassMode = RPGGlassMode(rawValue: UserDefaults.standard.string(forKey: "moonlight.world.glassMode") ?? "") ?? .selected {
         didSet { UserDefaults.standard.set(glassMode.rawValue, forKey: "moonlight.world.glassMode"); updateGlass(force: true) }
@@ -84,6 +96,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var saving: Task<Void, Never>?
     private var generation = UUID()
     private var displayedChunk: ChunkCoordinate?
+    private var displayedRadius = 1
     private var terrainGenerator = RPGWorldGenerator(seed: 20261102)
     private let storage: RPGWorldDiskStore
     private var clipboard: RPGClipboard?
@@ -176,6 +189,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     private func assign(_ value: WorldState) {
         recoveryChoices=[]; loadError=nil
+        // A different world opens outside the editor, with a centred camera.
+        mapEditorActive = false; gameModeBeforeEditor = nil; editorFocus = nil
         generation = UUID(); loading?.cancel(); saving?.cancel()
         scene.shutdown(); sideScene.shutdown()
         world = value; silenceMedia(); terrainGenerator = .init(seed: world.seed)
@@ -233,6 +248,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         scene.shutdown(); sideScene.shutdown(); let old = cache; Task { await old?.clear() }; cache = nil; chunks = []; displayedChunk = nil
     }
     func move(dx: Int, dz: Int) {
+        if mapEditorActive && editorMode == .free { return }
         if !followingRoute { guiding?.cancel() }
         guard active, ready, !working, world.player.health > 0, abs(dx) <= 1, abs(dz) <= 1 else { return }
         if world.player.perspective == .side {
@@ -275,6 +291,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         sideScene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
         scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point);self?.tapBehavior() }
         scene.onStroke = { [weak self] points in self?.stroke(points) }
+        scene.onCameraMoved = { [weak self] center, zoom in self?.cameraMoved(center: center, zoom: zoom) }
         scene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onFrame = { [weak self] time in self?.frame(time) }
         sideScene.onSelectCell = { [weak self] point in
@@ -463,6 +480,45 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             try RPGMediaBindings.assign(content, to: .entity(entityID), world: &world, generator: generator)
         }
     }
+    /// Opens the map editor in the remembered sub-mode. Top-down only: the
+    /// free camera and painting work on the surface map.
+    func enterMapEditor() {
+        guard ready, !working, !mapEditorActive else { return }
+        guard world.player.perspective == .topDown else { notice = "请先返回俯视，再进入地图编辑。"; return }
+        gameModeBeforeEditor = world.player.mode
+        mapEditorActive = true
+        applyEditorMode()
+        notice = "地图编辑 · " + editorMode.title + "：敌人、战斗与剧情已暂停。"
+    }
+    /// Leaves the editor: restores the game mode it was opened in, puts the
+    /// camera back on the player and resumes gameplay.
+    func exitMapEditor() {
+        guard mapEditorActive else { return }
+        mapEditorActive = false
+        if let previous = gameModeBeforeEditor, previous != world.player.mode { world.player.mode = previous; world.revision += 1; save() }
+        gameModeBeforeEditor = nil; editorFocus = nil
+        scene.cameraFollowsPlayer = true; scene.freePan = false; scene.cameraGesturesEnabled = false
+        scene.setCamera(center: scene.cameraCenter, zoom: 1); scene.recenterOnPlayer()
+        loadVisible(force: true); notice = "已返回沙盒。"
+    }
+    /// Free edit: whole map, free camera, no joystick. Character build:
+    /// camera follows the player, edits limited to cells near the player.
+    private func applyEditorMode() {
+        let mode = editorMode.gameMode
+        if world.player.mode != mode { world.player.mode = mode; world.revision += 1; save() }
+        let free = editorMode == .free
+        scene.cameraFollowsPlayer = !free; scene.freePan = free; scene.cameraGesturesEnabled = true
+        if free { editorFocus = RPGCameraRules.cell(at: scene.cameraCenter) ?? world.player.surface }
+        else { scene.recenterOnPlayer(); editorFocus = nil }
+        loadVisible(force: true)
+    }
+    private func cameraMoved(center: CGPoint, zoom: CGFloat) {
+        guard mapEditorActive else { return }
+        if editorMode == .free { editorFocus = RPGCameraRules.cell(at: center) ?? editorFocus }
+        loadVisible()
+    }
+    /// The cell the editor toolbar shows: the selection, else the camera centre.
+    var editorCoordinate: SurfacePoint? { selected ?? editorFocus ?? world.player.surface }
     func mediaBinding(for owner:RPGMediaOwner)->MediaBinding? {
         guard let id=RPGMediaBindings.bindingID(for:owner,in:world) else{return nil};return world.mediaBindings.first{$0.id==id}
     }
@@ -559,6 +615,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     func save() {
         guard ready else { return }
+        saveState = .saving
         saving?.cancel(); let snapshot = world, epoch = generation, storage = storage
         saving = Task { [weak self] in
             do {
@@ -567,9 +624,10 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 let elapsed=(ProcessInfo.processInfo.systemUptime-started)*1000
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
                 self.saveMilliseconds=elapsed
-                self.notice = "世界已保存 · 修订 \(snapshot.revision)"
+                self.notice = "世界已保存 · 修订 \(snapshot.revision)"; self.saveState = .saved
             } catch {
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }; self.notice = error.localizedDescription
+                self.saveState = .failed(error.localizedDescription)
             }
         }
     }
@@ -604,6 +662,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         guard active, ready, !working, !overlayVisible else { lastFrame = nil; return }
         frameMetrics.sample(time)
         if let started=switchStarted {switchMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000;switchStarted=nil}
+        if mapEditorActive { lastFrame = nil; return }
         guard let previous = lastFrame else { lastFrame = time; return }
         guard time-previous >= 1.0/30 else { return }
         lastFrame = time
@@ -748,15 +807,18 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private func loadVisible(force: Bool = false) {
         guard active, ready else { return }
         if world.player.perspective == .side { sideScene.show(world: world); updateProjectionEvidence(); return }
-        guard force || displayedChunk != world.player.surface.chunk else { return }
+        // Free edit loads around the camera; otherwise around the player.
+        let focus = mapEditorActive && editorMode == .free ? (editorFocus ?? world.player.surface) : world.player.surface
+        let radius = RPGCameraRules.chunkRadius(zoom: scene.cameraZoom)
+        guard force || displayedChunk != focus.chunk || displayedRadius != radius else { return }
         loading?.cancel(); if cache == nil { cache = RPGChunkCache(seed: world.seed) }
-        let wanted = generator.priorityChunks(around: world.player.surface), epoch = generation, cache = cache
+        let wanted = generator.priorityChunks(around: focus, radius: radius), epoch = generation, cache = cache
         loading = Task { [weak self] in
             let started=ProcessInfo.processInfo.systemUptime
             let chunks = await cache?.load(wanted) ?? []
             guard !Task.isCancelled, let self, self.generation == epoch, self.active else { return }
             self.chunkMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000
-            self.chunks = chunks; self.loadedChunks = chunks.count; self.displayedChunk = self.world.player.surface.chunk
+            self.chunks = chunks; self.loadedChunks = chunks.count; self.displayedChunk = focus.chunk; self.displayedRadius = radius
             RPGCombatRules.seedEnemies(world:&self.world,generator:self.generator,coordinates:chunks.map(\.coordinate))
             self.renderCurrent()
             self.notice = "世界已就绪 · \(self.loadedChunks)/64 区块在附近。"
