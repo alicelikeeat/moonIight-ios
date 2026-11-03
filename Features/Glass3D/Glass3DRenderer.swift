@@ -1,255 +1,240 @@
-import SceneKit
+import RealityKit
 import SpriteKit
 import UIKit
 import AVFoundation
 import ImageIO
+import Metal
 
-/// Draws the 2.5D glass world with SceneKit: real depth, tilt, turn and
-/// ray picking. World cells (x, y, height z) map to scene (x, z, −y).
-/// Ground glass is one plane per visible 32×32 chunk; blocks share
-/// geometry and materials; plants are flattened per chunk; media uses one
-/// player or image per file with each piece's texture rectangle.
+/// Draws the 3D glass world with RealityKit (iOS 18+, RealityView with a
+/// virtual camera). World cells (x, y map, z height) map to RealityKit
+/// (x, z, −y), Y up. Ground glass is one plane per visible 32×32 chunk;
+/// blocks share meshes and materials; media sits on its own face quad with
+/// the piece's texture coordinates, so one video player or image serves
+/// every piece. Native iOS glass for blocks is drawn by the SwiftUI layer
+/// on top (Glass3DNativeGlass), from the same camera maths.
+@available(iOS 18.0, *)
 @MainActor final class Glass3DRenderer {
-    let scene = SCNScene()
-    let cameraNode = SCNNode()
-    private let ground = SCNNode(), blocksNode = SCNNode(), plantsNode = SCNNode(), creaturesNode = SCNNode()
-    private let pickupsNode = SCNNode(), effects = SCNNode(), previewNode = SCNNode(), selectionNode = SCNNode()
-    let playerNode = SCNNode()
-    private var chunkNodes: [Int: SCNNode] = [:]
-    private var blockNodes: [String: SCNNode] = [:]
+    let root = Entity()
+    let camera = PerspectiveCamera()
+    private let ground = Entity(), blocksRoot = Entity(), plantsRoot = Entity(), creaturesRoot = Entity()
+    private let pickupsRoot = Entity(), effects = Entity(), previewRoot = Entity(), selectionRoot = Entity()
+    let playerEntity = Entity()
+    private var chunkEntities: [Int: ModelEntity] = [:]
+    private var blockEntities: [String: Entity] = [:]
     private var blockVersions: [String: SpatialBlock] = [:]
-    private var groupNodes: [String: SCNNode] = [:]
-    private var plantChunks: [Int: SCNNode] = [:]
+    private var groupEntities: [String: Entity] = [:]
+    private var plantChunks: [Int: Entity] = [:]
     private var plantSignature: [Int: Int] = [:]
-    private var creatureNodes: [String: SCNNode] = [:]
-    private var pickupNodes: [String: SCNNode] = [:]
-    private var telegraphs: [String: (SCNNode, Double)] = [:]
-    private var geometryCache: [String: SCNGeometry] = [:]
-    private var materialCache: [String: SCNMaterial] = [:]
+    private var creatureEntities: [String: Entity] = [:]
+    private var pickupEntities: [String: Entity] = [:]
+    private var telegraphs: [String: (entity: Entity, start: Double, seconds: Double)] = [:]
+    private var meshCache: [String: MeshResource] = [:]
+    private var materialCache: [String: RealityKit.Material] = [:]
     private(set) var quality = RPGGlassQuality.standard
+    /// Native glass draws the block glass; SceneKit-era glass materials
+    /// then thin out to edges so the system glass carries the look.
+    private(set) var nativeGlass = false
+    private var clock = 0.0
     let media = Glass3DMedia()
 
-    static func scenePoint(_ v: SpatialVector) -> SCNVector3 { SCNVector3(Float(v.x), Float(v.z), Float(-v.y)) }
+    static func position(_ v: SpatialVector) -> SIMD3<Float> { SIMD3(Float(v.x), Float(v.z), Float(-v.y)) }
 
     init() {
-        for node in [ground, blocksNode, plantsNode, creaturesNode, pickupsNode, effects, previewNode, selectionNode, playerNode] { scene.rootNode.addChildNode(node) }
-        scene.background.contents = Self.skyImage
-        let camera = SCNCamera(); camera.fieldOfView = CGFloat(SpatialCameraRules.fieldOfView); camera.zNear = 0.1; camera.zFar = 600
-        camera.projectionDirection = .vertical
-        cameraNode.camera = camera
-        scene.rootNode.addChildNode(cameraNode)
-        let ambient = SCNNode(); ambient.light = SCNLight(); ambient.light?.type = .ambient; ambient.light?.intensity = 650
-        let sun = SCNNode(); sun.light = SCNLight(); sun.light?.type = .directional; sun.light?.intensity = 900
-        sun.eulerAngles = SCNVector3(-Float.pi / 3, Float.pi / 5, 0); sun.name = "sun"
-        scene.rootNode.addChildNode(ambient); scene.rootNode.addChildNode(sun)
-        let capsule = SCNCapsule(capRadius: 0.3, height: 1.4)
-        capsule.firstMaterial = Self.solidMaterial(UIColor.systemTeal, glow: true)
-        let body = SCNNode(geometry: capsule); body.position = SCNVector3(0, 0.7, 0); body.name = "player"
-        let nose = SCNNode(geometry: SCNSphere(radius: 0.12)); nose.geometry?.firstMaterial = Self.solidMaterial(.white, glow: true); nose.position = SCNVector3(0.32, 1.1, 0)
-        playerNode.addChildNode(body); playerNode.addChildNode(nose)
-        previewNode.opacity = 0.55
+        for entity in [ground, blocksRoot, plantsRoot, creaturesRoot, pickupsRoot, effects, previewRoot, selectionRoot, playerEntity] { root.addChild(entity) }
+        camera.camera.fieldOfViewInDegrees = Float(SpatialCameraRules.fieldOfView)
+        camera.camera.near = 0.1; camera.camera.far = 600
+        root.addChild(camera)
+        let sun = DirectionalLight()
+        sun.light.intensity = 2600
+        sun.orientation = simd_quatf(angle: -.pi / 3, axis: [1, 0, 0]) * simd_quatf(angle: .pi / 5, axis: [0, 1, 0])
+        root.addChild(sun)
+        // Sky dome seen from inside.
+        var sky = UnlitMaterial()
+        if let texture = try? TextureResource(image: Self.skyImage.cgImage!, options: .init(semantic: .color)) { sky.color = .init(tint: .white, texture: .init(texture)) }
+        else { sky.color = .init(tint: UIColor(red: 0.25, green: 0.35, blue: 0.6, alpha: 1)) }
+        sky.faceCulling = .front
+        let dome = ModelEntity(mesh: .generateSphere(radius: 500), materials: [sky])
+        dome.position = [128, 0, -128]
+        root.addChild(dome)
+        // Player: a glowing capsule-like body and a nose for facing.
+        let body = ModelEntity(mesh: .generateBox(width: 0.6, height: 1.4, depth: 0.6, cornerRadius: 0.3), materials: [Self.solid(.systemTeal, glow: true)])
+        body.position = [0, 0.7, 0]
+        let nose = ModelEntity(mesh: .generateSphere(radius: 0.12), materials: [Self.solid(.white, glow: true)])
+        nose.position = [0.32, 1.1, 0]
+        playerEntity.addChild(body); playerEntity.addChild(nose)
     }
 
     // MARK: Quality
 
-    func setQuality(_ value: RPGGlassQuality) {
-        guard value != quality else { return }
-        quality = value
-        materialCache.removeAll(); geometryCache.removeAll()
-        blockNodes.values.forEach { $0.removeFromParentNode() }; blockNodes.removeAll(); blockVersions.removeAll()
-        chunkNodes.values.forEach { $0.removeFromParentNode() }; chunkNodes.removeAll()
-        scene.rootNode.childNode(withName: "sun", recursively: false)?.light?.castsShadow = value == .high
+    func setQuality(_ value: RPGGlassQuality, nativeGlass: Bool) {
+        guard value != quality || nativeGlass != self.nativeGlass else { return }
+        quality = value; self.nativeGlass = nativeGlass
+        materialCache.removeAll()
+        blockEntities.values.forEach { $0.removeFromParent() }; blockEntities.removeAll(); blockVersions.removeAll()
+        chunkEntities.values.forEach { $0.removeFromParent() }; chunkEntities.removeAll()
     }
 
     // MARK: Camera
 
-    func place(camera: SpatialCameraState) {
-        let eye = SpatialCameraRules.position(camera)
-        cameraNode.position = Self.scenePoint(eye)
-        let yaw = camera.yaw * .pi / 180
-        // "Up" on screen is map-forward for this turn, which also works when
-        // looking straight down.
-        let up = SCNVector3(Float(-sin(yaw)), 0, Float(-cos(yaw)))
-        cameraNode.look(at: Self.scenePoint(camera.target), up: camera.tilt < 1 ? up : SCNVector3(0, 1, 0), localFront: SCNVector3(0, 0, -1))
+    func place(camera state: SpatialCameraState, eye: SpatialVector) {
+        let yaw = state.yaw * .pi / 180
+        // Looking straight down: "up" on screen is map-forward for this turn.
+        let up: SIMD3<Float> = state.tilt < 1 ? [Float(-sin(yaw)), 0, Float(-cos(yaw))] : [0, 1, 0]
+        camera.look(at: Self.position(state.target), from: Self.position(eye), upVector: up, relativeTo: nil)
     }
 
     // MARK: Ground
 
-    /// Glass ground for the chunks around the camera; full chunks, so the
-    /// view never shows missing ground.
     func showGround(chunks: Set<Int>) {
-        for (key, node) in chunkNodes where !chunks.contains(key) { node.removeFromParentNode(); chunkNodes[key] = nil }
-        for key in chunks where chunkNodes[key] == nil {
+        for (key, entity) in chunkEntities where !chunks.contains(key) { entity.removeFromParent(); chunkEntities[key] = nil }
+        for key in chunks where chunkEntities[key] == nil {
             let cx = key % 8, cy = key / 8
-            let plane = SCNPlane(width: 32, height: 32)
-            plane.firstMaterial = groundMaterial()
-            let node = SCNNode(geometry: plane)
-            node.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
-            node.position = SCNVector3(Float(cx * 32 + 16), 0, Float(-(cy * 32 + 16)))
-            node.name = "ground"; node.renderingOrder = -10
-            ground.addChildNode(node); chunkNodes[key] = node
+            guard let groundMesh = groundMesh else { continue }
+            let plane = ModelEntity(mesh: groundMesh, materials: [groundMaterial()])
+            plane.position = [Float(cx * 32 + 16), 0, Float(-(cy * 32 + 16))]
+            ground.addChild(plane); chunkEntities[key] = plane
         }
     }
 
-    private func groundMaterial() -> SCNMaterial {
+    private func groundMaterial() -> RealityKit.Material {
         if let cached = materialCache["ground"] { return cached }
-        let material = SCNMaterial()
-        material.diffuse.contents = Self.tileImage
-        material.diffuse.wrapS = .repeat; material.diffuse.wrapT = .repeat
-        material.diffuse.contentsTransform = SCNMatrix4MakeScale(32, 32, 1)
-        material.lightingModel = quality == .performance ? .constant : .blinn
-        material.transparency = 0.9
-        material.isDoubleSided = true
-        material.writesToDepthBuffer = true
+        var material = UnlitMaterial()
+        if let texture = Self.tileTexture { material.color = .init(tint: UIColor(white: 1, alpha: 0.9), texture: .init(texture, sampler: Self.repeatSampler)) }
+        material.blending = .transparent(opacity: .init(floatLiteral: 0.9))
         materialCache["ground"] = material
         return material
     }
 
+    /// A 32 × 32 plane whose texture coordinates run 0…32, so the glass
+    /// tile repeats once per cell.
+    private lazy var groundMesh: MeshResource? = {
+        var descriptor = MeshDescriptor(name: "groundChunk")
+        descriptor.positions = MeshBuffers.Positions([[-16, 0, 16], [16, 0, 16], [16, 0, -16], [-16, 0, -16]])
+        descriptor.normals = MeshBuffers.Normals([[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]])
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates([[0, 0], [32, 0], [32, 32], [0, 32]])
+        descriptor.primitives = .triangles([0, 1, 2, 0, 2, 3])
+        return try? MeshResource.generate(from: [descriptor])
+    }()
+
     // MARK: Blocks
 
-    /// Shows `blocks` (only those in loaded chunks are passed in). Moving
-    /// groups get a parent node turned and moved every frame.
     func showBlocks(_ blocks: [SpatialBlock], pivots: [String: SpatialVector]) {
         let wanted = Set(blocks.map(\.id))
-        for (id, node) in blockNodes where !wanted.contains(id) { node.removeFromParentNode(); blockNodes[id] = nil; blockVersions[id] = nil }
+        for (id, entity) in blockEntities where !wanted.contains(id) { entity.removeFromParent(); blockEntities[id] = nil; blockVersions[id] = nil }
         for block in blocks {
-            if blockVersions[block.id] == block, let node = blockNodes[block.id], node.parent != nil {
+            if blockVersions[block.id] == block, let entity = blockEntities[block.id], entity.parent != nil {
                 let moving = block.groupID.flatMap { pivots[$0] } != nil
-                if moving == (node.parent !== blocksNode) { continue }
+                if moving == (entity.parent !== blocksRoot) { continue }
             }
-            blockNodes[block.id]?.removeFromParentNode()
-            let node = SCNNode(geometry: geometry(for: block))
-            node.name = "block:" + block.id
-            node.eulerAngles = SCNVector3(0, Float(block.yaw * .pi / 180), 0)
+            blockEntities[block.id]?.removeFromParent()
+            let entity = makeBlock(block)
             let center = SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2)
             if let group = block.groupID, let pivot = pivots[group] {
-                let parent = groupNode(group)
-                node.position = Self.scenePoint(SpatialVector(center.x - pivot.x, center.y - pivot.y, center.z))
-                parent.addChildNode(node)
+                entity.position = Self.position(SpatialVector(center.x - pivot.x, center.y - pivot.y, center.z))
+                groupEntity(group).addChild(entity)
             } else {
-                node.position = Self.scenePoint(center)
-                blocksNode.addChildNode(node)
+                entity.position = Self.position(center)
+                blocksRoot.addChild(entity)
             }
-            blockNodes[block.id] = node; blockVersions[block.id] = block
+            blockEntities[block.id] = entity; blockVersions[block.id] = block
         }
-        for (group, node) in groupNodes where node.childNodes.isEmpty { node.removeFromParentNode(); groupNodes[group] = nil }
+        for (group, entity) in groupEntities where entity.children.isEmpty { entity.removeFromParent(); groupEntities[group] = nil }
     }
 
-    private func groupNode(_ id: String) -> SCNNode {
-        if let node = groupNodes[id] { return node }
-        let node = SCNNode(); node.name = "group:" + id
-        blocksNode.addChildNode(node); groupNodes[id] = node
-        return node
+    private func groupEntity(_ id: String) -> Entity {
+        if let entity = groupEntities[id] { return entity }
+        let entity = Entity(); blocksRoot.addChild(entity); groupEntities[id] = entity
+        return entity
     }
 
-    /// Moves and turns the moving groups for this frame.
     func place(frames: [String: GroupFrame]) {
         for (id, frame) in frames {
-            guard let node = groupNodes[id] else { continue }
-            node.position = Self.scenePoint(SpatialVector(frame.pivot.x + frame.offset.x, frame.pivot.y + frame.offset.y, frame.offset.z))
-            node.eulerAngles = SCNVector3(0, Float(frame.yaw * .pi / 180), 0)
+            guard let entity = groupEntities[id] else { continue }
+            entity.position = Self.position(SpatialVector(frame.pivot.x + frame.offset.x, frame.pivot.y + frame.offset.y, frame.offset.z))
+            entity.orientation = simd_quatf(angle: Float(frame.yaw * .pi / 180), axis: [0, 1, 0])
         }
     }
 
-    private func geometry(for block: SpatialBlock) -> SCNGeometry {
-        let key = "\(block.thickness)|\(block.size)|\(block.glass.tintHex ?? "-")|\(block.glass.density)|\(block.glass.frosted)|\(block.glass.glow)|\(block.collision.rawValue)"
-        let base: SCNGeometry
-        if let cached = geometryCache[key] { base = cached } else {
-            let box = SCNBox(width: CGFloat(block.size) * 0.98, height: CGFloat(block.thickness), length: CGFloat(block.size) * 0.98, chamferRadius: CGFloat(min(0.06, block.thickness * 0.2)))
-            box.materials = [glassMaterial(block.glass, collision: block.collision)]
-            geometryCache[key] = box; base = box
-        }
-        guard let mediaRef = block.media, let mediaMaterial = media.material(for: mediaRef, quality: quality) else { return base }
-        // Media blocks get their own copy with the media on one face.
-        let copy = base.copy() as! SCNGeometry
-        let glass = base.firstMaterial!
-        var faces = [glass, glass, glass, glass, glass, glass]
-        switch mediaRef.face { case .top: faces[4] = mediaMaterial; case .front: faces[0] = mediaMaterial; case .side: faces[1] = mediaMaterial }
-        copy.materials = faces
-        return copy
+    private func makeBlock(_ block: SpatialBlock) -> Entity {
+        let key = "box|\(block.size)|\(block.thickness)"
+        let box = mesh(key) { .generateBox(width: Float(block.size) * 0.98, height: Float(block.thickness), depth: Float(block.size) * 0.98, cornerRadius: Float(min(0.06, block.thickness * 0.2))) }
+        let entity = ModelEntity(mesh: box, materials: [glassMaterial(block.glass, collision: block.collision)])
+        entity.orientation = simd_quatf(angle: Float(block.yaw * .pi / 180), axis: [0, 1, 0])
+        if let reference = block.media, let face = media.face(for: reference, block: block) { entity.addChild(face) }
+        return entity
     }
 
-    func glassMaterial(_ glass: SpatialGlass, collision: SpatialCollision) -> SCNMaterial {
+    func glassMaterial(_ glass: SpatialGlass, collision: SpatialCollision) -> RealityKit.Material {
         let key = "glass|\(glass.tintHex ?? "-")|\(glass.density)|\(glass.frosted)|\(glass.glow)|\(collision == .trigger)"
         if let cached = materialCache[key] { return cached }
-        let tint = glass.tintHex.map { UIColor(rpgHex: $0) } ?? UIColor(white: 0.92, alpha: 1)
-        let material = SCNMaterial()
-        material.diffuse.contents = Self.tileImage
-        material.multiply.contents = tint
-        // Every quality keeps the glass translucent; only lighting changes.
-        material.transparency = CGFloat(collision == .trigger ? 0.18 : 0.35 + glass.density * 0.5)
+        let tint = glass.tintHex.map { UIColor(rpgHex: $0) } ?? UIColor(white: 0.94, alpha: 1)
+        // With native glass on, these meshes keep only their edges and a
+        // faint body: depth and outline, the system glass does the rest.
+        var opacity = Float(collision == .trigger ? 0.18 : 0.3 + glass.density * 0.5)
+        if nativeGlass { opacity = min(opacity, 0.22) }
+        let result: RealityKit.Material
         switch quality {
-        case .high:
-            material.lightingModel = .physicallyBased
-            material.metalness.contents = 0.15; material.roughness.contents = glass.frosted ? 0.65 : 0.08
-            material.transparencyMode = .dualLayer
-        case .standard:
-            material.lightingModel = .blinn
-            material.specular.contents = UIColor(white: 1, alpha: 0.9); material.shininess = 60
-            material.fresnelExponent = 1.4
         case .performance:
-            material.lightingModel = .constant
+            var material = UnlitMaterial()
+            if let texture = Self.tileTexture { material.color = .init(tint: tint, texture: .init(texture)) } else { material.color = .init(tint: tint) }
+            material.blending = .transparent(opacity: .init(floatLiteral: opacity))
+            result = material
+        case .standard, .high:
+            var material = PhysicallyBasedMaterial()
+            if let texture = Self.tileTexture { material.baseColor = .init(tint: tint, texture: .init(texture)) } else { material.baseColor = .init(tint: tint) }
+            material.roughness = .init(floatLiteral: glass.frosted ? 0.6 : 0.08)
+            material.metallic = .init(floatLiteral: quality == .high ? 0.15 : 0.02)
+            material.clearcoat = .init(floatLiteral: quality == .high ? 1 : 0.4)
+            material.blending = .transparent(opacity: .init(floatLiteral: opacity))
+            if glass.glow { material.emissiveColor = .init(color: tint); material.emissiveIntensity = 0.8 }
+            result = material
         }
-        if glass.glow { material.emission.contents = tint.withAlphaComponent(0.6) }
-        material.isDoubleSided = false
-        materialCache[key] = material
-        return material
+        materialCache[key] = result
+        return result
     }
 
     // MARK: Plants
 
-    /// Plants grouped and flattened per chunk: few draw calls for many plants.
     func showPlants(_ plants: [PlantEntity], chunks: Set<Int>) {
         var byChunk: [Int: [PlantEntity]] = [:]
         for plant in plants { let key = (plant.y / 32) * 8 + plant.x / 32; if chunks.contains(key) { byChunk[key, default: []].append(plant) } }
-        for (key, node) in plantChunks where byChunk[key] == nil { node.removeFromParentNode(); plantChunks[key] = nil; plantSignature[key] = nil }
+        for (key, entity) in plantChunks where byChunk[key] == nil { entity.removeFromParent(); plantChunks[key] = nil; plantSignature[key] = nil }
         for (key, list) in byChunk {
             var hasher = Hasher(); for plant in list { hasher.combine(plant.id); hasher.combine(plant.x); hasher.combine(plant.y); hasher.combine(plant.z); hasher.combine(plant.kind) }
             let signature = hasher.finalize()
             if plantSignature[key] == signature { continue }
-            plantChunks[key]?.removeFromParentNode()
-            let holder = SCNNode()
-            for plant in list { holder.addChildNode(plantNode(plant)) }
-            let flat = holder.flattenedClone(); flat.name = "plants:\(key)"
-            plantsNode.addChildNode(flat); plantChunks[key] = flat; plantSignature[key] = signature
+            plantChunks[key]?.removeFromParent()
+            let holder = Entity()
+            for plant in list { holder.addChild(plantEntity(plant)) }
+            plantsRoot.addChild(holder); plantChunks[key] = holder; plantSignature[key] = signature
         }
     }
 
-    private func plantNode(_ plant: PlantEntity) -> SCNNode {
-        let node = SCNNode()
-        node.position = Self.scenePoint(SpatialVector(Double(plant.x) + 0.5, Double(plant.y) + 0.5, plant.z))
-        node.scale = SCNVector3(Float(plant.scale), Float(plant.scale), Float(plant.scale))
+    private func plantEntity(_ plant: PlantEntity) -> Entity {
+        let entity = Entity()
+        entity.position = Self.position(SpatialVector(Double(plant.x) + 0.5, Double(plant.y) + 0.5, plant.z))
+        entity.scale = SIMD3(repeating: Float(plant.scale))
         let green = UIColor(hue: CGFloat(0.25 + plant.hue * 0.12), saturation: 0.6, brightness: 0.75, alpha: 1)
+        func part(_ key: String, _ make: () -> MeshResource, _ color: UIColor, glow: Bool = false, at y: Float, x: Float = 0, z: Float = 0) {
+            let model = ModelEntity(mesh: mesh("plant|" + key, make), materials: [material("plant|\(key)|\(color.hashValue)", color: color, glow: glow)])
+            model.position = [x, y, z]; entity.addChild(model)
+        }
         switch plant.kind {
         case .grass:
-            for i in 0..<3 { let blade = SCNNode(geometry: shared("grass", SCNCone(topRadius: 0, bottomRadius: 0.05, height: 0.35), color: green))
-                blade.position = SCNVector3(Float(i - 1) * 0.1, 0.17, Float(i % 2) * 0.08); node.addChildNode(blade) }
+            for i in 0..<3 { part("grass", { .generateCone(height: 0.35, radius: 0.05) }, green, at: 0.17, x: Float(i - 1) * 0.1, z: Float(i % 2) * 0.08) }
         case .flower:
-            let stem = SCNNode(geometry: shared("stem", SCNCylinder(radius: 0.02, height: 0.4), color: green)); stem.position = SCNVector3(0, 0.2, 0)
-            let petal = UIColor(hue: CGFloat(plant.hue), saturation: 0.7, brightness: 1, alpha: 1)
-            let head = SCNNode(geometry: shared("flower\(Int(plant.hue * 8))", SCNSphere(radius: 0.1), color: petal)); head.position = SCNVector3(0, 0.42, 0)
-            node.addChildNode(stem); node.addChildNode(head)
+            part("stem", { .generateCylinder(height: 0.4, radius: 0.02) }, green, at: 0.2)
+            part("flower", { .generateSphere(radius: 0.1) }, UIColor(hue: CGFloat(plant.hue), saturation: 0.7, brightness: 1, alpha: 1), at: 0.42)
         case .bush:
-            let bush = SCNNode(geometry: shared("bush", SCNSphere(radius: 0.42), color: green)); bush.position = SCNVector3(0, 0.38, 0); node.addChildNode(bush)
+            part("bush", { .generateSphere(radius: 0.42) }, green, at: 0.38)
         case .tree:
-            let trunk = SCNNode(geometry: shared("trunk", SCNCylinder(radius: 0.1, height: 1.0), color: UIColor.brown)); trunk.position = SCNVector3(0, 0.5, 0)
-            let crown = SCNNode(geometry: shared("crown", SCNCone(topRadius: 0, bottomRadius: 0.55, height: 1.5), color: green.withAlphaComponent(0.85))); crown.position = SCNVector3(0, 1.6, 0)
-            node.addChildNode(trunk); node.addChildNode(crown)
+            part("trunk", { .generateCylinder(height: 1.0, radius: 0.1) }, .brown, at: 0.5)
+            part("crown", { .generateCone(height: 1.5, radius: 0.55) }, green, at: 1.6)
         case .glow:
-            let orb = SCNNode(geometry: shared("glow", SCNSphere(radius: 0.16), color: UIColor.cyan, glow: true)); orb.position = SCNVector3(0, 0.35, 0)
-            let stem = SCNNode(geometry: shared("glowstem", SCNCylinder(radius: 0.02, height: 0.3), color: UIColor.systemTeal)); stem.position = SCNVector3(0, 0.15, 0)
-            node.addChildNode(stem); node.addChildNode(orb)
+            part("glowstem", { .generateCylinder(height: 0.3, radius: 0.02) }, .systemTeal, at: 0.15)
+            part("glow", { .generateSphere(radius: 0.16) }, .cyan, glow: true, at: 0.35)
         }
-        node.name = "plant:" + plant.id
-        return node
-    }
-
-    private func shared(_ key: String, _ make: @autoclosure () -> SCNGeometry, color: UIColor, glow: Bool = false) -> SCNGeometry {
-        let cacheKey = "plant|" + key
-        if let cached = geometryCache[cacheKey] { return cached }
-        let geometry = make(); geometry.firstMaterial = Self.solidMaterial(color, glow: glow)
-        geometryCache[cacheKey] = geometry
-        return geometry
+        return entity
     }
 
     // MARK: Creatures, chests, effects
@@ -258,103 +243,128 @@ import ImageIO
         var seen = Set<String>()
         for creature in creatures where (creature.position - center).flatLength <= radius {
             seen.insert(creature.id)
-            let node = creatureNodes[creature.id] ?? makeCreature(creature)
-            node.position = Self.scenePoint(creature.position)
-            node.opacity = creature.alive ? (creature.state == .hurt ? 0.6 : 1) : 0.25
-            node.isHidden = !creature.alive && creature.kind != .boss && creature.kind != .miniBoss
+            let entity = creatureEntities[creature.id] ?? makeCreature(creature)
+            entity.position = Self.position(creature.position)
+            entity.isEnabled = creature.alive || creature.kind.isBoss
+            entity.scale = creature.alive ? (creature.state == .hurt ? [1.1, 0.9, 1.1] : [1, 1, 1]) : [1, 0.3, 1]
         }
-        for (id, node) in creatureNodes where !seen.contains(id) { node.removeFromParentNode(); creatureNodes[id] = nil }
+        for (id, entity) in creatureEntities where !seen.contains(id) { entity.removeFromParent(); creatureEntities[id] = nil }
     }
 
-    private func makeCreature(_ creature: CreatureEntity) -> SCNNode {
-        let node = SCNNode(); node.name = "creature:" + creature.id
-        let body: SCNNode
+    private func makeCreature(_ creature: CreatureEntity) -> Entity {
+        let entity = Entity()
+        let model: ModelEntity
         switch creature.kind {
-        case .neutral: body = SCNNode(geometry: shared("c-neutral", SCNSphere(radius: 0.3), color: UIColor.systemGreen)); body.position = SCNVector3(0, 0.3, 0)
-        case .enemy: body = SCNNode(geometry: shared("c-enemy", SCNCone(topRadius: 0.05, bottomRadius: 0.38, height: 1.0), color: UIColor.systemRed)); body.position = SCNVector3(0, 0.5, 0)
-        case .guardian: body = SCNNode(geometry: shared("c-guard", SCNBox(width: 0.7, height: 1.2, length: 0.7, chamferRadius: 0.1), color: UIColor.systemPurple)); body.position = SCNVector3(0, 0.6, 0)
-        case .miniBoss: body = SCNNode(geometry: shared("c-mini", SCNSphere(radius: 0.7), color: UIColor.systemOrange, glow: true)); body.position = SCNVector3(0, 0.7, 0)
-        case .boss: body = SCNNode(geometry: shared("c-boss", SCNPyramid(width: 2.2, height: 2.8, length: 2.2), color: UIColor(red: 0.6, green: 0.05, blue: 0.2, alpha: 1), glow: true))
+        case .neutral: model = ModelEntity(mesh: mesh("c-neutral") { .generateSphere(radius: 0.3) }, materials: [material("c-neutral", color: .systemGreen)]); model.position = [0, 0.3, 0]
+        case .enemy: model = ModelEntity(mesh: mesh("c-enemy") { .generateCone(height: 1.0, radius: 0.38) }, materials: [material("c-enemy", color: .systemRed)]); model.position = [0, 0.5, 0]
+        case .guardian: model = ModelEntity(mesh: mesh("c-guard") { .generateBox(width: 0.7, height: 1.2, depth: 0.7, cornerRadius: 0.1) }, materials: [material("c-guard", color: .systemPurple)]); model.position = [0, 0.6, 0]
+        case .miniBoss: model = ModelEntity(mesh: mesh("c-mini") { .generateSphere(radius: 0.7) }, materials: [material("c-mini", color: .systemOrange, glow: true)]); model.position = [0, 0.7, 0]
+        case .boss: model = ModelEntity(mesh: mesh("c-boss") { .generateCone(height: 2.8, radius: 1.1) }, materials: [material("c-boss", color: UIColor(red: 0.6, green: 0.05, blue: 0.2, alpha: 1), glow: true)]); model.position = [0, 1.4, 0]
         }
-        body.name = node.name
-        node.addChildNode(body)
-        creaturesNode.addChildNode(node); creatureNodes[creature.id] = node
-        return node
+        entity.addChild(model)
+        creaturesRoot.addChild(entity); creatureEntities[creature.id] = entity
+        return entity
     }
 
     func showPickups(_ pickups: [PickupEntity], near center: SpatialVector, radius: Double) {
         var seen = Set<String>()
         for pickup in pickups where !pickup.collected && (pickup.position - center).flatLength <= radius {
             seen.insert(pickup.id)
-            if pickupNodes[pickup.id] == nil {
-                let chest = SCNNode(geometry: shared("chest", SCNBox(width: 0.5, height: 0.35, length: 0.35, chamferRadius: 0.05), color: UIColor.systemYellow, glow: true))
-                chest.position = Self.scenePoint(pickup.position + SpatialVector(0, 0, 0.2)); chest.name = "chest:" + pickup.id
-                chest.runAction(.repeatForever(.rotateBy(x: 0, y: .pi, z: 0, duration: 2)))
-                pickupsNode.addChildNode(chest); pickupNodes[pickup.id] = chest
+            if pickupEntities[pickup.id] == nil {
+                let chest = ModelEntity(mesh: mesh("chest") { .generateBox(width: 0.5, height: 0.35, depth: 0.35, cornerRadius: 0.05) }, materials: [material("chest", color: .systemYellow, glow: true)])
+                chest.position = Self.position(pickup.position + SpatialVector(0, 0, 0.2))
+                pickupsRoot.addChild(chest); pickupEntities[pickup.id] = chest
             }
         }
-        for (id, node) in pickupNodes where !seen.contains(id) { node.removeFromParentNode(); pickupNodes[id] = nil }
+        for (id, entity) in pickupEntities where !seen.contains(id) { entity.removeFromParent(); pickupEntities[id] = nil }
     }
 
-    /// A red ring that grows while a boss attack winds up.
+    /// A red disc growing while a boss attack winds up.
     func telegraph(id: String, at point: SpatialVector, radius: Double, seconds: Double) {
-        telegraphs[id]?.0.removeFromParentNode()
-        let ring = SCNNode(geometry: SCNCylinder(radius: CGFloat(radius), height: 0.04))
-        let material = SCNMaterial(); material.diffuse.contents = UIColor.systemRed.withAlphaComponent(0.35); material.lightingModel = .constant; material.writesToDepthBuffer = false
-        ring.geometry?.firstMaterial = material
-        ring.position = Self.scenePoint(point + SpatialVector(0, 0, 0.05)); ring.scale = SCNVector3(0.2, 1, 0.2)
-        ring.runAction(.sequence([.scale(to: 1, duration: seconds), .fadeOut(duration: 0.15), .removeFromParentNode()]))
-        effects.addChildNode(ring); telegraphs[id] = (ring, seconds)
+        telegraphs[id]?.entity.removeFromParent()
+        var red = UnlitMaterial(color: .systemRed)
+        red.blending = .transparent(opacity: .init(floatLiteral: 0.35))
+        let disc = ModelEntity(mesh: .generateCylinder(height: 0.04, radius: Float(radius)), materials: [red])
+        disc.position = Self.position(point + SpatialVector(0, 0, 0.05)); disc.scale = [0.2, 1, 0.2]
+        effects.addChild(disc); telegraphs[id] = (disc, clock, seconds)
+    }
+
+    /// Per-frame effects: telegraph growth, chest spin.
+    func animate(clock: Double) {
+        self.clock = clock
+        for (id, entry) in telegraphs {
+            let t = (clock - entry.start) / max(0.05, entry.seconds)
+            if t >= 1.15 { entry.entity.removeFromParent(); telegraphs[id] = nil; continue }
+            let s = Float(0.2 + 0.8 * min(1, t)); entry.entity.scale = [s, 1, s]
+        }
+        let spin = simd_quatf(angle: Float(clock.truncatingRemainder(dividingBy: 2 * .pi)), axis: [0, 1, 0])
+        for entity in pickupEntities.values { entity.orientation = spin }
     }
 
     func placePlayer(_ player: SpatialPlayer) {
-        playerNode.position = Self.scenePoint(player.position)
-        playerNode.eulerAngles = SCNVector3(0, Float(player.facing * .pi / 180), 0)
+        playerEntity.position = Self.position(player.position)
+        playerEntity.orientation = simd_quatf(angle: Float(player.facing * .pi / 180), axis: [0, 1, 0])
     }
 
     // MARK: Preview and selection
 
     func showPreview(_ blocks: [SpatialBlock], conflicts: Set<String>) {
-        previewNode.childNodes.forEach { $0.removeFromParentNode() }
+        previewRoot.children.removeAll()
         for block in blocks.prefix(1500) {
-            let box = SCNBox(width: CGFloat(block.size), height: CGFloat(block.thickness), length: CGFloat(block.size), chamferRadius: 0.04)
-            let material = SCNMaterial(); material.diffuse.contents = conflicts.contains(block.id) ? UIColor.systemRed : UIColor.systemCyan
-            material.transparency = 0.5; material.lightingModel = .constant
-            box.firstMaterial = material
-            let node = SCNNode(geometry: box)
-            node.position = Self.scenePoint(SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2))
-            previewNode.addChildNode(node)
+            var tint = UnlitMaterial(color: conflicts.contains(block.id) ? .systemRed : .systemCyan)
+            tint.blending = .transparent(opacity: .init(floatLiteral: 0.45))
+            let box = ModelEntity(mesh: mesh("box|\(block.size)|\(block.thickness)") { .generateBox(width: Float(block.size) * 0.98, height: Float(block.thickness), depth: Float(block.size) * 0.98) }, materials: [tint])
+            box.position = Self.position(SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2))
+            previewRoot.addChild(box)
         }
     }
 
-    func showSelection(_ boxes: [SpatialBlock]) {
-        selectionNode.childNodes.forEach { $0.removeFromParentNode() }
-        for block in boxes.prefix(400) {
-            let box = SCNBox(width: CGFloat(block.size) + 0.06, height: CGFloat(block.thickness) + 0.06, length: CGFloat(block.size) + 0.06, chamferRadius: 0.05)
-            let material = SCNMaterial(); material.diffuse.contents = UIColor.systemYellow; material.fillMode = .lines; material.lightingModel = .constant
-            box.firstMaterial = material
-            let node = SCNNode(geometry: box)
-            node.position = Self.scenePoint(SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2))
-            selectionNode.addChildNode(node)
+    func showSelection(_ blocks: [SpatialBlock]) {
+        selectionRoot.children.removeAll()
+        for block in blocks.prefix(400) {
+            var yellow = UnlitMaterial(color: .systemYellow)
+            yellow.blending = .transparent(opacity: .init(floatLiteral: 0.3))
+            let box = ModelEntity(mesh: .generateBox(width: Float(block.size) + 0.08, height: Float(block.thickness) + 0.08, depth: Float(block.size) + 0.08), materials: [yellow])
+            box.position = Self.position(SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2))
+            selectionRoot.addChild(box)
         }
     }
 
-    // MARK: Stats
+    var blockNodeCount: Int { blockEntities.count }
+    var creatureNodeCount: Int { creatureEntities.count }
 
-    var blockNodeCount: Int { blockNodes.count }
-    var creatureNodeCount: Int { creatureNodes.count }
+    // MARK: Shared resources
 
-    // MARK: Shared images
+    private func mesh(_ key: String, _ make: () -> MeshResource) -> MeshResource {
+        if let cached = meshCache[key] { return cached }
+        let value = make(); meshCache[key] = value; return value
+    }
+    private func material(_ key: String, color: UIColor, glow: Bool = false) -> RealityKit.Material {
+        if let cached = materialCache[key] { return cached }
+        let value = Self.solid(color, glow: glow); materialCache[key] = value; return value
+    }
 
-    static func solidMaterial(_ color: UIColor, glow: Bool = false) -> SCNMaterial {
-        let material = SCNMaterial()
-        material.diffuse.contents = color
-        material.lightingModel = .blinn
-        if glow { material.emission.contents = color.withAlphaComponent(0.45) }
+    static func solid(_ color: UIColor, glow: Bool = false) -> RealityKit.Material {
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: color)
+        material.roughness = .init(floatLiteral: 0.5)
+        if glow { material.emissiveColor = .init(color: color); material.emissiveIntensity = 0.6 }
         return material
     }
 
-    /// One glass cell: faint fill, bright top edge, soft lower shade.
+    static let repeatSampler: MaterialParameters.Texture.Sampler = {
+        let descriptor = MTLSamplerDescriptor()
+        descriptor.sAddressMode = .repeat; descriptor.tAddressMode = .repeat
+        descriptor.minFilter = .linear; descriptor.magFilter = .linear; descriptor.mipFilter = .linear
+        return MaterialParameters.Texture.Sampler(descriptor)
+    }()
+
+    static let tileTexture: TextureResource? = {
+        guard let image = tileImage.cgImage else { return nil }
+        return try? TextureResource(image: image, options: .init(semantic: .color))
+    }()
+
+    /// One glass cell: faint fill, bright edge, soft lower shade.
     static let tileImage: UIImage = {
         let side: CGFloat = 64
         let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
@@ -383,109 +393,121 @@ import ImageIO
     }()
 }
 
-/// Media for blocks: one image, one looping player or one GIF timeline per
-/// file, shared by every block face that shows it. Pieces of a media grid
-/// show their part through the texture transform.
+/// Media for block faces: one image texture, one looping video player or
+/// one set of GIF frame textures per file, shared by every face showing
+/// it. A face is its own quad whose texture coordinates pick the piece.
+@available(iOS 18.0, *)
 @MainActor final class Glass3DMedia {
-    private var images: [String: UIImage] = [:]
+    private var images: [String: TextureResource] = [:]
+    private var imageSizes: [String: CGSize] = [:]
     private var players: [String: (AVQueuePlayer, AVPlayerLooper)] = [:]
-    private var gifs: [String: (frames: [CGImage], delays: [Double], total: Double)] = [:]
-    private var gifMaterials: [String: [SCNMaterial]] = [:]
-    private(set) var visibleVideos: Set<String> = []
-    /// mediaID → file URL and kind, from the media library.
+    private var gifs: [String: (frames: [TextureResource], delays: [Double], total: Double, size: CGSize)] = [:]
+    private var gifFaces: [String: [ModelEntity]] = [:]
+    private var shownGIFFrame: [String: Int] = [:]
     var resolve: ((String) -> (URL, RPGMediaKind)?)?
-    /// bindingID → binding, from the world.
     var binding: ((String) -> MediaBinding?)?
 
     var decoderCount: Int { players.values.filter { $0.0.rate > 0 }.count }
 
-    func material(for reference: SpatialMedia, quality: RPGGlassQuality) -> SCNMaterial? {
+    /// A quad just outside the block face, showing the binding's piece.
+    func face(for reference: SpatialMedia, block: SpatialBlock) -> ModelEntity? {
         guard let binding = binding?(reference.bindingID) else { return nil }
-        let material = SCNMaterial()
-        material.lightingModel = .constant
-        material.isDoubleSided = false
+        var material: RealityKit.Material?
+        var pixels = CGSize(width: 1, height: 1)
+        var gifID: String?
         switch binding.kind {
         case .image, .video, .gif:
-            guard let (url, kind) = resolve?(binding.mediaID) else { return placeholder() }
-            var size = CGSize(width: 1, height: 1)
+            guard let (url, kind) = resolve?(binding.mediaID) else { return nil }
             switch kind {
             case .video:
                 let player = videoPlayer(binding.mediaID, url: url)
-                material.diffuse.contents = player
-                size = player.currentItem?.presentationSize ?? CGSize(width: 16, height: 9)
+                material = VideoMaterial(avPlayer: player)
+                pixels = player.currentItem?.presentationSize ?? CGSize(width: 16, height: 9)
             case .gif:
-                guard let gif = gif(binding.mediaID, url: url), let first = gif.frames.first else { return placeholder() }
-                material.diffuse.contents = first
-                size = CGSize(width: first.width, height: first.height)
-                gifMaterials[binding.mediaID, default: []].append(material)
+                guard let gif = gif(binding.mediaID, url: url), let first = gif.frames.first else { return nil }
+                var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(first)); material = unlit
+                pixels = gif.size; gifID = binding.mediaID
             default:
-                guard let image = image(binding.mediaID, url: url) else { return placeholder() }
-                material.diffuse.contents = image; size = image.size
+                guard let texture = image(binding.mediaID, url: url) else { return nil }
+                var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(texture)); material = unlit
+                pixels = imageSizes[binding.mediaID] ?? pixels
             }
-            material.diffuse.contentsTransform = Self.transform(binding: binding, region: reference.region, pixels: size)
-            material.diffuse.wrapS = .clamp; material.diffuse.wrapT = .clamp
         case .icon, .number, .text:
-            material.diffuse.contents = RPGCellRenderer.image(kind: binding.kind, style: binding.style ?? RPGCellStyle())
+            let image = RPGCellRenderer.image(kind: binding.kind, style: binding.style ?? RPGCellStyle())
+            if let cg = image.cgImage, let texture = try? TextureResource(image: cg, options: .init(semantic: .color)) {
+                var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(texture)); unlit.blending = .transparent(opacity: .init(floatLiteral: 1)); material = unlit
+            }
         }
-        return material
+        guard let material else { return nil }
+        let rect = Self.textureRect(binding: binding, region: reference.region, pixels: pixels)
+        guard let mesh = Self.quad(face: reference.face, block: block, uv: rect) else { return nil }
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        if let gifID { gifFaces[gifID, default: []].append(entity) }
+        return entity
     }
 
-    /// Texture rectangle (top-left origin for SceneKit) for a binding piece.
-    static func transform(binding: MediaBinding, region: RPGMediaRegion?, pixels: CGSize) -> SCNMatrix4 {
+    /// The piece's texture rectangle (bottom-left origin, v up).
+    static func textureRect(binding: MediaBinding, region: RPGMediaRegion?, pixels: CGSize) -> CGRect {
         let crop = CGRect(x: binding.cropX, y: binding.cropY, width: binding.cropWidth, height: binding.cropHeight)
-        var rect = crop
-        if let region {
-            let group = RPGMediaRegion.groupRect(crop: crop, pixels: pixels, rows: region.rows, columns: region.columns, stretch: region.stretch == true)
-            rect = region.subRect(of: group)
+        guard let region else { return crop }
+        let group = RPGMediaRegion.groupRect(crop: crop, pixels: pixels, rows: region.rows, columns: region.columns, stretch: region.stretch == true)
+        return region.subRect(of: group)
+    }
+
+    /// A quad on one face of a block (block-local coordinates, Y up).
+    static func quad(face: SpatialFace, block: SpatialBlock, uv rect: CGRect) -> MeshResource? {
+        let h = Float(block.size) * 0.49, t = Float(block.thickness) / 2, e: Float = 0.006
+        let corners: [SIMD3<Float>]
+        switch face {
+        case .top: corners = [[-h, t + e, h], [h, t + e, h], [h, t + e, -h], [-h, t + e, -h]]
+        case .front: corners = [[-h, -t, h + e], [h, -t, h + e], [h, t, h + e], [-h, t, h + e]]
+        case .side: corners = [[h + e, -t, h], [h + e, -t, -h], [h + e, t, -h], [h + e, t, h]]
         }
-        // SpriteKit-style rects are bottom-left; SceneKit images are top-left.
-        let top = 1 - rect.maxY
-        return SCNMatrix4Mult(SCNMatrix4MakeScale(Float(rect.width), Float(rect.height), 1), SCNMatrix4MakeTranslation(Float(rect.minX), Float(top), 0))
+        let u0 = Float(rect.minX), u1 = Float(rect.maxX), v0 = Float(rect.minY), v1 = Float(rect.maxY)
+        var descriptor = MeshDescriptor(name: "mediaFace")
+        descriptor.positions = MeshBuffers.Positions(corners)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates([[u0, v0], [u1, v0], [u1, v1], [u0, v1]])
+        descriptor.primitives = .triangles([0, 1, 2, 0, 2, 3])
+        return try? MeshResource.generate(from: [descriptor])
     }
 
-    private func placeholder() -> SCNMaterial {
-        let material = SCNMaterial(); material.diffuse.contents = RPGCellRenderer.placeholder.cgImage(); material.lightingModel = .constant
-        return material
-    }
-
-    private func image(_ id: String, url: URL) -> UIImage? {
+    private func image(_ id: String, url: URL) -> TextureResource? {
         if let cached = images[id] { return cached }
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
-        images[id] = image; return image
+        guard let image = UIImage(contentsOfFile: url.path), let cg = image.cgImage, let texture = try? TextureResource(image: cg, options: .init(semantic: .color)) else { return nil }
+        images[id] = texture; imageSizes[id] = image.size
+        return texture
     }
 
     private func videoPlayer(_ id: String, url: URL) -> AVQueuePlayer {
         if let existing = players[id] { return existing.0 }
-        let item = AVPlayerItem(url: url)
         let player = AVQueuePlayer()
-        let looper = AVPlayerLooper(player: player, templateItem: item)
+        let looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
         player.isMuted = true
         players[id] = (player, looper)
         return player
     }
 
-    private func gif(_ id: String, url: URL) -> (frames: [CGImage], delays: [Double], total: Double)? {
+    private func gif(_ id: String, url: URL) -> (frames: [TextureResource], delays: [Double], total: Double, size: CGSize)? {
         if let cached = gifs[id] { return cached }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        let count = min(CGImageSourceGetCount(source), 120)
-        var frames: [CGImage] = [], delays: [Double] = []
-        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 512, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
+        let count = min(CGImageSourceGetCount(source), 90)
+        var frames: [TextureResource] = [], delays: [Double] = [], size = CGSize(width: 1, height: 1)
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 384, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
         for index in 0..<count {
-            guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options) else { continue }
-            frames.append(image)
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options), let texture = try? TextureResource(image: image, options: .init(semantic: .color)) else { continue }
+            if frames.isEmpty { size = CGSize(width: image.width, height: image.height) }
+            frames.append(texture)
             let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
             let gif = properties?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
-            let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double) ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1
-            delays.append(max(0.02, delay))
+            delays.append(max(0.02, (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double) ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1))
         }
         guard !frames.isEmpty else { return nil }
-        let value = (frames, delays, delays.reduce(0, +))
+        let value = (frames, delays, delays.reduce(0, +), size)
         gifs[id] = value; return value
     }
 
-    /// Plays videos that are on screen, from the shared world clock so a
-    /// video that comes back into view continues where it should be; GIFs
-    /// step on the same clock, so every piece shows the same frame.
+    /// Plays on-screen videos from the shared world clock (so a video that
+    /// comes back into view continues in time) and steps GIF pieces together.
     func update(visibleMedia: Set<String>, clock: Double, paused: Set<String>) {
         for (id, entry) in players {
             let player = entry.0
@@ -498,17 +520,20 @@ import ImageIO
                 }
             } else if player.rate != 0 { player.pause() }
         }
-        visibleVideos = Set(players.keys.filter { visibleMedia.contains($0) })
-        for (id, materials) in gifMaterials where visibleMedia.contains(id) {
+        for (id, faces) in gifFaces where visibleMedia.contains(id) {
             guard let gif = gifs[id], gif.total > 0 else { continue }
             var t = clock.truncatingRemainder(dividingBy: gif.total), index = 0
             while index < gif.delays.count - 1 && t >= gif.delays[index] { t -= gif.delays[index]; index += 1 }
-            for material in materials { material.diffuse.contents = gif.frames[index] }
+            guard shownGIFFrame[id] != index else { continue }
+            shownGIFFrame[id] = index
+            var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(gif.frames[index]))
+            for face in faces where face.parent != nil { face.model?.materials = [unlit] }
+            gifFaces[id] = faces.filter { $0.parent != nil }
         }
     }
 
     func stop() {
         players.values.forEach { $0.0.pause() }
-        players.removeAll(); gifMaterials.removeAll()
+        players.removeAll(); gifFaces.removeAll()
     }
 }

@@ -13,12 +13,16 @@ struct SpatialProjection: Equatable, Sendable {
     /// Vertical field of view, degrees.
     var fieldOfView: Double
     var viewSize: CGSize
+    /// Camera turn (degrees): decides screen "up" when looking straight down.
+    var yaw: Double = 0
 
     private var basis: (forward: SpatialVector, right: SpatialVector, up: SpatialVector) {
         let forward = Self.normalize(target - eye)
         // Looking straight down has no "up" from z; use map north then.
         var right = Self.cross(forward, SpatialVector(0, 0, 1))
-        if (right.x * right.x + right.y * right.y + right.z * right.z) < 1e-10 { right = SpatialVector(1, 0, 0) }
+        if (right.x * right.x + right.y * right.y + right.z * right.z) < 1e-10 {
+            right = SpatialVector(cos(yaw * .pi / 180), sin(yaw * .pi / 180), 0)
+        }
         right = Self.normalize(right)
         let up = Self.cross(right, forward)
         return (forward, right, up)

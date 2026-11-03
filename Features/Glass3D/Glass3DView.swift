@@ -1,9 +1,11 @@
 import SwiftUI
-import SceneKit
+import RealityKit
 import UIKit
 
-/// The 2.5D glass world screen: the SceneKit world, the glass HUD for
-/// play, and the design tools. Opened from the sandbox; shares its save.
+/// The 3D glass world screen: the RealityKit world, native iOS glass on
+/// its blocks, the glass HUD for play, and the design tools. Opened from
+/// the sandbox; shares its save. Needs iOS 18 (RealityView).
+@available(iOS 18.0, *)
 struct Glass3DScreen: View {
     @StateObject private var controller: Glass3DController
     @EnvironmentObject private var model: AppModel
@@ -20,7 +22,9 @@ struct Glass3DScreen: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Glass3DSceneView(controller: controller).ignoresSafeArea()
+                Glass3DWorldView(controller: controller).ignoresSafeArea()
+                Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
+                Glass3DGestureLayer(controller: controller).ignoresSafeArea()
                 VStack(spacing: 8) {
                     topBar
                     if !controller.notice.isEmpty {
@@ -82,8 +86,8 @@ struct Glass3DScreen: View {
             }
             .padding(2).background(Color.primary.opacity(0.08), in: Capsule())
             Spacer(minLength: 4)
-            Text(L10n.t("可见 \(controller.stats.visibleCells) 格 · 方块 \(controller.stats.blocks) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS",
-                        "\(controller.stats.visibleCells) cells · \(controller.stats.blocks) blocks · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS"))
+            Text(L10n.t("方块 \(controller.stats.blocks) · 原生玻璃面 \(controller.nativeGlass.faces) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS",
+                        "\(controller.stats.blocks) blocks · \(controller.nativeGlass.faces) native glass faces · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS"))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("glass3d-stats")
             if controller.mode == .edit {
                 icon("arrow.uturn.backward", L10n.t("撤销", "Undo"), id: "glass3d-undo") { controller.undo() }.disabled(!controller.canUndo)
@@ -99,7 +103,9 @@ struct Glass3DScreen: View {
             Menu {
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
                 Button(L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
-                Toggle(L10n.t("显示渲染统计", "Show Render Stats"), isOn: Binding(get: { controller.view?.showsStatistics ?? false }, set: { controller.view?.showsStatistics = $0 }))
+                if Glass3DController.nativeGlassAvailable {
+                    Toggle(L10n.t("方块使用 iOS 原生玻璃", "Native iOS Glass on Blocks"), isOn: $controller.nativeGlassEnabled)
+                }
             } label: { Image(systemName: "gearshape").font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34) }
                 .accessibilityLabel(L10n.t("设置", "Settings")).accessibilityIdentifier("glass3d-settings")
         }
@@ -306,23 +312,33 @@ struct Glass3DStick: View {
     }
 }
 
-/// SceneKit view with the camera and editing gestures. Two fingers always
-/// drive the camera (pinch zoom, twist turn, vertical drag tilt); one
-/// finger pans in design-select, draws with draw/area, and does nothing on
-/// the map in play (the stick and buttons are separate SwiftUI controls).
-struct Glass3DSceneView: UIViewRepresentable {
+/// The RealityKit world with a virtual camera (no AR).
+@available(iOS 18.0, *)
+struct Glass3DWorldView: View {
+    let controller: Glass3DController
+    var body: some View {
+        GeometryReader { geometry in
+            RealityView { content in
+                content.camera = .virtual
+                content.add(controller.renderer.root)
+            }
+            .onAppear { controller.viewSize = geometry.size }
+            .onChange(of: geometry.size) { _, size in controller.viewSize = size }
+        }
+    }
+}
+
+/// Camera and editing gestures over the world. Two fingers always drive
+/// the camera (pinch zoom, twist turn, vertical drag tilt); one finger pans
+/// in design-select, draws with draw/area, and does nothing on the map in
+/// play (the stick and buttons are separate SwiftUI controls above).
+@available(iOS 18.0, *)
+struct Glass3DGestureLayer: UIViewRepresentable {
     let controller: Glass3DController
 
-    func makeUIView(context: Context) -> SCNView {
-        let view = SCNView(frame: .zero, options: nil)
-        view.scene = controller.renderer.scene
-        view.pointOfView = controller.renderer.cameraNode
-        view.backgroundColor = .black
-        view.antialiasingMode = .multisampling2X
-        view.preferredFramesPerSecond = 60
-        view.rendersContinuously = true
-        view.isJitteringEnabled = false
-        controller.view = view
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
+        view.backgroundColor = .clear
         let coordinator = context.coordinator
         let pinch = UIPinchGestureRecognizer(target: coordinator, action: #selector(Coordinator.pinch(_:)))
         let rotate = UIRotationGestureRecognizer(target: coordinator, action: #selector(Coordinator.rotate(_:)))
@@ -337,7 +353,7 @@ struct Glass3DSceneView: UIViewRepresentable {
         tap.require(toFail: hold)
         return view
     }
-    func updateUIView(_ view: SCNView, context: Context) {}
+    func updateUIView(_ view: UIView, context: Context) {}
     func makeCoordinator() -> Coordinator { Coordinator(controller: controller) }
 
     @MainActor final class Coordinator: NSObject, UIGestureRecognizerDelegate {
@@ -380,6 +396,7 @@ struct Glass3DSceneView: UIViewRepresentable {
 
 /// Properties of the selection: height, size, collision, glass, media,
 /// group operations and motion.
+@available(iOS 18.0, *)
 struct Glass3DPanel: View {
     @ObservedObject var controller: Glass3DController
     let store: MediaStore
@@ -499,6 +516,7 @@ struct Glass3DPanel: View {
 
 /// One-tap world generation: settings, a preview of what it adds and
 /// replaces, then confirm (one undo step).
+@available(iOS 18.0, *)
 struct Glass3DGeneratorSheet: View {
     @ObservedObject var controller: Glass3DController
     @Environment(\.dismiss) private var dismiss

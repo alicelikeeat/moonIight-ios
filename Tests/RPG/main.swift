@@ -1340,6 +1340,10 @@ do {
     }
     let topDown = SpatialProjection(eye: SpatialVector(50, 50, 20), target: SpatialVector(50, 50, 0), fieldOfView: 30, viewSize: size)
     check(topDown.project(SpatialVector(50, 51, 0))!.point.y < 200, "straight down: north is still up")
+    let turnedDown = SpatialProjection(eye: SpatialVector(50, 50, 20), target: SpatialVector(50, 50, 0), fieldOfView: 30, viewSize: size, yaw: 90)
+    check(turnedDown.project(SpatialVector(49, 50, 0))!.point.y < 200, "straight down turned 90°: west is up, as the stick expects")
+    let ahead = SpatialCameraRules.worldDirection(stickX: 0, stickY: -1, yaw: 90)
+    check(abs(ahead.dx + 1) < 1e-9, "and the stick walks west")
     // Picking: nearest first, stacked blocks, creatures, ground.
     let stacked = [SpatialBlock(id: "low", x: 100, y: 100, elevation: 0), SpatialBlock(id: "high", x: 100, y: 100, elevation: 3, thickness: 0.5)]
     let down = topDown.ray(through: CGPoint(x: 400, y: 200))

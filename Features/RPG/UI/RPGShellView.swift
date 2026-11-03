@@ -124,7 +124,14 @@ struct RPGShellView: View {
             }
             .onChange(of: shapeEditor) { _ in syncOverlay() }
             .fullScreenCover(isPresented: $glassWorld) {
-                Glass3DScreen(session: session) { glassWorld = false }.environmentObject(model)
+                if #available(iOS 18.0, *) {
+                    Glass3DScreen(session: session) { glassWorld = false }.environmentObject(model)
+                } else {
+                    VStack(spacing: 12) {
+                        Text(L10n.t("3D 玻璃世界需要 iOS 18 或更高版本。", "The 3D glass world needs iOS 18 or later."))
+                        Button(L10n.t("关闭", "Close")) { glassWorld = false }
+                    }.padding()
+                }
             }
             .onChange(of: glassWorld) { _ in syncOverlay() }
             .sheet(isPresented: $appSettings) {

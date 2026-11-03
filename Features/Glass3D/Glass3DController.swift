@@ -1,4 +1,4 @@
-import SceneKit
+import RealityKit
 import UIKit
 import Combine
 
@@ -38,10 +38,20 @@ struct Glass3DPending {
 /// Runs the 2.5D world on the main thread: one display-link step does the
 /// clock, motion, events, physics, AI and rendering. Edits go through
 /// `SpatialWorld.edit` (undoable) and are committed to the shared save.
+@available(iOS 18.0, *)
 @MainActor final class Glass3DController: NSObject, ObservableObject {
     let session: RPGSession
     let renderer = Glass3DRenderer()
-    weak var view: SCNView?
+    /// Size of the 3D view in points (for projection, picking, aspect).
+    var viewSize: CGSize = .zero
+    /// Native iOS glass on blocks (iOS 26+), drawn by the SwiftUI layer.
+    let nativeGlass = Glass3DNativeGlass()
+    @Published var nativeGlassEnabled = UserDefaults.standard.object(forKey: "moonlight.glass3d.native") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(nativeGlassEnabled, forKey: "moonlight.glass3d.native"); applyQuality(); rebuildAll() }
+    }
+    static var nativeGlassAvailable: Bool { if #available(iOS 26.0, *) { return true }; return false }
+    private var nativeTimer = 0.0
+    private var visibleBlockCache: [SpatialBlock] = []
 
     /// The world changes every frame (clock, positions); SwiftUI only
     /// redraws on edits (`revision`), never 60 times a second.
@@ -60,7 +70,7 @@ struct Glass3DPending {
     @Published private(set) var cooldowns: [Double] = [0, 0, 0]
     @Published private(set) var bossBar: (name: String, health: Int, maxHealth: Int, phase: Int)?
     @Published private(set) var stats = (visibleCells: 0, blocks: 0, creatures: 0, activeAI: 0, videos: 0, fps: 0.0)
-    @Published var quality: RPGGlassQuality { didSet { renderer.setQuality(quality); rebuildAll() } }
+    @Published var quality: RPGGlassQuality { didSet { applyQuality(); rebuildAll() } }
     // Builder settings.
     @Published var buildHeight = 0.0
     @Published var buildThickness = 1.0
@@ -103,7 +113,7 @@ struct Glass3DPending {
         quality = session.glassQuality
         super.init()
         if world.player.position == SpatialVector(128.5, 128.5, 0) { world.player.position = world.spawn }
-        renderer.setQuality(quality)
+        applyQuality()
         renderer.media.binding = { [weak session] id in session?.world.mediaBindings.first { $0.id == id } }
         camera.target = world.player.position
         health = session.playerHealth; stamina = session.playerStamina
@@ -151,7 +161,10 @@ struct Glass3DPending {
         renderer.place(frames: frames)
         renderer.placePlayer(world.player)
         if mode == .play { follow(dt: dt) }
-        renderer.place(camera: camera)
+        renderer.place(camera: camera, eye: SpatialCameraRules.position(camera))
+        renderer.animate(clock: world.clock)
+        nativeTimer += dt
+        if nativeTimer >= 1.0 / 30 { nativeTimer = 0; updateNativeGlass(frames: frames) }
         renderTimer += dt
         if renderTimer > 0.25 { renderTimer = 0; refreshVisible() }
         renderer.media.update(visibleMedia: visibleMediaIDs, clock: world.clock, paused: pausedMedia(frames: frames))
@@ -288,8 +301,8 @@ struct Glass3DPending {
     // MARK: Camera
 
     var aspect: Double {
-        guard let size = view?.bounds.size, size.height > 0 else { return 0.46 }
-        return Double(size.width / size.height)
+        guard viewSize.height > 0 else { return 2.1 }
+        return Double(viewSize.width / viewSize.height)
     }
     func clampCamera() {
         camera.tilt = SpatialCameraRules.clampTilt(camera.tilt)
@@ -328,6 +341,7 @@ struct Glass3DPending {
         let all = allBlocks
         let visible = all.filter { chunks.contains(($0.y / 32) * 8 + $0.x / 32) }
         renderer.showBlocks(visible, pivots: pivots)
+        visibleBlockCache = visible
         renderer.showPlants(world.plants, chunks: chunks)
         renderer.showCreatures(world.creatures, near: center, radius: reach + 8)
         renderer.showPickups(world.pickups, near: center, radius: reach + 8)
@@ -406,23 +420,41 @@ struct Glass3DPending {
 
     var selectedBlocks: [SpatialBlock] { world.blocks.filter { selection.contains($0.id) } }
 
-    /// What is under a screen point, nearest first.
+    /// The camera as maths (shared by RealityKit, picking and native glass).
+    var projection: SpatialProjection {
+        SpatialProjection(eye: SpatialCameraRules.position(camera), target: camera.target, fieldOfView: SpatialCameraRules.fieldOfView, viewSize: viewSize, yaw: camera.yaw)
+    }
+
+    /// What is under a screen point, nearest first (ray through the world).
     func pick(_ point: CGPoint) -> [(kind: String, id: String, cell: SurfacePoint, height: Double)] {
-        guard let view else { return [] }
-        let hits = view.hitTest(point, options: [SCNHitTestOption.searchMode: SCNHitTestSearchMode.all.rawValue, SCNHitTestOption.ignoreHiddenNodes: true])
-        var result: [(String, String, SurfacePoint, Double)] = []
-        for hit in hits {
-            var node: SCNNode? = hit.node, name = ""
-            while let current = node, current.name == nil || current.name == "" { node = current.parent }
-            name = node?.name ?? ""
-            let w = hit.worldCoordinates
-            let cell = SurfacePoint(x: min(255, max(0, Int(Double(w.x).rounded(.down)))), z: min(255, max(0, Int(Double(-w.z).rounded(.down)))))
-            if name.hasPrefix("block:") { result.append(("block", String(name.dropFirst(6)), cell, Double(w.y))) }
-            else if name.hasPrefix("creature:") { result.append(("creature", String(name.dropFirst(9)), cell, Double(w.y))) }
-            else if name.hasPrefix("chest:") { result.append(("chest", String(name.dropFirst(6)), cell, Double(w.y))) }
-            else if name == "ground" { result.append(("ground", "", cell, 0)) }
+        guard viewSize.width > 0 else { return [] }
+        let ray = projection.ray(through: point)
+        let frames = world.groupFrames(pivots: pivots, clock: world.clock)
+        let hits = SpatialPicking.pick(origin: ray.origin, direction: ray.direction, blocks: visibleBlockCache, frames: frames,
+                                       creatures: world.creatures, pickups: world.pickups)
+        return hits.map { hit in
+            let id = hit.kind == .block && hit.id.hasPrefix("legacy:") ? hit.id : hit.id
+            return (hit.kind.rawValue, id, hit.cell, hit.point.z)
         }
-        return result
+    }
+
+    // MARK: Native glass
+
+    private func applyQuality() {
+        renderer.setQuality(quality, nativeGlass: nativeGlassActive)
+    }
+    /// On when the system has Liquid Glass, the setting is on and the
+    /// quality level gives it a budget.
+    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && SpatialFaces.budget(quality) > 0 }
+
+    private func updateNativeGlass(frames: [String: GroupFrame]) {
+        guard nativeGlassActive else { nativeGlass.update(projection: projection, blocks: [], frames: [:], characters: [], budget: 0); return }
+        var characters = [Glass3DNativeGlass.Character(position: world.player.position, radius: 0.35, height: 1.5)]
+        for creature in world.creatures where creature.alive && (creature.position - camera.target).flatLength < camera.distance * 3 + 10 {
+            let big = creature.kind == .boss ? 1.1 : creature.kind == .miniBoss ? 0.7 : 0.4
+            characters.append(.init(position: creature.position, radius: big, height: creature.kind == .boss ? 2.8 : 1.4))
+        }
+        nativeGlass.update(projection: projection, blocks: visibleBlockCache, frames: frames, characters: characters, budget: SpatialFaces.budget(quality))
     }
 
     func tap(_ point: CGPoint) {
