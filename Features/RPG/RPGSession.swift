@@ -14,6 +14,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private var switchMilliseconds=0.0,saveMilliseconds=0.0,chunkMilliseconds=0.0
     @Published private(set) var pendingStory=false
     @Published private(set) var recoveryChoices:[RPGRecoveryChoice]=[]
+    /// Set when the world could not be loaded and nothing is recoverable,
+    /// so the sandbox shows a create/retry screen instead of a blank scene.
+    @Published private(set) var loadError: String?
     private var lastFrame: TimeInterval?
     private var lastHUD: TimeInterval = 0
     private var combatObstacles: Set<SurfacePoint> = []
@@ -51,6 +54,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     private static var testReset = false
     #if DEBUG
     private static var testRecoveryPrepared=false
+    private static var testFuturePrepared=false
     #endif
     var generator: RPGWorldGenerator { terrainGenerator }
     init() {
@@ -100,6 +104,21 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                     }
                 }
                 #endif
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--rpg-future-world-ui-tests"),!Self.testFuturePrepared {
+                    // A world saved by a newer app version: it must not open,
+                    // must not be overwritten, and must not leave a blank screen.
+                    Self.testFuturePrepared=true
+                    let root=await storage.root,folder=root.appendingPathComponent("Worlds/future-world",isDirectory:true)
+                    var fixture=WorldState(seed:7);fixture.id="future-world"
+                    if var object=try JSONSerialization.jsonObject(with:RPGWorldCodec.encode(fixture)) as? [String:Any] {
+                        object["schemaVersion"]=WorldState.currentSchema+1
+                        try FileManager.default.createDirectory(at:folder,withIntermediateDirectories:true)
+                        try JSONSerialization.data(withJSONObject:object).write(to:folder.appendingPathComponent("world.json"))
+                        try Data(#"{"id":"future-world"}"#.utf8).write(to:root.appendingPathComponent("active.json"))
+                    }
+                }
+                #endif
                 let value = try await storage.load() ?? WorldState()
                 let recovered = await storage.recoveredFromBackup
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
@@ -107,7 +126,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 self.notice = recovered ? "已从保留的有效存档恢复。" : "世界已就绪。"
             } catch {
                 guard let self, self.generation == epoch else { return }
-                self.boot = nil; self.notice = error.localizedDescription; self.ready = false
+                self.boot = nil; self.notice = error.localizedDescription; self.ready = false; self.loadError = error.localizedDescription
                 if error as? RPGWorldError != .unsupportedVersion {
                     let choices=(try? await storage.recoverableWorlds()) ?? []
                     guard !Task.isCancelled,self.generation==epoch else{return};self.recoveryChoices=choices
@@ -116,7 +135,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         }
     }
     private func assign(_ value: WorldState) {
-        recoveryChoices=[]
+        recoveryChoices=[]; loadError=nil
         generation = UUID(); loading?.cancel(); saving?.cancel()
         scene.shutdown(); sideScene.shutdown()
         world = value; silenceMedia(); terrainGenerator = .init(seed: world.seed)
@@ -125,6 +144,47 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         ready = true; working = false
         bindScenes(); applyScenePause(); scene.tool = tool
         loadVisible(force: true)
+    }
+    /// Name shown for the current world. Saves have no name field, so it is
+    /// derived from what identifies the world.
+    var worldTitle: String { (world.isCreativeCopy ? "创作副本" : "原世界") + " · Seed \(world.seed)" }
+    var modeTitle: String { world.player.mode == .creative ? "创造模式" : "冒险模式" }
+    var perspectiveTitle: String { world.player.perspective == .side ? "侧视切片" : "俯视地表" }
+    /// The active story and the step the player is on.
+    var questSummary: String {
+        let graph = world.story.activeGraph, progress = world.story.activeProgress
+        if progress?.ended == true { return graph.title + " · 已完成" }
+        guard let node = graph.nodes.first(where: { $0.id == (progress?.current ?? graph.start) }) else { return graph.title }
+        let text = node.text.isEmpty ? node.kind.rawValue : node.text
+        return graph.title + " · " + (text.count > 28 ? String(text.prefix(28)) + "…" : text)
+    }
+    /// Every world kept on disk, for the control center's world switcher.
+    func listWorlds() async -> [RPGRecoveryChoice] { (try? await storage.recoverableWorlds()) ?? [] }
+    /// Saves the current world, then opens another one kept on disk.
+    func switchWorld(_ id: String) {
+        guard !working, id != world.id || !ready else { return }
+        replaceWorld { storage in try await storage.load(id: id) }
+    }
+    /// Saves the current world (if any), then starts a new one with a fresh
+    /// seed. Existing worlds, readable or not, stay on disk untouched.
+    func createWorld() {
+        guard !working else { return }
+        replaceWorld { _ in WorldState(seed: UInt64.random(in: 1...999_999_999)) }
+    }
+    private func replaceWorld(_ next: @escaping @Sendable (RPGWorldDiskStore) async throws -> WorldState) {
+        working = true; silenceMedia()
+        let current = ready ? world : nil, epoch = generation, storage = storage
+        boot = Task { [weak self] in
+            do {
+                if let current { try await storage.save(current) }
+                let value = try await next(storage); try await storage.save(value)
+                guard let self, !Task.isCancelled, self.generation == epoch else { return }
+                self.boot = nil; self.assign(value); self.notice = "已打开：" + self.worldTitle
+            } catch {
+                guard let self, self.generation == epoch else { return }
+                self.boot = nil; self.working = false; self.notice = error.localizedDescription
+            }
+        }
     }
     func pause() { guiding?.cancel(); active = false; silenceMedia(); media?.pause(); applyScenePause(); loading?.cancel(); save() }
     func shutdown() {

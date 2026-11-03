@@ -47,7 +47,7 @@ final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRecognizer
         accessibilityIdentifier = "navigation-slider"
         accessibilityLabel = "原生底部导航"
         delegate = self
-        items = AppTab.allCases.enumerated().map { UITabBarItem(title: $0.element.title, image: UIImage(systemName: $0.element.symbol), tag: $0.offset) }
+        items = AppTab.bar.enumerated().map { UITabBarItem(title: $0.element.title, image: UIImage(systemName: $0.element.symbol), tag: $0.offset) }
         itemPositioning = .fill
         itemWidth = 0
         itemSpacing = 0
@@ -71,19 +71,20 @@ final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRecognizer
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func setSelected(_ tab: AppTab) {
+    func setSelected(_ requested: AppTab) {
+        let tab = requested.barTab
         guard !isApplyingSelection else { return }
-        selectedItem = items?.first(where: { $0.tag == (AppTab.allCases.firstIndex(of: tab) ?? 0) })
+        selectedItem = items?.first(where: { $0.tag == (AppTab.bar.firstIndex(of: tab) ?? 0) })
     }
 
     func tab(at point: CGPoint) -> AppTab {
-        let width = max(1, bounds.width / CGFloat(AppTab.allCases.count))
-        let index = min(AppTab.allCases.count - 1, max(0, Int(point.x / width)))
-        return AppTab.allCases[index]
+        let width = max(1, bounds.width / CGFloat(AppTab.bar.count))
+        let index = min(AppTab.bar.count - 1, max(0, Int(point.x / width)))
+        return AppTab.bar[index]
     }
 
     func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
-        guard !isApplyingSelection, let tab = AppTab.allCases[safe: item.tag] else { return }
+        guard !isApplyingSelection, let tab = AppTab.bar[safe: item.tag] else { return }
         activate(tab)
     }
 
@@ -96,7 +97,7 @@ final class NativeSlidingTabBar: UITabBar, UITabBarDelegate, UIGestureRecognizer
     @objc private func slid(_ recognizer: UIPanGestureRecognizer) {
         let tab = tab(at: recognizer.location(in: self))
         if recognizer.state == .began || recognizer.state == .changed {
-            if selectedItem?.tag != (AppTab.allCases.firstIndex(of: tab) ?? 0) {
+            if selectedItem?.tag != (AppTab.bar.firstIndex(of: tab) ?? 0) {
                 UISelectionFeedbackGenerator().selectionChanged()
                 setSelected(tab)
                 activate(tab)
@@ -116,7 +117,7 @@ final class PriorityTabView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
-        for (index, tab) in AppTab.allCases.enumerated() {
+        for (index, tab) in AppTab.bar.enumerated() {
             let button = UIButton(type: .custom)
             button.tag = index
             button.accessibilityLabel = tab.title
@@ -143,7 +144,7 @@ final class PriorityTabView: UIView {
         return hit === self ? nil : hit
     }
     @objc private func selected(_ sender: UIButton) {
-        guard AppTab.allCases.indices.contains(sender.tag) else { return }
-        onSelect?(AppTab.allCases[sender.tag])
+        guard AppTab.bar.indices.contains(sender.tag) else { return }
+        onSelect?(AppTab.bar[sender.tag])
     }
 }

@@ -8,79 +8,75 @@ extension AppCommand {
 }
 
 struct RPGShellView: View {
+    /// The app-wide session from WorldHost; this view never creates or
+    /// destroys the world, it only activates and pauses it.
+    @ObservedObject var session: RPGSession
     var initialPage=RPGEntryPage.world
+    /// 完成: leave the sandbox for the previous page.
+    var onExit: () -> Void = {}
+    /// Control center navigation to another app page.
+    var onNavigate: (AppTab) -> Void = { _ in }
     @State private var initialPresented=false
+    /// A page requested from outside (search), opened once the world is ready.
+    @State private var queuedPage: RPGEntryPage?
     @State private var toolPath:[RPGEntryPage]=[]
     @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @State private var storyPlaying=false
-    @StateObject private var session = RPGSession()
     @State private var tools = false
     @State private var mediaDiagnostics = ""
     @State private var backgroundLayer = 0
     @State private var cellEditor: WorldEntity?
+    @State private var controlCenter = false
+    @State private var appSettings = false
+    @State private var prologue: WorldPrologue?
+    @AppStorage("moonlight.world.edgeSwipe") private var edgeSwipe = true
     var body: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text(session.world.isCreativeCopy ? "创作副本" : "自由媒体沙盒").font(.headline)
-                Spacer()
-                Button("校验") { session.validateRoundTrip() }.accessibilityIdentifier("rpg-validate").disabled(!session.ready)
-                Button("工具") { toolPath=[];tools = true }.accessibilityIdentifier("rpg-tools")
-                Button("完成") { Task { if await session.saveBeforeExit() { dismiss() } } }.accessibilityIdentifier("rpg-close")
-            }.frame(minHeight: 44)
-            HStack {
-                Text("256 × 256 · \(session.loadedChunks)/64 区块").font(.caption)
-                    .accessibilityIdentifier("rpg-loaded-chunks").accessibilityValue(String(session.loadedChunks))
-                Text("自建 \(session.world.entities.count)").font(.caption).accessibilityIdentifier("rpg-placed-count").accessibilityValue(String(session.world.entities.count))
-                Spacer()
-                Text(positionLabel).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-position")
-            }
+        GeometryReader { geometry in
+            let landscape = geometry.size.width > geometry.size.height
             Group {
-                if !session.ready,!session.recoveryChoices.isEmpty {
-                    ScrollView {VStack(spacing:12){
-                        Text("选择保留的世界").font(.headline)
-                        ForEach(session.recoveryChoices){choice in
-                            Button((choice.creative ? "创作副本":"原世界")+" · Seed \(choice.seed) · 修订 \(choice.revision)"){session.recoverWorld(choice.id)}
-                                .accessibilityIdentifier("rpg-recover-"+choice.id)
-                        }
-                    }.padding()}
-                } else if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
-                else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
-            }.clipShape(RoundedRectangle(cornerRadius: 20)).accessibilityLabel("世界场景")
-                .overlay { if session.ready, let rect = session.selectionRect { RPGSelectionGlass(rect: rect) } }
-                .overlay(alignment:.bottomLeading){if session.ready{movementPad.padding(6)}}
-                .overlay(alignment:.bottomTrailing){if session.ready{combatButtons.padding(6)}}
-            HStack {
-                Button(session.world.player.perspective == .topDown ? "进入侧视" : "返回俯视") { session.toggleProjection() }
-                    .accessibilityIdentifier("rpg-perspective")
-                Spacer()
-                Text(session.world.player.perspective == .topDown ? "俯视地表" : "侧视切片")
-                    .font(.caption).accessibilityIdentifier("rpg-projection-evidence").accessibilityValue(session.projectionEvidence)
+                if landscape { landscapeLayout } else { portraitLayout }
             }
-            RPGCombatHUDView(model:session.combatHUD,session:session)
-            Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
-            if session.selected != nil || !session.world.undo.isEmpty || !session.world.redo.isEmpty {
-            HStack {
-                Button("放置") { session.placeSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-place")
-                Button("挖掘") { session.hitSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-hit")
-                Button("内容") { cellEditor = session.selectedEntity }.disabled(session.selectedEntity == nil).accessibilityIdentifier("rpg-edit-cell")
-                Button("撤销") { session.undo() }.disabled(session.world.undo.isEmpty).accessibilityIdentifier("rpg-undo")
-                Button("重做") { session.redo() }.disabled(session.world.redo.isEmpty).accessibilityIdentifier("rpg-redo")
-            }.disabled(!session.ready || session.working)
-            }
-        }.buttonStyle(MoonGlassButtonStyle()).padding(12).padding(.bottom, 82)
+            // The world stays visible under the control center but takes no
+            // touches; the HUD fades out (see layouts).
+            .allowsHitTesting(!controlCenter && prologue == nil)
+            .accessibilityHidden(controlCenter)
+            .overlay(alignment: .leading) { if landscape && edgeSwipe && session.ready && !controlCenter { edgeSwipeZone(height: geometry.size.height) } }
+        }
             .background(Color(uiColor: .systemBackground).ignoresSafeArea())
-            .onAppear { session.attachMediaStore(model.mediaStore); session.setReducedMotion(reducedMotion);session.activate() }
-            .onDisappear { session.shutdown() }
+            .overlay { worldBackdrop }
+            .overlay {
+                if controlCenter {
+                    WorldControlCenterView(session: session, onClose: { closeControlCenter() }, onNavigate: { tab in
+                        closeControlCenter(); Task { if await session.saveBeforeExit() { onNavigate(tab) } }
+                    }, onTools: { page in
+                        closeControlCenter(); toolPath = page.map { [$0] } ?? []; tools = true
+                    }, onAppSettings: { closeControlCenter(); appSettings = true })
+                    .transition(.opacity)
+                }
+            }
+            .overlay { if let prologue { WorldPrologueView(prologue: prologue) { self.prologue = nil } } }
+            .animation(reducedMotion ? nil : .easeOut(duration: 0.3), value: controlCenter)
+            .onAppear {
+                session.attachMediaStore(model.mediaStore); session.setReducedMotion(reducedMotion); session.activate()
+                if let page = WorldHost.shared.pendingPage { WorldHost.shared.pendingPage = nil; queuedPage = page }
+                if session.ready { presentInitial() }
+                showPrologueIfNeeded()
+            }
+            .onDisappear { controlCenter = false; session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.activate() }
             .sheet(isPresented: $tools) { toolPanel }
+            .sheet(isPresented:$storyPlaying) {
+                NavigationStack {RPGStoryView(session:session,travel:{anchor in storyPlaying=false;session.guideTo(anchor)},backTitle:"返回世界")}
+            }
             .sheet(item: $cellEditor) { entity in
                 NavigationStack { RPGCellEditorView(session: session, store: model.mediaStore, entity: entity) }.environmentObject(model)
             }
-            .sheet(isPresented:$storyPlaying) {
-                NavigationStack {RPGStoryView(session:session,travel:{anchor in storyPlaying=false;session.guideTo(anchor)},backTitle:"返回世界")}
+            .sheet(isPresented: $appSettings) {
+                NavigationStack {
+                    SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { appSettings = false }.accessibilityIdentifier("world-app-settings-close") } }
+                }.environmentObject(model).environmentObject(BackgroundStore.shared)
             }
             .overlay(alignment: .topLeading) {
                 #if DEBUG
@@ -101,15 +97,204 @@ struct RPGShellView: View {
                 }
                 #endif
             }
-            .onChange(of:session.ready){if $0{presentInitial()}}
-            .onChange(of: tools) { visible in session.setOverlay(visible || storyPlaying || cellEditor != nil) }
-            .onChange(of:storyPlaying){session.setOverlay($0 || tools || cellEditor != nil)}
-            .onChange(of: cellEditor?.id) { id in session.setOverlay(id != nil || tools || storyPlaying) }
+            .onChange(of:session.ready){ if $0 { presentInitial(); showPrologueIfNeeded() } }
+            .onChange(of:session.world.id){ _ in showPrologueIfNeeded() }
+            .onChange(of: tools) { _ in syncOverlay() }
+            .onChange(of:storyPlaying){ _ in syncOverlay() }
+            .onChange(of: cellEditor?.id) { _ in syncOverlay() }
+            .onChange(of: controlCenter) { _ in syncOverlay() }
+            .onChange(of: appSettings) { _ in syncOverlay() }
             .onChange(of:session.pendingStory){if $0{storyPlaying=true;session.acknowledgeStory()}}
             .onChange(of:reducedMotion){session.setReducedMotion($0)}
             .onChange(of: session.world.backgroundBindingIDs.count) { count in backgroundLayer=min(backgroundLayer,min(2,count)) }
     }
+
+    // MARK: Layouts
+
+    /// Portrait: the original column layout. Used on portrait pages, when the
+    /// rotation request is refused, and by the existing portrait UI tests.
+    private var portraitLayout: some View {
+        VStack(spacing: 8) {
+            header
+            statusRow
+            sceneView.clipShape(RoundedRectangle(cornerRadius: 20))
+                .overlay(alignment:.bottomLeading){if session.ready{movementPad.padding(6)}}
+                .overlay(alignment:.bottomTrailing){if session.ready{combatButtons.padding(6)}}
+            perspectiveRow
+            RPGCombatHUDView(model:session.combatHUD,session:session)
+            Text(session.notice).font(.caption).accessibilityIdentifier("rpg-status")
+            actionRow
+        }.buttonStyle(MoonGlassButtonStyle()).padding(12).padding(.bottom, 82)
+            .opacity(controlCenter ? 0.35 : 1)
+    }
+
+    /// Landscape: the world fills the screen and the HUD floats over it.
+    private var landscapeLayout: some View {
+        ZStack {
+            sceneView.ignoresSafeArea()
+            VStack(spacing: 6) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.worldTitle).font(.subheadline.weight(.semibold))
+                        statusRow
+                    }.padding(.horizontal, 12).padding(.vertical, 6).moonSingleGlass(radius: 14).fixedSize()
+                    Spacer(minLength: 8)
+                    headerButtons
+                }
+                Spacer(minLength: 0)
+                HStack(alignment: .bottom, spacing: 10) {
+                    if session.ready { movementPad }
+                    Spacer(minLength: 0)
+                    VStack(spacing: 4) {
+                        Text(session.notice).font(.caption).lineLimit(1).padding(.horizontal, 10).padding(.vertical, 4)
+                            .moonSingleGlass(radius: 10).accessibilityIdentifier("rpg-status")
+                        RPGCombatHUDView(model:session.combatHUD,session:session)
+                        actionRow
+                        perspectiveRow
+                    }.frame(maxWidth: 420)
+                    Spacer(minLength: 0)
+                    if session.ready { combatButtons }
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .opacity(controlCenter ? 0 : 1)
+        }.buttonStyle(MoonGlassButtonStyle())
+    }
+
+    // MARK: Pieces
+
+    private var header: some View {
+        HStack {
+            Text(session.world.isCreativeCopy ? "创作副本" : "自由媒体沙盒").font(.headline)
+            Spacer()
+            headerButtons
+        }.frame(minHeight: 44)
+    }
+
+    private var headerButtons: some View {
+        HStack {
+            Button("校验") { session.validateRoundTrip() }.accessibilityIdentifier("rpg-validate").disabled(!session.ready)
+            Button("工具") { toolPath=[];tools = true }.accessibilityIdentifier("rpg-tools")
+            Button("完成") { Task { if await session.saveBeforeExit() { onExit() } } }.accessibilityIdentifier("rpg-close")
+            Button { openControlCenter() } label: { Image(systemName: "square.grid.2x2").frame(width: 24, height: 24) }
+                .accessibilityLabel("世界控制中心").accessibilityIdentifier("rpg-menu")
+        }
+    }
+
+    private var statusRow: some View {
+        HStack {
+            Text("256 × 256 · \(session.loadedChunks)/64 区块").font(.caption)
+                .accessibilityIdentifier("rpg-loaded-chunks").accessibilityValue(String(session.loadedChunks))
+            Text("自建 \(session.world.entities.count)").font(.caption).accessibilityIdentifier("rpg-placed-count").accessibilityValue(String(session.world.entities.count))
+            Spacer(minLength: 0)
+            Text(positionLabel).font(.caption.monospacedDigit()).accessibilityIdentifier("rpg-position")
+        }
+    }
+
+    @ViewBuilder private var sceneView: some View {
+        Group {
+            if !session.ready, !session.recoveryChoices.isEmpty {
+                ScrollView {VStack(spacing:12){
+                    Text("选择保留的世界").font(.headline)
+                    ForEach(session.recoveryChoices){choice in
+                        Button((choice.creative ? "创作副本":"原世界")+" · Seed \(choice.seed) · 修订 \(choice.revision)"){session.recoverWorld(choice.id)}
+                            .accessibilityIdentifier("rpg-recover-"+choice.id)
+                    }
+                }.padding()}
+            } else if !session.ready, let error = session.loadError {
+                // No blank screen: explain and offer a way forward. Creating
+                // a world never deletes the unreadable one.
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle").font(.largeTitle)
+                    Text("世界无法打开").font(.headline)
+                    Text(error).font(.caption).multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    HStack {
+                        Button("重试") { session.loadWorld() }.accessibilityIdentifier("world-load-retry")
+                        Button("创建新世界") { session.createWorld() }.accessibilityIdentifier("world-load-create")
+                    }
+                    Text("原存档文件会保留，不会被覆盖。").font(.caption2).foregroundStyle(.secondary)
+                }.padding().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !session.ready {
+                ProgressView("正在打开最近的世界…").frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityIdentifier("world-loading")
+            } else if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
+            else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
+        }.accessibilityLabel("世界场景")
+            .overlay { if session.ready, !controlCenter, let rect = session.selectionRect { RPGSelectionGlass(rect: rect) } }
+    }
+
+    private var perspectiveRow: some View {
+        HStack {
+            Button(session.world.player.perspective == .topDown ? "进入侧视" : "返回俯视") { session.toggleProjection() }
+                .accessibilityIdentifier("rpg-perspective")
+            Spacer()
+            Text(session.world.player.perspective == .topDown ? "俯视地表" : "侧视切片")
+                .font(.caption).accessibilityIdentifier("rpg-projection-evidence").accessibilityValue(session.projectionEvidence)
+        }
+    }
+
+    @ViewBuilder private var actionRow: some View {
+        if session.selected != nil || !session.world.undo.isEmpty || !session.world.redo.isEmpty {
+            HStack {
+                Button("放置") { session.placeSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-place")
+                Button("挖掘") { session.hitSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-hit")
+                Button("内容") { cellEditor = session.selectedEntity }.disabled(session.selectedEntity == nil).accessibilityIdentifier("rpg-edit-cell")
+                Button("撤销") { session.undo() }.disabled(session.world.undo.isEmpty).accessibilityIdentifier("rpg-undo")
+                Button("重做") { session.redo() }.disabled(session.world.redo.isEmpty).accessibilityIdentifier("rpg-redo")
+            }.disabled(!session.ready || session.working)
+        }
+    }
+
+    /// While the control center is open the world stays drawn behind it;
+    /// a light scrim keeps text readable without hiding the world.
+    @ViewBuilder private var worldBackdrop: some View {
+        if controlCenter { Color.black.opacity(0.12).ignoresSafeArea().allowsHitTesting(false) }
+    }
+
+    /// Left-edge swipe opens the control center. Only the upper part of the
+    /// edge listens, so the movement pad in the lower left is never touched.
+    private func edgeSwipeZone(height: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(width: 18, height: height * 0.55).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 12).onEnded { value in
+                    if value.translation.width > 50 && abs(value.translation.height) < 80 { openControlCenter() }
+                })
+                .accessibilityHidden(true)
+            Spacer(minLength: 0)
+        }.padding(.top, 60)
+    }
+
+    // MARK: State
+
+    private func openControlCenter() {
+        guard session.ready, !controlCenter else { return }
+        controlCenter = true
+    }
+    private func closeControlCenter() { controlCenter = false }
+
+    /// Game input and scene simulation stop whenever anything covers the
+    /// world; they resume only when every cover is gone.
+    private func syncOverlay() {
+        session.setOverlay(tools || storyPlaying || cellEditor != nil || controlCenter || appSettings)
+    }
+
+    private func showPrologueIfNeeded() {
+        guard session.ready, prologue == nil, WorldHost.shared.needsPrologue(session.world.id) else { return }
+        WorldHost.shared.markPrologue(session.world.id)
+        #if DEBUG
+        // Existing UI tests tap the world immediately; only opted-in tests see the prologue.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--scroll-ui-tests") && !arguments.contains("--prologue-ui-tests") { return }
+        #endif
+        prologue = WorldPrologue(title: session.worldTitle, quest: session.questSummary, mode: session.modeTitle, perspective: session.perspectiveTitle)
+    }
+
+
     private func presentInitial(){
+        if let page = queuedPage {
+            queuedPage = nil
+            if page != .world { toolPath=[page]; tools=true }
+            return
+        }
         guard !initialPresented,initialPage != .world else{return}
         initialPresented=true;toolPath=[initialPage];tools=true
     }

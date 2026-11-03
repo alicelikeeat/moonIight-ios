@@ -120,10 +120,10 @@ enum BackgroundTarget: String, Codable, CaseIterable, Identifiable {
         return nil
     }
     static func page(for tab: AppTab) -> BackgroundTarget {
-        switch tab { case .home: .home; case .discover: .discover; case .camera: .camera; case .moments: .moments; case .me: .me }
+        switch tab { case .sandbox: .allPages; case .home: .home; case .discover: .discover; case .camera: .camera; case .moments: .moments; case .me: .me }
     }
     static func button(for tab: AppTab) -> BackgroundTarget {
-        switch tab { case .home: .tabHome; case .discover: .tabDiscover; case .camera: .tabCamera; case .moments: .tabMoments; case .me: .tabMe }
+        switch tab { case .sandbox: .allButtons; case .home: .tabHome; case .discover: .tabDiscover; case .camera: .tabCamera; case .moments: .tabMoments; case .me: .tabMe }
     }
     static func ring(for action: QuickActionID) -> BackgroundTarget {
         switch action { case .play: .ringPlay; case .favorite: .ringFavorite; case .library: .ringLibrary; case .share: .ringShare }

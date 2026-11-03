@@ -16,6 +16,9 @@ struct RootView: View {
     @State private var treasureRoute: AppCommand?
     @State private var discoveryQuery = ""
     @State private var discoverySourcesPresented = false
+    /// 发现 is mounted the first time it is shown and then kept, so 推荐 and
+    /// 发现 each keep their own scroll position.
+    @State private var discoverMounted = false
     @ObservedObject private var interactions = InteractionPreferences.shared
     @State private var captureRequest: CameraRequest?
     @State private var rootImporter = false
@@ -67,36 +70,18 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
-            PageBackground(target: .page(for: model.selectedTab))
-                .ignoresSafeArea()
+            if model.selectedTab == .sandbox { Color.black.ignoresSafeArea() }
+            else { PageBackground(target: .page(for: model.selectedTab)).ignoresSafeArea() }
             ZStack(alignment: .bottom) {
                 Group {
                     switch model.selectedTab {
-                    case .home: refreshable(.home) { HomeView(onSelect: { activePlayer = $0 }) }
-                    case .discover:
-                        refreshable(.discover) {
-                            DiscoverView(query: $discoveryQuery, onSelect: { activePlayer = $0 }, onSources: {
-                                model.activeLongPressMenu = nil
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) { discoverySourcesPresented = true }
-                            })
-                        }
-                        .overlay {
-                            if discoverySourcesPresented {
-                                GeometryReader { geometry in
-                                    ZStack(alignment: .leading) {
-                                        Color.black.opacity(0.18).contentShape(Rectangle()).onTapGesture {
-                                            withAnimation { discoverySourcesPresented = false }
-                                        }
-                                        DiscoverySourcePanel(query: $discoveryQuery, onClose: {
-                                            withAnimation { discoverySourcesPresented = false }
-                                        })
-                                        .frame(width: min(380, geometry.size.width * 0.86), height: geometry.size.height)
-                                        .shadow(color: .black.opacity(0.12), radius: 24, x: 6)
-                                        .transition(.move(edge: .leading))
-                                    }
-                                }
-                            }
-                        }
+                    case .sandbox:
+                        RPGShellView(session: WorldHost.shared.session,
+                                     onExit: { leaveSandbox(to: WorldHost.shared.returnTab) },
+                                     onNavigate: { leaveSandbox(to: $0) })
+                    // Both segments share this branch, so switching between
+                    // them keeps the same views and their scroll positions.
+                    case .home, .discover: homeFeeds
                     case .camera: CameraView()
                     case .moments: MomentsView(onSelect: { activePlayer = $0 }, onCompose: { activeSheet = .composer(nil) })
                     case .me: MeView(selectedImage: selectedImage, selection: $selectedMedia, onSelect: { activePlayer = $0 })
@@ -142,9 +127,16 @@ struct RootView: View {
                 .padding(.top, 8).padding(.trailing, 8)
             }
         }
-        .onChange(of: model.selectedTab) { _ in
+        .onChange(of: model.selectedTab) { tab in
             discoverySourcesPresented = false
+            if tab == .discover { discoverMounted = true }
+            if tab != .sandbox { WorldHost.shared.returnTab = tab }
+            MoonlightOrientationDelegate.setSandboxLandscape(tab == .sandbox)
             revealNavigation()
+        }
+        .onAppear {
+            if model.selectedTab == .discover { discoverMounted = true }
+            MoonlightOrientationDelegate.setSandboxLandscape(model.selectedTab == .sandbox)
         }
         .onChange(of: blindMode) { enabled in
             blindExitVisible = false
@@ -167,7 +159,7 @@ struct RootView: View {
         // Full-blind mode hides the page layer itself. Search and the explicit
         // exit control remain readable when they are intentionally revealed.
         .buttonStyle(MoonInteractiveButtonStyle(blind: false))
-        .environment(\.moonlightMediaSuspended, treasureRoute?.rpgPage != nil)
+        .environment(\.moonlightMediaSuspended, model.selectedTab == .sandbox)
         .tint(activeButtonTint)
         .overlay {
             GeometryReader { geometry in
@@ -201,10 +193,12 @@ struct RootView: View {
         }
         .universalLongPress(target: .page(for: model.selectedTab))
         .overlay(alignment: .bottom) {
+            // The sandbox is full screen: its own control center replaces the bar.
             tabBar.zIndex(100)
-                .opacity(navigationVisible && !blindMode ? 1 : 0)
+                .opacity(navigationVisible && !blindMode && model.selectedTab != .sandbox ? 1 : 0)
                 .offset(y: navigationVisible ? 0 : 28)
-                .allowsHitTesting(navigationVisible && !blindMode)
+                .allowsHitTesting(navigationVisible && !blindMode && model.selectedTab != .sandbox)
+                .accessibilityHidden(model.selectedTab == .sandbox)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
         // The visible circles are deliberately decorative so their glass can
@@ -212,8 +206,9 @@ struct RootView: View {
         // targets and sits above the long-press scrim in every state.
         .overlay(alignment: .bottom) {
             priorityNavigationLayer.zIndex(1_000)
-                .opacity(navigationVisible && !blindMode ? 1 : 0)
-                .allowsHitTesting(navigationVisible && !blindMode)
+                .opacity(navigationVisible && !blindMode && model.selectedTab != .sandbox ? 1 : 0)
+                .allowsHitTesting(navigationVisible && !blindMode && model.selectedTab != .sandbox)
+                .accessibilityHidden(model.selectedTab == .sandbox)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
         // Observe taps without covering the feed with an invisible hit target.
@@ -238,8 +233,7 @@ struct RootView: View {
         }
         .fullScreenCover(item: $treasureRoute, onDismiss: { revealNavigation() }) { command in
             NavigationStack {
-                if let page=command.rpgPage { RPGShellView(initialPage:page).environmentObject(model) }
-                else { MoonTreasureMapView(openVideoWall: command == .treasurePlayback, openLandlord: command == .landlord) }
+                MoonTreasureMapView(openVideoWall: command == .treasurePlayback, openLandlord: command == .landlord)
             }
         }
         .fullScreenCover(item: $captureRequest) { request in
@@ -328,6 +322,14 @@ struct RootView: View {
         }
         .overlay(alignment: .topLeading) {
             #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--sandbox-launch-ui-tests") {
+                // Layout orientation as the app sees it, for the navigation tests.
+                GeometryReader { geometry in
+                    Text("方向").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("app-orientation")
+                        .accessibilityValue(geometry.size.width > geometry.size.height ? "landscape" : "portrait")
+                }.frame(width: 2, height: 2).allowsHitTesting(false)
+            }
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
                 Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
                     .font(.caption2).foregroundStyle(.secondary).allowsHitTesting(false)
@@ -484,21 +486,21 @@ struct RootView: View {
             let diameter = min(60, max(54, (geometry.size.width - 72) / 5))
             let dockWidth = min(geometry.size.width - 36, 390)
             HStack(spacing: 0) {
-                ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
+                ForEach(Array(AppTab.bar.enumerated()), id: \.element) { index, tab in
                     VStack(spacing: 4) {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 20, weight: .semibold))
-                            .scaleEffect(model.selectedTab == tab ? 1.10 : 1)
-                            .rotationEffect(.degrees(model.selectedTab == tab ? 3 : 0))
+                            .scaleEffect(model.selectedTab.barTab == tab ? 1.10 : 1)
+                            .rotationEffect(.degrees(model.selectedTab.barTab == tab ? 3 : 0))
                             .opacity(blindMode ? 0.01 : 1)
                             .animation(.spring(response: 0.28, dampingFraction: 0.62), value: model.selectedTab)
                             .frame(width: diameter, height: diameter)
                             .moonGlassCircle(.button(for: tab))
-                            .overlay(Circle().strokeBorder(model.selectedTab == tab ? activeButtonTint.opacity(0.62) : .clear, lineWidth: 1).allowsHitTesting(false))
-                        Text(tab.title).font(.system(size: 10, weight: model.selectedTab == tab ? .semibold : .medium))
+                            .overlay(Circle().strokeBorder(model.selectedTab.barTab == tab ? activeButtonTint.opacity(0.62) : .clear, lineWidth: 1).allowsHitTesting(false))
+                        Text(tab.title).font(.system(size: 10, weight: model.selectedTab.barTab == tab ? .semibold : .medium))
                             .opacity(blindMode ? 0.01 : 1)
                     }
-                    .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab == tab ? activeButtonTint : .secondary))
+                    .foregroundStyle(backgroundStore.resolved(.button(for: tab))?.veil.foreground ?? (model.selectedTab.barTab == tab ? activeButtonTint : .secondary))
                     .frame(maxWidth: .infinity)
                     .allowsHitTesting(false).accessibilityHidden(true)
                 }
@@ -516,7 +518,7 @@ struct RootView: View {
             GeometryReader { geometry in
                 let width = min(geometry.size.width - 36, 390)
                 let diameter = min(60, max(54, (geometry.size.width - 72) / 5))
-                ForEach(Array(AppTab.allCases.enumerated()), id: \.element) { index, tab in
+                ForEach(Array(AppTab.bar.enumerated()), id: \.element) { index, tab in
                     GeometryReader { proxy in
                         Color.clear
                             .contentShape(Circle())
@@ -552,6 +554,79 @@ struct RootView: View {
             .frame(height: 78)
             .padding(.horizontal, 18)
             .padding(.bottom, 8)
+        }
+    }
+
+    /// 首页: 推荐 and 发现 as two segments. Each feed is its own scroll view and
+    /// stays mounted while hidden, so neither reloads nor loses its place.
+    private var homeFeeds: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                homeSegment("推荐", tab: .home, identifier: "home-segment-recommend")
+                homeSegment("发现", tab: .discover, identifier: "navigation-discover")
+            }
+            .padding(4).moonSingleGlass(radius: 18)
+            .padding(.top, 2)
+            ZStack {
+                refreshable(.home) { HomeView(onSelect: { activePlayer = $0 }) }
+                    .opacity(model.selectedTab == .home ? 1 : 0)
+                    .allowsHitTesting(model.selectedTab == .home)
+                    .accessibilityHidden(model.selectedTab != .home)
+                if discoverMounted || model.selectedTab == .discover {
+                    refreshable(.discover) {
+                        DiscoverView(query: $discoveryQuery, onSelect: { activePlayer = $0 }, onSources: {
+                            model.activeLongPressMenu = nil
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.88)) { discoverySourcesPresented = true }
+                        })
+                    }
+                    .overlay {
+                        if discoverySourcesPresented {
+                            GeometryReader { geometry in
+                                ZStack(alignment: .leading) {
+                                    Color.black.opacity(0.18).contentShape(Rectangle()).onTapGesture {
+                                        withAnimation { discoverySourcesPresented = false }
+                                    }
+                                    DiscoverySourcePanel(query: $discoveryQuery, onClose: {
+                                        withAnimation { discoverySourcesPresented = false }
+                                    })
+                                    .frame(width: min(380, geometry.size.width * 0.86), height: geometry.size.height)
+                                    .shadow(color: .black.opacity(0.12), radius: 24, x: 6)
+                                    .transition(.move(edge: .leading))
+                                }
+                            }
+                        }
+                    }
+                    .opacity(model.selectedTab == .discover ? 1 : 0)
+                    .allowsHitTesting(model.selectedTab == .discover)
+                    .accessibilityHidden(model.selectedTab != .discover)
+                }
+            }
+        }
+    }
+
+    private func homeSegment(_ title: String, tab: AppTab, identifier: String) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            withAnimation(.easeOut(duration: 0.16)) { model.selectedTab = tab }
+        } label: {
+            Text(title).font(.subheadline.weight(model.selectedTab == tab ? .semibold : .regular))
+                .frame(width: 72, height: 32)
+                .background(model.selectedTab == tab ? Color.accentColor.opacity(0.18) : .clear, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+        .accessibilityAddTraits(model.selectedTab == tab ? .isSelected : [])
+    }
+
+    /// Leaves the sandbox for a portrait page. The world was already saved
+    /// and paused by the sandbox; the camera opens over the previous page.
+    private func leaveSandbox(to tab: AppTab) {
+        if tab == .camera {
+            let back = WorldHost.shared.returnTab == .sandbox ? .home : WorldHost.shared.returnTab
+            withAnimation(.easeOut(duration: 0.16)) { model.selectedTab = back }
+            openCamera(video: false)
+        } else {
+            withAnimation(.easeOut(duration: 0.16)) { model.selectedTab = tab == .sandbox ? .home : tab }
         }
     }
 
@@ -600,7 +675,11 @@ struct RootView: View {
                 if let intent { values["query"] = intent.query; values["kind"] = intent.kind }
                 NotificationCenter.default.post(name: .init("moonlight.focusMediaSearch"), object: nil, userInfo: values)
             }
-        case .treasureMap, .treasurePlayback, .landlord, .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics: treasureRoute = action
+        case .treasureMap, .treasurePlayback, .landlord: treasureRoute = action
+        case .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics:
+            // Every way into the world lands in the one sandbox tab.
+            WorldHost.shared.pendingPage = action.rpgPage
+            selectTab(.sandbox)
         case .home: selectTab(.home)
         case .discover: selectTab(.discover)
         case .moments: selectTab(.moments)
@@ -643,7 +722,8 @@ struct RootView: View {
 
     @ViewBuilder private func commandDestination(_ action: AppCommand) -> some View {
         switch action {
-        case .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics: RPGShellView(initialPage:action.rpgPage ?? .world).environmentObject(model)
+        case .rpg, .rpgStory, .rpgEditor, .rpgDiagnostics:
+            Button("进入沙盒世界") { activeSheet = nil; model.send(action) }
         case .treasureMap, .treasurePlayback, .landlord: MoonTreasureMapView(openVideoWall: action == .treasurePlayback, openLandlord: action == .landlord)
         case .searchMedia: Text("请返回发现页搜索媒体。")
         case .settings: SettingsView()

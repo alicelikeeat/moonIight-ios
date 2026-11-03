@@ -66,7 +66,7 @@ struct UniversalHoldScope: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background {
-                GlobalHoldObserver(enabled: menu == nil && globalSearch == nil && model.activeLongPressMenu == nil,
+                GlobalHoldObserver(enabled: menu == nil && globalSearch == nil && model.activeLongPressMenu == nil && model.selectedTab != .sandbox,
                     onBegin: { point, buttonTarget in
                         heldTarget = buttonTarget ?? target
                         LongPressHapticFeedback.shared.menuOpened()

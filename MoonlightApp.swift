@@ -17,12 +17,37 @@ struct MoonlightApp: App {
 @MainActor
 final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
     static var playerAllowsLandscape = false
+    /// Set while the sandbox world is on screen; it takes priority.
+    static var sandboxLandscape = false
+
+    static var supported: UIInterfaceOrientationMask {
+        if sandboxLandscape { return .landscape }
+        if playerAllowsLandscape { return [.portrait, .landscapeLeft, .landscapeRight] }
+        return .portrait
+    }
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        if Self.playerAllowsLandscape {
-            return [.portrait, .landscapeLeft, .landscapeRight]
+        Self.supported
+    }
+
+    /// Switches between the landscape sandbox and portrait pages using the
+    /// iOS 16 scene geometry API. If the system refuses (for example during
+    /// another rotation) the layout still adapts, because the sandbox draws
+    /// a portrait layout whenever it is taller than wide.
+    static func setSandboxLandscape(_ landscape: Bool) {
+        #if DEBUG
+        // Existing RPG UI tests drive the world in portrait; only tests that
+        // opt in exercise the rotation itself.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--rpg-ui-tests") && !arguments.contains("--sandbox-landscape-ui-tests") { return }
+        #endif
+        guard sandboxLandscape != landscape else { return }
+        sandboxLandscape = landscape
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait)) { error in
+            print("Orientation request declined: \(error.localizedDescription)")
         }
-        return .portrait
     }
 }
 
@@ -73,7 +98,8 @@ final class AppModel: ObservableObject {
     var pendingMediaSearch: MediaSearchIntent?
     @Published var command: AppCommandRequest?
     func send(_ action: AppCommand, context: String = "") { command = AppCommandRequest(action: action, context: context) }
-    @Published var selectedTab: AppTab = .home
+    /// The app opens into the most recent sandbox world.
+    @Published var selectedTab: AppTab = .sandbox
     @Published var mediaStore = MediaStore() {
         didSet { observeMediaChanges() }
     }
@@ -162,6 +188,7 @@ final class AppModel: ObservableObject {
             cardLongPressEnabled = !ProcessInfo.processInfo.arguments.contains("--disable-card-hold-ui-tests")
             if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") { UserDefaults.standard.set(false, forKey: "moonlight.reels.autoAdvance") }
             selectedTab = ProcessInfo.processInfo.arguments.contains("--test-discover") ? .discover : .home
+            if ProcessInfo.processInfo.arguments.contains("--sandbox-launch-ui-tests") { selectedTab = .sandbox }
             let columns = ProcessInfo.processInfo.arguments.contains("--single-column") ? 1 : 2
             UserDefaults.standard.set(columns, forKey: "discover_columns")
             UserDefaults.standard.set(1.0, forKey: "discover_banner_scale")
@@ -481,10 +508,15 @@ struct MomentPost: Codable, Identifiable, Sendable {
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, discover, camera, moments, me
+    case sandbox, home, discover, camera, moments, me
     var id: Self { self }
+    /// Bottom bar order. 发现 is no longer its own tab: it is the second
+    /// segment of 首页 (推荐 / 发现), so `.discover` maps to the 首页 button.
+    static let bar: [AppTab] = [.sandbox, .home, .camera, .moments, .me]
+    var barTab: AppTab { self == .discover ? .home : self }
     var title: String {
         switch self {
+        case .sandbox: "沙盒"
         case .home: "首页"
         case .discover: "发现"
         case .camera: "拍摄"
@@ -494,6 +526,7 @@ enum AppTab: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
+        case .sandbox: "cube.transparent"
         case .home: "moon.stars.fill"
         case .discover: "safari"
         case .camera: "camera.fill"
