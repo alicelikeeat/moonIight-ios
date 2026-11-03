@@ -542,9 +542,10 @@ final class MediaStore: ObservableObject {
                            title: "Scroll fixture \(index)", author: "Gesture verification",
                            platform: "test", source: "ui-test")
             }
-            items = fixtures
+            items = ProcessInfo.processInfo.arguments.contains("--treasure-drag-ui-tests")
+                ? Array(fixtures.prefix(1)) : fixtures
             items[0].isFavorite = true
-            items[1].source = "download"
+            if items.count > 1 { items[1].source = "download" }
             discoverItems = fixtures
         }
         #endif
@@ -564,6 +565,16 @@ final class MediaStore: ObservableObject {
     #if DEBUG
     func insertAsyncUITestEntry() {
         discoverItems.insert(MediaEntry(id: "async-source-item", kind: .image, title: "异步到达的新内容", author: "UI verification", platform: "test", source: "ui-test"), at: 0)
+    }
+    func prepareCardImageUITest(imageURL: URL) {
+        guard items.count > 11 else { return }
+        items[11].kind = .image; items[11].remoteURL = imageURL; items[11].coverURL = imageURL
+    }
+    func prepareTreasureVideoUITest(videoURL: URL, count: Int = 5) {
+        for index in items.indices.prefix(count) {
+            items[index].kind = .video
+            items[index].remoteURL = videoURL
+        }
     }
     func prepareReelsUITest(videoURL: URL, imageURL: URL) {
         guard items.count >= 2 else { return }
@@ -935,6 +946,33 @@ final class MediaStore: ObservableObject {
             notice = "保存失败：\(error.localizedDescription)"
             return nil
         }
+    }
+
+    /// RPG file imports copy off the main actor and return the stable entry ID.
+    func importLocalFile(_ sourceURL: URL, title: String, kind: MediaKind) async -> MediaEntry? {
+        guard sourceURL.isFileURL, kind != .embed else { return nil }
+        let directory = itemURL.deletingLastPathComponent().appendingPathComponent("media", isDirectory: true)
+        // Same content already in the library: reuse it, do not copy again.
+        let index = MediaImportIndex(url: directory.appendingPathComponent("import-hashes.json"))
+        let hash = try? await Task.detached(priority: .userInitiated) { try MediaImportIndex.sha256(of: sourceURL) }.value
+        if let hash, let id = index.entryID(for: hash),
+           let existing = items.first(where: { $0.id == id && $0.kind == kind }),
+           let url = existing.remoteURL, url.isFileURL, FileManager.default.fileExists(atPath: url.path) {
+            notice = "库中已有相同文件，已直接使用。"; return existing
+        }
+        let ext = sourceURL.pathExtension.lowercased()
+        let safe = !ext.isEmpty && ext.count <= 12 && ext.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) ? ext : (kind == .video ? "mov" : "jpg")
+        let destination = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(safe)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: sourceURL, to: destination)
+            }.value
+            let entry = MediaEntry(kind: kind, title: title, remoteURL: destination, platform: "local", source: "rpg-import")
+            items.insert(entry, at: 0); persist(); notice = "已保存到库。"
+            if let hash { index.prune(keeping: Set(items.map(\.id))); index.record(hash, entryID: entry.id) }
+            return entry
+        } catch { notice = "导入失败：\(error.localizedDescription)"; return nil }
     }
 
     func importVideoFile(_ sourceURL: URL, title: String) {

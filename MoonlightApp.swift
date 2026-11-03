@@ -6,10 +6,12 @@ import Combine
 struct MoonlightApp: App {
     @UIApplicationDelegateAdaptor(MoonlightOrientationDelegate.self) private var orientationDelegate
     @StateObject private var model = AppModel()
+    /// Changing the language rebuilds the interface so every string updates.
+    @AppStorage(L10n.key) private var language = AppLanguage.zh.rawValue
 
     var body: some Scene {
         WindowGroup {
-            RootView().environmentObject(model).environmentObject(BackgroundStore.shared)
+            RootView().id(language).environmentObject(model).environmentObject(BackgroundStore.shared)
         }
     }
 }
@@ -17,12 +19,37 @@ struct MoonlightApp: App {
 @MainActor
 final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
     static var playerAllowsLandscape = false
+    /// Set while the sandbox world is on screen; it takes priority.
+    static var sandboxLandscape = false
+
+    static var supported: UIInterfaceOrientationMask {
+        if sandboxLandscape { return .landscape }
+        if playerAllowsLandscape { return [.portrait, .landscapeLeft, .landscapeRight] }
+        return .portrait
+    }
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        if Self.playerAllowsLandscape {
-            return [.portrait, .landscapeLeft, .landscapeRight]
+        Self.supported
+    }
+
+    /// Switches between the landscape sandbox and portrait pages using the
+    /// iOS 16 scene geometry API. If the system refuses (for example during
+    /// another rotation) the layout still adapts, because the sandbox draws
+    /// a portrait layout whenever it is taller than wide.
+    static func setSandboxLandscape(_ landscape: Bool) {
+        #if DEBUG
+        // Existing RPG UI tests drive the world in portrait; only tests that
+        // opt in exercise the rotation itself.
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--rpg-ui-tests") && !arguments.contains("--sandbox-landscape-ui-tests") { return }
+        #endif
+        guard sandboxLandscape != landscape else { return }
+        sandboxLandscape = landscape
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait)) { error in
+            print("Orientation request declined: \(error.localizedDescription)")
         }
-        return .portrait
     }
 }
 
@@ -70,9 +97,11 @@ struct ActiveLongPressMenu: Identifiable, Equatable {
 
 @MainActor
 final class AppModel: ObservableObject {
+    var pendingMediaSearch: MediaSearchIntent?
     @Published var command: AppCommandRequest?
     func send(_ action: AppCommand, context: String = "") { command = AppCommandRequest(action: action, context: context) }
-    @Published var selectedTab: AppTab = .home
+    /// The app opens into the most recent sandbox world.
+    @Published var selectedTab: AppTab = .sandbox
     @Published var mediaStore = MediaStore() {
         didSet { observeMediaChanges() }
     }
@@ -114,12 +143,9 @@ final class AppModel: ObservableObject {
     @Published var virtualIntervalMinutes = 30 {
         didSet { UserDefaults.standard.set(virtualIntervalMinutes, forKey: "moonlight.virtualFriends.interval") }
     }
+    private let momentPersistence = MomentPersistence()
     @Published private(set) var moments: [MomentPost] = [] {
-        didSet {
-            if let data = try? JSONEncoder().encode(moments) {
-                UserDefaults.standard.set(data, forKey: "moonlight.moments.v2")
-            }
-        }
+        didSet { momentPersistence.save(moments) }
     }
 
     init() {
@@ -127,10 +153,7 @@ final class AppModel: ObservableObject {
         let savedInterval = UserDefaults.standard.integer(forKey: "moonlight.virtualFriends.interval")
         if savedInterval > 0 { virtualIntervalMinutes = max(15, savedInterval) }
         virtualAIKeyDraft = SecureSettings.read(virtualAIProvider.keychainAccount) ?? ""
-        if let data = UserDefaults.standard.data(forKey: "moonlight.moments.v2"),
-           let saved = try? JSONDecoder().decode([MomentPost].self, from: data) {
-            moments = saved
-        }
+        moments = momentPersistence.load()
         if let rawValue = UserDefaults.standard.string(forKey: "moonlight.longPressStyle"),
            let savedStyle = LongPressStyle(rawValue: rawValue) {
             longPressStyle = savedStyle
@@ -167,6 +190,7 @@ final class AppModel: ObservableObject {
             cardLongPressEnabled = !ProcessInfo.processInfo.arguments.contains("--disable-card-hold-ui-tests")
             if ProcessInfo.processInfo.arguments.contains("--reels-ui-tests") { UserDefaults.standard.set(false, forKey: "moonlight.reels.autoAdvance") }
             selectedTab = ProcessInfo.processInfo.arguments.contains("--test-discover") ? .discover : .home
+            if ProcessInfo.processInfo.arguments.contains("--sandbox-launch-ui-tests") { selectedTab = .sandbox }
             let columns = ProcessInfo.processInfo.arguments.contains("--single-column") ? 1 : 2
             UserDefaults.standard.set(columns, forKey: "discover_columns")
             UserDefaults.standard.set(1.0, forKey: "discover_banner_scale")
@@ -316,9 +340,11 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     case background, backgrounds, backgroundLibrary, gestures, menuSettings
     case playMedia, favoriteMedia, saveMedia, shareMedia
     case portrait, virtualFriends, navigationMode, selectAll, favorites, downloads
+    case searchMedia, treasureMap, treasurePlayback, landlord, rpg, rpgStory, rpgEditor, rpgDiagnostics
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .searchMedia: "搜索媒体"; case .treasureMap: "月藏图"; case .treasurePlayback: "视频墙"; case .landlord: "斗地主"; case .rpg: "自由媒体沙盒"; case .rpgStory: "剧情与任务"; case .rpgEditor: "剧情编辑器"; case .rpgDiagnostics: "沙盒运行诊断"
         case .home: "首页"; case .discover: "发现"; case .moments: "朋友圈"; case .me: "我"
         case .library: "打开库"; case .settings: "设置"; case .friends: "朋友"; case .messages: "消息"; case .profile: "编辑资料"
         case .refresh: "刷新"; case .sources: "内容源"; case .layout: "切换单双列"
@@ -335,6 +361,7 @@ enum AppCommand: String, CaseIterable, Codable, Identifiable, Hashable {
     }
     var symbol: String {
         switch self {
+        case .searchMedia: "magnifyingglass"; case .treasureMap: "sparkles.rectangle.stack"; case .treasurePlayback: "play.square.stack"; case .landlord: "suit.spade"; case .rpg: "square.grid.3x3"; case .rpgStory: "book"; case .rpgEditor: "point.3.connected.trianglepath.dotted"; case .rpgDiagnostics: "waveform.path.ecg"
         case .home: "moon.stars"; case .discover: "safari"; case .moments, .friends: "person.2"
         case .me, .profile, .avatar: "person.crop.circle"; case .library, .saveMedia: "square.grid.2x2"
         case .settings, .menuSettings: "gearshape"; case .messages: "bubble.left.and.bubble.right"
@@ -415,6 +442,27 @@ enum RingAction: Identifiable, Hashable {
     var background: BackgroundTarget { mediaAction.map(BackgroundTarget.ring(for:)) ?? .allRingButtons }
 }
 
+extension AppCommand {
+    var searchTerms: [String] {
+        let aliases: [String]
+        switch self {
+        case .searchMedia: aliases = ["搜索", "搜视频", "搜图片", "查找媒体", "search"]
+        case .rpg: aliases = ["沙盒", "沙盘", "RPG", "双视角", "世界", "冒险", "创造", "建造", "放置", "挖掘", "八向移动", "范围技能", "翻滚", "冲刺", "方块行为", "世界保存", "撤销", "重做"]
+        case .rpgStory: aliases = ["沙盒剧情", "序章", "村庄", "月核", "守灯人", "任务导航"]
+        case .rpgEditor: aliases = ["剧情节点", "剧情JSON", "剧情导入", "剧情导出", "自制任务", "媒体演出"]
+        case .rpgDiagnostics: aliases = ["沙盒帧率", "沙盒性能", "解码器", "沙盒内存"]
+        case .landlord: aliases = ["斗地主", "叫分", "媒体牌面", "经典牌面", "出牌", "不出", "提示", "新一局", "托管", "牌桌记录", "牌面声音", "清理失效素材", "动态预览"]
+        case .treasureMap: aliases = ["月藏图", "宝藏", "卡片"]
+        case .treasurePlayback: aliases = ["视频墙", "顺序播放", "随机播放", "同时播放", "选择视频"]
+        case .importMedia: aliases = ["相册", "导入", "照片库"]
+        case .favorites: aliases = ["收藏", "我的收藏"]
+        case .library: aliases = ["库", "媒体库", "视频库"]
+        default: aliases = []
+        }
+        return [title, rawValue] + aliases
+    }
+}
+
 enum VirtualAIProvider: String, CaseIterable, Identifiable, Sendable {
     case openAI, grok
     var id: Self { self }
@@ -426,7 +474,7 @@ enum VirtualFriendRoster {
     static let names = ["小林", "阿月", "晚风", "橘子汽水", "星河", "山雀"]
 }
 
-struct MomentPost: Codable, Identifiable {
+struct MomentPost: Codable, Identifiable, Sendable {
     var id = UUID().uuidString
     var text: String
     var date = Date.now
@@ -462,19 +510,25 @@ struct MomentPost: Codable, Identifiable {
 }
 
 enum AppTab: String, CaseIterable, Identifiable {
-    case home, discover, camera, moments, me
+    case sandbox, home, discover, camera, moments, me
     var id: Self { self }
+    /// Bottom bar order. 发现 is no longer its own tab: it is the second
+    /// segment of 首页 (推荐 / 发现), so `.discover` maps to the 首页 button.
+    static let bar: [AppTab] = [.sandbox, .home, .camera, .moments, .me]
+    var barTab: AppTab { self == .discover ? .home : self }
     var title: String {
         switch self {
-        case .home: "首页"
-        case .discover: "发现"
-        case .camera: "拍摄"
-        case .moments: "朋友圈"
-        case .me: "我"
+        case .sandbox: L10n.t("沙盒", "Sandbox")
+        case .home: L10n.t("首页", "Home")
+        case .discover: L10n.t("发现", "Discover")
+        case .camera: L10n.t("拍摄", "Camera")
+        case .moments: L10n.t("朋友圈", "Moments")
+        case .me: L10n.t("我", "Me")
         }
     }
     var symbol: String {
         switch self {
+        case .sandbox: "cube.transparent"
         case .home: "moon.stars.fill"
         case .discover: "safari"
         case .camera: "camera.fill"

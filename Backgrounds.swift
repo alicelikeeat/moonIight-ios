@@ -19,27 +19,23 @@ enum GlassSurfaceSize: String, CaseIterable, Identifiable {
 }
 
 struct MoonGlassButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @Environment(\.moonGlassContainer) private var inGlass
     var prominent = false
     @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
     private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding)
+        configuration.label.padding(.horizontal, size.buttonHorizontalPadding).padding(.vertical, size.buttonVerticalPadding).frame(minHeight: 44)
             .contentShape(Rectangle())
-            .background { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) }
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .background { if !inGlass { GlassCapsule(prominent: prominent).allowsHitTesting(false).accessibilityHidden(true) } }
+            .scaleEffect(configuration.isPressed && !reducedMotion ? 0.95 : 1)
+            .animation(reducedMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 private struct GlassCapsule: View {
     let prominent: Bool
-    var body: some View {
-        if #available(iOS 26.0, *) {
-            Capsule().fill(.clear).glassEffect(.regular.tint(prominent ? .accentColor.opacity(0.2) : .clear).interactive(), in: Capsule())
-        } else {
-            Capsule().fill(.ultraThinMaterial).overlay(Capsule().strokeBorder(.white.opacity(0.5), lineWidth: 0.7))
-        }
-    }
+    var body: some View { MoonGlassBackdrop(radius: 40) }
 }
 
 // Weak, live frames keep long-press context aligned with buttons after scrolling
@@ -124,10 +120,10 @@ enum BackgroundTarget: String, Codable, CaseIterable, Identifiable {
         return nil
     }
     static func page(for tab: AppTab) -> BackgroundTarget {
-        switch tab { case .home: .home; case .discover: .discover; case .camera: .camera; case .moments: .moments; case .me: .me }
+        switch tab { case .sandbox: .allPages; case .home: .home; case .discover: .discover; case .camera: .camera; case .moments: .moments; case .me: .me }
     }
     static func button(for tab: AppTab) -> BackgroundTarget {
-        switch tab { case .home: .tabHome; case .discover: .tabDiscover; case .camera: .tabCamera; case .moments: .tabMoments; case .me: .tabMe }
+        switch tab { case .sandbox: .allButtons; case .home: .tabHome; case .discover: .tabDiscover; case .camera: .tabCamera; case .moments: .tabMoments; case .me: .tabMe }
     }
     static func ring(for action: QuickActionID) -> BackgroundTarget {
         switch action { case .play: .ringPlay; case .favorite: .ringFavorite; case .library: .ringLibrary; case .share: .ringShare }
@@ -367,7 +363,7 @@ final class BackgroundStore: ObservableObject {
     }
 
     #if DEBUG
-    func prepareUITestMedia() async {
+    func prepareUITestMedia(applyBackgrounds: Bool = true) async {
         guard !uiTestReady else { return }
         let imageID = "ui-test-background-image", videoID = "ui-test-background-video"
         let imageName = imageID + ".jpg", videoName = videoID + ".mp4"
@@ -404,7 +400,7 @@ final class BackgroundStore: ObservableObject {
             assets.append(BackgroundAsset(id: videoID, fileName: videoName, posterName: imageName, isVideo: true, createdAt: .now))
         }
         if let image = assets.first(where: { $0.id == imageID }), let video = assets.first(where: { $0.id == videoID }) {
-            use(image, for: .allPages); use(video, for: .allButtons)
+            if applyBackgrounds { use(image, for: .allPages); use(video, for: .allButtons) }
             uiTestReady = true
         }
     }
@@ -419,6 +415,7 @@ private enum BackgroundImportError: LocalizedError {
 struct BackgroundMediaLayer: View {
     @EnvironmentObject private var store: BackgroundStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.moonlightMediaSuspended) private var mediaSuspended
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let configuration: BackgroundConfiguration
     var paused = false
@@ -426,7 +423,7 @@ struct BackgroundMediaLayer: View {
         GeometryReader { geometry in
             if let asset = store.asset(configuration) {
                 ZStack {
-                    if asset.isVideo, !paused, !reduceMotion, !ProcessInfo.processInfo.isLowPowerModeEnabled, scenePhase == .active {
+                    if asset.isVideo, !paused, !mediaSuspended, !reduceMotion, !ProcessInfo.processInfo.isLowPowerModeEnabled, scenePhase == .active {
                         BackgroundVideoLoop(url: store.url(for: asset))
                     } else if let image = store.image(for: asset) {
                         Image(uiImage: image).resizable().scaledToFill()
@@ -580,11 +577,7 @@ private struct GlassPanelSizing: ViewModifier {
     private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
     @ViewBuilder func body(content: Content) -> some View {
         let surface = content.padding(size.panelInset)
-        if #available(iOS 26.0, *) {
-            surface.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: size.panelRadius))
-        } else {
-            surface.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: size.panelRadius))
-        }
+        surface.moonSingleGlass(radius: size.panelRadius)
     }
 }
 

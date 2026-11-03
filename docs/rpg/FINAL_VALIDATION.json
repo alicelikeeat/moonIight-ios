@@ -1,0 +1,255 @@
+{
+  "qa_head_sha": "737cccbbc60e80ceb9053d22ea6664e4f7f51dac",
+  "app_frozen_sha": "f2109a181b421177337693a9958fc79c61ae71f4",
+  "full_run": "https://github.com/alicelikeeat/moonIight-ios/actions/runs/41529982389",
+  "full_job_id": 125567706758,
+  "ui_executions": 50,
+  "ui_unique": 50,
+  "ui_passed": 50,
+  "failed": [],
+  "missing": [],
+  "unexpected": [],
+  "rpg_checks": 3690,
+  "original_checks": 1850,
+  "test_cases": [
+    {
+      "name": "testRPGAuthoredCutsceneProducesFramesAndResumesMuted",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGBuildUndoSaveAndReopen",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGCombatRewardsPersistWithoutDuplicateDrop",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGMediaFramesBudgetLoopAndBackground",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGSearchOpensStoryEditorAndDiagnosticsDirectly",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGSharedEntityAndSafeDualProjection",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGSideCombatAndDiagnostics",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGSkeletonCanValidateExitAndPreserveOtherModules",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGStoryChoicePersistsAndWaitsForRealWorldEvent",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGStoryEditorCanPreviewAndPublishBranch",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt",
+      "result": "passed"
+    },
+    {
+      "name": "testRPGWorldSeedChunksAndMovement",
+      "result": "passed"
+    },
+    {
+      "name": "testLandlordClassicWholeGameAndNewRound",
+      "result": "passed"
+    },
+    {
+      "name": "testLandlordMediaBudgetFocusBackgroundAndModeCleanup",
+      "result": "passed"
+    },
+    {
+      "name": "testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI",
+      "result": "passed"
+    },
+    {
+      "name": "testVideoWallSelectionLimitModesFocusAndCleanup",
+      "result": "passed"
+    },
+    {
+      "name": "testTreasureDragKeepsTouchAndPhysicsOwnership",
+      "result": "passed"
+    },
+    {
+      "name": "testTreasureGridCanOpenHoldAndSwitchTwentyTimes",
+      "result": "passed"
+    },
+    {
+      "name": "testTreasureVideoPreviewCanPlayFreezeAndRememberPreference",
+      "result": "passed"
+    },
+    {
+      "name": "testBackgroundImagesVideosAndEditorKeepCardScrolling",
+      "result": "passed"
+    },
+    {
+      "name": "testButtonBackgroundPlaylistPersists",
+      "result": "passed"
+    },
+    {
+      "name": "testConfiguredMenuPersistsAndShowsExtraActionInMore",
+      "result": "passed"
+    },
+    {
+      "name": "testContextLibraryNavigationCanPlayAndReturn",
+      "result": "passed"
+    },
+    {
+      "name": "testAssistantDockFindsFunctionsAndDismissesOnBlankTap",
+      "result": "passed"
+    },
+    {
+      "name": "testAsyncDiscoveryUpdatesWithoutSwitchingTabs",
+      "result": "passed"
+    },
+    {
+      "name": "testBottomHoldAvoidsNavigationAndCameraOffersCaptureOptions",
+      "result": "passed"
+    },
+    {
+      "name": "testBottomPullRefreshUsesFeedPan",
+      "result": "passed"
+    },
+    {
+      "name": "testBubbleLongPressKeepsMenuInteractive",
+      "result": "passed"
+    },
+    {
+      "name": "testCardScrollsWithLongPressDisabled",
+      "result": "passed"
+    },
+    {
+      "name": "testConsecutiveCardFlicksKeepMoving",
+      "result": "passed"
+    },
+    {
+      "name": "testDiscoverSingleColumnCardScroll",
+      "result": "passed"
+    },
+    {
+      "name": "testDiscoverTwoColumnFastCardScroll",
+      "result": "passed"
+    },
+    {
+      "name": "testDiscoverTwoColumnSlowCardScroll",
+      "result": "passed"
+    },
+    {
+      "name": "testFavoriteAndDownloadFiltersUseCardsAndCanDelete",
+      "result": "passed"
+    },
+    {
+      "name": "testFullBlindModeKeepsOnlyBackgroundSearchAndTripleTapExit",
+      "result": "passed"
+    },
+    {
+      "name": "testHeaderButtonsAreFullyVisibleAndNavigationWinsOverMenu",
+      "result": "passed"
+    },
+    {
+      "name": "testHiddenDockDoesNotCoverCardSwipe",
+      "result": "passed"
+    },
+    {
+      "name": "testHoldOnNavigationAndOrdinaryButtonDoesNotTapThrough",
+      "result": "passed"
+    },
+    {
+      "name": "testHoldOnPageAndSwipeOnHeaderButton",
+      "result": "passed"
+    },
+    {
+      "name": "testHomeFastCardScroll",
+      "result": "passed"
+    },
+    {
+      "name": "testHomeRandomPanelIsCompact",
+      "result": "passed"
+    },
+    {
+      "name": "testHomeSlowCardScroll",
+      "result": "passed"
+    },
+    {
+      "name": "testLibraryFolderKeepsReelsInsideItsContents",
+      "result": "passed"
+    },
+    {
+      "name": "testNativeSliderSwitchesPages",
+      "result": "passed"
+    },
+    {
+      "name": "testProfileAvatarAndCoverOpenNativeMediaPicker",
+      "result": "passed"
+    },
+    {
+      "name": "testReelsUsesVerticalPagesAndReturnsToHome",
+      "result": "passed"
+    },
+    {
+      "name": "testShortTapStillOpensPlayer",
+      "result": "passed"
+    },
+    {
+      "name": "testSourceSwitchPersistsAndSidebarScrolls",
+      "result": "passed"
+    },
+    {
+      "name": "testStationaryHoldOpensRingAndReleaseKeepsItOpen",
+      "result": "passed"
+    },
+    {
+      "name": "testWideMomentStaysInsideScreenAndCanBeDeleted",
+      "result": "passed"
+    }
+  ],
+  "archive_run": "https://github.com/alicelikeeat/moonIight-ios/actions/runs/41536201276",
+  "ipa": {
+    "file": "Moonlight-v1.51.ipa",
+    "bytes": 2173141,
+    "sha256": "95fabb7f78353fed6b1c93515924f0760782f7fea92df353067c458696d05d82",
+    "version": "1.51",
+    "build": "151",
+    "bundle_id": "com.moonlight.feed",
+    "platforms": [
+      "iPhoneOS"
+    ],
+    "minimum_os": "16.0",
+    "mach_o": [
+      {
+        "cpu": 16777228,
+        "subtype": 0,
+        "filetype": 2,
+        "platforms": [
+          2
+        ],
+        "signature_load_command": false
+      }
+    ],
+    "embedded_profile": false,
+    "signature_bundle": false
+  },
+  "signing": "unsigned",
+  "real_iphone_instruments": "not_verified",
+  "release": {
+    "tag": "v1.51",
+    "id": 432028249,
+    "url": "https://github.com/alicelikeeat/moonIight-ios/releases/tag/v1.51",
+    "download_url": "https://github.com/alicelikeeat/moonIight-ios/releases/download/v1.51/Moonlight-v1.51.ipa",
+    "published_at": "2026-11-02T22:32:56Z",
+    "prerelease": true,
+    "draft": false,
+    "anonymous_download_verified": true,
+    "download_sha256": "95fabb7f78353fed6b1c93515924f0760782f7fea92df353067c458696d05d82"
+  }
+}

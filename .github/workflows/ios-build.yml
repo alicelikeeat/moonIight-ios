@@ -5,7 +5,29 @@ on:
     # is merged. Version tags are the only publishes: v1.43 builds the IPA.
     branches: [main, cursor/fix-tab-hold-card-overlap-3131]
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
+    inputs:
+      ui_suite:
+        description: 'UI validation scope (all on pull requests)'
+        type: choice
+        default: all
+        options: [all, rpg, landlord, directed, treasure, preview, settings, scroll, none]
+      device_ipa:
+        description: 'Also archive a device IPA and attach it to this run (no GitHub Release)'
+        type: boolean
+        default: false
+      ipa_version:
+        description: 'Version for the device IPA, e.g. 1.52 (build number = digits)'
+        type: string
+        default: ''
+      publish_release:
+        description: 'With device_ipa: create tag vX.Y at this commit and publish the IPA as a pre-release'
+        type: boolean
+        default: false
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.ui_suite || 'all' }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 permissions:
   contents: write
 jobs:
@@ -17,6 +39,10 @@ jobs:
       - name: Set build version
         id: version
         shell: bash
+        env:
+          DEVICE_IPA: ${{ inputs.device_ipa }}
+          IPA_VERSION: ${{ inputs.ipa_version }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
         run: |
           # A version tag is the public release (v1.43 -> marketing 1.43, build 143).
           # Other pushes only exercise the simulator and do not publish an IPA.
@@ -26,6 +52,15 @@ jobs:
             echo "marketing=${MARKETING}" >> "$GITHUB_OUTPUT"
             echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "device=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${DEVICE_IPA}" == "true" && "${IPA_VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            # Manual device test build: same archive as a release, attached
+            # to the run as an artifact; nothing is published.
+            echo "marketing=${IPA_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "build=$(printf '%s' "$IPA_VERSION" | tr -d '.')" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "device=true" >> "$GITHUB_OUTPUT"
+            echo "publish=${PUBLISH_RELEASE}" >> "$GITHUB_OUTPUT"
           else
             BASELINE_RUN=100
             MINOR=$((GITHUB_RUN_NUMBER - BASELINE_RUN))
@@ -33,14 +68,44 @@ jobs:
             echo "marketing=1.${MINOR}" >> "$GITHUB_OUTPUT"
             echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "device=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Test treasure interaction policy
+        run: |
+          mkdir -p build
+          swiftc LandlordRules.swift CardMediaPolicy.swift TreasureRules.swift TreasureVideoSelectionModel.swift AppSearchIntent.swift tests/main.swift -o build/treasure-tests
+          build/treasure-tests
+      - name: Test RPG pure domain
+        run: |
+          mkdir -p build
+          swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Domain/World/RPGGlassLab.swift Features/RPG/Domain/World/RPGMapEditor.swift Features/RPG/Domain/Blocks/RPGEditDraft.swift Shared/Localization/L10n.swift Features/RPG/Domain/World/RPGWorldRoute.swift Features/RPG/Domain/World/RPGFrameMetrics.swift Features/RPG/Domain/Blocks/RPGBehaviorRules.swift Features/RPG/Domain/Story/RPGStoryAuthoring.swift Features/RPG/Domain/Story/RPGStoryGraph.swift Features/RPG/Domain/Story/RPGOfficialStory.swift Features/RPG/Domain/Story/RPGStoryRuntime.swift Features/RPG/Domain/Combat/RPGCombatRules.swift Features/RPG/Media/RPGMediaPolicy.swift Features/RPG/Domain/World/RPGProjectionRules.swift Features/RPG/Domain/Blocks/RPGWorldEditing.swift Features/RPG/Persistence/RPGWorldDiskStore.swift Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
+          build/rpg-tests
+      - name: Test versioned file persistence
+        run: |
+          mkdir -p build
+          swiftc -swift-version 6 Shared/Persistence/VersionedJSONFile.swift tests/persistence/main.swift -o build/persistence-tests
+          build/persistence-tests
+      - name: Test GIF decoding
+        run: |
+          mkdir -p build
+          swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Media/RPGGIFLibrary.swift tests/gif/main.swift -o build/gif-tests
+          build/gif-tests
+      - name: Test media import index
+        run: |
+          mkdir -p build
+          swiftc Shared/Persistence/MediaImportIndex.swift tests/import/main.swift -o build/import-tests
+          build/import-tests
+      - name: Verify control inventory
+        run: |
+          python3 scripts/audit_controls.py
+          git diff --exit-code -- docs/CONTROL_INVENTORY.md
       - name: Compile simulator build
         if: steps.version.outputs.release != 'true'
         env:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO build
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO build
       - name: Check public discovery source APIs
         run: |
           mkdir -p build
@@ -48,7 +113,8 @@ jobs:
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
       - name: Boot iOS simulator
         id: simulator
-        if: steps.version.outputs.release != 'true'
+        # ui_suite=none: compile and pure checks only, no simulator or UI tests.
+        if: steps.version.outputs.release != 'true' && inputs.ui_suite != 'none'
         timeout-minutes: 10
         shell: bash
         run: |
@@ -59,9 +125,35 @@ jobs:
           # wait is not charged against the gesture-suite deadline.
           xcrun simctl boot "$SIMULATOR_ID" || true
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
-      - name: Run focused visual diagnostics
-        if: steps.version.outputs.release != 'true'
-        continue-on-error: true
+      - name: Run RPG stage validation
+        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'rpg')
+        timeout-minutes: 35
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSearchOpensStoryEditorAndDiagnosticsDirectly -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSideCombatAndDiagnostics -only-testing:MoonlightUITests/ScrollGestureTests/testRPGAuthoredCutsceneProducesFramesAndResumesMuted -only-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryEditorCanPreviewAndPublishBranch -only-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryChoicePersistsAndWaitsForRealWorldEvent -only-testing:MoonlightUITests/ScrollGestureTests/testRPGCombatRewardsPersistWithoutDuplicateDrop -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules -only-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement -only-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSharedEntityAndSafeDualProjection -only-testing:MoonlightUITests/ScrollGestureTests/testRPGMediaFramesBudgetLoopAndBackground -only-testing:MoonlightUITests/ScrollGestureTests/testRPGCellContentEditorGlassAndReopen -only-testing:MoonlightUITests/ScrollGestureTests/testSandboxLaunchControlCenterAndPortraitPages -only-testing:MoonlightUITests/ScrollGestureTests/testSandboxLoadFailureOffersNewWorld -only-testing:MoonlightUITests/ScrollGestureTests/testRPGGlassLabModesAndSample -resultBundlePath build/RPGTests.xcresult test
+      - name: Run V2.4.1 landlord tests
+        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'landlord')
+        timeout-minutes: 15
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordClassicWholeGameAndNewRound -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordMediaBudgetFocusBackgroundAndModeCleanup -resultBundlePath build/V241Tests.xcresult test
+      - name: Run V2.3 wall playback and search tests
+        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'directed')
+        timeout-minutes: 15
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testVideoWallSelectionLimitModesFocusAndCleanup -only-testing:MoonlightUITests/ScrollGestureTests/testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI -resultBundlePath build/V23Tests.xcresult test
+      - name: Run treasure browsing regression
+        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'treasure' || inputs.ui_suite == 'preview') }}
+        timeout-minutes: 15
+        shell: bash
+        env:
+          UI_SUITE: ${{ inputs.ui_suite }}
+        run: |
+          TESTS=(testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference)
+          if [[ "$UI_SUITE" == preview ]]; then TESTS=(testTreasureVideoPreviewCanPlayFreezeAndRememberPreference); fi
+          ONLY=()
+          for TEST_NAME in "${TESTS[@]}"; do ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/$TEST_NAME"); done
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${ONLY[@]}" -resultBundlePath build/TreasureTests.xcresult test
+      - name: Run configuration UI regression
+        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'settings') }}
         timeout-minutes: 20
         shell: bash
         run: |
@@ -71,19 +163,18 @@ jobs:
           for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
             ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
-          # These four cases stay diagnostic. An accessibility miss under the
-          # floating dock must not hide a gesture failure, and it must not
-          # consume the gate suite's time limit.
+          # Keep configuration cases separate so scrolling still runs after a
+          # failure. Every suite remains blocking for the final job result.
           xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
       - name: Run card scrolling UI tests
-        if: steps.version.outputs.release != 'true'
+        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'scroll') }}
         timeout-minutes: 35
         shell: bash
         run: |
           SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
           COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
-          SKIP=()
-          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
+          SKIP=("-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSearchOpensStoryEditorAndDiagnosticsDirectly" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSideCombatAndDiagnostics" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGAuthoredCutsceneProducesFramesAndResumesMuted" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryEditorCanPreviewAndPublishBranch" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryChoicePersistsAndWaitsForRealWorldEvent" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGCombatRewardsPersistWithoutDuplicateDrop" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGMediaFramesBudgetLoopAndBackground" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSharedEntityAndSafeDualProjection" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement")
+          for TEST_NAME in testLandlordClassicWholeGameAndNewRound testLandlordMediaBudgetFocusBackgroundAndModeCleanup testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference testVideoWallSelectionLimitModesFocusAndCleanup testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI; do
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
@@ -91,7 +182,7 @@ jobs:
         if: always() && steps.version.outputs.release != 'true'
         shell: bash
         run: |
-          for RESULT in build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
+          for RESULT in build/RPGTests.xcresult build/V241Tests.xcresult build/V23Tests.xcresult build/TreasureTests.xcresult build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
             if [[ -f "$RESULT/Info.plist" ]]; then
               xcrun xcresulttool export attachments --path "$RESULT" --output-path "build/ui-attachments/$(basename "$RESULT" .xcresult)"
             fi
@@ -110,12 +201,16 @@ jobs:
         with:
           name: ScrollGestureTests-v${{ steps.version.outputs.marketing }}
           path: |
+            build/RPGTests.xcresult
+            build/V241Tests.xcresult
+            build/V23Tests.xcresult
+            build/TreasureTests.xcresult
             build/SettingsTests*.xcresult
             build/ScrollGestureTests.xcresult
           if-no-files-found: ignore
       - name: Import Ad Hoc signing
         id: signing
-        if: steps.version.outputs.release == 'true'
+        if: steps.version.outputs.device == 'true'
         shell: bash
         env:
           CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
@@ -147,7 +242,7 @@ jobs:
           echo "keychain_path=$KEYCHAIN_PATH" >> "$GITHUB_OUTPUT"
           echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
       - name: Archive and export IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready == 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready == 'true'
         shell: bash
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
@@ -155,7 +250,7 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight.xcarchive INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" archive
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight.xcarchive MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution' PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" archive
           cat > build/ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -171,25 +266,45 @@ jobs:
           test -n "$IPA_PATH"
           mv "$IPA_PATH" "build/ipa/Moonlight-v${APP_VERSION}.ipa"
       - name: Archive and package unsigned iOS IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready != 'true'
         shell: bash
         env:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
         run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight-Unsigned.xcarchive INFOPLIST_KEY_CFBundleShortVersionString="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Release -destination 'generic/platform=iOS' -archivePath build/Moonlight-Unsigned.xcarchive MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive
           mkdir -p build/unsigned-ipa/Payload
           cp -R build/Moonlight-Unsigned.xcarchive/Products/Applications/Moonlight.app build/unsigned-ipa/Payload/Moonlight.app
           (cd build/unsigned-ipa && /usr/bin/zip -qry "Moonlight-v${APP_VERSION}.ipa" Payload)
+      - name: Validate device archive metadata
+        if: steps.version.outputs.device == 'true'
+        env:
+          APP_VERSION: ${{ steps.version.outputs.marketing }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          SIGNED_READY: ${{ steps.signing.outputs.ready }}
+        run: |
+          python3 - <<'PYTHON'
+          import os, plistlib
+          from pathlib import Path
+          archive = 'Moonlight.xcarchive' if os.environ['SIGNED_READY'] == 'true' else 'Moonlight-Unsigned.xcarchive'
+          app = Path('build') / archive / 'Products/Applications/Moonlight.app'
+          with (app / 'Info.plist').open('rb') as f:
+              info = plistlib.load(f)
+          assert info.get('CFBundleShortVersionString') == os.environ['APP_VERSION'], 'Missing or wrong application version'
+          assert info.get('CFBundleVersion') == os.environ['BUILD_NUMBER'], 'Wrong build number'
+          assert info.get('CFBundleSupportedPlatforms') == ['iPhoneOS'], 'Expected device archive'
+          assert (app / info['CFBundleExecutable']).is_file(), 'Missing application executable'
+          print('Device archive metadata verified:', info['CFBundleShortVersionString'], info['CFBundleVersion'])
+          PYTHON
       - name: Upload unsigned IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-Unsigned-IPA-v${{ steps.version.outputs.marketing }}
           path: build/unsigned-ipa/Moonlight-v${{ steps.version.outputs.marketing }}.ipa
           if-no-files-found: error
       - name: Upload signed IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready == 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-IPA-v${{ steps.version.outputs.marketing }}
@@ -203,10 +318,10 @@ jobs:
           SIGNED_READY: ${{ steps.signing.outputs.ready }}
         shell: bash
         run: |
-          CURRENT_MAIN=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
-          if [[ "$CURRENT_MAIN" != "$GITHUB_SHA" ]]; then
-            echo "A newer commit superseded this build; keeping its artifacts without replacing the release."
-            exit 0
+          TAG_COMMIT=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_REF_NAME}" --jq .sha)
+          if [[ "$TAG_COMMIT" != "$GITHUB_SHA" ]]; then
+            echo "The version tag moved during this build; refusing to publish a different snapshot."
+            exit 1
           fi
           if [[ "$SIGNED_READY" == "true" ]]; then
             IPA_PATH="build/ipa/Moonlight-v${APP_VERSION}.ipa"
@@ -217,13 +332,45 @@ jobs:
           fi
           NOTES_PATH="build/release-notes.md"
           cat .github/RELEASE_NOTES.md > "$NOTES_PATH"
-          printf '\n验证：模拟器构建、核心手势回归测试及公开内容源接口检查通过；背景编辑器的视觉诊断截图已随构建保留。\n\n%s\n' "$RELEASE_NOTE" >> "$NOTES_PATH"
+          printf '\n验证：GitHub Actions 设备架构归档与数量/交互策略检查通过；模拟器和 UI 回归状态请查对应 PR 记录，真机验证尚未执行。\n\n%s\n' "$RELEASE_NOTE" >> "$NOTES_PATH"
           if gh release view "v${APP_VERSION}" >/dev/null 2>&1; then
             gh release upload "v${APP_VERSION}" "$IPA_PATH" --clobber
             gh release edit "v${APP_VERSION}" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           else
             gh release create "v${APP_VERSION}" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION}" --notes-file "$NOTES_PATH"
           fi
+      - name: Publish manual device build as pre-release
+        # The workflow token creates the tag and release, so this works where
+        # pushing a tag is not possible. It never replaces an existing release.
+        if: steps.version.outputs.release != 'true' && steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ steps.version.outputs.marketing }}
+          SIGNED_READY: ${{ steps.signing.outputs.ready }}
+        shell: bash
+        run: |
+          TAG="v${APP_VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1 || gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "${TAG} already exists; refusing to replace it."
+            exit 1
+          fi
+          if [[ "$SIGNED_READY" == "true" ]]; then
+            IPA_PATH="build/ipa/Moonlight-v${APP_VERSION}.ipa"; SIGNING="已签名（Ad Hoc）"
+          else
+            IPA_PATH="build/unsigned-ipa/Moonlight-v${APP_VERSION}.ipa"; SIGNING="未签名，无嵌入描述文件，需要自行重签后安装"
+          fi
+          DIGEST=$(shasum -a 256 "$IPA_PATH" | cut -d' ' -f1)
+          NOTES_PATH="build/release-notes.md"
+          cat .github/RELEASE_NOTES.md > "$NOTES_PATH"
+          {
+            printf '\n验证：本版为手动真机测试构建。GitHub Actions 设备架构归档与元数据校验通过；完整界面回归以分支 %s 的对应运行为准；真机验证尚未执行，自动化通过不等于真机通过。\n\n' "$GITHUB_REF_NAME"
+            printf -- '- 构建记录：%s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf -- '- 源码快照：`%s`（分支 `%s`）\n' "$GITHUB_SHA" "$GITHUB_REF_NAME"
+            printf -- '- 安装包：`Moonlight-v%s.ipa`，版本 %s / 构建 %s，iPhoneOS arm64，最低 iOS 16.0。\n' "$APP_VERSION" "$APP_VERSION" "${{ steps.version.outputs.build }}"
+            printf -- '- 签名：%s。\n' "$SIGNING"
+            printf -- '- SHA-256：`%s`\n' "$DIGEST"
+          } >> "$NOTES_PATH"
+          gh release create "$TAG" "$IPA_PATH" --target "$GITHUB_SHA" --title "月淡 v${APP_VERSION} · 真机测试版" --notes-file "$NOTES_PATH" --prerelease
       - name: Upload simulator app when signing is absent
         if: steps.version.outputs.release != 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
@@ -248,5 +395,6 @@ jobs:
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+$ ]]
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file .github/RELEASE_UPDATE.md
+
 
 

@@ -2,10 +2,900 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    func testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-recovery-ui-tests"])
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        let recovery=app.buttons["rpg-recover-recover-target"]
+        XCTAssertTrue(recovery.waitForExistence(timeout:12));recovery.tap()
+        let reward=NSPredicate(format:"label CONTAINS %@","月晶 7")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:12),.completed)
+        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String,"1")
+        app.buttons["rpg-tools"].tap()
+        let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
+        XCTAssertTrue(app.staticTexts["rpg-story-ended"].waitForExistence(timeout:8))
+        app.buttons["rpg-story-back"].tap();app.buttons["rpg-tools-close"].tap();app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:8));app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:12),.completed)
+        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String,"1")
+        XCTAssertFalse(recovery.exists);attach(app,name:"review-rpg-p9-unindexed-recovery")
+    }
+
+    @MainActor
+    func testRPGSearchOpensStoryEditorAndDiagnosticsDirectly() {
+        let app=launch(discover:false,flags:["--assistant-dock-ui-tests","--rpg-ui-tests","--rpg-reset-world"])
+        let routes=[("剧情编辑器","rpgEditor","rpg-story-title","rpg-editor-back"),("序章","rpgStory","rpg-story-text","rpg-story-back"),("沙盒运行诊断","rpgDiagnostics","rpg-diagnostics-report","rpg-diagnostics-back")]
+        for (query,command,target,back) in routes {
+            let input=app.textFields["assistant-input"];XCTAssertTrue(input.waitForExistence(timeout:6));input.tap();input.typeText(query)
+            let result=app.buttons["assistant-command-"+command];XCTAssertTrue(result.waitForExistence(timeout:6));result.tap()
+            XCTAssertTrue(app.descendants(matching:.any).matching(identifier:target).firstMatch.waitForExistence(timeout:12))
+            app.buttons[back].tap();app.buttons["rpg-tools-close"].tap();app.buttons["rpg-close"].tap()
+        }
+        XCTAssertFalse(app.navigationBars["智能对话"].exists)
+    }
+
+    @MainActor
+    func testRPGSideCombatAndDiagnostics() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        app.segmentedControls["rpg-mode"].buttons["创造"].tap();app.buttons["rpg-temple"].tap();app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-perspective"].tap()
+        let side=NSPredicate{_,_ in (app.staticTexts["rpg-projection-evidence"].value as? String ?? "").hasPrefix("side:")}
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:side,object:app)],timeout:10),.completed)
+        app.buttons["rpg-tools"].tap()
+        let training=app.buttons["rpg-training"];guard revealListControl(training,in:app) else{return};training.tap();app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-skill"].tap();app.buttons["rpg-attack"].tap()
+        let reward=NSPredicate(format:"label CONTAINS %@","月晶 1")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:10),.completed)
+        app.buttons["rpg-perspective"].tap()
+        app.buttons["rpg-tools"].tap()
+        let diagnostics=app.buttons["rpg-diagnostics"];guard revealListControl(diagnostics,in:app) else{return};diagnostics.tap()
+        let report=app.staticTexts["rpg-diagnostics-report"];XCTAssertTrue(report.waitForExistence(timeout:8))
+        XCTAssertTrue(report.label.contains("p95") && report.label.contains("待验证"));attach(app,name:"review-rpg-p10-diagnostics")
+    }
+
+    @MainActor
+    func testRPGAuthoredCutsceneProducesFramesAndResumesMuted() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
+        let ready=app.staticTexts["background-test-state"];XCTAssertTrue(ready.waitForExistence(timeout:15))
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","背景测试就绪"),object:ready)],timeout:20),.completed)
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        let editor=app.buttons["rpg-story-editor"];guard revealListControl(editor,in:app) else{return};editor.tap()
+        let node=app.buttons["rpg-edit-node-media"];guard revealListControl(node,in:app) else{return};node.tap()
+        let picker=app.buttons["rpg-node-media"];guard revealListControl(picker,in:app) else{return};picker.tap()
+        let video=app.buttons["Scroll fixture 0"];XCTAssertTrue(video.waitForExistence(timeout:6));video.tap()
+        let loop=app.switches["rpg-node-loop"];guard revealListControl(loop,in:app) else{return};if loop.value as? String == "0"{loop.tap()}
+        let apply=app.buttons["rpg-node-apply"];XCTAssertTrue(apply.waitForExistence(timeout:6));apply.tap()
+        let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
+        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
+        let probe=app.staticTexts["rpg-cutscene-probe"]
+        func values()->[String:Int]{
+            Dictionary((probe.value as? String ?? "").split(separator:";").compactMap{item in let p=item.split(separator:"=");guard p.count==2,let n=Int(p[1]) else{return nil};return(String(p[0]),n)},uniquingKeysWith:{a,_ in a})
+        }
+        let active=NSPredicate{_,_ in let v=values();return (v["frames"] ?? 0)>0 && (v["players"] ?? 99)<=1 && (v["global"] ?? 99)<=1}
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:active,object:probe)],timeout:25),.completed)
+        let frames=values()["frames"] ?? 0
+        XCUIDevice.shared.press(.home);app.activate()
+        let resumed=NSPredicate{_,_ in let v=values();return (v["frames"] ?? 0)>frames && v["muted"]==1 && (v["global"] ?? 99)<=1}
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:resumed,object:probe)],timeout:25),.completed)
+        attach(app,name:"review-rpg-p10-authored-video")
+        app.buttons["rpg-preview-close"].tap()
+    }
+
+    @MainActor
+    func testRPGStoryEditorCanPreviewAndPublishBranch() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        let editor=app.buttons["rpg-story-editor"];guard revealListControl(editor,in:app) else{return};editor.tap()
+        let title=app.textFields["rpg-story-title"];XCTAssertTrue(title.waitForExistence(timeout:8));title.tap();title.typeText(" UI\n")
+        let validate=app.buttons["rpg-story-validate"];guard revealListControl(validate,in:app) else{return};validate.tap()
+        let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
+        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-preview-text"].label.contains("字幕"));app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-preview-ended"].waitForExistence(timeout:6));app.buttons["rpg-preview-close"].tap()
+        let publish=app.buttons["rpg-story-publish"];guard revealListControl(publish,in:app) else{return};publish.tap()
+        let status=app.staticTexts["rpg-editor-status"];XCTAssertTrue(status.waitForExistence(timeout:8))
+        XCTAssertTrue(status.label.contains("已保存"));attach(app,name:"review-rpg-p8-editor")
+        app.buttons["rpg-editor-back"].tap()
+        let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
+        let custom=app.buttons.matching(NSPredicate(format:"label CONTAINS %@"," UI")).firstMatch
+        guard revealListControl(custom,in:app) else{return};custom.tap()
+        let intro=NSPredicate(format:"label CONTAINS %@","你的故事从这里开始")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:intro,object:app.staticTexts["rpg-story-text"])],timeout:8),.completed)
+    }
+
+    @MainActor
+    func testRPGStoryChoicePersistsAndWaitsForRealWorldEvent() {
+        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        let story = app.buttons["rpg-story"]
+        guard revealListControl(story,in:app) else { return }; story.tap()
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].waitForExistence(timeout:8))
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].label.contains("月核破碎"))
+        app.buttons["rpg-story-next"].tap()
+        let help = app.buttons["rpg-story-choice-help"]
+        XCTAssertTrue(help.waitForExistence(timeout:8)); help.tap()
+        let gathered = NSPredicate(format:"label CONTAINS %@","收集第一份材料")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:gathered,object:app.staticTexts["rpg-story-text"])],timeout:10),.completed)
+        app.buttons["rpg-story-next"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].label.contains("收集第一份材料"))
+        app.buttons["rpg-story-back"].tap(); app.buttons["rpg-tools-close"].tap(); app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:6)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        guard revealListControl(app.buttons["rpg-story"],in:app) else { return }; app.buttons["rpg-story"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:gathered,object:app.staticTexts["rpg-story-text"])],timeout:10),.completed)
+        attach(app,name:"review-rpg-p7-story")
+    }
+
+    @MainActor
+    func testRPGCombatRewardsPersistWithoutDuplicateDrop() {
+        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        let training = app.buttons["rpg-training"]
+        guard revealListControl(training,in:app) else { return }; training.tap()
+        app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-skill"].tap(); app.buttons["rpg-attack"].tap()
+        let stats = app.staticTexts["rpg-combat-stats"]
+        let reward = NSPredicate(format:"label CONTAINS %@","月晶 1")
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:stats)],timeout:10),.completed)
+        attach(app,name:"review-rpg-p6-combat")
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:6)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:10),.completed)
+        app.buttons["rpg-attack"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-combat-stats"].label.contains("月晶 1"))
+    }
+
+    @MainActor
+    func testRPGMediaFramesBudgetLoopAndBackground() {
+        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
+        let ready=app.staticTexts["background-test-state"]
+        XCTAssertTrue(ready.waitForExistence(timeout:15))
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","背景测试就绪"),object:ready)],timeout:20),.completed)
+        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
+        func media(_ id:String,_ index:Int) {
+            let entrance=app.buttons[id]
+            guard revealListControl(entrance,in:app) else{return};entrance.tap()
+            let item=app.buttons["rpg-pick-scroll-fixture-\(index)"]
+            guard revealListControl(item,in:app) else{return};item.tap()
+            XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label CONTAINS %@","Scroll fixture \(index)"),object:app.staticTexts["rpg-current-media"])],timeout:10),.completed)
+            app.buttons["rpg-media-back"].tap()
+        }
+        media("rpg-media-player",0);media("rpg-media-background",11)
+        app.buttons["rpg-tools-close"].tap()
+        let probe=app.staticTexts["rpg-media-probe"]
+        func waitMedia(_ condition:@escaping ([String:Int])->Bool) {
+            let predicate=NSPredicate{_,_ in
+                let pairs=(probe.value as? String ?? "").split(separator:";").compactMap{item->(String,Int)? in
+                    let pair=item.split(separator:"=",maxSplits:1);guard pair.count==2,let number=Int(pair[1]) else{return nil};return(String(pair[0]),number)
+                }
+                return condition(Dictionary(pairs,uniquingKeysWith:{first,_ in first}))
+            }
+            let result=XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:predicate,object:probe)],timeout:25)
+            if result != .completed { print("RPG_MEDIA_TIMEOUT: \(probe.value as? String ?? "missing")");print(app.debugDescription) }
+            XCTAssertEqual(result,.completed)
+        }
+        waitMedia{($0["frames"] ?? 0)>0 && ($0["posters"] ?? 0)>0 && ($0["advancing"] ?? 0)>0 && ($0["global"] ?? 99)<=2 && $0["muted"]==1}
+        XCUIDevice.shared.press(.home);app.activate()
+        waitMedia{($0["advancing"] ?? 0)>0 && $0["muted"]==1}
+        app.buttons["rpg-tools"].tap()
+        let player=app.buttons["rpg-media-player"];guard revealListControl(player,in:app) else{return};player.tap()
+        let loop=app.switches["rpg-binding-loop"]
+        guard revealListControl(loop,in:app) else{return};if loop.value as? String=="1"{loop.tap()}
+        XCTAssertEqual(loop.value as? String,"0")
+        app.buttons["rpg-media-back"].tap();app.buttons["rpg-tools-close"].tap()
+        waitMedia{($0["completed"] ?? 0)>0 && $0["players"]==0}
+        attach(app,name:"review-rpg-p5-media")
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout:5))
+    }
+
+    @MainActor
+    func testRPGSharedEntityAndSafeDualProjection() {
+        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
+        app.segmentedControls["rpg-mode"].buttons["创造"].tap()
+        app.buttons["rpg-temple"].tap(); app.buttons["rpg-choose-mapped"].tap()
+        app.buttons["rpg-tools-close"].tap(); app.buttons["rpg-place"].tap()
+        let evidence = app.staticTexts["rpg-projection-evidence"]
+        let hasShared = NSPredicate { _,_ in (evidence.value as? String ?? "").contains("placed:") }
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:hasShared,object:evidence)],timeout:15),.completed)
+        let top = evidence.value as? String ?? ""
+        app.buttons["rpg-perspective"].tap()
+        let side = NSPredicate { _,_ in (evidence.value as? String ?? "").hasPrefix("side:") }
+        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:side,object:evidence)],timeout:10),.completed)
+        XCTAssertEqual((evidence.value as? String ?? "").dropFirst(5),top.dropFirst(8))
+        attach(app,name:"review-rpg-p4-side")
+        app.buttons["rpg-move-0-1"].tap()
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout:5))
+    }
+
+    @MainActor
+    func testRPGBuildUndoSaveAndReopen() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout: 8)); app.buttons["rpg-tools"].tap()
+        let mode = app.segmentedControls["rpg-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.buttons["创造"].tap()
+        app.buttons["rpg-choose-site"].tap(); app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-place"].tap()
+        let count = app.staticTexts["rpg-placed-count"]
+        func waitCount(_ value: String) {
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value),object:count)],timeout:15),.completed)
+        }
+        waitCount("1"); app.buttons["rpg-undo"].tap(); waitCount("0")
+        app.buttons["rpg-redo"].tap(); waitCount("1")
+        app.buttons["rpg-close"].tap()
+        app.buttons["me-rpg-entrance"].tap(); waitCount("1")
+        attach(app,name:"review-rpg-p3-persisted-build")
+        app.buttons["rpg-close"].tap()
+    }
+
+    /// Glass lab: each experimental mode switches what renders (B one merged
+    /// native glass layer, C one native glass per nearest cell, A the drawn
+    /// texture), and a timed sample records a result. Functional only:
+    /// simulator frame rates say nothing about iPhone performance.
+    @MainActor
+    func testRPGGlassLabModesAndSample() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--glass-lab-ui-tests", "--glass-sample-short"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let tools = app.buttons["rpg-tools"]
+        XCTAssertTrue(tools.waitForExistence(timeout: 10))
+        let state = app.staticTexts["rpg-glass-state"]
+        func waitState(_ fragment: String, _ timeout: TimeInterval = 10, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", fragment), object: state)], timeout: timeout)
+            XCTAssertEqual(result, .completed, "glass state \(state.value ?? "nil") lacks \(fragment)", line: line)
+        }
+        func choose(_ mode: String, nearest: String? = nil) {
+            tools.tap()
+            let diagnostics = app.buttons["rpg-diagnostics"]
+            guard revealListControl(diagnostics, in: app) else { return }
+            diagnostics.tap()
+            let button = app.buttons["rpg-glass-mode-" + mode]
+            XCTAssertTrue(button.waitForExistence(timeout: 5)); button.tap()
+            if let nearest {
+                let picker = app.segmentedControls["rpg-glass-nearest"]
+                XCTAssertTrue(picker.waitForExistence(timeout: 5)); picker.buttons[nearest].tap()
+            }
+            app.buttons["rpg-diagnostics-back"].tap(); app.buttons["rpg-tools-close"].tap()
+        }
+        let grid = app.descendants(matching: .any)["rpg-grid-glass"]
+
+        choose("nativeMerged")
+        waitState("render=nativeMerged")
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        XCTAssertTrue((grid.value as? String ?? "").hasPrefix("merged:"), "B is one merged glass layer: \(grid.value ?? "nil")")
+        attach(app, name: "review-glass-lab-b-merged")
+
+        choose("nativeNearest", nearest: "64")
+        waitState("render=nativeNearest:64")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "nearest:64"), object: grid)], timeout: 5), .completed)
+        attach(app, name: "review-glass-lab-c-nearest-64")
+
+        choose("texture")
+        waitState("render=texture")
+        XCTAssertFalse(grid.waitForExistence(timeout: 2), "A is drawn by SpriteKit, no native glass views")
+        attach(app, name: "review-glass-lab-a-texture")
+
+        tools.tap()
+        let diagnostics = app.buttons["rpg-diagnostics"]
+        guard revealListControl(diagnostics, in: app) else { return }
+        diagnostics.tap()
+        let run = app.buttons["rpg-glass-run"]
+        XCTAssertTrue(run.waitForExistence(timeout: 5)); run.tap()
+        XCTAssertTrue(app.staticTexts["rpg-glass-sample"].waitForExistence(timeout: 8), "sample runs on the uncovered world")
+        waitState("samples=1", 30)
+
+        choose("selected")
+        waitState("render=selected")
+        app.buttons["rpg-close"].tap()
+    }
+
+    /// Task C: the app opens into the most recent world in landscape with
+    /// the bottom bar hidden; the prologue is skippable without touching the
+    /// world; the control center pauses input and returns the world as it
+    /// was; leaving goes to portrait pages and coming back neither reloads
+    /// the world nor replays the prologue.
+    @MainActor
+    func testSandboxLaunchControlCenterAndPortraitPages() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--scroll-ui-tests", "--rpg-ui-tests", "--rpg-reset-world", "--sandbox-launch-ui-tests",
+                               "--sandbox-landscape-ui-tests", "--prologue-ui-tests"]
+        app.launch()
+        let orientation = app.descendants(matching: .any)["app-orientation"]
+        func waitOrientation(_ value: String, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: orientation)], timeout: 10)
+            XCTAssertEqual(result, .completed, "layout is \(orientation.value ?? "nil"), expected \(value)", line: line)
+        }
+        func waitGone(_ element: XCUIElement, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)], timeout: 6)
+            XCTAssertEqual(result, .completed, "\(element) still on screen", line: line)
+        }
+        let prologue = app.descendants(matching: .any)["world-prologue"]
+        XCTAssertTrue(prologue.waitForExistence(timeout: 25), "world prologue after launch")
+        attach(app, name: "review-sandbox-prologue")
+        prologue.tap()
+        waitGone(prologue)
+        waitOrientation("landscape")
+        let count = app.staticTexts["rpg-placed-count"]
+        XCTAssertEqual(count.value as? String, "0", "skipping the prologue must not build")
+        XCTAssertFalse(app.buttons["navigation-home"].exists && app.buttons["navigation-home"].isHittable, "bottom bar hidden in the sandbox")
+        let position = app.staticTexts["rpg-position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 5))
+        let startPosition = position.label
+        attach(app, name: "review-sandbox-landscape")
+
+        let menu = app.buttons["rpg-menu"]
+        menu.tap()
+        let center = app.descendants(matching: .any)["world-control-center"]
+        XCTAssertTrue(center.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["world-title"].label.hasPrefix("原世界 · Seed"))
+        for id in ["world-nav-home", "world-nav-discover", "world-nav-camera", "world-nav-moments", "world-nav-me",
+                   "world-fn-build", "world-fn-story", "world-fn-media", "world-fn-settings", "world-fn-app-settings", "world-create"] {
+            XCTAssertTrue(app.buttons[id].exists, "control center entry \(id)")
+        }
+        XCTAssertFalse(app.buttons["rpg-move-1-0"].exists, "world controls are shielded while the center is open")
+        attach(app, name: "review-world-control-center")
+        app.buttons["world-continue"].tap()
+        waitGone(center)
+        XCTAssertTrue(app.buttons["rpg-move-1-0"].waitForExistence(timeout: 5))
+        XCTAssertEqual(position.label, startPosition, "world unchanged after the control center")
+
+        menu.tap()
+        XCTAssertTrue(center.waitForExistence(timeout: 5))
+        app.buttons["world-nav-discover"].tap()
+        XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 10))
+        waitOrientation("portrait")
+        XCTAssertTrue(app.buttons["navigation-sandbox"].waitForExistence(timeout: 5))
+        app.buttons["home-segment-recommend"].tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
+        attach(app, name: "review-home-recommend-discover")
+
+        app.buttons["navigation-sandbox"].tap()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        waitOrientation("landscape")
+        XCTAssertFalse(prologue.waitForExistence(timeout: 2), "prologue does not replay when returning")
+        XCTAssertEqual(position.label, startPosition, "returning resumes the same world")
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 10), "完成 returns to the last page")
+        waitOrientation("portrait")
+    }
+
+    /// A world saved by a newer app version cannot open: instead of a blank
+    /// or endless loading screen the sandbox explains and offers a new world.
+    @MainActor
+    func testSandboxLoadFailureOffersNewWorld() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--scroll-ui-tests", "--rpg-ui-tests", "--rpg-reset-world", "--sandbox-launch-ui-tests", "--rpg-future-world-ui-tests"]
+        app.launch()
+        let create = app.buttons["world-load-create"]
+        XCTAssertTrue(create.waitForExistence(timeout: 25))
+        XCTAssertTrue(app.staticTexts["world-load-failed"].exists)
+        XCTAssertTrue(app.buttons["world-load-retry"].exists)
+        attach(app, name: "review-sandbox-load-failure")
+        create.tap()
+        let chunks = app.staticTexts["rpg-loaded-chunks"]
+        let loaded = NSPredicate { _, _ in (Int(chunks.value as? String ?? "0") ?? 0) > 0 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: loaded, object: chunks)], timeout: 20), .completed)
+        XCTAssertFalse(create.exists)
+        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String, "0")
+    }
+
+    /// Cell content MVP: one block gets a number, an edit is cancelled, an
+    /// icon is applied and undone, the selection glass follows the camera,
+    /// delete and undo, and the content survives closing and reopening.
+    @MainActor
+    func testRPGCellContentEditorGlassAndReopen() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout: 8)); app.buttons["rpg-tools"].tap()
+        let mode = app.segmentedControls["rpg-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.buttons["创造"].tap()
+        app.buttons["rpg-choose-site"].tap(); app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-place"].tap()
+        let count = app.staticTexts["rpg-placed-count"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
+        let content = app.staticTexts["rpg-cell-content"]
+        func waitContent(_ value: String, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: content)], timeout: 15)
+            XCTAssertEqual(result, .completed, "cell content \(content.value ?? "nil") != \(value)", line: line)
+        }
+        waitContent("empty")
+
+        let glass = app.descendants(matching: .any)["rpg-selection-glass"]
+        XCTAssertTrue(glass.waitForExistence(timeout: 8))
+        XCTAssertEqual(glass.value as? String, "native", "iOS 26 simulator uses native Liquid Glass")
+        XCTAssertGreaterThan(glass.frame.width, 20)
+
+        let kind = app.segmentedControls["rpg-cell-kind"]
+        let confirm = app.buttons["rpg-cell-confirm"]
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["数字"].tap()
+        let field = app.textFields["rpg-cell-value"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6) + "42")
+        let preview = app.descendants(matching: .any)["rpg-cell-preview"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "number:42"), object: preview)], timeout: 5), .completed)
+        attach(app, name: "review-rpg-cell-editor-number")
+        confirm.tap()
+        waitContent("number:42")
+
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["文字"].tap()
+        app.buttons["rpg-cell-cancel"].tap()
+        waitContent("number:42")
+
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["图标"].tap()
+        app.buttons["rpg-cell-symbol-moon.stars.fill"].tap(); confirm.tap()
+        waitContent("icon:moon.stars.fill")
+        attach(app, name: "review-rpg-cell-icon-glass")
+        app.buttons["rpg-undo"].tap()
+        waitContent("number:42")
+
+        // Moving the player moves the camera; the glass must stay on the
+        // selected cell, so its on-screen position shifts.
+        let start = glass.frame
+        var followed = false
+        for direction in ["rpg-move-1-0", "rpg-move--1-0", "rpg-move-0-1", "rpg-move-0--1"] where !followed {
+            app.buttons[direction].tap()
+            let moved = NSPredicate { _, _ in abs(glass.frame.midX - start.midX) > 10 || abs(glass.frame.midY - start.midY) > 10 }
+            followed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 4) == .completed
+        }
+        XCTAssertTrue(followed, "selection glass follows the camera")
+        waitContent("number:42")
+
+        // Delete clears the content but keeps the block, and is undoable.
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(app.buttons["rpg-cell-delete"].waitForExistence(timeout: 8)); app.buttons["rpg-cell-delete"].tap()
+        waitContent("empty")
+        XCTAssertEqual(count.value as? String, "1", "deleting content keeps the block")
+        app.buttons["rpg-undo"].tap()
+        waitContent("number:42")
+
+        // The content survives leaving and reopening the world. Checked over
+        // the whole world so the result does not depend on re-selecting.
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
+        let cells = app.staticTexts["rpg-world-cells"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "number:42"), object: cells)], timeout: 15), .completed,
+                       "world cells after reopening: \(cells.value ?? "nil")")
+        attach(app, name: "review-rpg-cell-reopened")
+        app.buttons["rpg-close"].tap()
+    }
+
+    @MainActor
+    func testRPGWorldSeedChunksAndMovement() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let count = app.staticTexts["rpg-loaded-chunks"]
+        XCTAssertTrue(count.waitForExistence(timeout: 8))
+        let ready = NSPredicate { _, _ in (Int(count.value as? String ?? "0") ?? 0) > 0 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: count)], timeout: 20), .completed)
+        let position = app.staticTexts["rpg-position"]
+        let before = position.label
+        app.buttons["rpg-move-1-0"].tap()
+        XCTAssertNotEqual(position.label, before)
+        app.buttons["rpg-move--1-0"].tap()
+        XCTAssertEqual(position.label, before)
+        attach(app, name: "review-rpg-p2-world")
+        app.buttons["rpg-close"].tap()
+    }
+
+    @MainActor
+    func testRPGSkeletonCanValidateExitAndPreserveOtherModules() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap()
+        let entrance = app.buttons["me-rpg-entrance"]
+        XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()
+        XCTAssertTrue(app.buttons["rpg-close"].waitForExistence(timeout: 5))
+        app.buttons["rpg-validate"].tap()
+        XCTAssertTrue(app.staticTexts["世界数据往返校验通过。"].waitForExistence(timeout: 5))
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout: 5))
+        app.buttons["me-treasure-map"].tap()
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
+        app.buttons["treasure-map-close"].tap()
+        app.buttons["navigation-home"].tap()
+        XCTAssertTrue(app.buttons["navigation-me"].exists)
+    }
+
+    @MainActor
+    private func waitLandlord(_ app: XCUIApplication, _ condition: @escaping ([String: String]) -> Bool, timeout: TimeInterval = 20) {
+        let probe = app.staticTexts["landlord-probe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        let predicate = NSPredicate { _, _ in
+            let pairs = (probe.value as? String ?? "").split(separator: ";").compactMap { item -> (String, String)? in
+                let pair = item.split(separator: "=", maxSplits: 1)
+                return pair.count == 2 ? (String(pair[0]), String(pair[1])) : nil
+            }
+            return condition(Dictionary(pairs, uniquingKeysWith: { first, _ in first }))
+        }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: probe)], timeout: timeout)
+        if result != .completed { print("LANDLORD_TIMEOUT: \(probe.value as? String ?? "missing")"); print(app.debugDescription) }
+        XCTAssertEqual(result, .completed)
+    }
+    @MainActor
+    func testLandlordClassicWholeGameAndNewRound() {
+        let app = launch(discover: false, flags: ["--treasure-wall-ui-tests", "--landlord-ui-tests"])
+        XCTAssertTrue(app.staticTexts["background-test-state"].waitForExistence(timeout: 15))
+        openTreasureMap(app); app.buttons["treasure-landlord-mode"].tap()
+        XCTAssertTrue(app.buttons["landlord-new-game"].waitForExistence(timeout: 5))
+        app.buttons["landlord-new-game"].tap()
+        app.buttons["landlord-bid-3"].tap()
+        app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
+        waitLandlord(app) { $0["valid"] == "1" && (Int($0["history"] ?? "0") ?? 0) > 0 && $0["players"] == "0" }
+        app.switches["landlord-auto"].tap()
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "1")
+        waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
+        attach(app, name: "review-v241-classic-result")
+        app.buttons["landlord-new-game"].tap()
+        waitLandlord(app) { $0["phase"] == "bidding" && $0["history"] == "0" && $0["cards"] == "51" }
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "0")
+    }
+    @MainActor
+    func testLandlordMediaBudgetFocusBackgroundAndModeCleanup() {
+        let app = launch(discover: false, flags: ["--treasure-wall-ui-tests", "--landlord-ui-tests"])
+        let ready = app.staticTexts["background-test-state"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 15), .completed)
+        openTreasureMap(app); app.buttons["treasure-landlord-mode"].tap()
+        app.buttons["landlord-settings"].tap()
+        app.segmentedControls["landlord-style"].buttons["媒体牌面"].tap()
+        for index in [0, 1, 2, 11] {
+            let item = app.buttons["landlord-media-scroll-fixture-\(index)"]
+            guard revealListControl(item, in: app) else { return }; item.tap()
+        }
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { (Int($0["players"] ?? "0") ?? 0) > 0 && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["advancing"] ?? "0") ?? 0) > 0 && (Int($0["frames"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" && $0["valid"] == "1" }
+        waitLandlord(app) { (Int($0["posters"] ?? "0") ?? 0) > 0 }
+        let videoCards = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value CONTAINS %@", "landlord-hand-", "视频牌面"))
+        guard let card = videoCards.allElementsBoundByIndex.first(where: { $0.isHittable }) else { XCTFail("No visible video card"); return }
+        card.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["landlord-focus-close"].waitForExistence(timeout: 5))
+        waitLandlord(app) { $0["players"] == "1" && $0["history"] == "0" && $0["cards"] == "51" }
+        app.buttons["landlord-focus-sound"].tap()
+        waitLandlord(app) { $0["muted"] == "0" }
+        app.buttons["landlord-focus-close"].tap()
+        waitLandlord(app) { $0["muted"] == "1" && $0["history"] == "0" }
+        XCUIDevice.shared.press(.home); app.activate()
+        waitLandlord(app) { $0["muted"] == "1" && (Int($0["advancing"] ?? "0") ?? 0) > 0 }
+        app.buttons["landlord-settings"].tap()
+        app.buttons["landlord-test-memory"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { $0["pressure"] == "1" && $0["players"] == "0" && $0["owned"] == "0" && (Int($0["cache"] ?? "9999999") ?? 9999999) <= 2097152 && $0["history"] == "0" }
+        app.buttons["landlord-settings"].tap(); app.buttons["landlord-retry"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { (Int($0["advancing"] ?? "0") ?? 0) > 0 && $0["muted"] == "1" }
+        app.buttons["landlord-bid-3"].tap()
+        app.buttons["landlord-hint"].tap(); app.buttons["landlord-play"].tap()
+        waitLandlord(app) { (Int($0["history"] ?? "0") ?? 0) > 0 && $0["valid"] == "1" && (Int($0["players"] ?? "99") ?? 99) <= 2 && (Int($0["owned"] ?? "99") ?? 99) <= 2 }
+        app.switches["landlord-auto"].tap()
+        XCTAssertEqual(app.switches["landlord-auto"].value as? String, "1")
+        waitLandlord(app, { $0["phase"] == "finished" && $0["valid"] == "1" }, timeout: 45)
+        attach(app, name: "review-v241-media-result")
+        for _ in 0..<3 {
+            app.buttons["treasure-free-mode"].tap()
+            app.buttons["treasure-wall-mode"].tap()
+            XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+            app.buttons["treasure-landlord-mode"].tap()
+            waitLandlord(app) { (Int($0["players"] ?? "99") ?? 99) <= 2 && $0["valid"] == "1" }
+        }
+        app.buttons["landlord-settings"].tap()
+        app.segmentedControls["landlord-style"].buttons["经典牌面"].tap()
+        app.buttons["landlord-settings-done"].tap()
+        waitLandlord(app) { $0["players"] == "0" && $0["cache"] == "0" && $0["phase"] == "finished" }
+    }
+
+    @MainActor
+    func testVideoWallSelectionLimitModesFocusAndCleanup() {
+        let app = launch(discover: false, flags: ["--treasure-wall-ui-tests"])
+        let ready = app.staticTexts["background-test-state"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 15), .completed)
+        openTreasureMap(app)
+        XCTAssertFalse(app.buttons["treasure-directed-settings"].exists)
+        let freeMode = app.buttons["treasure-free-mode"]
+        let wallMode = app.buttons["treasure-wall-mode"]
+        XCTAssertTrue(freeMode.isSelected)
+        wallMode.tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+        app.buttons["wall-select"].tap()
+        let clear = app.buttons["wall-clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5)); clear.tap()
+        XCTAssertTrue(app.steppers["wall-target-count"].label.contains("4"))
+        for index in 0..<10 {
+            let item = app.buttons["wall-pick-scroll-fixture-\(index)"]
+            guard revealListControl(item, in: app) else { return }
+            item.tap()
+            XCTAssertEqual(item.value as? String, "已选择")
+        }
+        let eleventh = app.buttons["wall-pick-scroll-fixture-10"]
+        for _ in 0..<6 { if eleventh.exists { break }; app.swipeUp() }
+        XCTAssertTrue(eleventh.waitForExistence(timeout: 5))
+        XCTAssertFalse(eleventh.isEnabled, "The eleventh different video must be disabled")
+        attach(app, name: "review-v23-limit-ten")
+        app.buttons["wall-selection-done"].tap()
+        let modes = app.segmentedControls["wall-mode"]
+        XCTAssertTrue(modes.waitForExistence(timeout: 5))
+        modes.buttons["同时"].tap()
+        if app.switches["wall-loop"].value as? String == "0" { app.switches["wall-loop"].tap() }
+        XCTAssertEqual(app.switches["wall-loop"].value as? String, "1")
+        if app.switches["wall-muted"].value as? String == "1" { app.switches["wall-muted"].tap() }
+        app.buttons["wall-play-pause"].tap()
+        func waitWall(_ predicate: @escaping ([String: Int]) -> Bool) {
+            let probe = app.staticTexts["wall-probe"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            let condition = NSPredicate { _, _ in
+                guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                      let state = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
+                return predicate(state)
+            }
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 15)
+            if result != .completed { print("WALL_TIMEOUT: \(probe.value as? String ?? "missing")"); print(app.debugDescription) }
+            XCTAssertEqual(result, .completed)
+        }
+        waitWall { $0["selected"] == 10 && $0["loop"] == 1 && ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 11) <= ($0["limit"] ?? 0) && ($0["audible"] ?? 2) <= 1 }
+        let last = app.buttons["wall-tile-scroll-fixture-9"]
+        guard revealListControl(last, in: app) else { return }
+        XCTAssertTrue(last.isHittable, "The tenth cell is scrollable")
+        last.tap()
+        XCTAssertTrue(app.buttons["wall-unfocus"].waitForExistence(timeout: 5))
+        waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 && ($0["audible"] ?? 2) <= 1 }
+        app.buttons["wall-unfocus"].tap()
+        app.switches["wall-muted"].tap()
+        waitWall { $0["audible"] == 0 }
+        app.buttons["wall-play-pause"].tap()
+        waitWall { $0["playing"] == 0 }
+        app.buttons["wall-stop"].tap()
+        waitWall { $0["players"] == 0 }
+        for mode in ["顺序", "随机"] {
+            modes.buttons[mode].tap(); app.buttons["wall-play-pause"].tap()
+            waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 }
+            if mode == "随机" {
+                XCUIDevice.shared.press(.home); app.activate()
+                waitWall { $0["playing"] == 0 && $0["players"] == 0 && $0["ownedTotal"] == 0 }
+            }
+            app.buttons["wall-stop"].tap()
+            waitWall { $0["players"] == 0 }
+        }
+        app.buttons["wall-play-pause"].tap()
+        waitWall { $0["players"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        freeMode.tap()
+        XCTAssertFalse(app.buttons["wall-select"].exists)
+        wallMode.tap()
+        XCTAssertTrue(app.buttons["wall-select"].label.contains("10/10"))
+        waitWall { $0["playing"] == 0 && $0["players"] == 0 && $0["ownedTotal"] == 0 }
+        attach(app, name: "review-v23-stopped-wall")
+        app.buttons["wall-select"].tap()
+        app.buttons["wall-clear"].tap()
+        let single = app.buttons["wall-pick-scroll-fixture-0"]
+        guard revealListControl(single, in: app) else { return }
+        single.tap(); app.buttons["wall-selection-done"].tap()
+        modes.buttons["顺序"].tap()
+        if app.switches["wall-loop"].value as? String == "1" { app.switches["wall-loop"].tap() }
+        XCTAssertEqual(app.switches["wall-loop"].value as? String, "0")
+        app.buttons["wall-play-pause"].tap()
+        let message = app.staticTexts["wall-message"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "本轮播放完成。"), object: message)], timeout: 20), .completed)
+        waitWall { $0["players"] == 0 && $0["playing"] == 0 }
+    }
+
+    @MainActor
+    private func openTreasureMap(_ app: XCUIApplication) {
+        app.buttons["navigation-me"].tap()
+        let entrance = app.buttons["me-treasure-map"]
+        XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI() {
+        let app = launch(discover: false, flags: ["--assistant-dock-ui-tests"])
+        let input = app.textFields["assistant-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("月藏图")
+        let command = app.buttons["assistant-command-treasureMap"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5)); command.tap()
+        XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
+        app.buttons["treasure-map-close"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("视频墙")
+        let settingsCommand = app.buttons["assistant-command-treasurePlayback"]
+        XCTAssertTrue(settingsCommand.waitForExistence(timeout: 5)); settingsCommand.tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 8))
+        app.buttons["treasure-map-close"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap(); input.typeText("搜索图片 猫\n")
+        let field = app.textFields["discover-search-input"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "猫")
+        XCTAssertTrue(app.segmentedControls["discover-kind-filter"].buttons["图片"].isSelected)
+        XCTAssertFalse(app.navigationBars["智能对话"].exists)
+        let clear = app.buttons["discover-search-clear"]
+        XCTAssertTrue(clear.waitForExistence(timeout: 5)); clear.tap()
+        XCTAssertNotEqual(field.value as? String, "猫")
+        attach(app, name: "review-v21-search-routing")
+    }
+
+    @MainActor
+    func testTreasureVideoPreviewCanPlayFreezeAndRememberPreference() {
+        let app = launch(discover: false, flags: ["--treasure-video-ui-tests"])
+        func openMap() {
+            let ready = app.staticTexts["background-test-state"]
+            XCTAssertTrue(ready.waitForExistence(timeout: 10))
+            let loaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)
+            XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 10), .completed)
+            openTreasureMap(app)
+            XCTAssertTrue(app.buttons["treasure-video-mode"].waitForExistence(timeout: 5))
+        }
+        func select(_ title: String) {
+            let menu = app.buttons["treasure-video-mode"]
+            let expected = title == "静止封面" ? "静止封面" : "自动播放"
+            if menu.value as? String == expected { return }
+            menu.tap()
+            let option = app.buttons[title]
+            XCTAssertTrue(option.waitForExistence(timeout: 3))
+            option.tap()
+        }
+        func waitForPreview(_ predicate: @escaping ([String: Int]) -> Bool) {
+            let probe = app.staticTexts["treasure-video-probe"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5))
+            let condition = NSPredicate { _, _ in
+                guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                      let snapshot = try? JSONDecoder().decode([String: Int].self, from: data) else { return false }
+                return predicate(snapshot)
+            }
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: condition, object: probe)], timeout: 12)
+            if result != .completed {
+                print("PREVIEW_TIMEOUT_SNAPSHOT: \(probe.value as? String ?? "missing")")
+                attach(app, name: "review-preview-timeout")
+            }
+            XCTAssertEqual(result, .completed)
+        }
+        openMap()
+        let layout = app.buttons["treasure-layout"]
+        if layout.label == "自由" { layout.tap() }
+        select("静止封面")
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
+        select("自动播放（最多3张）")
+        waitForPreview { $0["players"] == 3 && $0["advancing"] == 3 && $0["muted"] == 1 && $0["nodes"] == 3 && $0["centerIcons"] == 0 }
+        layout.tap()
+        waitForPreview { ($0["advancing"] ?? 0) > 0 && ($0["players"] ?? 4) <= 3 && $0["nodes"] == 0 }
+        app.terminate(); app.launch()
+        openMap()
+        waitForPreview { $0["auto"] == 1 && ($0["advancing"] ?? 0) > 0 }
+        if layout.label == "自由" { layout.tap() }
+        waitForPreview { $0["nodes"] == 3 && ($0["advancing"] ?? 0) > 0 }
+        let before = app.staticTexts["treasure-video-probe"].value as? String ?? ""
+        let beforeState = (try? JSONDecoder().decode([String: Int].self, from: Data(before.utf8))) ?? [:]
+        app.buttons["treasure-wall-mode"].tap()
+        XCTAssertTrue(app.buttons["wall-select"].waitForExistence(timeout: 5))
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 }
+        app.buttons["treasure-free-mode"].tap()
+        waitForPreview { $0["nodes"] == 3 && ($0["advancing"] ?? 0) > 0 && $0["configuration"] == beforeState["configuration"] }
+        select("静止封面")
+        waitForPreview { $0["players"] == 0 && $0["nodes"] == 0 && $0["centerIcons"] == 0 }
+        attach(app, name: "review-treasure-static-video-no-center-icon")
+    }
+
+    @MainActor
+    func testTreasureDragKeepsTouchAndPhysicsOwnership() {
+        let app = launch(discover: false, flags: ["--treasure-drag-ui-tests"])
+        openTreasureMap(app)
+        let layout = app.buttons["treasure-layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        if layout.label == "自由" { layout.tap() }
+        let probe = app.descendants(matching: .any).matching(identifier: "treasure-physics-probe").firstMatch
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        func snapshot() -> [String: Double] {
+            guard let value = probe.value as? String, let data = value.data(using: .utf8),
+                  let result = try? JSONDecoder().decode([String: Double].self, from: data) else {
+                XCTFail("SpriteKit did not publish drag diagnostics")
+                return [:]
+            }
+            return result
+        }
+        // Exercise the actual SKView touch path with gravity running. Start
+        // from a settled card rather than guessing a SpriteKit node's frame.
+        for x in [0.35, 0.65] {
+            Thread.sleep(forTimeInterval: 2)
+            let before = snapshot()
+            let width = before["width"] ?? 1, height = before["height"] ?? 1
+            let screen = app.coordinate(withNormalizedOffset: .zero)
+            let start = screen.withOffset(CGVector(dx: before["x"] ?? 0, dy: before["y"] ?? 0))
+            let startFraction = ((before["y"] ?? 0) - (before["originY"] ?? 0)) / max(1, height)
+            let targetFraction = startFraction < 0.5 ? 0.85 : 0.15
+            let end = screen.withOffset(CGVector(dx: (before["originX"] ?? 0) + width * x,
+                                                dy: (before["originY"] ?? 0) + height * targetFraction))
+            start.press(forDuration: 0.05, thenDragTo: end,
+                        withVelocity: .slow, thenHoldForDuration: 1.2)
+            var after = snapshot()
+            for _ in 0..<10 where after["owned"] != 0 {
+                Thread.sleep(forTimeInterval: 0.1)
+                after = snapshot()
+            }
+            XCTAssertEqual(after["cancelled"], 0, "The presentation stole the drag")
+            XCTAssertGreaterThan(after["moves"] ?? 0, (before["moves"] ?? 0) + 2)
+            XCTAssertGreaterThan(after["travel"] ?? 0, 100, "Card only moved once")
+            XCTAssertGreaterThan(after["frames"] ?? 0, (before["frames"] ?? 0) + 10)
+            XCTAssertLessThan(after["drift"] ?? 100, 2, "Gravity/collisions moved a held card")
+            XCTAssertEqual(after["violations"], 0)
+            XCTAssertEqual(after["owned"], 0)
+            XCTAssertEqual(after["released"], 1, "Release failed to restore physics")
+            XCTAssertFalse(app.buttons["player-close"].exists)
+            XCTAssertFalse(app.buttons["加入播放队列"].exists)
+        }
+        attach(app, name: "review-treasure-sustained-drag")
+    }
+
+    @MainActor
+    func testTreasureGridCanOpenHoldAndSwitchTwentyTimes() {
+        let app = launch(discover: false)
+        openTreasureMap(app)
+        let layout = app.buttons["treasure-layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        if layout.label == "自由" { layout.tap() }
+        for _ in 0..<20 {
+            layout.tap()
+            XCTAssertTrue(app.scrollViews["treasure-grid"].waitForExistence(timeout: 3))
+            layout.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["moon-treasure-map"].waitForExistence(timeout: 3))
+        }
+        layout.tap()
+        let card = app.buttons["treasure-grid-scroll-fixture-0"]
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        card.press(forDuration: 0.7)
+        guard app.buttons["加入播放队列"].waitForExistence(timeout: 5) else {
+            print(app.debugDescription); attach(app, name: "review-grid-hold-failure")
+            XCTFail("Long press did not open the treasure actions menu"); return
+        }
+        XCTAssertFalse(app.buttons["player-close"].exists)
+        app.buttons["加入播放队列"].tap()
+        card.tap()
+        XCTAssertTrue(app.buttons["player-close"].waitForExistence(timeout: 5))
+        app.buttons["player-close"].tap()
+        XCTAssertTrue(layout.waitForExistence(timeout: 5))
+        attach(app, name: "review-treasure-organized")
+    }
+
+    @MainActor
     private func attach(_ app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    /// Keep list targets above the floating navigation dock. A row may be
+    /// accessible while its center still belongs to the dock's hit region.
+    @MainActor
+    private func revealListControl(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
+        let bounds = app.frame
+        for _ in 0..<30 {
+            var moveDown = false
+            if element.exists {
+                let frame = element.frame
+                if element.isHittable && frame.minY >= bounds.minY + 90 && frame.maxY <= bounds.maxY - 110 { return true }
+                moveDown = frame.height > 0 && frame.minY < bounds.minY + 90
+            }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.35 : 0.65))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: moveDown ? 0.55 : 0.45))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        print(app.debugDescription)
+        attach(app, name: "review-list-control-not-visible")
+        XCTFail("List target is not safely visible above navigation: \(element)")
+        return false
     }
 
     @MainActor
@@ -102,7 +992,8 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
         XCTAssertFalse(app.buttons["player-close"].exists)
-        app.buttons["navigation-discover"].tap()
+        // 发现 is now the second segment of 首页.
+        app.buttons["navigation-home"].tap(); app.buttons["navigation-discover"].tap()
         XCTAssertTrue(sources.waitForExistence(timeout: 5))
         attach(app, name: "review-header-and-priority-tabs")
     }
@@ -195,7 +1086,7 @@ final class ScrollGestureTests: XCTestCase {
         let top = app.buttons["feed-scroll-top-discover"]
         XCTAssertTrue(top.waitForExistence(timeout: 4), "Return-to-top must appear after reaching the bottom")
         XCTAssertTrue(top.isHittable)
-        XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-discover"].frame.minY)
+        XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-home"].frame.minY)
         if (state.value as? String ?? initialRefresh) == initialRefresh {
             let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
             start.press(forDuration: 0.01,
@@ -435,12 +1326,16 @@ final class ScrollGestureTests: XCTestCase {
         let app = launch(discover: false, flags: ["--slider-ui-tests"])
         let bar = app.tabBars["navigation-slider"]
         XCTAssertTrue(bar.waitForExistence(timeout: 5))
-        bar.buttons["发现"].tap()
+        // Bar order is now 沙盒 / 首页 / 拍摄 / 朋友圈 / 我; 发现 is a 首页 segment.
+        XCTAssertEqual(bar.buttons.count, 5)
+        bar.buttons["首页"].tap(); app.buttons["navigation-discover"].tap()
         XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 5))
         bar.buttons["我"].tap()
         XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5))
+        // Slide from 我 back to 首页 (the second item), not past it into the sandbox.
         let start = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
-        start.press(forDuration: 0.01, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        start.press(forDuration: 0.01, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)))
+        app.buttons["home-segment-recommend"].tap()
         XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
         attach(app, name: "review-native-sliding-tabs")
     }
@@ -459,20 +1354,20 @@ final class ScrollGestureTests: XCTestCase {
         openBackgroundSettings()
         for id in ["ui-test-background-image", "ui-test-background-video"] {
             let asset = app.buttons["playlist-asset-\(id)"]
-            for _ in 0..<16 { if asset.isHittable { break }; app.swipeUp() }
-            XCTAssertTrue(asset.isHittable)
+            guard revealListControl(asset, in: app) else { return }
             if asset.value as? String != "已选择" { asset.tap() }
             XCTAssertEqual(asset.value as? String, "已选择", "The background row did not accept selection")
         }
         let picker = app.descendants(matching: .any).matching(identifier: "background-playback-mode").firstMatch
-        for _ in 0..<16 { if picker.isHittable { break }; app.swipeDown() }
-        picker.tap(); app.buttons["顺序循环"].tap()
+        guard revealListControl(picker,in:app) else{return}
+        picker.tap()
+        let sequential=app.buttons["顺序循环"]
+        XCTAssertTrue(sequential.waitForExistence(timeout:5));sequential.tap()
         XCTAssertTrue(app.staticTexts["background-playback-summary"].label.contains("2 项 · 顺序循环"))
         attach(app, name: "review-button-background-playlist")
         app.terminate(); app.launch(); openBackgroundSettings()
         let persistedSummary = app.staticTexts["background-playback-summary"]
-        for _ in 0..<16 { if persistedSummary.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(persistedSummary.isHittable)
+        guard revealListControl(persistedSummary,in:app) else{return}
         XCTAssertTrue(persistedSummary.label.contains("2 项 · 顺序循环"))
     }
 
@@ -482,6 +1377,8 @@ final class ScrollGestureTests: XCTestCase {
         func openEditor() {
             app.buttons["navigation-me"].tap(); app.buttons["settings-entry"].tap()
             app.buttons["context-menu-settings-entry"].tap()
+            XCTAssertTrue(app.navigationBars["长按与底栏"].waitForExistence(timeout: 5))
+            guard revealListControl(app.buttons["媒体卡片"], in: app) else { return }
             XCTAssertTrue(app.buttons["页面长按菜单"].exists)
             XCTAssertTrue(app.buttons["按键长按菜单"].exists)
             XCTAssertFalse(app.buttons["页面背景 · 首页"].exists)
@@ -569,7 +1466,9 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["我"].tap()
         app.buttons["settings-entry"].tap()
         app.buttons["backgrounds-entry"].tap()
-        app.buttons["background-target-page.home"].tap()
+        let homeBackground = app.buttons["background-target-page.home"]
+        guard revealListControl(homeBackground, in: app) else { return }
+        homeBackground.tap()
         attach(app, name: "review-background-editor")
         let video = app.buttons["使用这个视频背景"].firstMatch
         // The background library may contain the user's imported assets before
@@ -672,5 +1571,6 @@ final class ScrollGestureTests: XCTestCase {
     }
 
 }
+
 
 
