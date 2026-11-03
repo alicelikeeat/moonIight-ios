@@ -13,6 +13,14 @@ on:
         type: choice
         default: all
         options: [all, rpg, landlord, directed, treasure, preview, settings, scroll]
+      device_ipa:
+        description: 'Also archive a device IPA and attach it to this run (no GitHub Release)'
+        type: boolean
+        default: false
+      ipa_version:
+        description: 'Version for the device IPA, e.g. 1.52 (build number = digits)'
+        type: string
+        default: ''
 concurrency:
   group: ios-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.ui_suite || 'all' }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -27,6 +35,9 @@ jobs:
       - name: Set build version
         id: version
         shell: bash
+        env:
+          DEVICE_IPA: ${{ inputs.device_ipa }}
+          IPA_VERSION: ${{ inputs.ipa_version }}
         run: |
           # A version tag is the public release (v1.43 -> marketing 1.43, build 143).
           # Other pushes only exercise the simulator and do not publish an IPA.
@@ -36,6 +47,14 @@ jobs:
             echo "marketing=${MARKETING}" >> "$GITHUB_OUTPUT"
             echo "build=${BUILD}" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "device=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${DEVICE_IPA}" == "true" && "${IPA_VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            # Manual device test build: same archive as a release, attached
+            # to the run as an artifact; nothing is published.
+            echo "marketing=${IPA_VERSION}" >> "$GITHUB_OUTPUT"
+            echo "build=$(printf '%s' "$IPA_VERSION" | tr -d '.')" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "device=true" >> "$GITHUB_OUTPUT"
           else
             BASELINE_RUN=100
             MINOR=$((GITHUB_RUN_NUMBER - BASELINE_RUN))
@@ -43,6 +62,7 @@ jobs:
             echo "marketing=1.${MINOR}" >> "$GITHUB_OUTPUT"
             echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "device=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Test treasure interaction policy
         run: |
@@ -183,7 +203,7 @@ jobs:
           if-no-files-found: ignore
       - name: Import Ad Hoc signing
         id: signing
-        if: steps.version.outputs.release == 'true'
+        if: steps.version.outputs.device == 'true'
         shell: bash
         env:
           CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
@@ -215,7 +235,7 @@ jobs:
           echo "keychain_path=$KEYCHAIN_PATH" >> "$GITHUB_OUTPUT"
           echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
       - name: Archive and export IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready == 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready == 'true'
         shell: bash
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
@@ -239,7 +259,7 @@ jobs:
           test -n "$IPA_PATH"
           mv "$IPA_PATH" "build/ipa/Moonlight-v${APP_VERSION}.ipa"
       - name: Archive and package unsigned iOS IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready != 'true'
         shell: bash
         env:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
@@ -250,7 +270,7 @@ jobs:
           cp -R build/Moonlight-Unsigned.xcarchive/Products/Applications/Moonlight.app build/unsigned-ipa/Payload/Moonlight.app
           (cd build/unsigned-ipa && /usr/bin/zip -qry "Moonlight-v${APP_VERSION}.ipa" Payload)
       - name: Validate device archive metadata
-        if: steps.version.outputs.release == 'true'
+        if: steps.version.outputs.device == 'true'
         env:
           APP_VERSION: ${{ steps.version.outputs.marketing }}
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
@@ -270,14 +290,14 @@ jobs:
           print('Device archive metadata verified:', info['CFBundleShortVersionString'], info['CFBundleVersion'])
           PYTHON
       - name: Upload unsigned IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready != 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-Unsigned-IPA-v${{ steps.version.outputs.marketing }}
           path: build/unsigned-ipa/Moonlight-v${{ steps.version.outputs.marketing }}.ipa
           if-no-files-found: error
       - name: Upload signed IPA
-        if: steps.version.outputs.release == 'true' && steps.signing.outputs.ready == 'true'
+        if: steps.version.outputs.device == 'true' && steps.signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Moonlight-iOS-IPA-v${{ steps.version.outputs.marketing }}
