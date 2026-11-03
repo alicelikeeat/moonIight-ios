@@ -139,7 +139,7 @@ struct RPGCellPanel: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("格子 x \(point.x) · z \(point.z)").font(.subheadline.weight(.semibold)).accessibilityIdentifier("rpg-panel-coordinate")
-                    Text("地形 " + (session.terrain(at: point)?.title ?? "—") + " · " + (entity.flatMap { BlockDefinition.find($0.definitionID)?.title } ?? "无方块"))
+                    Text(materialLine(entity))
                         .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("rpg-panel-material")
                 }
                 Spacer()
@@ -161,5 +161,12 @@ struct RPGCellPanel: View {
         .worldGlass(radius: 20)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("rpg-cell-panel")
+    }
+
+    private func materialLine(_ entity: WorldEntity?) -> String {
+        let terrain: String = session.terrain(at: point)?.title ?? "—"
+        var block = "无方块"
+        if let entity, let definition = BlockDefinition.find(entity.definitionID) { block = definition.title }
+        return "地形 \(terrain) · \(block)"
     }
 }
