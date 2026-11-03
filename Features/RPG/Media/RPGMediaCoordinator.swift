@@ -42,7 +42,14 @@ import UIKit
             Task{@MainActor [weak self] in self?.textures.maxEntries=6;self?.textures.maxCost=2*1024*1024;self?.textures.trim();self?.clearEvictedTextures()}
         }
     }
-    func install(world:WorldState,targets:[RPGMediaNode],scene:SKScene,active:Bool,initialPositions:[String:Double]=[:]){
+    func install(world:WorldState,targets all:[RPGMediaNode],scene:SKScene,active:Bool,initialPositions:[String:Double]=[:]){
+        // Icon, number and text cells are static textures; only library
+        // files go through the decoder pool and visibility scheduling.
+        for glyph in all where RPGCellRenderer.isGlyph(glyph.binding) {
+            glyph.sprite.texture=RPGCellRenderer.texture(for:glyph.binding)
+            glyph.sprite.anchorPoint=CGPoint(x:glyph.binding.anchorX,y:glyph.binding.anchorY)
+        }
+        let targets=all.filter{!RPGCellRenderer.isGlyph($0.binding)}
         self.targets=targets;self.scene=scene;self.budget=world.videoBudget;self.active=active
         let mediaIDs=Set(targets.map{$0.binding.mediaID})
         let owners=Set(targets.map(\.ownerID))
@@ -76,7 +83,14 @@ import UIKit
         }
         localEntries=local
         let valid=Set(local.map(\.id));availableIDs=valid
-        for target in targets where !valid.contains(target.binding.mediaID){target.sprite.texture=nil;textures.remove(target.binding.mediaID)}
+        for target in targets where !valid.contains(target.binding.mediaID){
+            textures.remove(target.binding.mediaID)
+            // Missing block media shows a placeholder; backgrounds and the
+            // player keep their default look as before.
+            target.sprite.texture=target.role == .interactive ? RPGCellRenderer.placeholder : nil
+            target.sprite.size=RPGMediaSprites.box(of:target.sprite)
+            target.sprite.color = .white;target.sprite.colorBlendFactor=0
+        }
     }
     func frame(_ time:TimeInterval){guard active,time-lastTime>=0.1 else{return};lastTime=time;sync()}
     private func sync(force:Bool=false){
@@ -105,20 +119,24 @@ import UIKit
         }
         let sound=targets.first{target in !target.binding.muted && requests.contains(where:{request in request.ownerID==target.ownerID && request.visible && request.mediaID==target.binding.mediaID})}
         let soundID=sound.flatMap{ownerIDs[$0.ownerID]}
-        for target in targets where !requests.contains(where:{$0.ownerID==target.ownerID && $0.visible}) { target.sprite.texture=nil }
+        for target in targets where availableIDs.contains(target.binding.mediaID) && !requests.contains(where:{$0.ownerID==target.ownerID && $0.visible}) { target.sprite.texture=nil }
         pool.update(candidates,focus:soundID)
         for id in Set(requests.filter(\.visible).map(\.mediaID)){applyTexture(id)}
         if soundID != nil && pool.muted {pool.toggleSound()} else if soundID==nil && !pool.muted{pool.mute()}
     }
     private func applyTexture(_ id:String){
+        guard availableIDs.contains(id) else{return}
         guard let base=textures.value(id) else{for target in targets where target.binding.mediaID==id{target.sprite.texture=nil};return}
         for target in targets where target.binding.mediaID==id && lastRequests.contains(where:{$0.ownerID==target.ownerID && $0.visible}) {
             let binding=target.binding
-            target.sprite.texture=SKTexture(rect:CGRect(x:binding.cropX,y:binding.cropY,width:binding.cropWidth,height:binding.cropHeight),in:base)
+            let layout=RPGCellRenderer.layout(binding:binding,base:base,box:RPGMediaSprites.box(of:target.sprite))
+            target.sprite.texture=SKTexture(rect:layout.rect,in:base);target.sprite.size=layout.size
             target.sprite.anchorPoint=CGPoint(x:binding.anchorX,y:binding.anchorY)
+            // A custom icon is a library picture tinted with the icon colour.
+            if binding.kind == .icon,let style=binding.style {target.sprite.color=UIColor(rpgHex:style.colorHex);target.sprite.colorBlendFactor=1}
         }
     }
-    private func clearEvictedTextures(){for target in targets where !textures.contains(target.binding.mediaID){target.sprite.texture=nil}}
+    private func clearEvictedTextures(){for target in targets where availableIDs.contains(target.binding.mediaID) && !textures.contains(target.binding.mediaID){target.sprite.texture=nil}}
     func position(_ mediaID:String)->Double{pool.playbackSeconds(mediaID)}
     func pause(){active=false;pool.stop();lastRequests=[]}
     func retry(){textures.maxEntries=24;textures.maxCost=12*1024*1024;pool.retry();configureAssets();sync(force:true)}
@@ -132,9 +150,16 @@ import UIKit
 @MainActor enum RPGMediaSprites {
     static func attach(ownerID:String,bindingID:String?,role:RPGMediaRole,parent:SKNode,world:WorldState,size:CGSize)->RPGMediaNode? {
         guard let bindingID,let binding=world.mediaBindings.first(where:{$0.id==bindingID}) else{return nil}
-        let sprite=SKSpriteNode(color:.clear,size:CGSize(width:size.width*binding.scale,height:size.height*binding.scale))
+        let box=CGSize(width:size.width*binding.scale,height:size.height*binding.scale)
+        let sprite=SKSpriteNode(color:.clear,size:box)
+        sprite.userData=["boxWidth":box.width,"boxHeight":box.height]
         sprite.zPosition=1;sprite.name="media:"+ownerID;parent.addChild(sprite)
         return .init(ownerID:ownerID,binding:binding,role:role,sprite:sprite)
+    }
+    /// The cell area a sprite was created for, before any fit adjustment.
+    static func box(of sprite:SKSpriteNode)->CGSize {
+        guard let width=sprite.userData?["boxWidth"] as? CGFloat,let height=sprite.userData?["boxHeight"] as? CGFloat else{return sprite.size}
+        return CGSize(width:width,height:height)
     }
     static func backgrounds(world:WorldState,camera:SKCameraNode,size:CGSize,topDown:Bool)->[RPGMediaNode] {
         camera.children.filter{$0.name?.hasPrefix("media:background:")==true}.forEach{$0.removeFromParent()}
