@@ -240,6 +240,96 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["rpg-close"].tap()
     }
 
+    /// Task C: the app opens into the most recent world in landscape with
+    /// the bottom bar hidden; the prologue is skippable without touching the
+    /// world; the control center pauses input and returns the world as it
+    /// was; leaving goes to portrait pages and coming back neither reloads
+    /// the world nor replays the prologue.
+    @MainActor
+    func testSandboxLaunchControlCenterAndPortraitPages() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--scroll-ui-tests", "--rpg-ui-tests", "--rpg-reset-world", "--sandbox-launch-ui-tests",
+                               "--sandbox-landscape-ui-tests", "--prologue-ui-tests"]
+        app.launch()
+        let orientation = app.descendants(matching: .any)["app-orientation"]
+        func waitOrientation(_ value: String, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: orientation)], timeout: 10)
+            XCTAssertEqual(result, .completed, "layout is \(orientation.value ?? "nil"), expected \(value)", line: line)
+        }
+        func waitGone(_ element: XCUIElement, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)], timeout: 6)
+            XCTAssertEqual(result, .completed, "\(element) still on screen", line: line)
+        }
+        let prologue = app.descendants(matching: .any)["world-prologue"]
+        XCTAssertTrue(prologue.waitForExistence(timeout: 25), "world prologue after launch")
+        attach(app, name: "review-sandbox-prologue")
+        prologue.tap()
+        waitGone(prologue)
+        waitOrientation("landscape")
+        let count = app.staticTexts["rpg-placed-count"]
+        XCTAssertEqual(count.value as? String, "0", "skipping the prologue must not build")
+        XCTAssertFalse(app.buttons["navigation-home"].exists && app.buttons["navigation-home"].isHittable, "bottom bar hidden in the sandbox")
+        let position = app.staticTexts["rpg-position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 5))
+        let startPosition = position.label
+        attach(app, name: "review-sandbox-landscape")
+
+        let menu = app.buttons["rpg-menu"]
+        menu.tap()
+        let center = app.descendants(matching: .any)["world-control-center"]
+        XCTAssertTrue(center.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["world-title"].label.hasPrefix("原世界 · Seed"))
+        for id in ["world-nav-home", "world-nav-discover", "world-nav-camera", "world-nav-moments", "world-nav-me",
+                   "world-fn-build", "world-fn-story", "world-fn-media", "world-fn-settings", "world-fn-app-settings", "world-create"] {
+            XCTAssertTrue(app.buttons[id].exists, "control center entry \(id)")
+        }
+        XCTAssertFalse(app.buttons["rpg-move-1-0"].exists, "world controls are shielded while the center is open")
+        attach(app, name: "review-world-control-center")
+        app.buttons["world-continue"].tap()
+        waitGone(center)
+        XCTAssertTrue(app.buttons["rpg-move-1-0"].waitForExistence(timeout: 5))
+        XCTAssertEqual(position.label, startPosition, "world unchanged after the control center")
+
+        menu.tap()
+        XCTAssertTrue(center.waitForExistence(timeout: 5))
+        app.buttons["world-nav-discover"].tap()
+        XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 10))
+        waitOrientation("portrait")
+        XCTAssertTrue(app.buttons["navigation-sandbox"].waitForExistence(timeout: 5))
+        app.buttons["home-segment-recommend"].tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
+        attach(app, name: "review-home-recommend-discover")
+
+        app.buttons["navigation-sandbox"].tap()
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        waitOrientation("landscape")
+        XCTAssertFalse(prologue.waitForExistence(timeout: 2), "prologue does not replay when returning")
+        XCTAssertEqual(position.label, startPosition, "returning resumes the same world")
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 10), "完成 returns to the last page")
+        waitOrientation("portrait")
+    }
+
+    /// A world saved by a newer app version cannot open: instead of a blank
+    /// or endless loading screen the sandbox explains and offers a new world.
+    @MainActor
+    func testSandboxLoadFailureOffersNewWorld() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--scroll-ui-tests", "--rpg-ui-tests", "--rpg-reset-world", "--sandbox-launch-ui-tests", "--rpg-future-world-ui-tests"]
+        app.launch()
+        let create = app.buttons["world-load-create"]
+        XCTAssertTrue(create.waitForExistence(timeout: 25))
+        XCTAssertTrue(app.staticTexts["世界无法打开"].exists)
+        XCTAssertTrue(app.buttons["world-load-retry"].exists)
+        attach(app, name: "review-sandbox-load-failure")
+        create.tap()
+        let chunks = app.staticTexts["rpg-loaded-chunks"]
+        let loaded = NSPredicate { _, _ in (Int(chunks.value as? String ?? "0") ?? 0) > 0 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: loaded, object: chunks)], timeout: 20), .completed)
+        XCTAssertFalse(create.exists)
+        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String, "0")
+    }
+
     /// Cell content MVP: one block gets a number, an edit is cancelled, an
     /// icon is applied and undone, the selection glass follows the camera,
     /// the content survives closing and reopening the world, then is deleted.
@@ -839,7 +929,8 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["打开全部操作"].exists)
         XCTAssertFalse(app.buttons["player-close"].exists)
-        app.buttons["navigation-discover"].tap()
+        // 发现 is now the second segment of 首页.
+        app.buttons["navigation-home"].tap(); app.buttons["navigation-discover"].tap()
         XCTAssertTrue(sources.waitForExistence(timeout: 5))
         attach(app, name: "review-header-and-priority-tabs")
     }
@@ -932,7 +1023,7 @@ final class ScrollGestureTests: XCTestCase {
         let top = app.buttons["feed-scroll-top-discover"]
         XCTAssertTrue(top.waitForExistence(timeout: 4), "Return-to-top must appear after reaching the bottom")
         XCTAssertTrue(top.isHittable)
-        XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-discover"].frame.minY)
+        XCTAssertLessThan(top.frame.maxY, app.buttons["navigation-home"].frame.minY)
         if (state.value as? String ?? initialRefresh) == initialRefresh {
             let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
             start.press(forDuration: 0.01,
@@ -1172,12 +1263,16 @@ final class ScrollGestureTests: XCTestCase {
         let app = launch(discover: false, flags: ["--slider-ui-tests"])
         let bar = app.tabBars["navigation-slider"]
         XCTAssertTrue(bar.waitForExistence(timeout: 5))
-        bar.buttons["发现"].tap()
+        // Bar order is now 沙盒 / 首页 / 拍摄 / 朋友圈 / 我; 发现 is a 首页 segment.
+        XCTAssertEqual(bar.buttons.count, 5)
+        bar.buttons["首页"].tap(); app.buttons["navigation-discover"].tap()
         XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 5))
         bar.buttons["我"].tap()
         XCTAssertTrue(app.buttons["settings-entry"].waitForExistence(timeout: 5))
+        // Slide from 我 back to 首页 (the second item), not past it into the sandbox.
         let start = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
-        start.press(forDuration: 0.01, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        start.press(forDuration: 0.01, thenDragTo: bar.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)))
+        app.buttons["home-segment-recommend"].tap()
         XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
         attach(app, name: "review-native-sliding-tabs")
     }
