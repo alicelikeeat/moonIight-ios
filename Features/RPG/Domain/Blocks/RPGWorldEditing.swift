@@ -82,7 +82,7 @@ struct RPGWorldEvent: Codable, Equatable, Sendable, Identifiable {
     let definitionID: String
 }
 struct RPGClipboard: Equatable, Sendable {
-    struct Cell: Equatable, Sendable { let dx: Int; let dz: Int; let definitionID: String; let mediaBindingID: String?; var outline: ShapeOutline? = nil }
+    struct Cell: Equatable, Sendable { let dx: Int; let dz: Int; let definitionID: String; let mediaBindingID: String?; var outline: ShapeOutline? = nil; var mediaRegion: RPGMediaRegion? = nil }
     let width: Int
     let height: Int
     let cells: [Cell]
@@ -109,6 +109,7 @@ struct RPGPlacement: Sendable {
     let definitionID: String
     var mediaBindingID: String? = nil
     var outline: ShapeOutline? = nil
+    var mediaRegion: RPGMediaRegion? = nil
 }
 enum RPGWorldEditing {
     static let maximumBatch = 1024
@@ -169,7 +170,7 @@ enum RPGWorldEditing {
                 next.inventory[cost, default: 0] -= 1
             }
             var entity = newEntity(at: request.point, definition: definition, index: index, world: world, generator: generator, mediaBindingID: request.mediaBindingID)
-            entity.outline = request.outline
+            entity.outline = request.outline; entity.mediaRegion = request.mediaBindingID == nil ? nil : request.mediaRegion
             next.entities.append(entity)
             changes.append(.init(id: entity.id, before: nil, after: entity, removedBefore: false, removedAfter: false, damageBefore: nil, damageAfter: nil))
         }
@@ -272,12 +273,12 @@ enum RPGWorldEditing {
         let x = min(a.x,b.x), z = min(a.z,b.z)
         let cells = points.compactMap { point -> RPGClipboard.Cell? in
             guard let entity = entity(at: point, world: world, generator: generator) else { return nil }
-            return .init(dx: point.x - x, dz: point.z - z, definitionID: entity.definitionID, mediaBindingID: entity.mediaBindingID, outline: entity.outline)
+            return .init(dx: point.x - x, dz: point.z - z, definitionID: entity.definitionID, mediaBindingID: entity.mediaBindingID, outline: entity.outline, mediaRegion: entity.mediaRegion)
         }
         return .init(width: abs(a.x-b.x)+1, height: abs(a.z-b.z)+1, cells: cells)
     }
     static func paste(_ clipboard: RPGClipboard, at origin: SurfacePoint, world: inout WorldState, generator: RPGWorldGenerator) throws {
-        let requests = clipboard.cells.map { RPGPlacement(point: .init(x: origin.x + $0.dx, z: origin.z + $0.dz), definitionID: $0.definitionID, mediaBindingID: $0.mediaBindingID, outline: $0.outline) }
+        let requests = clipboard.cells.map { RPGPlacement(point: .init(x: origin.x + $0.dx, z: origin.z + $0.dz), definitionID: $0.definitionID, mediaBindingID: $0.mediaBindingID, outline: $0.outline, mediaRegion: $0.mediaRegion) }
         try place(requests, world: &world, generator: generator)
     }
 }

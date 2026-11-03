@@ -64,6 +64,9 @@ struct WorldEntity: Codable, Equatable, Identifiable, Sendable {
     /// Schema 9: a curved cell outline (relative 0–1 Bézier anchors); nil
     /// keeps the square cell. Optional so schema 8 files decode unchanged.
     var outline: ShapeOutline?
+    /// Schema 10: this cell's piece of a smart media grid; the group shares
+    /// the binding named by `groupID` (== `mediaBindingID`).
+    var mediaRegion: RPGMediaRegion?
 }
 enum RPGMediaKind: String, Codable, CaseIterable, Sendable {
     case image, video, gif, icon, number, text
@@ -153,8 +156,8 @@ struct RPGPlayerState: Codable, Equatable, Sendable {
 }
 /// Pure state. Seed/generator identity is distinct from file schema identity.
 struct WorldState: Codable, Equatable, Sendable {
-    static let currentSchema = 9
-    var schemaVersion = 9
+    static let currentSchema = 10
+    var schemaVersion = 10
     var generatorVersion = 1
     var id = UUID().uuidString
     var seed: UInt64
@@ -221,7 +224,8 @@ struct WorldState: Codable, Equatable, Sendable {
             }
         }
         for entity in entities {
-            guard !entity.id.isEmpty, entity.id.count <= 128, !entity.definitionID.isEmpty, entity.physics.valid, entity.outline?.valid ?? true else { throw RPGWorldError.invalidState }
+            guard !entity.id.isEmpty, entity.id.count <= 128, !entity.definitionID.isEmpty, entity.physics.valid, entity.outline?.valid ?? true,
+                  entity.mediaRegion.map { $0.valid && $0.groupID == entity.mediaBindingID } ?? true else { throw RPGWorldError.invalidState }
             if let binding = entity.mediaBindingID, !bindings.contains(binding) { throw RPGWorldError.missingReference }
             if let surface = entity.surface, !surface.valid { throw RPGWorldError.invalidState }
             if let side = entity.side, !validSide(side) { throw RPGWorldError.invalidProjection }

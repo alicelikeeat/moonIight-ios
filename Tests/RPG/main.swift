@@ -958,7 +958,7 @@ check(RPGWorldEditing.entity(at: blockCell, world: curved, generator: mapGen)?.d
 check(curveCells.allSatisfy { RPGWorldEditing.entity(at: $0, world: curved, generator: mapGen)?.definitionID == RPGWorldEditing.displayDefinition }, "empty cells get display cells with the curve")
 check(RPGDraftCommit.plan(shapeDraft, world: curved, generator: mapGen).skipped[.unchanged] == 4, "same outline again is unchanged")
 let curvedCopy = try RPGWorldCodec.decode(RPGWorldCodec.encode(curved))
-check(curvedCopy == curved && curvedCopy.schemaVersion == 9, "outlines saved and reopened")
+check(curvedCopy == curved && curvedCopy.schemaVersion == WorldState.currentSchema, "outlines saved and reopened")
 let clip = try RPGWorldEditing.copy(from: blockCell, to: blockCell, world: curved, generator: mapGen)
 check(clip.cells.first?.outline == ShapeTemplate.droplet.outline, "copy keeps the outline")
 var squareDraft = RPGEditDraft(payload: .outline(nil)); squareDraft.add([blockCell, emptyCells[3]])
@@ -975,10 +975,99 @@ rejected(badOutline, "invalid outlines refused")
 var schema8 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(map)) as! [String: Any]
 schema8["schemaVersion"] = 8
 let reopened8 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema8))
-check(reopened8.schemaVersion == 9 && reopened8.entities == map.entities, "schema 8 opens as 9 with square cells")
+check(reopened8.schemaVersion == WorldState.currentSchema && reopened8.entities == map.entities, "schema 8 opens as current with square cells")
 UserDefaults.standard.set("en", forKey: L10n.key)
 check(ShapeTemplate.droplet.title == "Droplet" && RPGDraftPayload.outline(nil).title == "Shape · Square", "shape titles in English")
 UserDefaults.standard.set("zh", forKey: L10n.key)
 print("RPG curves: \(checks) total checks passed")
+
+
+// P21: V2.2 glass world, HUD rules and smart media grids.
+let phoneLandscape = CGSize(width: 874, height: 402), phonePortrait = CGSize(width: 402, height: 874)
+check(RPGCameraRules.visibleCells(viewSize: phoneLandscape, zoom: 1) > 300, "the old default zoom showed more than 300 cells (\(RPGCameraRules.visibleCells(viewSize: phoneLandscape, zoom: 1)))")
+for size in [phoneLandscape, phonePortrait, CGSize(width: 1376, height: 1032), CGSize(width: 320, height: 568)] {
+    let widest = RPGCameraRules.budgetZoom(viewSize: size)
+    check(RPGCameraRules.visibleCells(viewSize: size, zoom: widest) <= 300 && RPGCameraRules.visibleCells(viewSize: size, zoom: widest + 0.02) > 300 || widest == RPGCameraRules.closestZoom, "widest zoom stays within 300 cells on \(size)")
+    let play = RPGCameraRules.playZoom(viewSize: size)
+    check((40...100).contains(RPGCameraRules.visibleCells(viewSize: size, zoom: play)) || play == RPGCameraRules.closestZoom, "play view shows 40–100 cells on \(size) (\(RPGCameraRules.visibleCells(viewSize: size, zoom: play)))")
+    check(RPGCameraRules.clampZoom(5, viewSize: size) == widest && RPGCameraRules.clampZoom(0.01, viewSize: size) == RPGCameraRules.closestZoom, "pinch clamped to the budget on \(size)")
+}
+check(RPGGlassQuality.allCases.allSatisfy { RPGGlassQuality.effective($0, lowPower: true, reduceMotion: false) == .performance } && RPGGlassQuality.effective(.high, lowPower: false, reduceMotion: false) == .high, "low power drops the highlight")
+check(RPGGlassQuality.performance.sheen == 0 && RPGGlassQuality.high.sheen > RPGGlassQuality.standard.sheen, "quality levels")
+let calmHUD = RPGHUDGlassStyle.resolve(.light, RPGHUDConditions())
+check(!calmHUD.regular && !calmHUD.solid && calmHUD.scrim > 0, "status glass is clear with a light scrim")
+check(RPGHUDGlassStyle.resolve(.light, RPGHUDConditions(increasedContrast: true)).regular && RPGHUDGlassStyle.resolve(.light, RPGHUDConditions(increasedContrast: true)).scrim > calmHUD.scrim, "increased contrast thickens the glass")
+check(RPGHUDGlassStyle.resolve(.panel, RPGHUDConditions(reduceTransparency: true)).solid, "reduce transparency goes solid")
+check(RPGHUDGlassStyle.resolve(.interactive, RPGHUDConditions(inCombat: true)).combatTint && RPGHUDGlassStyle.resolve(.interactive, RPGHUDConditions()).interactive, "combat tints the controls")
+check(!RPGHUDGlassStyle.resolve(.interactive, RPGHUDConditions(lowPower: true)).interactive, "low power drops interactive glass")
+// Stick.
+check(RPGStickRules.step((0.05, -0.1)) == nil, "dead zone")
+check(RPGStickRules.step((0, -1))! == (0, 1) && RPGStickRules.step((1, 0))! == (1, 0) && RPGStickRules.step((-0.7, 0.7))! == (-1, -1) && RPGStickRules.step((0.2, -0.95))! == (0, 1), "screen directions map to grid steps")
+let push = RPGStickRules.vector(dx: 300, dy: 0, radius: 50)
+check(push.x == 1 && push.y == 0 && RPGStickRules.vector(dx: 25, dy: 0, radius: 50).x == 0.5, "stick vector normalised to the base")
+check(abs(RPGStickRules.interval((1, 0)) - RPGStickRules.fastestStep) < 1e-9 && RPGStickRules.interval((0.3, 0)) > RPGStickRules.interval((0.9, 0)), "further push walks faster")
+check(RPGStickRules.cooldownFraction(remaining: 1.5, total: 3) == 0.5 && RPGStickRules.cooldownFraction(remaining: -1, total: 3) == 0, "cooldown ring")
+// Media grid maths.
+let piece = RPGMediaRegion(groupID: "g", row: 0, column: 2, rows: 2, columns: 4)
+check(piece.subRect(of: CGRect(x: 0, y: 0, width: 1, height: 1)) == CGRect(x: 0.5, y: 0.5, width: 0.25, height: 0.5), "top row piece sits in the upper texture half")
+check(RPGMediaRegion.groupRect(crop: CGRect(x: 0, y: 0, width: 1, height: 1), pixels: CGSize(width: 1000, height: 1000), rows: 1, columns: 2, stretch: false) == CGRect(x: 0, y: 0.25, width: 1, height: 0.5), "square picture cropped to a 2:1 grid")
+check(RPGMediaRegion.groupRect(crop: CGRect(x: 0, y: 0, width: 1, height: 1), pixels: CGSize(width: 1000, height: 1000), rows: 1, columns: 2, stretch: true).width == 1, "stretch keeps the whole picture")
+check(!RPGMediaRegion(groupID: "g", row: 2, column: 0, rows: 2, columns: 2).valid && !RPGMediaRegion(groupID: "", row: 0, column: 0, rows: 1, columns: 1).valid, "invalid regions refused")
+check(RPGMediaGridSpec.shape(for: 12, aspect: 4.0 / 3) == (3, 4) && RPGMediaGridSpec.shape(for: 100) == (10, 10) && RPGMediaGridSpec.shape(for: 9) == (3, 3), "rows × columns from a total")
+let primeShape = RPGMediaGridSpec.shape(for: 37)
+check(primeShape.rows <= 32 && primeShape.columns <= 32 && primeShape.rows * primeShape.columns >= 37, "awkward totals still fit")
+// Media grid commits: one binding, a region per cell, one undo step.
+var gridWorld = map
+let openArea = Array((0..<256).lazy.flatMap { z in (0..<256).lazy.map { SurfacePoint(x: $0, z: z) } }.filter { anchor in
+    (0..<3).allSatisfy { row in (0..<4).allSatisfy { column in
+        let p = SurfacePoint(x: anchor.x + column, z: anchor.z - row)
+        return p.valid && p != gridWorld.player.surface && mapGen.tile(at: p)?.passable == true && !mapGen.protected(p) && !mapGen.sideRegion.contains(p) && RPGWorldEditing.entity(at: p, world: gridWorld, generator: mapGen) == nil
+    } }
+}.prefix(1))
+check(openArea.count == 1, "open 4×3 area for a grid")
+let videoTemplate = MediaBinding(id: "draft", mediaID: "clip-1", kind: .video)
+var gridSpec = RPGMediaGridSpec(template: videoTemplate, rows: 3, columns: 4, anchor: openArea[0])
+check(gridSpec.valid && gridSpec.cells.count == 12, "grid spec covers 12 cells")
+let gridDraft = RPGEditDraft(payload: .mediaGrid(gridSpec))
+let gridPlan = RPGDraftCommit.plan(gridDraft, world: gridWorld, generator: mapGen)
+check(gridPlan.cells.count == 12 && gridPlan.overwrites == 0 && gridWorld == map, "grid previewed without changing the world")
+let bindingsBefore = gridWorld.mediaBindings.count, undoBeforeGrid = gridWorld.undo.count
+try RPGDraftCommit.commit(gridDraft, world: &gridWorld, generator: mapGen)
+let gridEntities = gridWorld.entities.filter { $0.mediaRegion != nil }
+check(gridEntities.count == 12 && gridWorld.mediaBindings.count == bindingsBefore + 1 && gridWorld.undo.count == undoBeforeGrid + 1, "12 cells share one binding in one transaction")
+let groupID = gridEntities[0].mediaRegion!.groupID
+check(gridEntities.allSatisfy { $0.mediaBindingID == groupID && $0.mediaRegion?.groupID == groupID }, "every piece points at the shared binding")
+check(Set(gridEntities.map { "\($0.mediaRegion!.row),\($0.mediaRegion!.column)" }).count == 12, "each piece has its own row and column")
+let topLeft = RPGWorldEditing.entity(at: openArea[0], world: gridWorld, generator: mapGen)?.mediaRegion
+check(topLeft?.row == 0 && topLeft?.column == 0, "anchor cell is the top-left piece")
+let gridCopy = try RPGWorldCodec.decode(RPGWorldCodec.encode(gridWorld))
+check(gridCopy == gridWorld && gridCopy.schemaVersion == 10, "media grids saved and reopened")
+// Overwrite reported, then a move replaces the old group in one edit.
+let overPlan = RPGDraftCommit.plan(RPGEditDraft(payload: .mediaGrid(RPGMediaGridSpec(template: videoTemplate, rows: 1, columns: 1, anchor: openArea[0]))), world: gridWorld, generator: mapGen)
+check(overPlan.overwrites == 1 && overPlan.summary.contains("覆盖已有内容 1 格"), "replacing content is reported")
+var moved = gridSpec; moved.anchor = SurfacePoint(x: openArea[0].x + 1, z: openArea[0].z); moved.replacing = groupID; moved.columns = 3
+let movePlan = RPGDraftCommit.plan(RPGEditDraft(payload: .mediaGrid(moved)), world: gridWorld, generator: mapGen)
+check(movePlan.overwrites == 0, "moving a group over itself is not an overwrite")
+try RPGDraftCommit.commit(RPGEditDraft(payload: .mediaGrid(moved)), world: &gridWorld, generator: mapGen)
+let afterMove = gridWorld.entities.filter { $0.mediaRegion != nil }
+check(afterMove.count == 9 && Set(afterMove.map(\.mediaBindingID)).count == 1 && !afterMove.contains { $0.mediaRegion?.groupID == groupID }, "moved and re-sliced as one new group")
+check(RPGWorldEditing.entity(at: openArea[0], world: gridWorld, generator: mapGen) == nil, "old display cells removed")
+try RPGWorldEditing.undo(world: &gridWorld)
+check(gridWorld.entities.filter { $0.mediaRegion?.groupID == groupID }.count == 12, "undo restores the original group")
+try RPGWorldEditing.redo(world: &gridWorld)
+check(gridWorld.entities.filter { $0.mediaRegion != nil }.count == 9, "redo moves it again")
+var mismatched = gridWorld; let mismatchIndex = mismatched.entities.firstIndex { $0.mediaRegion != nil }!
+mismatched.entities[mismatchIndex].mediaRegion?.groupID = "other"; rejected(mismatched, "a piece must point at its own binding")
+let gridClip = try RPGWorldEditing.copy(from: afterMove[0].surface!, to: afterMove[0].surface!, world: gridWorld, generator: mapGen)
+check(gridClip.cells.first?.mediaRegion != nil, "copy keeps the piece")
+check(!RPGMediaGridSpec(template: MediaBinding(id: "d", mediaID: "", kind: .image), rows: 2, columns: 2).valid && !RPGMediaGridSpec(template: videoTemplate, rows: 33, columns: 1).valid, "invalid grid specs refused")
+var schema9 = try JSONSerialization.jsonObject(with: RPGWorldCodec.encode(map)) as! [String: Any]
+schema9["schemaVersion"] = 9
+let reopened9 = try RPGWorldCodec.decode(JSONSerialization.data(withJSONObject: schema9))
+check(reopened9.schemaVersion == 10, "schema 9 opens as 10")
+UserDefaults.standard.set("en", forKey: L10n.key)
+check(RPGGlassQuality.performance.title == "Performance" && overPlan.summary.contains("replaces content in 1"), "V2.2 strings in English")
+UserDefaults.standard.set("zh", forKey: L10n.key)
+print("RPG glass world: \(checks) total checks passed")
 
 print("RPG complete: \(checks) total checks passed")

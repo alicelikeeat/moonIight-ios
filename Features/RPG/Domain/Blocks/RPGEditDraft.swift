@@ -17,6 +17,8 @@ enum RPGDraftPayload: Equatable, Sendable {
     /// Give every covered cell this curved outline (nil: back to square);
     /// empty cells get a display cell with the outline.
     case outline(ShapeOutline?)
+    /// Smart media grid: one picture, video or GIF across rows × columns.
+    case mediaGrid(RPGMediaGridSpec)
 
     var title: String {
         switch self {
@@ -26,6 +28,7 @@ enum RPGDraftPayload: Equatable, Sendable {
         case .erase: L10n.t("擦除", "Erase")
         case .paste: L10n.t("粘贴", "Paste")
         case .replace(let from, let to): L10n.t("替换 ", "Replace ") + (BlockDefinition.find(from)?.name ?? from) + " → " + (BlockDefinition.find(to)?.name ?? to)
+        case .mediaGrid(let spec): L10n.t("切格 · ", "Media Grid · ") + spec.template.kind.title + " \(spec.rows)×\(spec.columns)"
         case .outline(let outline): outline == nil ? L10n.t("形状 · 方形", "Shape · Square") : L10n.t("形状 · 曲线", "Shape · Curve")
         }
     }
@@ -98,11 +101,14 @@ struct RPGDraftPlan: Equatable, Sendable {
     var skipped: [RPGDraftSkip: Int] = [:]
     /// Cells beyond character-build range (character build refuses these).
     var outOfRange = 0
+    /// Cells whose existing content a media grid would replace.
+    var overwrites = 0
     var skippedTotal: Int { skipped.values.reduce(0, +) }
     var summary: String {
         var text = L10n.t("影响 \(cells.count) 格", "\(cells.count) cells")
         let reasons = RPGDraftSkip.allCases.compactMap { reason in skipped[reason].map { "\(reason.title) \($0)" } }
         if !reasons.isEmpty { text += L10n.t("，跳过 ", "; skipped ") + reasons.joined(separator: L10n.t("、", ", ")) }
+        if overwrites > 0 { text += L10n.t("，覆盖已有内容 \(overwrites) 格", "; replaces content in \(overwrites)") }
         if outOfRange > 0 { text += L10n.t("，\(outOfRange) 格超出角色建造范围", "; \(outOfRange) out of character range") }
         return text
     }
@@ -118,7 +124,11 @@ enum RPGDraftCommit {
             if world.player.mode == .adventure && abs(point.x - world.player.surface.x) + abs(point.z - world.player.surface.z) > characterRange { plan.outOfRange += 1 }
             if let reason = skipReason(point, payload: draft.payload, world: world, generator: generator, playerCell: playerCell) {
                 plan.skipped[reason, default: 0] += 1
-            } else { plan.cells.append(point) }
+            } else {
+                plan.cells.append(point)
+                if case .mediaGrid(let spec) = draft.payload, let existing = RPGWorldEditing.entity(at: point, world: world, generator: generator),
+                   existing.mediaBindingID != nil, existing.mediaRegion?.groupID != spec.replacing || spec.replacing == nil { plan.overwrites += 1 }
+            }
         }
         return plan
     }
@@ -140,7 +150,7 @@ enum RPGDraftCommit {
             let wanted = Set(plan.cells)
             let placements = clipboard.cells.compactMap { cell -> RPGPlacement? in
                 let point = SurfacePoint(x: origin.x + cell.dx, z: origin.z + cell.dz)
-                return wanted.contains(point) ? RPGPlacement(point: point, definitionID: cell.definitionID, mediaBindingID: cell.mediaBindingID, outline: cell.outline) : nil
+                return wanted.contains(point) ? RPGPlacement(point: point, definitionID: cell.definitionID, mediaBindingID: cell.mediaBindingID, outline: cell.outline, mediaRegion: cell.mediaRegion) : nil
             }
             try RPGWorldEditing.place(placements, world: &world, generator: generator)
         case .content(let template):
@@ -153,6 +163,8 @@ enum RPGDraftCommit {
             try commitReplace(to: to, cells: plan.cells, world: &world, generator: generator)
         case .outline(let outline):
             try commitOutline(outline, cells: plan.cells, world: &world, generator: generator)
+        case .mediaGrid(let spec):
+            try commitMediaGrid(spec, cells: plan.cells, world: &world, generator: generator)
         }
         return plan
     }
@@ -163,6 +175,7 @@ enum RPGDraftCommit {
         if case .paste(let clipboard) = draft.payload, let origin = draft.cells.first {
             return RPGEditDraft.footprint(clipboard, at: origin).filter(\.valid)
         }
+        if case .mediaGrid(let spec) = draft.payload { return spec.cells }
         return draft.cells
     }
 
@@ -176,7 +189,7 @@ enum RPGDraftCommit {
             if entity != nil { return .occupied }
             if point == playerCell { return .player }
             if world.combat.enemies.contains(where: { $0.health > 0 && $0.surface == point }) { return .occupied }
-        case .content:
+        case .content, .mediaGrid:
             if entity == nil {
                 if !passable { return .blocked }
                 if point == playerCell { return .player }
@@ -320,6 +333,59 @@ extension RPGDraftCommit {
         }
         guard !changes.isEmpty else { throw RPGEditError.outside }
         try RPGWorldEditing.finish(next: &next, changes: changes, inventoryBefore: world.inventory, title: "形状 \(changes.count) 格")
+        world = next
+    }
+}
+
+extension RPGDraftCommit {
+    /// One shared binding (one copy of the file, one timeline) and a region
+    /// per cell. Replacing a group (move, re-slice) clears the old cells in
+    /// the same transaction: its display cells go, blocks keep their material.
+    fileprivate static func commitMediaGrid(_ spec: RPGMediaGridSpec, cells: [SurfacePoint], world: inout WorldState, generator: RPGWorldGenerator) throws {
+        guard spec.valid else { throw RPGWorldError.invalidState }
+        var binding = spec.template; binding.id = UUID().uuidString
+        if binding.kind != .video { binding.muted = true }
+        guard binding.valid else { throw RPGWorldError.invalidState }
+        var next = world
+        if next.mediaBindings.count >= 960 { try RPGMediaBindings.pruneUnreferenced(&next) }
+        guard next.mediaBindings.count < 1024 else { throw RPGWorldError.invalidState }
+        next.mediaBindings.append(binding)
+        guard let display = BlockDefinition.find(RPGWorldEditing.displayDefinition) else { throw RPGEditError.unknownDefinition }
+        var order: [String] = [], after: [String: WorldEntity?] = [:]
+        func set(_ id: String, _ value: WorldEntity?) { if after[id] == nil { order.append(id) }; after[id] = .some(value) }
+        let targets = Set(cells)
+        if let old = spec.replacing {
+            for entity in world.entities where entity.mediaRegion?.groupID == old {
+                if entity.definitionID == RPGWorldEditing.displayDefinition, let point = entity.surface, !targets.contains(point) { set(entity.id, nil) }
+                else { var cleared = entity; cleared.mediaBindingID = nil; cleared.mediaRegion = nil; set(entity.id, cleared) }
+            }
+        }
+        for (index, point) in cells.enumerated() {
+            guard let position = spec.position(of: point) else { continue }
+            let region = spec.region(row: position.row, column: position.column, groupID: binding.id)
+            if let existing = RPGWorldEditing.entity(at: point, world: world, generator: generator) {
+                var value = existing
+                if let stored = after[existing.id], let stored { value = stored }
+                value.mediaBindingID = binding.id; value.mediaRegion = region
+                set(existing.id, value)
+            } else {
+                var entity = RPGWorldEditing.newEntity(at: point, definition: display, index: index, world: world, generator: generator, mediaBindingID: binding.id)
+                entity.mediaRegion = region
+                set(entity.id, entity)
+            }
+        }
+        guard !order.isEmpty, order.count <= RPGWorldEditing.maximumBatch else { throw order.isEmpty ? RPGEditError.outside : RPGEditError.tooLarge }
+        var changes: [RPGEntityChange] = []
+        for id in order {
+            let before = world.entities.first { $0.id == id }
+            let value = after[id] ?? nil
+            next.entities.removeAll { $0.id == id }
+            if let value { next.entities.append(value) }
+            changes.append(.init(id: id, before: before, after: value, removedBefore: false, removedAfter: false,
+                                 damageBefore: world.damage[id], damageAfter: value == nil ? nil : world.damage[id]))
+            if value == nil { next.damage[id] = nil }
+        }
+        try RPGWorldEditing.finish(next: &next, changes: changes, inventoryBefore: world.inventory, title: "切格 \(cells.count) 格")
         world = next
     }
 }
