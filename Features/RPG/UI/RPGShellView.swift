@@ -19,6 +19,7 @@ struct RPGShellView: View {
     @State private var tools = false
     @State private var mediaDiagnostics = ""
     @State private var backgroundLayer = 0
+    @State private var cellEditor: WorldEntity?
     var body: some View {
         VStack(spacing: 8) {
             HStack {
@@ -47,6 +48,7 @@ struct RPGShellView: View {
                 } else if session.world.player.perspective == .topDown { SpriteView(scene: session.scene, options: [.allowsTransparency]) }
                 else { SpriteView(scene: session.sideScene, options: [.allowsTransparency]) }
             }.clipShape(RoundedRectangle(cornerRadius: 20)).accessibilityLabel("世界场景")
+                .overlay { if session.ready, let rect = session.selectionRect { RPGSelectionGlass(rect: rect) } }
                 .overlay(alignment:.bottomLeading){if session.ready{movementPad.padding(6)}}
                 .overlay(alignment:.bottomTrailing){if session.ready{combatButtons.padding(6)}}
             HStack {
@@ -62,6 +64,7 @@ struct RPGShellView: View {
             HStack {
                 Button("放置") { session.placeSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-place")
                 Button("挖掘") { session.hitSelected() }.disabled(session.selected == nil).accessibilityIdentifier("rpg-hit")
+                Button("内容") { cellEditor = session.selectedEntity }.disabled(session.selectedEntity == nil).accessibilityIdentifier("rpg-edit-cell")
                 Button("撤销") { session.undo() }.disabled(session.world.undo.isEmpty).accessibilityIdentifier("rpg-undo")
                 Button("重做") { session.redo() }.disabled(session.world.redo.isEmpty).accessibilityIdentifier("rpg-redo")
             }.disabled(!session.ready || session.working)
@@ -73,6 +76,9 @@ struct RPGShellView: View {
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.activate() }
             .sheet(isPresented: $tools) { toolPanel }
+            .sheet(item: $cellEditor) { entity in
+                NavigationStack { RPGCellEditorView(session: session, store: model.mediaStore, entity: entity) }.environmentObject(model)
+            }
             .sheet(isPresented:$storyPlaying) {
                 NavigationStack {RPGStoryView(session:session,travel:{anchor in storyPlaying=false;session.guideTo(anchor)},backTitle:"返回世界")}
             }
@@ -81,6 +87,8 @@ struct RPGShellView: View {
                 if ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests") {
                     Text("媒体测试状态").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("rpg-media-probe").accessibilityValue(mediaDiagnostics)
+                    Text("格子内容").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("rpg-cell-content").accessibilityValue(session.selectedCellSummary)
                 }
                 #endif
             }
@@ -94,8 +102,9 @@ struct RPGShellView: View {
                 #endif
             }
             .onChange(of:session.ready){if $0{presentInitial()}}
-            .onChange(of: tools) { visible in session.setOverlay(visible || storyPlaying) }
-            .onChange(of:storyPlaying){session.setOverlay($0 || tools)}
+            .onChange(of: tools) { visible in session.setOverlay(visible || storyPlaying || cellEditor != nil) }
+            .onChange(of:storyPlaying){session.setOverlay($0 || tools || cellEditor != nil)}
+            .onChange(of: cellEditor?.id) { id in session.setOverlay(id != nil || tools || storyPlaying) }
             .onChange(of:session.pendingStory){if $0{storyPlaying=true;session.acknowledgeStory()}}
             .onChange(of:reducedMotion){session.setReducedMotion($0)}
             .onChange(of: session.world.backgroundBindingIDs.count) { count in backgroundLayer=min(backgroundLayer,min(2,count)) }

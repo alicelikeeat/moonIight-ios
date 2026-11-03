@@ -240,6 +240,87 @@ final class ScrollGestureTests: XCTestCase {
         app.buttons["rpg-close"].tap()
     }
 
+    /// Cell content MVP: one block gets a number, an edit is cancelled, an
+    /// icon is applied and undone, the selection glass follows the camera,
+    /// the content survives closing and reopening the world, then is deleted.
+    @MainActor
+    func testRPGCellContentEditorGlassAndReopen() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout: 8)); app.buttons["rpg-tools"].tap()
+        let mode = app.segmentedControls["rpg-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.buttons["创造"].tap()
+        app.buttons["rpg-choose-site"].tap(); app.buttons["rpg-tools-close"].tap()
+        app.buttons["rpg-place"].tap()
+        let count = app.staticTexts["rpg-placed-count"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
+        let content = app.staticTexts["rpg-cell-content"]
+        func waitContent(_ value: String, _ line: UInt = #line) {
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: content)], timeout: 15)
+            XCTAssertEqual(result, .completed, "cell content \(content.value ?? "nil") != \(value)", line: line)
+        }
+        waitContent("empty")
+
+        let glass = app.descendants(matching: .any)["rpg-selection-glass"]
+        XCTAssertTrue(glass.waitForExistence(timeout: 8))
+        XCTAssertEqual(glass.value as? String, "native", "iOS 26 simulator uses native Liquid Glass")
+        XCTAssertGreaterThan(glass.frame.width, 20)
+
+        let kind = app.segmentedControls["rpg-cell-kind"]
+        let confirm = app.buttons["rpg-cell-confirm"]
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["数字"].tap()
+        let field = app.textFields["rpg-cell-value"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6) + "42")
+        let preview = app.descendants(matching: .any)["rpg-cell-preview"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "number:42"), object: preview)], timeout: 5), .completed)
+        attach(app, name: "review-rpg-cell-editor-number")
+        confirm.tap()
+        waitContent("number:42")
+
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["文字"].tap()
+        app.buttons["rpg-cell-cancel"].tap()
+        waitContent("number:42")
+
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["图标"].tap()
+        app.buttons["rpg-cell-symbol-moon.stars.fill"].tap(); confirm.tap()
+        waitContent("icon:moon.stars.fill")
+        attach(app, name: "review-rpg-cell-icon-glass")
+        app.buttons["rpg-undo"].tap()
+        waitContent("number:42")
+
+        // Moving the player moves the camera; the glass must stay on the
+        // selected cell, so its on-screen position shifts.
+        let start = glass.frame
+        var followed = false
+        for direction in ["rpg-move-1-0", "rpg-move--1-0", "rpg-move-0-1", "rpg-move-0--1"] where !followed {
+            app.buttons[direction].tap()
+            let moved = NSPredicate { _, _ in abs(glass.frame.midX - start.midX) > 10 || abs(glass.frame.midY - start.midY) > 10 }
+            followed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 4) == .completed
+        }
+        XCTAssertTrue(followed, "selection glass follows the camera")
+        let cellCenter = glass.frame
+        waitContent("number:42")
+
+        app.buttons["rpg-close"].tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
+        // Reselect the same block where the glass last was; the camera is
+        // restored to the saved player position.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: cellCenter.midX, dy: cellCenter.midY)).tap()
+        waitContent("number:42")
+        attach(app, name: "review-rpg-cell-reopened")
+
+        app.buttons["rpg-edit-cell"].tap()
+        XCTAssertTrue(app.buttons["rpg-cell-delete"].waitForExistence(timeout: 8)); app.buttons["rpg-cell-delete"].tap()
+        waitContent("empty")
+        XCTAssertEqual(count.value as? String, "1", "deleting content keeps the block")
+        app.buttons["rpg-close"].tap()
+    }
+
     @MainActor
     func testRPGWorldSeedChunksAndMovement() {
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])

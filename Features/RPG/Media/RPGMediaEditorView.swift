@@ -3,10 +3,13 @@ import PhotosUI
 import CoreTransferable
 import UniformTypeIdentifiers
 
-private struct RPGPickedFile:Transferable,Sendable {
+/// A Photos item copied to a temporary file. GIF is listed before generic
+/// images so an animated GIF arrives as a .gif, not a flattened still.
+struct RPGPickedFile:Transferable,Sendable {
     let url:URL
     static var transferRepresentation:some TransferRepresentation {
         FileRepresentation(importedContentType:.movie){received in try copy(received.file)}
+        FileRepresentation(importedContentType:.gif){received in try copy(received.file)}
         FileRepresentation(importedContentType:.image){received in try copy(received.file)}
     }
     private static func copy(_ source:URL)throws->RPGPickedFile {

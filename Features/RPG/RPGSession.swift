@@ -27,6 +27,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     @Published private(set) var selectedSide: SidePlacement?
     @Published private(set) var projectionEvidence = ""
     @Published private(set) var overlayVisible = false
+    /// The selected cell in SpriteView coordinates, for the selection glass.
+    @Published private(set) var selectionRect: CGRect?
     let sideScene = RPGSideScene()
     @Published var definition = "wood"
     @Published var tool = RPGTool.select { didSet { scene.tool = tool } }
@@ -168,6 +170,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         notice = "身边是保护区或障碍，请先向外探索，或使用创作副本。"
     }
     private func bindScenes() {
+        // Native glass replaces the yellow outline where it is available.
+        scene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
+        sideScene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
         scene.onSelectCell = { [weak self] point in self?.selected = point; self?.scene.select(point);self?.tapBehavior() }
         scene.onStroke = { [weak self] points in self?.stroke(points) }
         scene.onFrame = { [weak self] time in self?.frame(time) }
@@ -256,6 +261,34 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     var selectedEntity:WorldEntity? {
         if world.player.perspective == .side,let point=selectedSide { return RPGProjectionRules.sideEntities(world:world,generator:generator).first{RPGProjectionRules.occupies($0,point)} }
         guard let selected else{return nil};return RPGWorldEditing.entity(at:selected,world:world,generator:generator)
+    }
+    /// Publishes the selection's on-screen rectangle only when it moves, so
+    /// SwiftUI is not invalidated every frame while the camera is still.
+    private func updateSelectionRect() {
+        let rect = world.player.perspective == .side ? sideScene.selectionRectInView() : scene.selectionRectInView()
+        switch (rect, selectionRect) {
+        case (nil, nil): return
+        case let (new?, old?) where abs(new.minX-old.minX) < 0.5 && abs(new.minY-old.minY) < 0.5 && abs(new.width-old.width) < 0.5: return
+        default: selectionRect = rect
+        }
+    }
+    /// Content of the selected block, e.g. "number:42", "empty" or "none".
+    var selectedCellSummary: String {
+        guard let entity = selectedEntity else { return "none" }
+        guard let id = entity.mediaBindingID, let binding = world.mediaBindings.first(where: { $0.id == id }) else { return "empty" }
+        return binding.kind.rawValue + ":" + (binding.style?.value.isEmpty == false ? binding.style!.value : binding.mediaID) + (binding.paused == true ? ":paused" : "")
+    }
+    /// Replaces the selected block's content with `draft` as one undoable edit.
+    func applyCellContent(_ draft: MediaBinding, to entityID: String) {
+        var value = draft
+        if value.kind != .video { value.muted = true }
+        if !value.muted && world.videoBudget == 0 { notice = "动态预览已关闭，请先增加播放预算。"; return }
+        let content = value
+        perform { world, generator in
+            // Only one cell may play sound; unmuting this one mutes the rest.
+            if !content.muted { for index in world.mediaBindings.indices { world.mediaBindings[index].muted = true } }
+            try RPGMediaBindings.assign(content, to: .entity(entityID), world: &world, generator: generator)
+        }
     }
     func mediaBinding(for owner:RPGMediaOwner)->MediaBinding? {
         guard let id=RPGMediaBindings.bindingID(for:owner,in:world) else{return nil};return world.mediaBindings.first{$0.id==id}
@@ -393,6 +426,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     private func frame(_ time: TimeInterval) {
         media?.frame(time)
+        updateSelectionRect()
         guard active, ready, !working, !overlayVisible else { lastFrame = nil; return }
         frameMetrics.sample(time)
         if let started=switchStarted {switchMilliseconds=(ProcessInfo.processInfo.systemUptime-started)*1000;switchStarted=nil}

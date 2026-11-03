@@ -70,6 +70,17 @@ import UIKit
     }
     func step(_ sign:Int) { direction=CGFloat(sign);movementUntil=tick+0.2 }
     func jump() { if isOnGround { avatar.physicsBody?.velocity.dy=300;isOnGround=false } }
+    /// The selected cell in SpriteView (UIKit) coordinates, or nil when
+    /// nothing is selected. Used to place the SwiftUI selection glass.
+    func selectionRectInView() -> CGRect? {
+        guard !selection.isHidden, view != nil else { return nil }
+        let half: CGFloat = 12
+        let a = convertPoint(toView: CGPoint(x: selection.position.x - half, y: selection.position.y - half))
+        let b = convertPoint(toView: CGPoint(x: selection.position.x + half, y: selection.position.y + half))
+        return CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+    }
+    /// The yellow outline is hidden when native glass marks the selection.
+    var selectionOutlineVisible = true { didSet { selection.alpha = selectionOutlineVisible ? 1 : 0 } }
     func select(_ side:SidePlacement?) { selection.isHidden=side==nil;if let side{selection.position=CGPoint(x:CGFloat(side.horizontal)*24+12,y:CGFloat(side.height)*24+12)} }
     override func update(_ currentTime:TimeInterval) {
         tick=currentTime
