@@ -2178,4 +2178,213 @@ do {
     print("RPG model render: \(checks) total checks passed")
 }
 
+
+// P39: v1.73 rigging — data layer, joints from the 3D mesh, 27-joint
+// skeleton, 4-influence skin, eight motion tests, GLB, cloud protocol,
+// versioned storage.
+do {
+    // Fixtures: a relief figure (as the app generates them) and a truly 3D
+    // blocky figure, each with arms down and in T-pose.
+    func reliefFigure(tpose: Bool, resolution: Int = 96) throws -> GeneratedMesh {
+        let w = tpose ? 160 : 100, h = 160
+        var mask = [Float](repeating: 0, count: w * h), depth = mask
+        func fill(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) { for y in y0..<y1 { for x in x0..<x1 { mask[y * w + x] = 1; depth[y * w + x] = 1 } } }
+        let o = tpose ? 30 : 0
+        fill(42 + o, 4, 58 + o, 24); fill(46 + o, 24, 54 + o, 30); fill(34 + o, 30, 66 + o, 84)
+        if tpose { fill(4, 32, 34 + o, 42); fill(66 + o, 32, 156, 42) } else { fill(20, 32, 30, 82); fill(70, 32, 80, 82) }
+        fill(36 + o, 84, 48 + o, 152); fill(52 + o, 84, 64 + o, 152); fill(36 + o, 150, 48 + o, 156); fill(52 + o, 150, 64 + o, 156)
+        var fo = DepthMeshBuilder.Options(); fo.resolution = resolution; fo.smoothingPasses = 0; fo.back = .inflated; fo.snapEdges = true; fo.edgeRounding = 1
+        var m = try DepthMeshBuilder.build(DepthField(width: w, height: h, nearness: depth, mask: mask), aspect: Double(w) / Double(h), options: fo)
+        m.normalize(size: 1)
+        return m
+    }
+    func voxelFigure(tpose: Bool) -> GeneratedMesh {
+        let W = 64, H = 64
+        var solid = Set<Int>()
+        func key(_ x: Int, _ y: Int, _ z: Int) -> Int { (z * H + y) * W + x }
+        func box(_ x0: Int, _ y0: Int, _ z0: Int, _ x1: Int, _ y1: Int, _ z1: Int) { for z in z0..<z1 { for y in y0..<y1 { for x in x0..<x1 { solid.insert(key(x, y, z)) } } } }
+        box(27, 0, 6, 31, 2, 12); box(33, 0, 6, 37, 2, 12); box(27, 2, 6, 31, 28, 10); box(33, 2, 6, 37, 28, 10)
+        box(26, 28, 5, 38, 48, 11); box(30, 48, 6, 34, 51, 10); box(28, 51, 5, 36, 60, 11)
+        if tpose { box(4, 44, 6, 26, 47, 10); box(38, 44, 6, 60, 47, 10) }
+        else { box(22, 24, 6, 25, 47, 10); box(39, 24, 6, 42, 47, 10); box(25, 44, 6, 26, 47, 10); box(38, 44, 6, 39, 47, 10) }
+        var map: [[Int]: UInt32] = [:], positions: [Float] = [], indices: [UInt32] = []
+        func vertex(_ p: [Int]) -> UInt32 {
+            if let i = map[p] { return i }
+            let i = UInt32(positions.count / 3); map[p] = i
+            positions += [Float(p[0]), Float(p[1]), Float(p[2])]; return i
+        }
+        for k in solid.sorted() {
+            let x = k % W, y = (k / W) % H, z = k / (W * H)
+            for d in [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]] where !solid.contains(key(x + d[0], y + d[1], z + d[2])) || y + d[1] < 0 {
+                let a = d.firstIndex { $0 != 0 }!, sign = d[a], u = (a + 1) % 3, v = (a + 2) % 3
+                var base = [x, y, z]; if sign > 0 { base[a] += 1 }
+                func c(_ du: Int, _ dv: Int) -> [Int] { var p = base; p[u] += du; p[v] += dv; return p }
+                let q = (sign > 0 ? [c(0, 0), c(1, 0), c(1, 1), c(0, 1)] : [c(0, 0), c(0, 1), c(1, 1), c(1, 0)]).map(vertex)
+                indices += [q[0], q[1], q[2], q[0], q[2], q[3]]
+            }
+        }
+        var m = GeneratedMesh(positions: positions, normals: [], uvs: [Float](repeating: 0.5, count: positions.count / 3 * 2), indices: indices)
+        m.computeNormals(); m.normalize(size: 1)
+        return m
+    }
+
+    // Transforms.
+    let rx = RigXform.translation(0.1, 0.2, -0.3) * RigXform.euler([0.3, -0.4, 0.5])
+    let backAndForth = rx * rx.inverse!
+    check(abs(backAndForth.a - 1) + abs(backAndForth.e - 1) + abs(backAndForth.i - 1) + abs(backAndForth.tx) + abs(backAndForth.ty) + abs(backAndForth.tz) < 1e-5, "rig transform inverse")
+    check(RigXform(matrix: rx.matrix) == rx && RigXform(matrix: [Float](repeating: .nan, count: 16)) == nil, "rig transform 4×4 round trip, NaN refused")
+    check(JointTag.rightUpperArm.mirror == .leftUpperArm && JointTag.chest.mirror == nil, "joint mirror names")
+    let unknownTag = try JSONDecoder().decode([JointTag].self, from: Data(#"["leftHand","mixamorig:Spine"]"#.utf8))
+    check(unknownTag == [.leftHand, .other], "unknown joint names read as other")
+
+    // Mesh analysis.
+    var broken = GeneratedMesh(positions: [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 5, 5, 5, 6, 5, 5, 5, 6, 5, 0, -1, 0], normals: [Float](repeating: 0, count: 24), uvs: [Float](repeating: 0, count: 16),
+                               indices: [0, 1, 2, 0, 1, 2, 0, 1, 3, 1, 0, 3, 0, 0, 1, 4, 5, 6, 0, 1, 7])
+    broken.normals[2] = 1
+    let brokenAnalysis = MeshAnalyzer.analyze(broken)
+    check(brokenAnalysis.duplicateTriangles == 2 && brokenAnalysis.degenerateTriangles == 1 && brokenAnalysis.nonManifoldEdges == 1 && brokenAnalysis.components == 2, "mesh analysis: duplicates, degenerate, non-manifold, pieces")
+    check(brokenAnalysis.invalidNormals == 7 && MeshAnalyzer.cleaned(broken).triangleCount == 4, "mesh analysis: normals, cleaned copy")
+    let dense = try reliefFigure(tpose: true, resolution: 320)
+    let reduced = MeshAnalyzer.simplified(dense, targetTriangles: 20_000)
+    check(dense.triangleCount > 60_000 && reduced.triangleCount <= 20_000 && reduced.triangleCount > 2_000 && reduced.valid, "dense mesh reduced (\(dense.triangleCount) → \(reduced.triangleCount))")
+
+    // Joints, skeleton, skin and the eight motion tests on four figures.
+    let figures: [(String, GeneratedMesh, MeshAnalysis.PoseType)] = [
+        ("relief arms down", try reliefFigure(tpose: false), .armsDown), ("relief T-pose", try reliefFigure(tpose: true), .tPose),
+        ("3D arms down", voxelFigure(tpose: false), .armsDown), ("3D T-pose", voxelFigure(tpose: true), .tPose),
+    ]
+    var keptResult: RiggingResult?
+    for (name, mesh, pose) in figures {
+        let result = try RiggingPipeline.run(mesh)
+        let s = result.skeleton, est = result.estimate
+        check(est.pose == pose && est.humanoid >= 0.9 && result.route == .local, "\(name): humanoid in \(pose) found locally")
+        check((22...32).contains(s.joints.count) && Set(s.joints.map(\.semanticTag)).count == s.joints.count, "\(name): \(s.joints.count) named joints")
+        var skeletonOK = true
+        do { try s.validate() } catch { skeletonOK = false }
+        check(skeletonOK, "\(name): skeleton hierarchy, matrices and sides valid")
+        let head = s.position(.head)!, pelvis = s.position(.pelvis)!, knee = s.position(.rightShin)!, ankle = s.position(.rightFoot)!, hand = s.position(.rightHand)!
+        let b = mesh.bounds
+        check(head.y > pelvis.y && pelvis.y > knee.y && knee.y > ankle.y && hand.x < pelvis.x && head.y < b.max[1] && ankle.y > b.min[1], "\(name): joints in body order, model frame")
+        check(result.skin.valid(jointCount: s.joints.count, vertexCount: mesh.vertexCount), "\(name): ≤4 weights per vertex, non-negative, sum 1")
+        let rest = SkinWeightSolver.deform(result.mesh, skin: result.skin, matrices: SkeletonPose.rest(s).skinning(s)).positions
+        check(zip(rest, result.mesh.positions).allSatisfy { abs($0 - $1) < 1e-4 }, "\(name): bind pose leaves the mesh unchanged")
+        let statuses = result.diagnostics.results.map { "\($0.id):\($0.status.rawValue)" }.joined(separator: " ")
+        check(result.diagnostics.results.count == 8 && result.diagnostics.results.allSatisfy { $0.status != .fail }, "\(name): eight motion tests without failures [\(statuses)]")
+        check(Set(result.sockets.map(\.kind)) == Set(AttachmentSocket.Kind.allCases) && result.sockets.allSatisfy { s.index($0.jointID) != nil }, "\(name): six attachment sockets")
+        if keptResult == nil { keptResult = result }
+    }
+
+    // Dense model timing (Linux CPU, not an iPhone measurement).
+    let started = Date()
+    let denseResult = try RiggingPipeline.run(dense)
+    let seconds = Date().timeIntervalSince(started)
+    check(denseResult.diagnostics.results.allSatisfy { $0.status != .fail }, "dense relief (\(dense.vertexCount) vertices) rigged without failures")
+    print(String(format: "Rig timing, %d vertices / %d triangles: total %.2fs ", dense.vertexCount, dense.triangleCount, seconds) + denseResult.timings.sorted { $0.key < $1.key }.map { "\($0.key) \(String(format: "%.2f", $0.value))s" }.joined(separator: ", "))
+
+    // Cancellation and failures.
+    var cancelledRun = false
+    do { _ = try RiggingPipeline.run(figures[0].1, cancelled: { true }) } catch RiggingError.cancelled { cancelledRun = true }
+    check(cancelledRun, "rigging can be cancelled")
+    var emptyRefused = false
+    do { _ = try RiggingPipeline.run(GeneratedMesh()) } catch RiggingError.emptyMesh { emptyRefused = true }
+    check(emptyRefused, "empty mesh refused")
+    let blob = MeshAnalyzer.analyze(GeneratedMesh(positions: [0, 0, 0, 1, 0, 0, 0, 1, 0], normals: [0, 0, 1, 0, 0, 1, 0, 0, 1], uvs: [0, 0, 0, 0, 0, 0], indices: [0, 1, 2]))
+    check(RiggingPipeline.route(analysis: blob, estimate: JointEstimate(positions: [:], confidence: [:], pose: .unknown, humanoid: 0.3, notes: [])) != .local, "unclear models suggest the cloud (never upload by themselves)")
+
+    // Hierarchy checks catch broken skeletons.
+    let good = keptResult!.skeleton
+    var looped = good; looped.joints[0].parentID = looped.joints[3].jointID
+    var twoRoots = good; twoRoots.joints[5].parentID = nil
+    var swapped = good
+    let r = swapped.index(.rightHand)!, l = swapped.index(.leftHand)!
+    let rp = swapped.worldRest[r].origin, lp = swapped.worldRest[l].origin
+    swapped = SkeletonBuilder.moving(SkeletonBuilder.moving(swapped, joint: r, to: lp), joint: l, to: rp)
+    func fails(_ s: SkeletonDefinition) -> Bool { do { try s.validate(); return false } catch { return true } }
+    check(fails(looped) && fails(twoRoots) && fails(swapped) && !fails(good), "skeleton validation: cycles, roots, left / right")
+
+    // Editing a joint and re-skinning (manual correction).
+    let figure = figures[0].1
+    let elbow = good.index(.rightForearm)!
+    let moved = SkeletonBuilder.moving(good, joint: elbow, to: good.worldRest[elbow].origin + SIMD3(0, 0.02, 0))
+    let reskinned = try RiggingPipeline.reskin(keptResult!.mesh, skeleton: moved)
+    check(!fails(moved) && moved.joints[elbow].confidence == 1 && reskinned.valid(jointCount: moved.joints.count, vertexCount: figure.vertexCount), "joint moved by hand, weights recomputed")
+    check(RiggingPipeline.test(keptResult!.mesh, skeleton: moved, skin: reskinned).count == 8, "edited rig re-tested")
+
+    // Motion library: every world action has a clip.
+    check(CharacterAction.allCases.allSatisfy { MotionClip.standard(MotionClip.id(for: $0)) != nil } && MotionClip.testIDs.count == 8, "every action maps to a motion; eight test motions")
+
+    // GLB round trip with texture.
+    let png = Data([0x89, 0x50, 0x4E, 0x47, 1, 2, 3])
+    let glb = GLBCodec.write(figure, texture: png)
+    let back = try GLBCodec.read(glb)
+    check(back.mesh.vertexCount == figure.vertexCount && back.mesh.indices == figure.indices && back.texture == png && back.textureMime == "image/png", "GLB round trip: geometry and texture")
+    check(zip(back.mesh.positions, figure.positions).allSatisfy { abs($0 - $1) < 1e-6 } && zip(back.mesh.uvs, figure.uvs).allSatisfy { abs($0 - $1) < 1e-6 }, "GLB keeps positions and UVs")
+    var glbRefused = 0
+    for bad in [Data("not a model".utf8), Data([0x67, 0x6C, 0x54, 0x46, 1, 0, 0, 0] + [UInt8](repeating: 0, count: 16))] { do { _ = try GLBCodec.read(bad) } catch { glbRefused += 1 } }
+    check(glbRefused == 2, "GLB: wrong files refused")
+    // A node translation is applied.
+    var json = try JSONSerialization.jsonObject(with: glb.subdata(in: 20..<(20 + Int(glb[12]) + Int(glb[13]) * 256 + Int(glb[14]) * 65536))) as! [String: Any]
+    json["nodes"] = [["mesh": 0, "translation": [0, 2, 0]]]
+    var moved1 = try JSONSerialization.data(withJSONObject: json)
+    while moved1.count % 4 != 0 { moved1.append(0x20) }
+    let binStart = 20 + Int(glb[12]) + Int(glb[13]) * 256 + Int(glb[14]) * 65536
+    var rebuilt = Data()
+    func le(_ v: Int) { var x = UInt32(v).littleEndian; withUnsafeBytes(of: &x) { rebuilt.append(contentsOf: $0) } }
+    le(0x4654_6C67); le(2); le(12 + 8 + moved1.count + (glb.count - binStart)); le(moved1.count); le(0x4E4F_534A); rebuilt.append(moved1); rebuilt.append(glb.subdata(in: binStart..<glb.count))
+    let shifted = try GLBCodec.read(rebuilt)
+    check(abs(shifted.mesh.positions[1] - figure.positions[1] - 2) < 1e-5, "GLB node transforms applied")
+
+    // Cloud protocol (no server is contacted in tests).
+    let config = CloudRigConfig.parse("https://rig.example.com/", token: " abc ")!
+    let create = CloudRiggingProtocol.create(config, glb: glb)
+    check(create.url?.absoluteString == "https://rig.example.com/v1/rig/jobs" && create.httpMethod == "POST" && create.value(forHTTPHeaderField: "Authorization") == "Bearer abc"
+          && create.value(forHTTPHeaderField: "Content-Type") == "model/gltf-binary", "cloud: create job request")
+    check(CloudRiggingProtocol.cancel(config, id: "j/1").url?.absoluteString == "https://rig.example.com/v1/rig/jobs/j%2F1/cancel" && CloudRiggingProtocol.delete(config, id: "j1").httpMethod == "DELETE"
+          && CloudRiggingProtocol.result(config, id: "j1").url?.path == "/v1/rig/jobs/j1/result", "cloud: cancel, delete, result requests")
+    check(CloudRigConfig.parse("http://evil.example.com", token: "") == nil && CloudRigConfig.parse("http://localhost:8080", token: "") != nil, "cloud: https only (localhost for testing)")
+    func cloudError(_ status: Int) -> CloudRigError? { do { try CloudRiggingProtocol.check(status: status, body: Data(#"{"message":"bad mesh"}"#.utf8)); return nil } catch { return error as? CloudRigError } }
+    check(cloudError(200) == nil && cloudError(401) == .unauthorized && cloudError(404) == .notFound && cloudError(422) == .rejected("bad mesh") && cloudError(503) == .server(503), "cloud: HTTP errors mapped")
+    check(CloudRiggingProtocol.pollDelay(attempt: 0) < CloudRiggingProtocol.pollDelay(attempt: 3) && CloudRiggingProtocol.pollDelay(attempt: 50) == 10, "cloud: polling backs off, capped")
+    let job = try CloudRiggingProtocol.job(Data(#"{"id":"j1","status":"running","progress":0.4}"#.utf8))
+    check(job.status == .running && !job.finished, "cloud: job status decoded")
+    let kept = keptResult!
+    let reply = CloudRigResult(formatVersion: 1, vertexCount: kept.mesh.vertexCount, skeleton: kept.skeleton, joints: kept.skin.joints, weights: kept.skin.weights.map { $0 * 1.0004 }, engine: "test", notes: nil)
+    let decoded = try CloudRiggingProtocol.decodeResult(try JSONEncoder().encode(reply), vertexCount: kept.mesh.vertexCount)
+    check(decoded.skin.valid(jointCount: kept.skeleton.joints.count, vertexCount: kept.mesh.vertexCount) && decoded.skeleton == kept.skeleton, "cloud: result checked and weights renormalised")
+    var mismatch = false
+    do { _ = try CloudRiggingProtocol.decodeResult(try JSONEncoder().encode(reply), vertexCount: 3) } catch CloudRigError.incompatible { mismatch = true }
+    var badWeights = reply; badWeights.weights[0] = .nan
+    var nanRefused = false
+    do { _ = try CloudRiggingProtocol.decodeResult(try JSONEncoder().encode(badWeights), vertexCount: kept.mesh.vertexCount) } catch { nanRefused = true }
+    check(mismatch && nanRefused, "cloud: mismatched or invalid results refused")
+
+    // Storage: save, reload, rollback, newer format refused, checkpoints.
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("rig-test-" + UUID().uuidString)
+    let store = RiggingAssetStore(folder: folder)
+    let character = RiggingPipeline.character(kept, modelID: "m1", meshFile: "m1.mesh", optimizedMeshFile: nil, skinFile: "m1.skin")
+    try store.save(character, skin: kept.skin, optimizedMesh: nil)
+    let loaded = try store.load("m1")
+    check(loaded?.0 == character && loaded?.1 == kept.skin, "rig saved and reloaded (skeleton, weights, clips, sockets)")
+    var second = character; second.metadata.notes = ["v2"]
+    try store.save(second, skin: kept.skin, optimizedMesh: nil)
+    let rolled = try store.rollback("m1")
+    let restored = try store.load("m1")
+    check(rolled && restored?.0.metadata.notes == character.metadata.notes, "previous save restored (rollback)")
+    var future = try JSONSerialization.jsonObject(with: try character.encoded()) as! [String: Any]
+    future["formatVersion"] = 99
+    try JSONSerialization.data(withJSONObject: future).write(to: store.characterURL("m1"))
+    var newerRefused = false, newerKept = false
+    do { _ = try store.load("m1") } catch RiggedCharacter.LoadError.newerFormat(99) { newerRefused = true }
+    do { try store.save(character, skin: kept.skin, optimizedMesh: nil) } catch RiggedCharacter.LoadError.newerFormat(99) { newerKept = true }
+    check(newerRefused && newerKept, "files from a newer format are neither read nor overwritten")
+    store.saveCheckpoint(.init(modelID: "m2", stage: "skeleton", skeleton: good, savedAt: Date()))
+    check(store.checkpoint("m2")?.skeleton == good, "checkpoint keeps the skeleton for resuming")
+    store.delete("m1"); store.delete("m2")
+    check(!store.exists("m1") && store.checkpoint("m2") == nil, "rig files deleted")
+    try? FileManager.default.removeItem(at: folder)
+    let skinBytes = kept.skin.encoded()
+    check(SkinInfluences.decode(skinBytes) == kept.skin && SkinInfluences.decode(skinBytes.dropLast()) == nil, "skin file round trip, truncated file refused")
+    print("RPG rigging: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
