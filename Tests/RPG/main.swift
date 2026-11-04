@@ -1378,4 +1378,133 @@ do {
     print("RPG projection: \(checks) total checks passed")
 }
 
+
+// P24: v1.60 characters, animation, skills, statuses, Boss phases, camera.
+do {
+    // Animation priorities and directions.
+    var anim = CharacterAnimationState()
+    CharacterAnimator.request(&anim, .walk, clock: 1, length: 0.6)
+    CharacterAnimator.request(&anim, .attack, clock: 1.1, length: 0.6)
+    CharacterAnimator.request(&anim, .walk, clock: 1.3, length: 0.6)
+    check(anim.action == .attack, "an attack is not cut off by walking")
+    CharacterAnimator.request(&anim, .walk, clock: 1.8, length: 0.6)
+    check(anim.action == .walk, "walking resumes after the attack clip")
+    CharacterAnimator.request(&anim, .hurt, clock: 2, length: 0.4); CharacterAnimator.request(&anim, .death, clock: 2.1, length: 0.4); CharacterAnimator.request(&anim, .idle, clock: 9, length: 0.4)
+    check(anim.action == .death, "death is final")
+    check(CharacterAnimator.movement(speed: 4, grounded: true, verticalSpeed: 0) == .run && CharacterAnimator.movement(speed: 1, grounded: false, verticalSpeed: -2) == .fall, "movement actions")
+    check(CharacterAnimator.direction(facing: -90, cameraYaw: 0, count: 4) == 0 && CharacterAnimator.direction(facing: 90, cameraYaw: 0, count: 4) == 2, "facing the camera shows the front picture, facing away the back")
+    check(CharacterAnimator.direction(facing: 0, cameraYaw: 0, count: 8) != CharacterAnimator.direction(facing: 180, cameraYaw: 0, count: 8), "left and right pictures differ")
+    var hero = CharacterTemplate(id: "hero", name: "Hero")
+    hero.clips[CharacterAction.idle.rawValue] = ActionClip(bindingIDs: ["idle-pic"])
+    hero.clips[CharacterAction.walk.rawValue] = ActionClip(bindingIDs: ["walk-pic"], speed: 1.5)
+    check(hero.clip(.run)?.bindingIDs == ["walk-pic"] && hero.clip(.attack)?.bindingIDs == ["idle-pic"] && hero.valid, "missing clips fall back to walk or idle")
+    check(CharacterAnimator.clipTime(CharacterAnimationState(action: .walk, started: 0), clip: ActionClip(speed: 1, loop: true, length: 0.5), clock: 1.2) < 0.5, "looping clip time wraps")
+    // Skills: projectiles, homing, pierce, explosion, beam, telegraphed area.
+    let templates = SkillLibrary.templates()
+    check(templates.count == 8 && templates.allSatisfy(\.valid), "eight valid skill templates")
+    let fireball = templates.first { $0.id == "tpl.fireball" }!
+    let foe = SkillTarget(id: "foe", position: SpatialVector(105, 100, 0), radius: 0.4, height: 1.4, faction: .enemy)
+    let friend = SkillTarget(id: "friend", position: SpatialVector(103, 100, 0), radius: 0.4, height: 1.4, faction: .player)
+    var cast = SkillCast(skill: fireball, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var hits: [SkillHit] = [], visuals: [SkillVisual] = []
+    for _ in 0..<120 { let step = cast.step(1.0 / 60, targets: [foe, friend], geometry: nil); hits += step.hits; visuals += step.visuals }
+    check(hits.filter { $0.targetID == "foe" }.count == 2 && hits.allSatisfy { $0.targetID != "friend" }, "fireball hits the enemy (impact + explosion), passes friends")
+    check(hits.first?.status?.kind == .burn && hits.first!.knockback.x > 0, "burn and knockback away from the caster")
+    check(visuals.contains { if case .projectile = $0 { return true }; return false } && visuals.contains { if case .particles(.explosion, _, _) = $0 { return true }; return false }, "projectile and explosion are shown")
+    var replay = SkillCast(skill: fireball, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var again: [SkillHit] = []
+    for _ in 0..<120 { again += replay.step(1.0 / 60, targets: [foe, friend], geometry: nil).hits }
+    check(again == hits, "same cast, same hits (deterministic)")
+    let wall = SpatialGeometry(blocks: [SpatialBlock(id: "w", x: 102, y: 99, elevation: 0, thickness: 3, size: 1), SpatialBlock(id: "w2", x: 102, y: 100, elevation: 0, thickness: 3)])
+    var blocked = SkillCast(skill: fireball, faction: .player, origin: SpatialVector(100, 100.5, 0), facing: 0)
+    var blockedHits: [SkillHit] = []
+    let behindWall = SkillTarget(id: "foe", position: SpatialVector(105, 100.5, 0), radius: 0.4, height: 1.4, faction: .enemy)
+    for _ in 0..<120 { blockedHits += blocked.step(1.0 / 60, targets: [behindWall], geometry: wall).hits }
+    check(blockedHits.filter { $0.damage == fireball.events.compactMap { if case .projectile(let p) = $0.kind { return p.damage }; return nil }.first }.isEmpty, "walls stop projectiles")
+    var pierce = SkillDefinition(id: "p", name: "Pierce", events: [SkillEvent(time: 0, kind: .projectile(ProjectileSpec(speed: 20, lifetime: 1, damage: 5, pierce: 1)))])
+    let row = (1...3).map { SkillTarget(id: "r\($0)", position: SpatialVector(100 + Double($0) * 2, 100, 0), radius: 0.4, height: 1.4, faction: .enemy) }
+    var pierceCast = SkillCast(skill: pierce, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var pierceHits: [SkillHit] = []
+    for _ in 0..<60 { pierceHits += pierceCast.step(1.0 / 60, targets: row, geometry: nil).hits }
+    check(pierceHits.map(\.targetID) == ["r1", "r2"], "pierce 1 hits two targets, each once")
+    pierce.events = [SkillEvent(time: 0, kind: .projectile(ProjectileSpec(speed: 6, lifetime: 3, damage: 5, homing: 400)))]
+    let sideFoe = SkillTarget(id: "side", position: SpatialVector(100, 106, 0), radius: 0.4, height: 1.4, faction: .enemy)
+    var homing = SkillCast(skill: pierce, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var homingHits: [SkillHit] = []
+    for _ in 0..<180 { homingHits += homing.step(1.0 / 60, targets: [sideFoe], geometry: nil).hits }
+    check(homingHits.map(\.targetID) == ["side"], "homing shots turn toward a target at the side")
+    let beam = templates.first { $0.id == "tpl.beam" }!
+    var beamCast = SkillCast(skill: beam, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var beamHits: [SkillHit] = []
+    for _ in 0..<150 { beamHits += beamCast.step(1.0 / 60, targets: [foe], geometry: nil).hits }
+    check(beamHits.count >= 6 && beamHits.count <= 8 && beamHits.allSatisfy { $0.damage == 6 }, "beam ticks on its interval (\(beamHits.count))")
+    let meteor = templates.first { $0.id == "tpl.meteor" }!
+    var meteorCast = SkillCast(skill: meteor, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var meteorEvents: [(Double, Bool, Bool)] = []
+    for _ in 0..<120 { let step = meteorCast.step(1.0 / 60, targets: [SkillTarget(id: "m", position: SpatialVector(104, 100, 0), radius: 0.4, height: 1.4, faction: .enemy)], geometry: nil)
+        meteorEvents.append((meteorCast.time, step.visuals.contains { if case .telegraph = $0 { return true }; return false }, !step.hits.isEmpty)) }
+    let warned = meteorEvents.first { $0.1 }!.0, struck = meteorEvents.first { $0.2 }!.0
+    check(warned < struck && struck - warned >= 0.95, "area warns first, lands after the delay")
+    check(meteorEvents.filter { $0.2 }.count == 1, "a one-shot area hits once")
+    let cone = AreaSpec(shape: .cone, radius: 4, angle: 40)
+    check(SkillCast.inArea(cone, center: .zero, facing: 0, target: SkillTarget(id: "a", position: SpatialVector(3, 0.5, 0), radius: 0.3, height: 1, faction: .enemy)) && !SkillCast.inArea(cone, center: .zero, facing: 0, target: SkillTarget(id: "b", position: SpatialVector(-3, 0, 0), radius: 0.3, height: 1, faction: .enemy)), "cone hits in front only")
+    check(!SkillCast.inArea(AreaSpec(radius: 3), center: .zero, facing: 0, target: SkillTarget(id: "c", position: SpatialVector(1, 0, 5), radius: 0.3, height: 1, faction: .enemy)), "areas respect height")
+    let invulnerable = SkillTarget(id: "i", position: SpatialVector(102, 100, 0), radius: 0.4, height: 1.4, faction: .enemy, invulnerable: true)
+    var dodge = SkillCast(skill: fireball, faction: .player, origin: SpatialVector(100, 100, 0), facing: 0)
+    var dodged: [SkillHit] = []
+    for _ in 0..<60 { dodged += dodge.step(1.0 / 60, targets: [invulnerable], geometry: nil).hits }
+    check(dodged.isEmpty, "invulnerable targets are not hit")
+    var flood = SkillDefinition(id: "f", name: "Flood", events: (0..<40).map { SkillEvent(time: Double($0) * 0.01, kind: .projectile(ProjectileSpec(lifetime: 9, count: 12))) })
+    flood.cooldown = 1
+    var floodCast = SkillCast(skill: flood, faction: .enemy, origin: .zero, facing: 0)
+    _ = floodCast.step(1, targets: [], geometry: nil)
+    check(floodCast.projectiles.count == SkillCast.projectileLimit, "projectiles are capped per cast")
+    for _ in 0..<2000 { _ = floodCast.step(0.05, targets: [], geometry: nil) }
+    check(floodCast.time <= SkillCast.lifetimeLimit + 0.05, "a cast never runs past its lifetime limit")
+    // Statuses.
+    var effects: [StatusEffect] = []
+    StatusRules.apply(StatusSpec(kind: .burn, perSecond: 4, duration: 2), to: &effects)
+    StatusRules.apply(StatusSpec(kind: .burn, perSecond: 2, duration: 3), to: &effects)
+    StatusRules.apply(StatusSpec(kind: .slow, perSecond: 0, duration: 1), to: &effects)
+    check(effects.count == 2 && effects[0].remaining == 3, "same status refreshes instead of stacking")
+    let tick = StatusRules.step(&effects, dt: 0.5)
+    check(abs(tick.health + 2) < 1e-9 && tick.speed == 0.5, "burn damages, slow halves speed")
+    _ = StatusRules.step(&effects, dt: 5)
+    check(effects.isEmpty, "statuses expire")
+    // Boss phases.
+    let script = BossDirector.example(id: "boss")
+    check(script.valid && script.phases.count == 3, "three-phase example boss")
+    check(BossDirector.phase(script, health: 400, maxHealth: 400) == 0 && BossDirector.phase(script, health: 250, maxHealth: 400) == 1 && BossDirector.phase(script, health: 100, maxHealth: 400) == 2, "phases change with health")
+    let phase = script.phases[2]
+    let ready = Set(phase.skills.map(\.skillID))
+    check(BossDirector.pick(phase, ready: ready, roll: 0.1) == "tpl.beam" && BossDirector.pick(phase, ready: ready, roll: 0.99) == "tpl.shockwave", "skills picked by weight")
+    check(BossDirector.pick(phase, ready: ["tpl.meteor"], roll: 0.1) == "tpl.meteor" && BossDirector.pick(phase, ready: [], roll: 0.5) == nil, "only skills off cooldown")
+    check(BossDirector.summonCount(SummonSpec(count: 3, cap: 4), alive: 3) == 1 && BossDirector.summonCount(SummonSpec(count: 3, cap: 4), alive: 5) == 0, "summons never exceed the cap")
+    var badScript = script; badScript.phases[0].threshold = 0.5
+    check(!badScript.valid, "first phase must start at full health")
+    // Camera.
+    check(ThirdPersonCamera.yawBehind(facing: 90) == 0, "behind a player facing north")
+    check(abs(ThirdPersonCamera.approach(350, 10, rate: 90, dt: 0.1) - 359) < 1e-9, "turns the short way, smoothly")
+    let walls = SpatialGeometry(blocks: (0..<5).map { SpatialBlock(id: "c\($0)", x: 120 + $0 - 2, y: 116, elevation: 0, thickness: 6) })
+    var behind = SpatialCameraState(target: SpatialVector(120.5, 120.5, 0), tilt: 62, yaw: 0, distance: 8)
+    let clear = ThirdPersonCamera.clearDistance(behind, wanted: 8, geometry: walls)
+    check(clear < 8 && clear >= SpatialCameraRules.minDistance, "camera pulls in in front of a wall (\(clear))")
+    behind.yaw = 180
+    check(ThirdPersonCamera.clearDistance(behind, wanted: 8, geometry: walls) == 8, "no wall, no change")
+    let lockable = [CreatureEntity(id: "near", kind: .enemy, position: SpatialVector(122, 120, 0), home: .zero, health: 5, maxHealth: 5, damage: 1),
+                    CreatureEntity(id: "behind", kind: .enemy, position: SpatialVector(118.5, 120, 0), home: .zero, health: 5, maxHealth: 5, damage: 1),
+                    CreatureEntity(id: "calm", kind: .neutral, position: SpatialVector(121, 120, 0), home: .zero, health: 5, maxHealth: 5, damage: 0)]
+    check(ThirdPersonCamera.lockTarget(player: SpatialVector(120, 120, 0), facing: 0, creatures: lockable) == "near", "locks the hostile in front")
+    // Saving the new data.
+    var full = map
+    var spatial = SpatialWorld.blank()
+    spatial.skills = templates; spatial.bossScripts = [script]; spatial.hotbar = ["tpl.fireball", "tpl.beam"]
+    spatial.creatures = [CreatureEntity(id: "boss1", kind: .boss, position: SpatialVector(50, 50, 0), home: SpatialVector(50, 50, 0), health: 400, maxHealth: 400, damage: 16, bossScriptID: "boss")]
+    full.spatial = spatial
+    check((try? RPGWorldCodec.decode(RPGWorldCodec.encode(full)))?.spatial == spatial, "skills, scripts and hotbar saved and reopened")
+    var dangling = full; dangling.spatial?.creatures[0].bossScriptID = "missing"; rejected(dangling, "creatures must point at existing scripts")
+    var badClip = full; badClip.spatial?.characters = [hero]; rejected(badClip, "character clips must point at media bindings")
+    print("RPG skills: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

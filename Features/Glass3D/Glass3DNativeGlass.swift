@@ -6,10 +6,10 @@ import SwiftUI
 /// one glass pass for all blocks. Characters closer to the camera than a
 /// block are cut out of its glass, so the glass never covers someone
 /// standing in front of it. Media faces stay out of the glass to stay sharp.
+@available(iOS 18.0, *)
 @MainActor final class Glass3DNativeGlass: ObservableObject {
     @Published private(set) var shape = Path()
     @Published private(set) var faces = 0
-    private var lastSignature = 0
 
     struct Character { let position: SpatialVector; let radius: Double; let height: Double }
 
@@ -54,6 +54,7 @@ import SwiftUI
 }
 
 /// The glass layer itself: one system glass shape, never takes touches.
+@available(iOS 18.0, *)
 struct Glass3DNativeGlassLayer: View {
     @ObservedObject var glass: Glass3DNativeGlass
     var body: some View {

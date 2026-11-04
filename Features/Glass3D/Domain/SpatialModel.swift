@@ -175,6 +175,12 @@ struct CreatureEntity: Codable, Equatable, Identifiable, Sendable {
     var phase = 1
     var stateTime = 0.0
     var origin = SpatialOrigin.user
+    // v1.60 (optional, so earlier saves open unchanged).
+    /// Media character shown for this creature.
+    var characterID: String?
+    /// Boss phase script driving its skills.
+    var bossScriptID: String?
+    var statuses: [StatusEffect]?
     var valid: Bool { !id.isEmpty && id.count <= 128 && position.finite && home.finite && (0...100_000).contains(health) && maxHealth > 0 && health <= maxHealth && (0...1000).contains(damage) }
     var alive: Bool { state != .dead && health > 0 }
 }
@@ -207,6 +213,13 @@ struct SpatialWorld: Codable, Equatable, Sendable {
     var history = SpatialHistory()
     /// Seconds of world time; motion and media use this one clock.
     var clock = 0.0
+    // v1.60 (optional, so earlier saves open unchanged).
+    var characters: [CharacterTemplate]?
+    var skills: [SkillDefinition]?
+    var bossScripts: [BossScript]?
+    /// The player's media character and skill hotbar (skill ids).
+    var playerCharacterID: String?
+    var hotbar: [String]?
 
     static func blank() -> SpatialWorld { SpatialWorld() }
 
@@ -224,6 +237,14 @@ struct SpatialWorld: Codable, Equatable, Sendable {
               spawn.finite, player.valid, clock.isFinite, clock >= 0
         else { throw RPGWorldError.invalidState }
         for block in blocks { if let media = block.media, !bindings.contains(media.bindingID) { throw RPGWorldError.missingReference } }
+        let characterList = characters ?? [], skillList = skills ?? [], scripts = bossScripts ?? []
+        guard characterList.count <= 200, skillList.count <= 200, scripts.count <= 50, (hotbar ?? []).count <= 6,
+              characterList.allSatisfy(\.valid), skillList.allSatisfy(\.valid), scripts.allSatisfy(\.valid),
+              Set(characterList.map(\.id)).count == characterList.count, Set(skillList.map(\.id)).count == skillList.count else { throw RPGWorldError.invalidState }
+        let characterIDs = Set(characterList.map(\.id)), scriptIDs = Set(scripts.map(\.id))
+        guard playerCharacterID.map(characterIDs.contains) ?? true,
+              creatures.allSatisfy({ ($0.characterID.map(characterIDs.contains) ?? true) && ($0.bossScriptID.map(scriptIDs.contains) ?? true) && ($0.statuses ?? []).count <= 6 }) else { throw RPGWorldError.missingReference }
+        for clip in characterList.flatMap({ $0.clips.values }) { for id in clip.bindingIDs where !bindings.contains(id) { throw RPGWorldError.missingReference } }
         try history.validate()
     }
 }
