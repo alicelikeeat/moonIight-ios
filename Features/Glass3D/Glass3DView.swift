@@ -23,6 +23,7 @@ struct Glass3DScreen: View {
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
     @State private var generate3D = false
+    @ObservedObject private var generatedStore = Generated3DStore.shared
     @AppStorage(Glass3DLaunch.key) private var openAtLaunch = true
     @Namespace private var modeNamespace
 
@@ -95,7 +96,7 @@ struct Glass3DScreen: View {
         .onDisappear { controller.stop() }
         .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
-        .fullScreenCover(isPresented: $generate3D) { Generate3DScreen(controller: controller) }
+        .fullScreenCover(isPresented: $generate3D) { Generate3DScreen(controller: controller) { generate3D = false } }
         .sheet(item: $editor) { kind in
             switch kind {
             case .characters: Glass3DCharacterEditor(controller: controller, store: model.mediaStore)
@@ -411,7 +412,7 @@ struct Glass3DScreen: View {
         case .dig: L10n.t("轻点地面挖开（再点填回），方块最低到 -16", "Tap the ground to dig (again to fill); blocks down to -16")
         case .building: L10n.t("轻点地图放置，确认后写入", "Tap the map to place, then confirm")
         case .media: L10n.t("轻点方块多选，再在属性面板选择媒体；多个方块自动切格", "Tap blocks to pick several, then choose media in the panel; several blocks split it")
-        case .creature: L10n.t("轻点地面或方块放置生物", "Tap ground or a block to place a creature")
+        case .creature: L10n.t("选类型和外观，轻点地面放置；外观里有你生成的 3D 模型", "Pick a kind and a look, then tap the ground; your generated 3D models are in the looks")
         case .maze: L10n.t("轻点地图放置 13×13 玻璃迷宫（入口在南侧）", "Tap the map for a 13×13 glass maze (entrance south)")
         case .track: L10n.t("依次点路径点，再选中建筑并选择「轨道」运动", "Tap waypoints, then select a building and choose Track motion")
         }
@@ -446,20 +447,7 @@ struct Glass3DScreen: View {
                 }.font(.caption)
             }
         case .creature:
-            VStack(alignment: .leading, spacing: 6) {
-                Picker(L10n.t("生物", "Creature"), selection: $controller.creatureKind) { ForEach(CreatureKind.allCases, id: \.self) { Text($0.title).tag($0) } }
-                    .pickerStyle(.segmented)
-                HStack {
-                    Text(L10n.t("外观", "Look"))
-                    Picker(L10n.t("外观", "Look"), selection: $controller.creatureLook) {
-                        Text(L10n.t("默认外观", "Default")).tag(String?.none)
-                        ForEach(controller.world.characters ?? []) { Text($0.name).tag(String?.some($0.id)) }
-                    }
-                    .accessibilityIdentifier("glass3d-creature-look")
-                    Spacer(minLength: 0)
-                }
-            }
-            .font(.caption)
+            creatureOptions
         case .track:
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -473,6 +461,71 @@ struct Glass3DScreen: View {
         case .select, .erase, .media, .maze, .dig:
             EmptyView()
         }
+    }
+
+    /// Creature tool: kind chips, then a strip of looks with previews —
+    /// default body, every generated 3D model (one tap picks it, no need to
+    /// add it first), other characters, and a shortcut to generate one.
+    private var creatureOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(CreatureKind.allCases, id: \.self) { kind in
+                        Button(kind.title) { controller.creatureKind = kind }
+                            .buttonStyle(Glass3DChipStyle(tint: controller.creatureKind == kind ? .accentColor : .primary, prominent: controller.creatureKind == kind))
+                            .accessibilityIdentifier("glass3d-creature-kind-" + kind.rawValue)
+                    }
+                }
+            }
+            Text(L10n.t("外观（选好后轻点地面放置）", "Look (pick, then tap the ground)")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    lookCard(title: L10n.t("默认", "Default"), selected: controller.creatureLook == nil, id: "glass3d-look-default") {
+                        Image(systemName: "pawprint.fill").font(.system(size: 22)).foregroundStyle(.secondary)
+                    } action: { controller.creatureLook = nil }
+                    ForEach(generatedStore.models.filter { $0.meshFile != nil || $0.usdzFile != nil }) { model in
+                        lookCard(title: model.name, selected: controller.selectedLookModelID == model.id, badge: model.rigFile != nil ? L10n.t("动", "Anim") : nil, id: "glass3d-look-model-\(model.id)") {
+                            Glass3DMediaThumbnail(url: generatedStore.thumbnailURL(model), kind: .image, side: 54, corner: 10)
+                        } action: { controller.creatureLook = controller.characterID(forGenerated: model) }
+                    }
+                    ForEach((controller.world.characters ?? []).filter { $0.mode != .generated }) { template in
+                        lookCard(title: template.name, selected: controller.creatureLook == template.id, id: "glass3d-look-character-\(template.id)") {
+                            Image(systemName: template.mode == .model ? "cube.fill" : "person.crop.rectangle.fill").font(.system(size: 22)).foregroundStyle(Color.accentColor)
+                        } action: { controller.creatureLook = template.id }
+                    }
+                    lookCard(title: L10n.t("生成新模型", "New Model"), selected: false, id: "glass3d-look-generate") {
+                        Image(systemName: "plus").font(.system(size: 22, weight: .semibold)).foregroundStyle(Color.accentColor)
+                    } action: { generate3D = true }
+                }
+                .padding(.vertical, 2)
+            }
+            if generatedStore.models.isEmpty {
+                Text(L10n.t("还没有生成的 3D 模型：点「生成新模型」从照片或视频生成。", "No generated 3D models yet: tap New Model to make one from a photo or video.")).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+    }
+
+    private func lookCard<Preview: View>(title: String, selected: Bool, badge: String? = nil, id: String, @ViewBuilder preview: () -> Preview, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.06))
+                    preview()
+                }
+                .frame(width: 58, height: 58)
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 2.5))
+                .overlay(alignment: .topTrailing) {
+                    if let badge {
+                        Text(badge).font(.system(size: 9, weight: .bold)).foregroundStyle(.white).padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.orange, in: Capsule()).padding(3)
+                    }
+                }
+                Text(title).font(.system(size: 10, weight: selected ? .semibold : .regular)).lineLimit(1).frame(width: 62)
+                    .foregroundStyle(selected ? Color.accentColor : .primary)
+            }
+        }
+        .buttonStyle(.plain).accessibilityLabel(title).accessibilityAddTraits(selected ? .isSelected : []).accessibilityIdentifier(id)
     }
 
     /// Glass tint swatches.

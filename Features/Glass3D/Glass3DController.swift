@@ -83,6 +83,29 @@ struct Glass3DPending {
     @Published var creatureKind = CreatureKind.enemy
     /// Look for the next placed creature (a character template id; nil = default body).
     @Published var creatureLook: String?
+
+    /// Character template showing a generated model: the existing one, or a
+    /// new one (one undo step) — models can be picked without adding them first.
+    func characterID(forGenerated model: Generated3DManifest) -> String {
+        if let existing = (world.characters ?? []).first(where: { $0.generatedModelID == model.id || ($0.mode == .model && $0.name == model.name && model.meshFile == nil) }) { return existing.id }
+        var template = CharacterTemplate(id: "char:" + UUID().uuidString, name: String(model.name.prefix(60)))
+        if model.meshFile != nil {
+            template.mode = .generated
+            template.generatedModelID = model.id
+        } else if let usdz = Generated3DStore.shared.usdzURL(model) {
+            let file = UUID().uuidString + ".usdz"
+            guard (try? FileManager.default.copyItem(at: usdz, to: Glass3DCharacters.modelsFolder.appendingPathComponent(file))) != nil else { return creatureLook ?? "" }
+            template.mode = .model
+            template.modelMediaID = file
+        }
+        saveCharacter(template, bindings: [])
+        return template.id
+    }
+
+    /// Generated model behind the selected look (for highlighting its card).
+    var selectedLookModelID: String? {
+        creatureLook.flatMap { id in (world.characters ?? []).first { $0.id == id }?.generatedModelID }
+    }
     @Published var trackPoints: [SpatialVector] = []
     @Published var trackSmooth = true
     @Published var trackClosed = false

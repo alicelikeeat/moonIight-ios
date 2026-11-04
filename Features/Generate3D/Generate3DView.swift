@@ -12,6 +12,8 @@ import ImageIO
 struct Generate3DScreen: View {
     /// The 3D world, when opened from it (enables "use as character look").
     var controller: Glass3DController?
+    /// Closes this screen (back to the world, e.g. to place a model).
+    var onDone: (() -> Void)?
     @StateObject private var tasks = GenerationTaskManager()
     @ObservedObject private var store = Generated3DStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -41,7 +43,7 @@ struct Generate3DScreen: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(L10n.t("关闭", "Close")) { tasks.cancel(); tasks.reset(); dismiss() } }
             }
-            .navigationDestination(item: $opened) { manifest in Generated3DDetailView(manifest: manifest, store: store, controller: controller) }
+            .navigationDestination(item: $opened) { manifest in Generated3DDetailView(manifest: manifest, store: store, controller: controller, onPlace: { tasks.reset(); if let onDone { onDone() } else { dismiss() } }) }
         }
         .photosPicker(isPresented: $choosingPhoto, selection: $photoItem, matching: photoFilter, preferredItemEncoding: .current)
         .fileImporter(isPresented: $importingFile, allowedContentTypes: fileIsVideo ? [.movie, .mpeg4Movie, .quickTimeMovie] : [.jpeg, .png, .heic, .image]) { result in
@@ -374,6 +376,8 @@ struct Generated3DDetailView: View {
     let manifest: Generated3DManifest
     @ObservedObject var store: Generated3DStore
     var controller: Glass3DController?
+    /// Goes back to the world with the Creature tool and this look selected.
+    var onPlace: (() -> Void)?
     @StateObject private var scene = Generated3DPreviewScene()
     @Environment(\.dismiss) private var dismiss
     @State private var counts: (triangles: Int, vertices: Int)?
@@ -581,7 +585,7 @@ struct Generated3DDetailView: View {
         VStack(alignment: .leading, spacing: 10) {
             if let controller, current.meshFile != nil || current.usdzFile != nil {
                 Button { useAsCharacter(controller) } label: {
-                    Label(current.rigFile != nil ? L10n.t("加入 3D 世界角色（带动作）", "Add as a 3D World Character (animated)") : L10n.t("加入 3D 世界角色", "Add as a 3D World Character"), systemImage: "person.crop.square")
+                    Label(current.rigFile != nil ? L10n.t("放进 3D 世界（带动作）", "Place in the 3D World (animated)") : L10n.t("放进 3D 世界", "Place in the 3D World"), systemImage: "mappin.and.ellipse")
                 }
                 .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true)).accessibilityIdentifier("generate3d-use-in-world")
             }
@@ -640,20 +644,12 @@ struct Generated3DDetailView: View {
 
     /// Depth models are used directly (no USDZ needed; animated when
     /// rigged); reconstructed models through their USDZ.
+    /// Picks this model as the Creature tool's look and goes back to the
+    /// world in design mode, ready to tap the ground.
     private func useAsCharacter(_ controller: Glass3DController) {
-        var template = CharacterTemplate(id: "char:" + UUID().uuidString, name: String(current.name.prefix(60)))
-        if current.meshFile != nil {
-            template.mode = .generated
-            template.generatedModelID = current.id
-        } else if let usdz = store.usdzURL(current) {
-            let name = UUID().uuidString + ".usdz"
-            do { try FileManager.default.copyItem(at: usdz, to: Glass3DCharacters.modelsFolder.appendingPathComponent(name)) }
-            catch { message = error.localizedDescription; return }
-            template.mode = .model
-            template.modelMediaID = name
-        } else { return }
-        controller.saveCharacter(template, bindings: [])
-        controller.creatureLook = template.id
-        message = L10n.t("已加入：设计模式「生物」工具的「外观」已选好它，点地面就能放一个；也可在角色编辑器里设为主角或整类生物。", "Added: it is selected as the Look in the Creature tool — tap the ground to place one; or set it for the player or a whole kind in the Character Editor.")
+        controller.creatureLook = controller.characterID(forGenerated: current)
+        controller.mode = .edit
+        controller.tool = .creature
+        if let onPlace { onPlace() } else { message = L10n.t("已选好：在设计模式「生物」工具里轻点地面放置。", "Selected: tap the ground with the Creature tool in design mode.") }
     }
 }
