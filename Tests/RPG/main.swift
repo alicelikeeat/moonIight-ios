@@ -1583,4 +1583,30 @@ do {
     print("RPG battle: \(checks) total checks passed")
 }
 
+// P26: v1.61 game controller mapping (Xbox layout).
+do {
+    check(SpatialGamepad.shaped(0.1, 0.1) == (0, 0), "stick drift inside the dead zone is ignored")
+    let full = SpatialGamepad.shaped(1, 0)
+    check(abs(full.x - 1) < 1e-9 && full.y == 0, "full push stays full")
+    check(SpatialGamepad.shaped(.nan, 1) == (0, 0), "bad stick values are ignored")
+    var pad = SpatialPadState(); pad.leftY = 1; pad.rightX = -1
+    let move = SpatialGamepad.move(pad), look = SpatialGamepad.look(pad)
+    check(move.x == 0 && abs(move.y + 1) < 1e-9, "left stick up = forward (screen-up, like the touch stick)")
+    check(abs(look.x + 1) < 1e-9 && look.y == 0, "right stick left = look left")
+    var down = SpatialPadState(); down.buttons = [.a, .x]
+    check(SpatialGamepad.actions(down, previous: SpatialPadState(), playing: true) == [.jump, .attack], "A jumps, X attacks")
+    check(SpatialGamepad.actions(down, previous: down, playing: true).isEmpty, "holding a button does not repeat")
+    var triggers = SpatialPadState(); triggers.rightTrigger = 0.8
+    check(SpatialGamepad.actions(triggers, previous: SpatialPadState(), playing: true) == [.hotbar(3)], "RT casts skill slot 4")
+    var light = SpatialPadState(); light.rightTrigger = 0.3
+    check(SpatialGamepad.actions(light, previous: SpatialPadState(), playing: true).isEmpty, "a light trigger touch does nothing")
+    check(SpatialGamepad.action(for: .y, playing: true) == .skill && SpatialGamepad.action(for: .b, playing: true) == .dodge, "Y skill, B dodge")
+    check(SpatialGamepad.action(for: .rightStick, playing: true) == .lock, "right stick click locks on")
+    check(SpatialGamepad.action(for: .menu, playing: true) == .switchMode && SpatialGamepad.action(for: .menu, playing: false) == .switchMode, "Menu switches play / design")
+    check(SpatialGamepad.action(for: .a, playing: false) == .backToCharacter && SpatialGamepad.action(for: .rightShoulder, playing: false) == .flyUp, "design: A back to character, RB fly up")
+    var zoomIn = SpatialPadState(); zoomIn.rightTrigger = 1
+    check(SpatialGamepad.zoomFactor(zoomIn, dt: 0.1) > 1 && SpatialGamepad.zoomFactor(SpatialPadState(), dt: 0.1) == 1, "design: RT zooms in, idle no zoom")
+    print("RPG gamepad: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

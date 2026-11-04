@@ -98,6 +98,7 @@ struct Glass3DScreen: View {
             Text(L10n.t("方块 \(controller.stats.blocks) · \(controller.nativeGlassStatus) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS",
                         "\(controller.stats.blocks) blocks · \(controller.nativeGlassStatus) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS"))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("glass3d-stats")
+            Glass3DGamepadBadge(gamepad: controller.gamepad)
             if controller.mode == .edit {
                 icon("arrow.uturn.backward", L10n.t("撤销", "Undo"), id: "glass3d-undo") { controller.undo() }.disabled(!controller.canUndo)
                 icon("arrow.uturn.forward", L10n.t("重做", "Redo"), id: "glass3d-redo") { controller.redo() }.disabled(!controller.canRedo)
@@ -700,5 +701,18 @@ struct Glass3DOverlay: View {
                 dragging = nil
             })
             .accessibilityLabel(L10n.t("沿 \(labels[axis]) 轴移动", "Move along \(labels[axis])"))
+    }
+}
+
+/// Small HUD badge while a game controller is connected.
+private struct Glass3DGamepadBadge: View {
+    @ObservedObject var gamepad: Glass3DGamepad
+    var body: some View {
+        if let name = gamepad.connectedName {
+            Label(name, systemImage: "gamecontroller.fill")
+                .font(.caption2).lineLimit(1).frame(maxWidth: 120).foregroundStyle(.secondary)
+                .accessibilityLabel(L10n.t("已连接手柄 \(name)", "Controller connected: \(name)"))
+                .accessibilityIdentifier("glass3d-gamepad")
+        }
     }
 }

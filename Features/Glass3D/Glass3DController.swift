@@ -86,6 +86,9 @@ struct Glass3DPending {
     @Published var trackClosed = false
 
     private var link: CADisplayLink?
+    /// Xbox / PlayStation / MFi controller, read once per frame.
+    let gamepad = Glass3DGamepad()
+    private var padMoving = false, padLooking = false
     private var driven = false
     /// RealityKit frame-update subscription (kept alive with the controller).
     var updates: EventSubscription?
@@ -158,7 +161,7 @@ struct Glass3DPending {
     }
 
     private func modeChanged() {
-        glide = nil
+        glide = nil; stick = (0, 0); look = (0, 0); padMoving = false; padLooking = false
         pending = nil; selection = []; trackPoints = []
         camera.tilt = mode == .edit ? SpatialCameraRules.editTilt : SpatialCameraRules.playTilt
         if mode == .play { camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() } }
@@ -187,6 +190,7 @@ struct Glass3DPending {
         guard dt > 0 else { return }
         frameTimes.append(dt); if frameTimes.count > 120 { frameTimes.removeFirst() }
         world.clock += dt
+        pollGamepad(dt: dt)
         let frames = world.groupFrames(pivots: pivots, clock: world.clock)
         let geometry = staticGeometry.moved(frames: frames)
         if mode == .play {
@@ -496,6 +500,50 @@ struct Glass3DPending {
         camera.distance = 10; clampCamera()
     }
     func lookStraightDown() { glide = nil; camera.tilt = 0; clampCamera() }
+    // MARK: Game controller
+
+    private func pollGamepad(dt: Double) {
+        guard let pad = gamepad.sample() else {
+            if padMoving { setStick(0, 0); padMoving = false }
+            if padLooking { setLook(0, 0); padLooking = false }
+            return
+        }
+        let previous = gamepad.previous
+        gamepad.remember(pad)
+        let playing = mode == .play
+        for action in SpatialGamepad.actions(pad, previous: previous, playing: playing) { perform(action) }
+        let move = SpatialGamepad.move(pad), look = SpatialGamepad.look(pad)
+        let moving = move.x != 0 || move.y != 0, looking = look.x != 0 || look.y != 0
+        if playing {
+            // Only write while the pad is in use, so touch sticks keep working.
+            if moving || padMoving { setStick(move.x, move.y) }
+            if looking || padLooking { setLook(look.x, look.y) }
+        } else {
+            if moving { pan(screenDX: -move.x * 400 * dt, screenDY: -move.y * 400 * dt) }
+            if looking { turn(by: look.x * 120 * dt); tilt(by: -look.y * 60 * dt) }
+            let factor = SpatialGamepad.zoomFactor(pad, dt: dt)
+            if factor != 1 { zoom(by: factor) }
+        }
+        padMoving = playing && moving; padLooking = playing && looking
+    }
+
+    private func perform(_ action: SpatialPadAction) {
+        switch action {
+        case .jump: if health == 0 { revive() } else { jump() }
+        case .attack: attack(.strike)
+        case .skill: attack(.skill)
+        case .dodge: roll()
+        case .lock: toggleLock()
+        case .cameraBehind: cameraBehindPlayer()
+        case .hotbar(let slot): if hotbar.indices.contains(slot) { castHotbar(slot) }
+        case .switchMode: mode = mode == .play ? .edit : .play
+        case .flyUp: fly(2)
+        case .flyDown: fly(-2)
+        case .backToCharacter: backToCharacter()
+        case .straightDown: lookStraightDown()
+        }
+    }
+
     /// Glides to an angled close-up behind the character and pulses it,
     /// so the tap always shows a change even when it was already centred.
     func backToCharacter() {
