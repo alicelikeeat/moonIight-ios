@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 // once (one undo step). Sheets use the system's native glass on iOS 26.
 
 private struct LibraryItem: Identifiable { let id: String; let title: String; let kind: RPGMediaKind }
-private func libraryItems(_ store: MediaStore) -> [LibraryItem] {
+@MainActor private func libraryItems(_ store: MediaStore) -> [LibraryItem] {
     store.items.compactMap { item in
         guard item.kind != .embed, item.remoteURL?.isFileURL == true else { return nil }
         let kind = RPGMediaCatalogKind.kind(for: item)
