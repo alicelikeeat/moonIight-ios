@@ -118,6 +118,7 @@ struct Glass3DMediaPicker: View {
     @State private var filter: Filter = .all
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importingFiles = false
+    @State private var choosingPhotos = false
     @State private var progress: (done: Int, total: Int)?
     @State private var message: String?
     @State private var selecting = false
@@ -228,6 +229,7 @@ struct Glass3DMediaPicker: View {
                 Button(L10n.t("取消", "Cancel"), role: .cancel) { pendingDelete = [] }
             } message: { Text(deleteMessage) }
         }
+        .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 20, matching: .any(of: [.images, .videos]))
         .fileImporter(isPresented: $importingFiles, allowedContentTypes: [.image, .gif, .movie], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { importFiles(urls) }
         }
@@ -241,7 +243,7 @@ struct Glass3DMediaPicker: View {
 
     private var importRow: some View {
         HStack(spacing: 12) {
-            PhotosPicker(selection: $photoItems, maxSelectionCount: 20, matching: .any(of: [.images, .videos])) {
+            Button { choosingPhotos = true } label: {
                 importTile(L10n.t("相册", "Photos"), L10n.t("图片 · GIF · 视频", "Images · GIFs · videos"), "photo.on.rectangle.angled", [.orange, .pink])
             }
             .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-photos")
