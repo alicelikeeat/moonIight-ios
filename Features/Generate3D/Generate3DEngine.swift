@@ -612,6 +612,12 @@ enum VideoReconstructionPipeline {
         let model = try await Task.detached(priority: .userInitiated) { () throws -> GLBModel in
             var m = try GLBCodec.read(glb)
             m.mesh.normalize(size: 1)
+            // v1.75: colours per vertex (TripoSR and others) become a texture.
+            if m.texture == nil, let colors = m.colors {
+                let baked = VertexColorBaker.bake(m.mesh, colors: colors)
+                m.mesh = baked.mesh
+                if let cg = ModelAnimationExport.cgImage(baked.texture), let jpeg = PixelReader.jpeg(cg, quality: 0.92) { m.texture = jpeg; m.textureMime = "image/jpeg" }
+            }
             return m
         }.value
         let id = UUID().uuidString

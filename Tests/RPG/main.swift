@@ -2499,4 +2499,69 @@ do {
     print("RPG v1.74 generation: \(checks) total checks passed")
 }
 
+
+// P41: v1.75 — local image → 3D: vertex colours, TripoSR decoder on the
+// phone, local server protocol.
+do {
+    // GLB vertex colours round trip and baking into a texture.
+    var tri = GeneratedMesh(positions: [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 0], normals: [Float](repeating: 0, count: 12), uvs: [Float](repeating: 0, count: 8), indices: [0, 1, 2, 1, 3, 2])
+    tri.computeNormals()
+    let colours: [Float] = [1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1]
+    let coloured = try GLBCodec.read(GLBCodec.write(tri, colors: colours))
+    check(coloured.colors == colours && coloured.texture == nil, "GLB vertex colours round trip")
+    let baked = VertexColorBaker.bake(tri, colors: colours)
+    check(baked.mesh.triangleCount == 2 && baked.mesh.vertexCount == 6 && baked.mesh.valid, "vertex colours baked: one cell per triangle")
+    func texel(_ v: Int) -> [UInt8] {
+        let u = baked.mesh.uvs[v * 2], w = 1 - baked.mesh.uvs[v * 2 + 1]
+        return baked.texture.pixel(min(baked.texture.width - 1, Int(u * Float(baked.texture.width))), min(baked.texture.height - 1, Int(w * Float(baked.texture.height))))
+    }
+    check(texel(0)[0] == 255 && texel(0)[1] == 0 && texel(1)[1] == 255 && texel(2)[2] == 255 && texel(4)[0] == 255 && texel(4)[2] == 255, "each corner samples its vertex colour")
+
+    // TripoSR decoder: tiny synthetic model whose density is a ball.
+    let C = 2, S = 16
+    var plane = [Float](repeating: 0, count: 3 * C * S * S)
+    for p in 0..<3 { for y in 0..<S { for x in 0..<S {
+        let u = (Float(x) + 0.5) / Float(S) * 2 - 1, v = (Float(y) + 0.5) / Float(S) * 2 - 1
+        plane[p * C * S * S + y * S + x] = -(u * u + v * v)            // channel 0: −r² in this plane
+        plane[p * C * S * S + S * S + y * S + x] = Float(p)            // channel 1: plane number
+    } } }
+    // One layer: density = 6 + Σ channel 0 (plane sums give −2r²), colours from channel 1.
+    var w = [Float](repeating: 0, count: 4 * 3 * C)
+    for p in 0..<3 { w[0 * 3 * C + p * C] = 4 }
+    w[1 * 3 * C + 0 * C + 1] = 1; w[2 * 3 * C + 1 * C + 1] = 1; w[3 * 3 * C + 2 * C + 1] = 1
+    var decoder = TripoSRDecoder(layers: [.init(outputs: 4, inputs: 3 * C, weights: w, bias: [6, 0, 0, 0])])
+    decoder.channels = C; decoder.planeSize = S; decoder.threshold = 25
+    let reloaded = try TripoSRDecoder.load(decoder.encoded())
+    check(reloaded.layers.count == 1 && reloaded.channels == C && reloaded.planeSize == S && reloaded.layers[0].weights == w, "decoder weights file round trip")
+    var corrupt = false
+    do { _ = try TripoSRDecoder.load(Data("TSRDxxxx".utf8)) } catch { corrupt = true }
+    check(corrupt, "damaged decoder file refused")
+    // Texel centre samples exactly (align_corners = false), outside is zero padding.
+    let centre = decoder.features(plane, points: [SIMD3((0.5 / Float(S) * 2 - 1) * 0.87, (0.5 / Float(S) * 2 - 1) * 0.87, 0)])
+    check(abs(centre[0] - plane[0]) < 1e-5, "triplane sampled like grid_sample (texel centres)")
+    let outside = decoder.features(plane, points: [SIMD3(5, 5, 5)])
+    check(outside.allSatisfy { $0 == 0 }, "points outside the planes read zero")
+    check(TripoSRDecoder.raw(SIMD3(1, 2, 3)) == SIMD3(-3, -1, 2), "TripoSR z-up → y-up front +z")
+    let ball = try decoder.mesh(plane, resolution: 40)
+    let a = MeshAnalyzer.analyze(ball.mesh), bb = ball.mesh.bounds
+    let size = bb.max[0] - bb.min[0]
+    check(ball.mesh.valid && a.watertight && a.components == 1 && size > 0.3 && size < 1.74, "decoder field becomes one closed surface (size \(size))")
+    check(ball.colors.count == ball.mesh.vertexCount * 3 && ball.colors.allSatisfy { $0 > 0 && $0 < 1 }, "vertex colours from the decoder")
+
+    // Local server protocol.
+    check(LocalServerConfig.parse("192.168.1.20:8765", token: "") != nil && LocalServerConfig.parse("http://mac-studio.local:8765", token: "") != nil
+          && LocalServerConfig.parse("http://172.20.0.5", token: "") != nil, "local network addresses accepted over http")
+    check(LocalServerConfig.parse("http://example.com", token: "") == nil && LocalServerConfig.parse("http://8.8.8.8", token: "") == nil
+          && LocalServerConfig.parse("https://gpu.example.com", token: "") != nil, "plain http to the internet refused")
+    let server = LocalServerConfig.parse("192.168.1.20:8765/", token: "t")!
+    let create = Image3DServerProtocol.create(server, image: Data([1, 2]), mime: "image/jpeg", texture: true)
+    check(create.url?.absoluteString == "http://192.168.1.20:8765/v1/image3d/jobs" && create.httpMethod == "POST" && create.value(forHTTPHeaderField: "Authorization") == "Bearer t", "local server create request")
+    check(Image3DServerProtocol.result(server, id: "a b").url?.path == "/v1/image3d/jobs/a%20b/result" || Image3DServerProtocol.result(server, id: "a b").url?.absoluteString.hasSuffix("/v1/image3d/jobs/a%20b/result") == true, "local server result request")
+    let health = try Image3DServerProtocol.healthInfo(Data(#"{"name":"Moonlight Local 3D","backend":"triposr","version":"1.75"}"#.utf8))
+    check(health.backend == "triposr", "health reply read")
+    let served = try Image3DServerProtocol.model(fromGLB: GLBCodec.write(tri, colors: colours))
+    check(served.texture != nil && served.mesh.triangleCount == 2, "server GLB with vertex colours gets a texture")
+    print("RPG v1.75 local 3D: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

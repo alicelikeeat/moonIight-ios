@@ -28,6 +28,8 @@ struct GLBModel: Sendable {
     var texture: Data?
     var textureMime: String?
     var name: String?
+    /// v1.75: RGB per vertex (0…1) from COLOR_0, when the file has it.
+    var colors: [Float]? = nil
 }
 
 enum GLBCodec {
@@ -117,6 +119,8 @@ enum GLBCodec {
         if instances.isEmpty { instances = meshes.indices.map { ($0, .identity) } }
 
         var out = GeneratedMesh()
+        var colors: [Float] = []
+        var anyColor = false
         var hasNormals = true
         var textureMaterial: Int?
         for (meshIndex, transform) in instances where meshIndex < meshes.count {
@@ -130,6 +134,17 @@ enum GLBCodec {
                 guard out.vertexCount + count <= vertexLimit else { throw GLBError.tooLarge }
                 let normals = try attributes["NORMAL"].map { try floats($0, components: 3) }
                 let uvs = try attributes["TEXCOORD_0"].map { try floats($0, components: 2) }
+                var vertexColors: [Float]?
+                if let c = attributes["COLOR_0"], c < accessors.count {
+                    let four = (accessors[c]["type"] as? String) == "VEC4"
+                    let raw = try floats(c, components: four ? 4 : 3)
+                    let stride = four ? 4 : 3
+                    var rgb: [Float] = []
+                    rgb.reserveCapacity(raw.count / stride * 3)
+                    for i in 0..<(raw.count / stride) { rgb.append(raw[i * stride]); rgb.append(raw[i * stride + 1]); rgb.append(raw[i * stride + 2]) }
+                    vertexColors = rgb
+                    anyColor = true
+                }
                 if normals == nil { hasNormals = false }
                 let base = UInt32(out.vertexCount)
                 for v in 0..<count {
@@ -142,6 +157,7 @@ enum GLBCodec {
                     } else { out.normals += [0, 0, 1] }
                     // glTF UV origin is top-left; ours is bottom-left.
                     out.uvs += uvs.map { [$0[v * 2], 1 - $0[v * 2 + 1]] } ?? [0, 0]
+                    if let vertexColors, v * 3 + 2 < vertexColors.count { colors += vertexColors[(v * 3)..<(v * 3 + 3)] } else { colors += [1, 1, 1] }
                 }
                 let indexStart = out.indices.count
                 if let indexAccessor = primitive["indices"] as? Int {
@@ -173,7 +189,7 @@ enum GLBCodec {
             texture = Data(bytes.data); mime = images[source]["mimeType"] as? String
         }
         let name = meshes.first?["name"] as? String
-        return GLBModel(mesh: out, texture: texture, textureMime: mime, name: name)
+        return GLBModel(mesh: out, texture: texture, textureMime: mime, name: name, colors: anyColor ? colors : nil)
     }
 
     static func quaternion(_ q: [Float]) -> RigXform {
@@ -188,7 +204,7 @@ enum GLBCodec {
     // MARK: Write
 
     /// One mesh, one material; PNG / JPEG texture embedded when given.
-    static func write(_ mesh: GeneratedMesh, texture: Data? = nil, textureMime: String = "image/png", name: String = "moonlight") -> Data {
+    static func write(_ mesh: GeneratedMesh, texture: Data? = nil, textureMime: String = "image/png", name: String = "moonlight", colors: [Float]? = nil) -> Data {
         var bin = Data()
         func align() { while bin.count % 4 != 0 { bin.append(0) } }
         func appendFloats(_ values: [Float]) -> (Int, Int) {
@@ -207,6 +223,7 @@ enum GLBCodec {
         let idx = (idxStart, bin.count - idxStart)
         var image: (Int, Int)?
         if let texture { align(); image = (bin.count, texture.count); bin.append(texture) }
+        let colorView = colors.flatMap { $0.count == mesh.vertexCount * 3 ? appendFloats($0) : nil }
         align()
         var views: [[String: Any]] = [
             ["buffer": 0, "byteOffset": pos.0, "byteLength": pos.1, "target": 34962],
@@ -215,16 +232,23 @@ enum GLBCodec {
             ["buffer": 0, "byteOffset": idx.0, "byteLength": idx.1, "target": 34963],
         ]
         if let image { views.append(["buffer": 0, "byteOffset": image.0, "byteLength": image.1]) }
+        var attributes: [String: Int] = ["POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2]
+        var accessorList: [[String: Any]] = [
+            ["bufferView": 0, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC3", "min": b.min.map(Double.init), "max": b.max.map(Double.init)],
+            ["bufferView": 1, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC3"],
+            ["bufferView": 2, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC2"],
+            ["bufferView": 3, "componentType": 5125, "count": mesh.indices.count, "type": "SCALAR"],
+        ]
+        if let colorView {
+            views.append(["buffer": 0, "byteOffset": colorView.0, "byteLength": colorView.1, "target": 34962])
+            accessorList.append(["bufferView": views.count - 1, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC3"])
+            attributes["COLOR_0"] = accessorList.count - 1
+        }
         var json: [String: Any] = [
             "asset": ["version": "2.0", "generator": "Moonlight"],
             "scene": 0, "scenes": [["nodes": [0]]], "nodes": [["mesh": 0, "name": name]],
-            "meshes": [["name": name, "primitives": [["attributes": ["POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2], "indices": 3, "material": 0, "mode": 4]]]],
-            "accessors": [
-                ["bufferView": 0, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC3", "min": b.min.map(Double.init), "max": b.max.map(Double.init)],
-                ["bufferView": 1, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC3"],
-                ["bufferView": 2, "componentType": 5126, "count": mesh.vertexCount, "type": "VEC2"],
-                ["bufferView": 3, "componentType": 5125, "count": mesh.indices.count, "type": "SCALAR"],
-            ],
+            "meshes": [["name": name, "primitives": [["attributes": attributes, "indices": 3, "material": 0, "mode": 4]]]],
+            "accessors": accessorList,
             "bufferViews": views,
             "buffers": [["byteLength": bin.count]],
             "materials": [["name": name, "pbrMetallicRoughness": (image != nil ? ["baseColorTexture": ["index": 0], "metallicFactor": 0, "roughnessFactor": 0.8] : ["metallicFactor": 0, "roughnessFactor": 0.8]) as [String: Any]]],

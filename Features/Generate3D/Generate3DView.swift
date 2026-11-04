@@ -106,6 +106,7 @@ struct Generate3DScreen: View {
     private var startButtons: some View {
         VStack(alignment: .leading, spacing: 10) {
             AICharacterCard(store: store, tasks: tasks, quality: quality) { opened = $0 }
+            LocalAIModelCard(store: store) { opened = $0 }
             MultiViewCard(store: store) { opened = $0 }
             Text(L10n.t("图片生成 3D", "Picture to 3D")).font(.headline)
             HStack(spacing: 10) {
