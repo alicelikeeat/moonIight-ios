@@ -41,6 +41,13 @@ struct SpatialBattle: Sendable {
         return creature.kind == .boss ? BossDirector.example(id: "builtin.boss") : nil
     }
 
+    /// Revive: the player's burns and slows end, and enemy skills already
+    /// in the air are dropped so the player is not hit again on arrival.
+    mutating func playerRevived() {
+        playerStatuses = []
+        casts.removeAll { $0.casterID != Self.playerID }
+    }
+
     func cooldownLeft(_ skillID: String, clock: Double) -> Double { max(0, (readyAt[skillID] ?? 0) - clock) }
 
     /// The player casts a skill from the hotbar.

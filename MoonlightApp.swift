@@ -19,12 +19,12 @@ struct MoonlightApp: App {
 @MainActor
 final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
     static var playerAllowsLandscape = false
-    /// Set while the sandbox world is on screen; it takes priority.
+    /// Set while the sandbox / 3D world is on screen: it then turns freely
+    /// between portrait and landscape (v1.63; it used to lock landscape).
     static var sandboxLandscape = false
 
     static var supported: UIInterfaceOrientationMask {
-        if sandboxLandscape { return .landscape }
-        if playerAllowsLandscape { return [.portrait, .landscapeLeft, .landscapeRight] }
+        if sandboxLandscape || playerAllowsLandscape { return [.portrait, .landscapeLeft, .landscapeRight] }
         return .portrait
     }
 
@@ -32,10 +32,9 @@ final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
         Self.supported
     }
 
-    /// Switches between the landscape sandbox and portrait pages using the
-    /// iOS 16 scene geometry API. If the system refuses (for example during
-    /// another rotation) the layout still adapts, because the sandbox draws
-    /// a portrait layout whenever it is taller than wide.
+    /// Entering the sandbox allows both orientations (the screen follows the
+    /// device); leaving it returns other pages to portrait. Both layouts
+    /// adapt to the window shape, so a declined request is harmless.
     static func setSandboxLandscape(_ landscape: Bool) {
         #if DEBUG
         // Existing RPG UI tests drive the world in portrait; only tests that
@@ -47,7 +46,7 @@ final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
         sandboxLandscape = landscape
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
         for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscape : .portrait)) { error in
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: supported)) { error in
             print("Orientation request declined: \(error.localizedDescription)")
         }
     }

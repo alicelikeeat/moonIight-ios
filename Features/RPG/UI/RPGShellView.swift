@@ -37,8 +37,9 @@ struct RPGShellView: View {
     @State private var exitPrompt = false
     /// Glass shape editor (iOS 26+), opened from the shape tool or the control center.
     @State private var shapeEditor = false
-    /// V2.8: the 2.5D glass world on the same save.
+    /// The 3D glass world on the same save (opens in design mode at launch).
     @State private var glassWorld = false
+    @State private var glassWorldDesign = false
     var body: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
@@ -83,6 +84,7 @@ struct RPGShellView: View {
                 if let page = WorldHost.shared.pendingPage { WorldHost.shared.pendingPage = nil; queuedPage = page }
                 if session.ready { presentInitial() }
                 showPrologueIfNeeded()
+                openGlassWorldAtLaunch()
             }
             .onDisappear { controlCenter = false; session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
@@ -125,7 +127,7 @@ struct RPGShellView: View {
             .onChange(of: shapeEditor) { _ in syncOverlay() }
             .fullScreenCover(isPresented: $glassWorld) {
                 if #available(iOS 18.0, *) {
-                    Glass3DScreen(session: session) { glassWorld = false }.environmentObject(model)
+                    Glass3DScreen(session: session, startInDesign: glassWorldDesign) { glassWorld = false; glassWorldDesign = false }.environmentObject(model)
                 } else {
                     VStack(spacing: 12) {
                         Text(L10n.t("3D 玻璃世界需要 iOS 18 或更高版本。", "The 3D glass world needs iOS 18 or later."))
@@ -163,7 +165,8 @@ struct RPGShellView: View {
                 }
                 #endif
             }
-            .onChange(of:session.ready){ if $0 { presentInitial(); showPrologueIfNeeded() } }
+            .onChange(of:session.ready){ if $0 { presentInitial(); showPrologueIfNeeded(); openGlassWorldAtLaunch() } }
+            .onChange(of: prologue == nil) { done in if done { openGlassWorldAtLaunch() } }
             .onChange(of:session.world.id){ _ in showPrologueIfNeeded() }
             .onChange(of: tools) { _ in syncOverlay() }
             .onChange(of:storyPlaying){ _ in syncOverlay() }
@@ -298,7 +301,7 @@ struct RPGShellView: View {
         HStack {
             Button(L10n.t("校验", "Check")) { session.validateRoundTrip() }.accessibilityIdentifier("rpg-validate").disabled(!session.ready)
             Button(L10n.t("编辑", "Edit")) { session.enterMapEditor() }.accessibilityIdentifier("rpg-map-editor").disabled(!session.ready)
-            Button("2.5D") { glassWorld = true }.accessibilityIdentifier("rpg-glass-world").disabled(!session.ready)
+            Button("3D") { glassWorld = true }.accessibilityIdentifier("rpg-glass-world").disabled(!session.ready)
             Button(L10n.t("工具", "Tools")) { toolPath=[];tools = true }.accessibilityIdentifier("rpg-tools")
             Button(L10n.t("完成", "Done")) { Task { if await session.saveBeforeExit() { onExit() } } }.accessibilityIdentifier("rpg-close")
             Button { openControlCenter() } label: { Image(systemName: "square.grid.2x2").frame(width: 24, height: 24) }
@@ -495,6 +498,19 @@ struct RPGShellView: View {
     /// world; they resume only when every cover is gone.
     private func syncOverlay() {
         session.setOverlay(tools || storyPlaying || cellEditor != nil || controlCenter || appSettings || shapeEditor || glassWorld)
+    }
+
+    /// Once per app launch the 3D world opens straight into design mode
+    /// (setting in the 3D world's gear menu; iOS 18+).
+    private func openGlassWorldAtLaunch() {
+        guard #available(iOS 18.0, *), Glass3DLaunch.shouldOpen, session.ready, prologue == nil, !glassWorld, !tools else { return }
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--scroll-ui-tests") || arguments.contains("--rpg-ui-tests") { return }
+        #endif
+        Glass3DLaunch.opened = true
+        glassWorldDesign = true
+        glassWorld = true
     }
 
     private func showPrologueIfNeeded() {

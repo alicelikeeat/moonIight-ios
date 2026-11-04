@@ -1643,4 +1643,22 @@ do {
     print("RPG glass steadiness: \(checks) total checks passed")
 }
 
+// P28: v1.63 revive clears what would kill the player again at once.
+do {
+    var reviveWorld = SpatialWorld.blank()
+    var foe = CreatureEntity(id: "foe", kind: .boss, position: SpatialVector(132, 128.5, 0), home: SpatialVector(132, 128.5, 0), health: 400, maxHealth: 400, damage: 20)
+    foe.bossScriptID = nil
+    reviveWorld.creatures = [foe]
+    var revive = SpatialBattle()
+    var stamina = 100, life = 100
+    _ = revive.castPlayer("tpl.fireball", world: reviveWorld, origin: reviveWorld.spawn, facing: 0, target: nil, clock: 0, stamina: &stamina, health: &life)
+    let playerCasts = revive.casts.count
+    StatusRules.apply(StatusSpec(kind: .burn), to: &revive.playerStatuses)
+    check(!revive.playerStatuses.isEmpty, "burning before revive")
+    revive.playerRevived()
+    check(revive.playerStatuses.isEmpty, "revive ends burns and slows")
+    check(revive.casts.count == playerCasts && revive.casts.allSatisfy { $0.casterID == SpatialBattle.playerID }, "revive keeps the player's own skills, drops enemy ones")
+    print("RPG revive: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

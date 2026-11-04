@@ -123,7 +123,7 @@ struct WorldControlCenterView: View {
             sectionTitle(L10n.t("世界功能", "World Functions"))
             row(L10n.t("地图编辑", "Map Editor"), symbol: "square.grid.3x3.square") { onMapEditor() }.accessibilityIdentifier("world-fn-map-editor")
             if let onGlassWorld {
-                row(L10n.t("2.5D 玻璃世界", "2.5D Glass World"), symbol: "cube.transparent") { onGlassWorld() }.accessibilityIdentifier("world-fn-glass-world")
+                row(L10n.t("3D 玻璃世界", "3D Glass World"), symbol: "cube.transparent") { onGlassWorld() }.accessibilityIdentifier("world-fn-glass-world")
             }
             if let onShapeEditor {
                 row(L10n.t("形状编辑器", "Shape Editor"), symbol: "scribble.variable") { onShapeEditor() }.accessibilityIdentifier("world-fn-shape-editor")

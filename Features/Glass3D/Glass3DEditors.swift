@@ -5,14 +5,6 @@ import UniformTypeIdentifiers
 // clips, the skill timeline, and Boss phases. Each edits a copy and saves
 // once (one undo step). Sheets use the system's native glass on iOS 26.
 
-private struct LibraryItem: Identifiable { let id: String; let title: String; let kind: RPGMediaKind }
-@MainActor private func libraryItems(_ store: MediaStore) -> [LibraryItem] {
-    store.items.compactMap { item in
-        guard item.kind != .embed, item.remoteURL?.isFileURL == true else { return nil }
-        let kind = RPGMediaCatalogKind.kind(for: item)
-        return kind.usesLibraryFile ? LibraryItem(id: item.id, title: item.title, kind: kind) : nil
-    }
-}
 
 // MARK: Characters
 
@@ -56,6 +48,8 @@ private struct Glass3DCharacterForm: View {
     @State var draft: CharacterTemplate
     @State private var bindings: [MediaBinding] = []
     @State private var importing = false
+    /// Action whose media is being picked (thumbnail grid sheet).
+    @State private var picking: CharacterAction?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -94,9 +88,29 @@ private struct Glass3DCharacterForm: View {
         }
         .navigationTitle(draft.name).navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("保存", "Save")) { save(); dismiss() }.disabled(!draft.valid) } }
+        .sheet(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } })) {
+            if let action = picking {
+                Glass3DMediaPicker(items: glass3DMediaItems(store), title: action.title) { item in add(item, to: action) }
+            }
+        }
         .fileImporter(isPresented: $importing, allowedContentTypes: [UTType.usdz]) { result in
             if case .success(let url) = result, let name = controller.importModel(from: url) { draft.modelMediaID = name }
         }
+    }
+
+    private func add(_ item: Glass3DMediaItem, to action: CharacterAction) {
+        let wanted = draft.mode == .layered ? 6 : draft.mode.directions
+        let binding = MediaBinding(id: "cb:" + UUID().uuidString, mediaID: item.id, kind: item.kind, fit: .fit)
+        bindings.append(binding)
+        var next = draft.clips[action.rawValue] ?? ActionClip()
+        if next.bindingIDs.count >= wanted { next.bindingIDs.removeFirst() }
+        next.bindingIDs.append(binding.id)
+        draft.clips[action.rawValue] = next
+    }
+    /// Library file behind a clip binding (new in this form or saved).
+    private func preview(_ bindingID: String) -> Glass3DMediaItem? {
+        let mediaID = bindings.first { $0.id == bindingID }?.mediaID ?? controller.mediaID(forBinding: bindingID)
+        return mediaID.flatMap { id in glass3DMediaItems(store).first { $0.id == id } }
     }
 
     private func save() {
@@ -121,21 +135,19 @@ private struct Glass3DCharacterForm: View {
                 Text(action.title).font(.subheadline.weight(.semibold))
                 Spacer()
                 Text("\(clip.bindingIDs.count)/\(wanted)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                Menu {
-                    ForEach(libraryItems(store)) { item in
-                        Button(item.title) {
-                            let binding = MediaBinding(id: "cb:" + UUID().uuidString, mediaID: item.id, kind: item.kind, fit: .fit)
-                            bindings.append(binding)
-                            var next = clip
-                            if next.bindingIDs.count >= wanted { next.bindingIDs.removeFirst() }
-                            next.bindingIDs.append(binding.id)
-                            draft.clips[action.rawValue] = next
-                        }
-                    }
-                } label: { Image(systemName: "plus.circle") }
+                Button { picking = action } label: { Image(systemName: "plus.circle.fill").font(.title3) }
+                    .buttonStyle(.borderless).accessibilityLabel(L10n.t("添加素材", "Add Media"))
                 if !clip.bindingIDs.isEmpty { Button(role: .destructive) { draft.clips[action.rawValue] = nil } label: { Image(systemName: "trash") }.buttonStyle(.borderless) }
             }
             if !clip.bindingIDs.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(clip.bindingIDs.enumerated()), id: \.offset) { _, id in
+                            let media = preview(id)
+                            Glass3DMediaThumbnail(url: media?.url, kind: media?.kind ?? .image, side: 44, corner: 8)
+                        }
+                    }
+                }
                 HStack {
                     Stepper(L10n.t("速度 \(String(format: "%.1f", clip.speed))", "Speed \(String(format: "%.1f", clip.speed))"), value: Binding(get: { clip.speed }, set: { draft.clips[action.rawValue]?.speed = $0 }), in: 0.25...4, step: 0.25)
                     Toggle(L10n.t("循环", "Loop"), isOn: Binding(get: { clip.loop }, set: { draft.clips[action.rawValue]?.loop = $0 })).fixedSize()

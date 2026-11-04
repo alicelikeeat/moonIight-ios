@@ -163,8 +163,9 @@ struct Glass3DPending {
     private func modeChanged() {
         glide = nil; stick = (0, 0); look = (0, 0); padMoving = false; padLooking = false
         pending = nil; selection = []; trackPoints = []
-        camera.tilt = mode == .edit ? SpatialCameraRules.editTilt : SpatialCameraRules.playTilt
-        if mode == .play { camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() } }
+        if mode == .edit { designOverview(); return }
+        camera.tilt = SpatialCameraRules.playTilt
+        camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() }
         clampCamera()
     }
 
@@ -473,10 +474,28 @@ struct Glass3DPending {
         }
     }
 
+    /// Back at the spawn with full health. Burns end, enemy skills in the
+    /// air are dropped, nearby enemies forget the chase, and 3 seconds of
+    /// protection stop an instant second death (the old revive only reset
+    /// health, so a burn or a waiting enemy could kill again at once).
     func revive() {
         world.player.position = world.spawn; world.player.lastSafe = world.spawn; world.player.verticalSpeed = 0
-        health = 100; stamina = 100; notice = ""
+        world.player.grounded = false
+        health = 100; stamina = 100; staminaBuffer = 0
+        invulnerable = 3
+        battle.playerRevived()
+        lockedTarget = nil
+        for creature in world.creatures where (creature.position - world.spawn).flatLength < 16 { brains[creature.id] = nil }
+        for index in world.creatures.indices where world.creatures[index].alive && (world.creatures[index].position - world.spawn).flatLength < 8 {
+            world.creatures[index].position = world.creatures[index].home
+        }
         session.applySpatialVitals(health: health, stamina: stamina)
+        if mode != .play { mode = .play }
+        camera.target = world.player.position
+        if thirdPerson { cameraBehindPlayer() }
+        renderer.punch(lunge: false)
+        effects.burst(.heal, at: world.spawn + SpatialVector(0, 0, 0.6), seconds: 0.8, clock: world.clock, quality: quality)
+        notice = L10n.t("已复苏 · 3 秒内不受伤害", "Revived · 3 s of protection")
     }
 
     // MARK: Camera
@@ -557,6 +576,15 @@ struct Glass3DPending {
                                    yaw: ThirdPersonCamera.yawBehind(facing: world.player.facing), distance: 9)
         renderer.punch(lunge: false)
         effects.burst(.magic, at: p + SpatialVector(0, 0, 0.4), seconds: 0.5, clock: world.clock, quality: quality)
+    }
+    /// Opening view for design mode: an angled look over the character's
+    /// surroundings instead of straight down.
+    func designOverview() {
+        let p = world.player.position
+        camera.target = SpatialVector(p.x, p.y, p.z)
+        camera.tilt = 38; camera.distance = 18
+        camera.yaw = ThirdPersonCamera.yawBehind(facing: world.player.facing)
+        clampCamera()
     }
     /// Camera move in progress (design-mode buttons).
     private var glide: SpatialCameraState?
@@ -1028,6 +1056,8 @@ struct Glass3DPending {
             SpatialBuilder.mediaGrid(bindingID: binding.id, blocks: ids, face: face, stretch: stretch, world: &w)
         }
     }
+    /// Library media behind a saved binding (previews in the editors).
+    func mediaID(forBinding id: String) -> String? { session.world.mediaBindings.first { $0.id == id }?.mediaID }
     func clearMedia() { updateSelected(L10n.t("移除媒体", "Remove Media")) { $0.media = nil } }
 
     // MARK: Characters, skills and Boss scripts (v1.60 editors)
