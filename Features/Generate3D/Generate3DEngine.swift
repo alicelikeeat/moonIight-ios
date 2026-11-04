@@ -520,6 +520,7 @@ enum VideoReconstructionPipeline {
 
     /// Writes a depth-relief result; USDZ export is tried and verified by
     /// loading it back with RealityKit (kept only when that works).
+    @available(iOS 18.0, *)
     func store(_ output: ImageGenerationOutput, name: String, source: Generated3DManifest.Source, sourceName: String, hash: String, quality: GenerationQuality) async throws -> Generated3DManifest {
         let id = UUID().uuidString
         let meshFile = id + ".m3dg", textureFile = id + ".jpg", thumbnailFile = id + ".jpg"
@@ -555,6 +556,7 @@ enum VideoReconstructionPipeline {
     }
 
     /// Saves a reconstructed USDZ (Object Capture).
+    @available(iOS 18.0, *)
     func storeReconstruction(_ usdz: URL, thumbnail: URL?, name: String, sourceName: String, hash: String) async throws -> Generated3DManifest {
         let id = UUID().uuidString
         let target = Self.folder("Models").appendingPathComponent(id + ".usdz")
@@ -651,6 +653,7 @@ enum Generate3DExport {
 // MARK: Tasks
 
 /// One generation at a time: real stage progress, cancel, error recovery.
+@available(iOS 18.0, *)
 @MainActor final class GenerationTaskManager: ObservableObject {
     enum Phase: Equatable { case idle, running, finished(String), failed(String), cancelled, videoReady }
     @Published private(set) var phase: Phase = .idle

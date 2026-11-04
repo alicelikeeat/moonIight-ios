@@ -311,7 +311,7 @@ struct Generate3DScreen: View {
         if lit {
             var material = PhysicallyBasedMaterial()
             if let image { material.baseColor = .init(tint: color, texture: .init(image)) } else { material.baseColor = .init(tint: color) }
-            material.roughness = 0.7; material.metallic = 0
+            material.roughness = 0.7; material.metallic = 0.0
             model.model?.materials = [material]
         } else {
             var material = UnlitMaterial()
