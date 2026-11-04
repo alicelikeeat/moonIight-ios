@@ -42,6 +42,9 @@ enum SkinWeightSolver {
     /// Unique edges as an adjacency list with lengths.
     static func adjacency(_ mesh: GeneratedMesh, depthWeight: Float = 1) -> [[(Int32, Float)]] {
         var adj = [[(Int32, Float)]](repeating: [], count: mesh.vertexCount)
+        // Seams: vertices at the same position are joined at zero length.
+        let weld = MeshAnalyzer.weldMap(mesh)
+        for v in 0..<mesh.vertexCount where weld[v] != v { adj[v].append((Int32(weld[v]), 0)); adj[weld[v]].append((Int32(v), 0)) }
         var seen = Set<UInt64>()
         for t in 0..<mesh.triangleCount {
             let a = mesh.indices[t * 3], b = mesh.indices[t * 3 + 1], c = mesh.indices[t * 3 + 2]
@@ -100,14 +103,14 @@ enum SkinWeightSolver {
             guard options.crossSectionVisibility else { return true }
             let p = point(v)
             let s = min(cuts.count - 1, max(0, Int(p.y * Float(cuts.count))))
-            guard let piece = cuts[s].pieces.first(where: { p.x >= $0.minX - 0.006 && p.x <= $0.maxX + 0.006 }) else { return true }
+            guard let piece = cuts[s].pieces.first(where: { p.x >= $0.minX - 0.006 && p.x <= $0.maxX + 0.006 && p.z >= $0.minZ - 0.006 && p.z <= $0.maxZ + 0.006 }) else { return true }
             let a = world[boneList[b].joint], c = world[boneList[b].tip]
             let ab = c - a, l2 = (ab * ab).sum()
             let t = l2 > 0 ? min(1, max(0, ((p - a) * ab).sum() / l2)) : 0
             let q = a + ab * t
             // Only judge when the nearest bone point is near this cut.
             guard abs(q.y - p.y) < 0.05 else { return true }
-            return q.x >= piece.minX - 0.01 && q.x <= piece.maxX + 0.01
+            return q.x >= piece.minX - 0.01 && q.x <= piece.maxX + 0.01 && q.z >= piece.minZ - 0.02 && q.z <= piece.maxZ + 0.02
         }
         var owner = [Int](repeating: -1, count: n)
         for v in 0..<n {
@@ -199,6 +202,7 @@ enum SkinWeightSolver {
             }
             write(top.map { (boneList[$0.index].joint, $0.weight) }, into: &skin, vertex: v)
         }
+        unifySeams(&skin, mesh: mesh)
         return skin
     }
 
@@ -228,7 +232,16 @@ enum SkinWeightSolver {
             if top.isEmpty { out.joints[v * 4] = skin.joints[v * 4]; out.weights[v * 4] = 1; continue }
             write(top.map { ($0.index, $0.weight) }, into: &out, vertex: v)
         }
+        unifySeams(&out, mesh: mesh)
         return out
+    }
+
+    /// Split copies of a vertex get exactly the same weights (no cracks).
+    static func unifySeams(_ skin: inout SkinInfluences, mesh: GeneratedMesh) {
+        let weld = MeshAnalyzer.weldMap(mesh)
+        for v in 0..<mesh.vertexCount where weld[v] != v {
+            for k in 0..<4 { skin.joints[v * 4 + k] = skin.joints[weld[v] * 4 + k]; skin.weights[v * 4 + k] = skin.weights[weld[v] * 4 + k] }
+        }
     }
 
     /// The 4 largest positive entries of `row[offset ..< offset + count]`.

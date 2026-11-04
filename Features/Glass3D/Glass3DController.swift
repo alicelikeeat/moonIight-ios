@@ -228,6 +228,8 @@ struct Glass3DPending {
         } else {
             lastTime = nil
             link?.isPaused = false
+            // Everything edited while hidden (looks, tools) is shown again.
+            rebuildAll(); renderer.showSelection(selectedBlocks)
         }
     }
 

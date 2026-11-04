@@ -131,6 +131,12 @@ enum ClaudeMotion {
 
     /// The clip from a Messages API reply. Checks the stop reason first.
     static func clip(fromResponse data: Data, status: Int) throws -> RigClip {
+        try clip(fromJSON: Data(try answerText(data, status: status).utf8))
+    }
+
+    /// The structured answer text of a Messages API reply (stop reason,
+    /// refusal and HTTP errors checked first).
+    static func answerText(_ data: Data, status: Int) throws -> String {
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard status == 200 else {
             let message = ((object?["error"] as? [String: Any])?["message"] as? String) ?? String(decoding: data.prefix(300), as: UTF8.self)
@@ -145,7 +151,7 @@ enum ClaudeMotion {
         let blocks = object["content"] as? [[String: Any]] ?? []
         let text = blocks.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }.joined()
         guard !text.isEmpty else { throw ClaudeMotionError.badReply("no text") }
-        return try clip(fromJSON: Data(text.utf8))
+        return text
     }
 
     /// The clip from the structured JSON answer, clamped to safe ranges.
@@ -187,5 +193,66 @@ enum ClaudeMotion {
         let ai = out.clips.filter { $0.id.hasPrefix("ai-") }
         if ai.count > limit { let drop = Set(ai.prefix(ai.count - limit).map(\.id)); out.clips.removeAll { drop.contains($0.id) } }
         return out
+    }
+}
+
+// MARK: v1.74 character design (text → CharacterSpec)
+
+/// Claude turns a description into a character spec (body, outfit, hair,
+/// accessories, colours) that the phone builds into a 3D model. Only the
+/// description is sent.
+enum ClaudeCharacter {
+    static var schema: [String: Any] {
+        func e(_ values: [String]) -> [String: Any] { ["type": "string", "enum": values] }
+        let hex: [String: Any] = ["type": "string", "description": "RRGGBB"]
+        return [
+            "type": "object", "additionalProperties": false,
+            "required": ["name", "height_m", "build", "head_scale", "hair", "outfit", "accessories", "skin", "hair_color", "top", "bottom", "shoes", "accent", "metal"],
+            "properties": [
+                "name": ["type": "string"], "height_m": ["type": "number"], "head_scale": ["type": "number"],
+                "build": e(CharacterSpec.Build.allCases.map(\.rawValue)), "hair": e(CharacterSpec.Hair.allCases.map(\.rawValue)),
+                "outfit": e(CharacterSpec.Outfit.allCases.map(\.rawValue)),
+                "accessories": ["type": "array", "items": e(CharacterSpec.Accessory.allCases.map(\.rawValue))],
+                "skin": hex, "hair_color": hex, "top": hex, "bottom": hex, "shoes": hex, "accent": hex, "metal": hex,
+            ] as [String: Any],
+        ]
+    }
+
+    static let system = """
+    You design stylised 3D game characters for a phone app that builds them from rounded primitives. \
+    Read the user's description and choose: a short name in the user's language; height in metres (0.8-2.4; children and chibi \
+    characters are shorter with head_scale up to 1.6, adults use 1.0); build; hair; outfit (armor for warriors and knights, robe for \
+    mages, dress for princesses, ninja for ninjas and assassins, robot for robots and mechs, casual otherwise); accessories that fit \
+    (at most 6; one weapon per hand: sword or staff in the right hand, shield or bow in the left); and colours as RRGGBB hex that \
+    match the description and look good together. Skin is the face and hands (use metal-like greys for robots).
+    """
+
+    static func requestBody(prompt: String, model: ClaudeMotion.ModelChoice) throws -> Data {
+        var body: [String: Any] = [
+            "model": model.id, "max_tokens": 16000, "system": system,
+            "messages": [["role": "user", "content": "Character description:\n" + String(prompt.prefix(500))]],
+            "output_config": ["effort": "low", "format": ["type": "json_schema", "schema": schema]] as [String: Any],
+        ]
+        if model.fallbacks { body["fallbacks"] = "default" }
+        return try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+    }
+
+    static func spec(fromResponse data: Data, status: Int) throws -> CharacterSpec {
+        try spec(fromJSON: Data(try ClaudeMotion.answerText(data, status: status).utf8))
+    }
+
+    static func spec(fromJSON data: Data) throws -> CharacterSpec {
+        guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ClaudeMotionError.badReply("not JSON") }
+        var s = CharacterSpec(name: o["name"] as? String ?? "")
+        if let h = (o["height_m"] as? NSNumber)?.floatValue { s.height = h }
+        if let h = (o["head_scale"] as? NSNumber)?.floatValue { s.headScale = h }
+        s.build = (o["build"] as? String).flatMap(CharacterSpec.Build.init) ?? s.build
+        s.hair = (o["hair"] as? String).flatMap(CharacterSpec.Hair.init) ?? s.hair
+        s.outfit = (o["outfit"] as? String).flatMap(CharacterSpec.Outfit.init) ?? s.outfit
+        s.accessories = Array(((o["accessories"] as? [String]) ?? []).compactMap(CharacterSpec.Accessory.init).prefix(6))
+        for (key, path) in [("skin", \CharacterSpec.skin), ("hair_color", \.hairColor), ("top", \.top), ("bottom", \.bottom), ("shoes", \.shoes), ("accent", \.accent), ("metal", \.metal)] {
+            if let v = o[key] as? String { s[keyPath: path] = v }
+        }
+        return s.clamped
     }
 }

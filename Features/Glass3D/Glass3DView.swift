@@ -49,10 +49,13 @@ struct Glass3DScreen: View {
         GeometryReader { geometry in
             let portrait = geometry.size.height > geometry.size.width
             ZStack {
+                // The 3D view stays mounted; while hidden its scene is
+                // detached (nothing to draw) and a black cover sits on top.
+                // Re-creating the view on return could leave it empty (black).
+                Glass3DWorldView(controller: controller, hidden: worldSuspended).ignoresSafeArea()
                 if worldSuspended {
                     Color.black.ignoresSafeArea()
                 } else {
-                    Glass3DWorldView(controller: controller).ignoresSafeArea()
                     Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
                 }
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
@@ -668,6 +671,7 @@ struct Glass3DStick: View {
 @available(iOS 18.0, *)
 struct Glass3DWorldView: View {
     let controller: Glass3DController
+    var hidden = false
     var body: some View {
         GeometryReader { geometry in
             RealityView { content in
@@ -676,6 +680,18 @@ struct Glass3DWorldView: View {
                 // Drive the game from RealityKit's own frame updates (in step with rendering).
                 controller.updates = content.subscribe(to: SceneEvents.Update.self) { event in
                     MainActor.assumeIsolated { controller.renderedFrame(event.deltaTime) }
+                }
+            } update: { content in
+                let root = controller.renderer.root
+                if hidden {
+                    if root.parent != nil || root.scene != nil { content.remove(root) }
+                } else if root.scene == nil {
+                    content.add(root)
+                }
+                if !hidden && controller.updates == nil {
+                    controller.updates = content.subscribe(to: SceneEvents.Update.self) { event in
+                        MainActor.assumeIsolated { controller.renderedFrame(event.deltaTime) }
+                    }
                 }
             }
             .onAppear { controller.viewSize = geometry.size }

@@ -18,41 +18,75 @@ struct JointEstimate: Equatable, Sendable {
 }
 
 enum JointEstimator {
-    struct Piece: Equatable { var minX: Float; var maxX: Float; var x: Float; var z: Float; var count: Int; var minZ: Float; var maxZ: Float }
+    struct Piece: Equatable {
+        var minX: Float; var maxX: Float; var x: Float; var z: Float; var count: Int; var minZ: Float; var maxZ: Float
+        /// A plate (cape, shield seen edge-on): under 2.5% of the height
+        /// thick one way and over 4× as long the other.
+        var thin: Bool {
+            let a = maxX - minX, b = maxZ - minZ
+            return min(a, b) < 0.025 && max(a, b) > min(a, b) * 4
+        }
+    }
     struct Slice { var y: Float; var pieces: [Piece] }
 
     static let sliceCount = 64
 
-    /// Where the plane `axis = value` cuts the surface: intervals along
-    /// `along`, each with the depth range (third axis) of its cut points.
+    /// Where the plane `axis = value` cuts the surface: separate pieces of
+    /// the cut (connected in the plane, so a cape behind the legs is its
+    /// own piece), each with its range along `along` and in depth.
     static func section(_ mesh: GeneratedMesh, axis: Int, value: Float, along: Int, tolerance: Float) -> [Piece] {
         let depth = 3 - axis - along
-        var spans: [(lo: Float, hi: Float, zlo: Float, zhi: Float)] = []
+        var segments: [(Float, Float, Float, Float)] = []
         let p = mesh.positions
+        var lo = SIMD2<Float>(.infinity, .infinity), hi = SIMD2<Float>(-.infinity, -.infinity)
         for t in 0..<mesh.triangleCount {
-            let i = [Int(mesh.indices[t * 3]), Int(mesh.indices[t * 3 + 1]), Int(mesh.indices[t * 3 + 2])]
-            let h = i.map { p[$0 * 3 + axis] - value }
-            if (h[0] > 0 && h[1] > 0 && h[2] > 0) || (h[0] < 0 && h[1] < 0 && h[2] < 0) { continue }
-            var a: [Float] = [], d: [Float] = []
-            for (u, v) in [(0, 1), (1, 2), (2, 0)] where (h[u] <= 0) != (h[v] <= 0) || h[u] == 0 {
-                let f = h[u] == h[v] ? 0 : h[u] / (h[u] - h[v])
-                a.append(p[i[u] * 3 + along] + (p[i[v] * 3 + along] - p[i[u] * 3 + along]) * f)
-                d.append(p[i[u] * 3 + depth] + (p[i[v] * 3 + depth] - p[i[u] * 3 + depth]) * f)
+            let i0 = Int(mesh.indices[t * 3]), i1 = Int(mesh.indices[t * 3 + 1]), i2 = Int(mesh.indices[t * 3 + 2])
+            let h0 = p[i0 * 3 + axis] - value, h1 = p[i1 * 3 + axis] - value, h2 = p[i2 * 3 + axis] - value
+            if (h0 > 0 && h1 > 0 && h2 > 0) || (h0 < 0 && h1 < 0 && h2 < 0) { continue }
+            var pts: [(Float, Float)] = []
+            for (u, v, hu, hv) in [(i0, i1, h0, h1), (i1, i2, h1, h2), (i2, i0, h2, h0)] where (hu <= 0) != (hv <= 0) || hu == 0 {
+                let f = hu == hv ? 0 : hu / (hu - hv)
+                pts.append((p[u * 3 + along] + (p[v * 3 + along] - p[u * 3 + along]) * f, p[u * 3 + depth] + (p[v * 3 + depth] - p[u * 3 + depth]) * f))
             }
-            guard let lo = a.min(), let hi = a.max(), let zl = d.min(), let zh = d.max() else { continue }
-            spans.append((lo, hi, zl, zh))
+            guard let a = pts.first, let b = pts.last else { continue }
+            segments.append((a.0, a.1, b.0, b.1))
+            lo = SIMD2(min(lo.x, a.0, b.0), min(lo.y, a.1, b.1)); hi = SIMD2(max(hi.x, a.0, b.0), max(hi.y, a.1, b.1))
         }
-        spans.sort { $0.lo < $1.lo }
+        guard !segments.isEmpty else { return [] }
+        // Rasterise the cut into a small grid and take connected cells.
+        let cell = max(tolerance, max(hi.x - lo.x, hi.y - lo.y) / 160)
+        let gw = Int((hi.x - lo.x) / cell) + 3, gh = Int((hi.y - lo.y) / cell) + 3
+        var grid = [Bool](repeating: false, count: gw * gh)
+        for (a0, d0, a1, d1) in segments {
+            let steps = max(1, Int(max(abs(a1 - a0), abs(d1 - d0)) / cell) + 1)
+            for k in 0...steps {
+                let f = Float(k) / Float(steps)
+                let gx = Int((a0 + (a1 - a0) * f - lo.x) / cell) + 1, gy = Int((d0 + (d1 - d0) * f - lo.y) / cell) + 1
+                grid[gy * gw + gx] = true
+            }
+        }
+        var label = [Int32](repeating: -1, count: gw * gh)
         var pieces: [Piece] = []
-        for s in spans {
-            if var last = pieces.last, s.lo <= last.maxX + tolerance {
-                last.maxX = max(last.maxX, s.hi); last.minZ = min(last.minZ, s.zlo); last.maxZ = max(last.maxZ, s.zhi); last.count += 1
-                pieces[pieces.count - 1] = last
-            } else {
-                pieces.append(Piece(minX: s.lo, maxX: s.hi, x: 0, z: 0, count: 1, minZ: s.zlo, maxZ: s.zhi))
+        for start in 0..<(gw * gh) where grid[start] && label[start] < 0 {
+            let id = Int32(pieces.count)
+            var stack = [start]; label[start] = id
+            var piece = Piece(minX: .infinity, maxX: -.infinity, x: 0, z: 0, count: 0, minZ: .infinity, maxZ: -.infinity)
+            while let c = stack.popLast() {
+                let cx = c % gw, cy = c / gw
+                let ax = lo.x + (Float(cx) - 1 + 0.5) * cell, dz = lo.y + (Float(cy) - 1 + 0.5) * cell
+                piece.minX = min(piece.minX, ax - cell / 2); piece.maxX = max(piece.maxX, ax + cell / 2)
+                piece.minZ = min(piece.minZ, dz - cell / 2); piece.maxZ = max(piece.maxZ, dz + cell / 2)
+                piece.count += 1
+                for dy in -1...1 { for dx in -1...1 {
+                    let nx = cx + dx, ny = cy + dy
+                    guard nx >= 0, ny >= 0, nx < gw, ny < gh else { continue }
+                    let n = ny * gw + nx
+                    if grid[n] && label[n] < 0 { label[n] = id; stack.append(n) }
+                } }
             }
+            pieces.append(piece)
         }
-        return pieces.map { var q = $0; q.x = (q.minX + q.maxX) / 2; q.z = (q.minZ + q.maxZ) / 2; return q }
+        return pieces.map { var q = $0; q.x = (q.minX + q.maxX) / 2; q.z = (q.minZ + q.maxZ) / 2; return q }.sorted { $0.minX < $1.minX }
     }
 
     /// Horizontal cross-sections, bottom to top.
@@ -75,15 +109,19 @@ enum JointEstimator {
         let n = s.count
         func sliceIndex(_ y: Float) -> Int { min(n - 1, max(0, Int(y * Float(n)))) }
         func main(_ slice: Slice) -> Piece? {
-            // Piece nearest the centre line, the biggest when tied.
-            slice.pieces.min { abs($0.x) - Float($0.count) * 1e-6 < abs($1.x) - Float($1.count) * 1e-6 }
+            // Piece nearest the centre line (thin plates such as capes
+            // only when nothing else is there), the biggest when tied.
+            let body = slice.pieces.filter { !$0.thin }
+            return (body.isEmpty ? slice.pieces : body).min { abs($0.x) - Float($0.count) * 1e-6 < abs($1.x) - Float($1.count) * 1e-6 }
         }
 
         // Legs: from the bottom, slices where pieces sit on both sides of x = 0.
         func legsSplit(_ slice: Slice) -> (Piece, Piece)? {
             // Nothing may cross the centre line (that would be the torso).
-            if slice.pieces.contains(where: { $0.minX < -0.004 && $0.maxX > 0.004 }) { return nil }
-            let right = slice.pieces.filter { $0.maxX < 0 }, left = slice.pieces.filter { $0.minX > 0 }
+            let solid = slice.pieces.filter { !$0.thin }
+            let body = solid.isEmpty ? slice.pieces : solid
+            if body.contains(where: { $0.minX < -0.004 && $0.maxX > 0.004 }) { return nil }
+            let right = body.filter { $0.maxX < 0 }, left = body.filter { $0.minX > 0 }
             guard let r = right.max(by: { $0.maxX < $1.maxX }), let l = left.min(by: { $0.minX < $1.minX }) else { return nil }
             return (r, l)
         }
@@ -104,8 +142,10 @@ enum JointEstimator {
         var pose = MeshAnalysis.PoseType.unknown
         var outBand: [Int] = []
         for k in sliceIndex(crotch + 0.15)..<sliceIndex(0.92) {
-            let width = (s[k].pieces.map(\.maxX).max() ?? 0) - (s[k].pieces.map(\.minX).min() ?? 0)
-            if width > torsoWidth * 2.4 { outBand.append(k) }
+            // One connected piece (arms joined to the shoulders), not the
+            // span of separate things such as a shield beside the body.
+            let width = s[k].pieces.filter { !$0.thin && $0.minX < 0 && $0.maxX > 0 }.map { $0.maxX - $0.minX }.max() ?? 0
+            if width > max(torsoWidth * 2.4, 0.6) { outBand.append(k) }
         }
         var rightArm: [SIMD3<Float>] = [], leftArm: [SIMD3<Float>] = []
         var armpit: Float = 0
@@ -133,14 +173,38 @@ enum JointEstimator {
         } else {
             // Arms down: pieces outside the torso, above the crotch (and
             // the outermost ones below it, beside the legs).
+            // Each arm is followed from the armpit down: it starts next
+            // to the torso, keeps to the biggest piece close to the last
+            // one, and ends when only something much thinner is left (a
+            // staff or bow in the hand) or the path jumps.
             var top = -1
-            for k in bottom..<sliceIndex(0.95) {
-                let pieces = s[k].pieces
-                let above = s[k].y > crotch
-                let side: (Piece) -> Bool = { above ? ($0.maxX < torsoMin + 0.005 || $0.minX > torsoMax - 0.005) : true }
-                guard pieces.count >= (above ? 3 : 4) else { continue }
-                if let r = pieces.first, r.maxX < 0, side(r), (above || r.maxX < (rightLeg.first?.1.minX ?? -1)) { rightArm.append(SIMD3(r.x, s[k].y, r.z)); top = max(top, k) }
-                if let l = pieces.last, l.minX > 0, side(l), (above || l.minX > (leftLeg.first?.1.maxX ?? 1)) { leftArm.append(SIMD3(l.x, s[k].y, l.z)); top = max(top, k) }
+            for side: Float in [-1, 1] {
+                var last: Piece?, sizes: [Int] = [], path: [SIMD3<Float>] = []
+                for k in stride(from: sliceIndex(0.95) - 1, through: bottom, by: -1) {
+                    let above = s[k].y > crotch
+                    let legEdge: Float = side < 0 ? (rightLeg.first?.1.minX ?? -1) : (leftLeg.first?.1.maxX ?? 1)
+                    let candidates = s[k].pieces.filter { p in
+                        guard !p.thin, side < 0 ? p.maxX < 0 : p.minX > 0 else { return false }
+                        if above { return side < 0 ? p.maxX < torsoMin + 0.005 : p.minX > torsoMax - 0.005 }
+                        return side < 0 ? p.maxX < legEdge : p.minX > legEdge
+                    }
+                    let established = (path.first?.y ?? s[k].y) - s[k].y > 0.12
+                    guard let best = candidates.max(by: { $0.count < $1.count }) else {
+                        if established { break } else { path = []; sizes = []; last = nil; continue }
+                    }
+                    if let l = last, abs(best.x - l.x) > 0.08 {
+                        // A jump near the top (a staff above the shoulder) restarts; later it ends the arm.
+                        if established { break }
+                        path = []; sizes = []
+                    } else if established, sizes.count >= 6 {
+                        let recent = sizes.suffix(6).sorted()
+                        if best.count * 100 < recent[recent.count / 2] * 45 { break }
+                    }
+                    path.append(SIMD3(best.x, s[k].y, best.z)); sizes.append(best.count); last = best
+                }
+                // The armpit is where the kept path starts.
+                if let first = path.first { top = max(top, sliceIndex(first.y)) }
+                if side < 0 { rightArm = path } else { leftArm = path }
             }
             rightArm.sort { $0.y > $1.y }; leftArm.sort { $0.y > $1.y }
             if top >= 0 { armpit = s[top].y; pose = .armsDown }

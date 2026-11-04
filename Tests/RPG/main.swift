@@ -2387,4 +2387,99 @@ do {
     print("RPG rigging: \(checks) total checks passed")
 }
 
+
+// P40: v1.74 — text → 3D character (keywords / Claude spec), models from
+// 2 / 4 / 6 photos, seam-aware rigging.
+do {
+    func signedVolume(_ m: GeneratedMesh) -> Float {
+        var v: Float = 0
+        for t in 0..<m.triangleCount {
+            let a = Int(m.indices[t * 3]), b = Int(m.indices[t * 3 + 1]), c = Int(m.indices[t * 3 + 2]), p = m.positions
+            let ab: Float = p[b * 3 + 1] * p[c * 3 + 2] - p[b * 3 + 2] * p[c * 3 + 1]
+            let bc: Float = p[b * 3] * p[c * 3 + 2] - p[b * 3 + 2] * p[c * 3]
+            let ca: Float = p[b * 3] * p[c * 3 + 1] - p[b * 3 + 1] * p[c * 3]
+            v += (p[a * 3] * ab - p[a * 3 + 1] * bc + p[a * 3 + 2] * ca) / 6
+        }
+        return v
+    }
+    var prims = ProceduralCharacterBuilder.Builder()
+    prims.capsule([0.5, 0.2, 0], [0.6, 0.8, 0.1], 0.05, .skin)
+    let capsuleVolume = signedVolume(prims.mesh)
+    var disc = ProceduralCharacterBuilder.Builder()
+    disc.frustum(bottomCenter: [0.2, 0.2, 0.3], top: 0, bottomRadius: 0.2, topRadius: 0.2, .skin, axis: 0, thickness: 0.03)
+    check(capsuleVolume > 0 && signedVolume(disc.mesh) > 0, "primitives face outwards")
+
+    let warrior = CharacterKeywords.spec(for: "一个拿剑的红色战士")
+    check(warrior.outfit == .armor && warrior.accessories.contains(.sword) && warrior.accessories.contains(.shield) && warrior.top == "B83A3A", "keywords: red warrior with sword and shield")
+    check(CharacterKeywords.spec(for: "purple wizard").accessories.contains(.wizardHat) && CharacterKeywords.spec(for: "可爱的机器人").outfit == .robot, "keywords: wizard, robot")
+    var odd = CharacterSpec(name: "  "); odd.height = .nan; odd.headScale = 9; odd.top = "#zz"; odd.accessories = [.sword, .sword]
+    let fixed = odd.clamped
+    check(fixed.height == 1.7 && fixed.headScale == 1.6 && fixed.top == CharacterSpec(name: "").top && fixed.accessories == [.sword] && !fixed.name.isEmpty, "character spec clamped")
+    for prompt in ["一个拿剑的红色战士", "骑士", "金发弓箭手", "可爱的机器人", "紫色法师", "公主", "恶魔"] {
+        let built = ProceduralCharacterBuilder.build(CharacterKeywords.spec(for: prompt))
+        check(built.mesh.valid && signedVolume(built.mesh) > 0 && built.palette.width == 64, "\(prompt): closed coloured mesh (\(built.mesh.triangleCount) triangles)")
+        var skeletonOK = true
+        do { try built.skeleton.validate() } catch { skeletonOK = false }
+        let tests = RiggingPipeline.test(built.mesh, skeleton: built.skeleton, skin: built.skin)
+        check(skeletonOK && built.skin.valid(jointCount: built.skeleton.joints.count, vertexCount: built.mesh.vertexCount) && tests.allSatisfy { $0.status == .pass },
+              "\(prompt): exact rig passes all 8 motion tests [\(tests.map { "\($0.id):\($0.status.rawValue)" }.joined(separator: " "))]")
+    }
+    let claudeBody = try JSONSerialization.jsonObject(with: try ClaudeCharacter.requestBody(prompt: "a knight", model: ClaudeMotion.models[0])) as! [String: Any]
+    check(((claudeBody["output_config"] as? [String: Any])?["format"] as? [String: Any])?["type"] as? String == "json_schema" && claudeBody["fallbacks"] as? String == "default", "Claude character request: structured output")
+    let reply: [String: Any] = ["stop_reason": "end_turn", "content": [["type": "text", "text": #"{"name":"银骑士","height_m":1.9,"build":"heavy","head_scale":1,"hair":"none","outfit":"armor","accessories":["helmet","sword","shield","cape","laser"],"skin":"F0C8A8","hair_color":"333333","top":"C0C6D0","bottom":"404858","shoes":"303030","accent":"2850A0","metal":"D0D4DA"}"#]]]
+    let knight = try ClaudeCharacter.spec(fromResponse: try JSONSerialization.data(withJSONObject: reply), status: 200)
+    check(knight.name == "银骑士" && knight.build == .heavy && knight.accessories == [.helmet, .sword, .shield, .cape] && knight.top == "C0C6D0", "Claude character answer parsed, unknown items dropped")
+
+    // Photos of a blocky figure from six directions (orthographic).
+    let boxes: [(Int, Int, Int, Int, Int, Int)] = [(27, 0, 6, 31, 28, 12), (33, 0, 6, 37, 28, 12), (26, 28, 5, 38, 48, 11), (30, 48, 6, 34, 51, 10), (28, 51, 5, 36, 60, 11),
+                                                   (21, 25, 6, 24, 47, 10), (40, 25, 6, 43, 47, 10), (24, 44, 6, 26, 47, 10), (38, 44, 6, 40, 47, 10)]
+    func solid(_ x: Int, _ y: Int, _ z: Int) -> Bool { boxes.contains { x >= $0.0 && y >= $0.1 && z >= $0.2 && x < $0.3 && y < $0.4 && z < $0.5 } }
+    func photo(_ view: PhotoView) -> ViewPhoto {
+        let s = 4, pad = 20, W = 64, H = 64, D = 16
+        let size: (Int, Int) = view == .front || view == .back ? (W, H) : view == .left || view == .right ? (D, H) : (W, D)
+        let pw = size.0 * s + pad * 2, ph = size.1 * s + pad * 2
+        var mask = [Float](repeating: 0, count: pw * ph)
+        var image = RasterImage(width: pw, height: ph, fill: [10, 10, 10, 255])
+        let tint: [UInt8] = view == .front ? [220, 40, 40] : view == .back ? [40, 40, 220] : [40, 200, 40]
+        for py in pad..<(ph - pad) { for px in pad..<(pw - pad) {
+            let u = (px - pad) / s, v = (py - pad) / s
+            var hit = false
+            switch view {
+            case .front: for z in 0..<D where solid(u, H - 1 - v, z) { hit = true }
+            case .back: for z in 0..<D where solid(W - 1 - u, H - 1 - v, z) { hit = true }
+            case .left: for x in 0..<W where solid(x, H - 1 - v, D - 1 - u) { hit = true }
+            case .right: for x in 0..<W where solid(x, H - 1 - v, u) { hit = true }
+            case .top: for y in 0..<H where solid(u, y, v) { hit = true }
+            case .bottom: for y in 0..<H where solid(u, y, D - 1 - v) { hit = true }
+            }
+            if hit { mask[py * pw + px] = 1; let o = (py * pw + px) * 4; image.rgba[o] = tint[0]; image.rgba[o + 1] = tint[1]; image.rgba[o + 2] = tint[2] }
+        } }
+        return ViewPhoto(width: pw, height: ph, mask: mask, image: image)
+    }
+    for set in [[PhotoView.front, .back], [.front, .back, .left, .right], PhotoView.allCases] {
+        var photos: [PhotoView: ViewPhoto] = [:]
+        for v in set { photos[v] = photo(v) }
+        let result = try MultiViewCarver.build(photos)
+        let a = MeshAnalyzer.analyze(result.mesh), b = result.mesh.bounds
+        let depth = b.max[2] - b.min[2], width = b.max[0] - b.min[0]
+        check(result.mesh.valid && a.watertight && a.components == 1 && signedVolume(result.mesh) > 0, "\(set.count) photos: one closed surface")
+        check(abs(width - 22.0 / 60) < 0.03 && (set.count == 2 || abs(depth - 7.0 / 60) < 0.03), "\(set.count) photos: proportions (width \(width), depth \(depth))")
+        let rig = try RiggingPipeline.run(result.mesh)
+        check(rig.estimate.pose == .armsDown && rig.diagnostics.results.allSatisfy { $0.status != .fail }, "\(set.count) photos: rigged automatically")
+        // The front faces take the front photo's colour.
+        let front = result.mesh.vertexCount > 0 ? (0..<result.mesh.vertexCount).first { result.mesh.normals[$0 * 3 + 2] > 0.95 && abs(result.mesh.positions[$0 * 3]) < 0.02 && result.mesh.positions[$0 * 3 + 1] > 0.6 } : nil
+        if let f = front {
+            let u = result.mesh.uvs[f * 2], v = 1 - result.mesh.uvs[f * 2 + 1]
+            let x = min(result.atlas.width - 1, Int(u * Float(result.atlas.width))), y = min(result.atlas.height - 1, Int(v * Float(result.atlas.height)))
+            check(result.atlas.pixel(x, y)[0] > 150 && result.atlas.pixel(x, y)[2] < 100, "\(set.count) photos: front surface textured from the front photo")
+        }
+    }
+    var noFront = false
+    do { _ = try MultiViewCarver.build([.back: photo(.back)]) } catch MultiViewError.needsFront { noFront = true }
+    check(noFront, "a front photo is required")
+    let weld = MeshAnalyzer.weldMap(GeneratedMesh(positions: [0, 0, 0, 1, 0, 0, 0, 0, 0], normals: [Float](repeating: 0, count: 9), uvs: [Float](repeating: 0, count: 6), indices: []))
+    check(weld == [0, 1, 0], "seam vertices welded for rigging")
+    print("RPG v1.74 generation: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

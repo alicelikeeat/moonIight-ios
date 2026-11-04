@@ -56,8 +56,9 @@ enum MeshAnalyzer {
         var edgeUse: [UInt64: Int] = [:]
         edgeUse.reserveCapacity(t * 3)
         var edgeSum: Double = 0, edgeCount = 0
+        let weld = weldMap(mesh)
         for k in 0..<t {
-            let a = mesh.indices[k * 3], b = mesh.indices[k * 3 + 1], c = mesh.indices[k * 3 + 2]
+            let a = UInt32(weld[Int(mesh.indices[k * 3])]), b = UInt32(weld[Int(mesh.indices[k * 3 + 1])]), c = UInt32(weld[Int(mesh.indices[k * 3 + 2])])
             if a == b || b == c || a == c || area(mesh, Int(a), Int(b), Int(c)) < 1e-12 { degenerate += 1; continue }
             if !faces.insert([a, b, c].sorted()).inserted { duplicates += 1; continue }
             for (u, v) in [(a, b), (b, c), (c, a)] {
@@ -83,9 +84,22 @@ enum MeshAnalyzer {
                             meanEdge: edgeCount > 0 ? Float(edgeSum / Double(edgeCount)) : 0, symmetry: symmetry(mesh, centerX: center[0]))
     }
 
+    /// Representative of every vertex: vertices at the same position (UV or
+    /// texture seams split them) share one, so seams do not cut the mesh.
+    static func weldMap(_ mesh: GeneratedMesh) -> [Int] {
+        var first: [SIMD3<Int32>: Int] = [:]
+        first.reserveCapacity(mesh.vertexCount)
+        return (0..<mesh.vertexCount).map { v in
+            let k = SIMD3(Int32((mesh.positions[v * 3] * 1e5).rounded()), Int32((mesh.positions[v * 3 + 1] * 1e5).rounded()), Int32((mesh.positions[v * 3 + 2] * 1e5).rounded()))
+            if let f = first[k] { return f }
+            first[k] = v
+            return v
+        }
+    }
+
     /// Connected pieces: label per vertex and size per label.
     static func components(_ mesh: GeneratedMesh) -> (labels: [Int], sizes: [Int]) {
-        var parent = Array(0..<mesh.vertexCount)
+        var parent = weldMap(mesh)
         func find(_ x: Int) -> Int { var x = x; while parent[x] != x { parent[x] = parent[parent[x]]; x = parent[x] }; return x }
         for k in 0..<mesh.triangleCount {
             let a = find(Int(mesh.indices[k * 3])), b = find(Int(mesh.indices[k * 3 + 1])), c = find(Int(mesh.indices[k * 3 + 2]))
