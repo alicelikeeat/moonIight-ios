@@ -54,7 +54,7 @@ struct Glass3DCharacterEditor: View {
                             Glass3DCharacterForm(controller: controller, store: store, draft: template)
                         } label: {
                             HStack {
-                                Label(template.name, systemImage: template.mode == .model ? "cube" : "person.crop.rectangle")
+                                Label(template.name, systemImage: template.mode == .model || template.mode == .generated ? "cube" : "person.crop.rectangle")
                                 Spacer()
                                 if controller.world.playerCharacterID == template.id { Text(L10n.t("主角", "Player")).font(.caption).foregroundStyle(.tint) }
                             }
@@ -96,7 +96,10 @@ private struct Glass3DCharacterForm: View {
         Form {
             Section(L10n.t("外观", "Look")) {
                 TextField(L10n.t("名称", "Name"), text: $draft.name)
-                Picker(L10n.t("显示方式", "Display"), selection: $draft.mode) { ForEach(CharacterDisplayMode.allCases, id: \.self) { Text($0.title).tag($0) } }
+                Picker(L10n.t("显示方式", "Display"), selection: $draft.mode) { ForEach(CharacterDisplayMode.allCases.filter { $0 != .generated || draft.mode == .generated }, id: \.self) { Text($0.title).tag($0) } }
+                if draft.mode == .generated {
+                    Text(L10n.t("来自「AI 生成 3D 模型」；绑定了骨骼的模型在世界里会按动作播放待机、行走、奔跑、挥手。", "From AI 3D Models; rigged models play idle, walk, run and wave in the world.")).font(.caption).foregroundStyle(.secondary)
+                }
                 if draft.mode == .model {
                     Button { importing = true } label: { Label(draft.modelMediaID == nil ? L10n.t("导入 USDZ 模型", "Import USDZ Model") : L10n.t("更换 USDZ 模型", "Replace USDZ Model"), systemImage: "square.and.arrow.down") }
                 }
@@ -111,7 +114,7 @@ private struct Glass3DCharacterForm: View {
                 slider(L10n.t("碰撞高度", "Collider Height"), value: $draft.colliderHeight, range: 0.5...10)
                 slider(L10n.t("受击范围倍数", "Hurt Box Scale"), value: $draft.hurtScale, range: 0.5...3)
             }
-            if draft.mode != .model {
+            if draft.mode != .model && draft.mode != .generated {
                 Section {
                     ForEach(CharacterAction.allCases, id: \.self) { action in actionRow(action) }
                 } header: { Text(L10n.t("动作素材", "Action Media")) } footer: {

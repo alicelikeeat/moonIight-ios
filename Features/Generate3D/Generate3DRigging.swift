@@ -98,7 +98,7 @@ enum Generate3DRigging {
 @available(iOS 18.0, *)
 @MainActor final class AnimatedRegionMesh {
     struct Vertex { var position: SIMD3<Float>; var normal: SIMD3<Float>; var uv: SIMD2<Float> }
-    private struct Region { var vertices: [Int32]; var mesh: LowLevelMesh; var entity: ModelEntity }
+    private struct Region { var region: Int; var vertices: [Int32]; var mesh: LowLevelMesh; var resource: MeshResource; var entity: ModelEntity }
 
     let root = Entity()
     private var regions: [Region] = []
@@ -137,20 +137,23 @@ enum Generate3DRigging {
                 for (i, index) in indices.enumerated() { target[i] = index }
             }
             low.parts.replaceAll([LowLevelMesh.Part(indexCount: indices.count, topology: .triangle, bounds: BoundingBox(min: [-2, -2, -2], max: [2, 2, 2]))])
-            let entity = ModelEntity(mesh: try MeshResource(from: low))
+            let resource = try MeshResource(from: low)
+            let entity = ModelEntity(mesh: resource)
             root.addChild(entity)
-            regions.append(Region(vertices: vertices, mesh: low, entity: entity))
+            regions.append(Region(region: region, vertices: vertices, mesh: low, resource: resource, entity: entity))
         }
         write()
     }
 
     /// Region of each part entity, for colours.
-    var regionEntities: [(region: Int, entity: ModelEntity)] {
-        var out: [(Int, ModelEntity)] = []
-        var index = 0
-        let present = Set(RigPose.triangleRegions(mesh, skin: skin))
-        for region in 0..<4 where present.contains(UInt8(region)) { out.append((region, regions[index].entity)); index += 1 }
-        return out
+    var regionEntities: [(region: Int, entity: ModelEntity)] { regions.map { ($0.region, $0.entity) } }
+
+    /// Another entity showing the same deforming mesh (characters in the
+    /// world that share a model and clip share one skinning pass).
+    func makeEntity(material: RealityKit.Material) -> Entity {
+        let holder = Entity()
+        for region in regions { holder.addChild(ModelEntity(mesh: region.resource, materials: [material])) }
+        return holder
     }
 
     /// Poses the mesh for `clip` at `time` (nil clip = rest pose).

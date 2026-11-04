@@ -37,10 +37,13 @@ enum CharacterDisplayMode: String, Codable, CaseIterable, Sendable {
     case layered
     /// A USDZ 3D model.
     case model
+    /// v1.69: a model made by "AI 3D Models" (Generated3D), animated when rigged.
+    case generated
     var title: String {
         switch self {
         case .billboard: L10n.t("面向镜头的媒体", "Billboard"); case .directional4: L10n.t("四方向", "4 Directions"); case .directional8: L10n.t("八方向", "8 Directions")
         case .layered: L10n.t("立体分层", "Layered"); case .model: L10n.t("3D 模型 (USDZ)", "3D Model (USDZ)")
+        case .generated: L10n.t("AI 生成 3D 模型", "AI 3D Model")
         }
     }
     var directions: Int { switch self { case .directional4: 4; case .directional8: 8; default: 1 } }
@@ -75,12 +78,15 @@ struct CharacterTemplate: Codable, Equatable, Identifiable, Sendable {
     var hurtScale = 1.0
     /// Library file of a USDZ model (model mode).
     var modelMediaID: String?
+    /// Generated3D model id (generated mode, v1.69).
+    var generatedModelID: String?
     var layerDepth = 0.12
 
     var valid: Bool {
         !id.isEmpty && id.count <= 128 && (1...64).contains(name.count) && height.isFinite && (0.3...20).contains(height) && aspect.isFinite && (0.1...5).contains(aspect) &&
             (0...0.5).contains(footAnchor) && (0.1...1).contains(opacity) && (0.1...5).contains(colliderRadius) && (0.3...20).contains(colliderHeight) &&
-            (0.5...3).contains(hurtScale) && clips.count <= CharacterAction.allCases.count && clips.values.allSatisfy { $0.bindingIDs.count <= 8 && $0.speed > 0 && $0.speed <= 8 }
+            (0.5...3).contains(hurtScale) && clips.count <= CharacterAction.allCases.count && clips.values.allSatisfy { $0.bindingIDs.count <= 8 && $0.speed > 0 && $0.speed <= 8 } &&
+            (mode != .generated || generatedModelID?.isEmpty == false)
     }
     func clip(_ action: CharacterAction) -> ActionClip? {
         if let clip = clips[action.rawValue], !clip.bindingIDs.isEmpty { return clip }

@@ -127,6 +127,8 @@ import UIKit
     private var models: [String: Entity] = [:]
     private var loading: Set<String> = []
     var media: Glass3DMedia?
+    /// AI-generated models (v1.69), animated when rigged.
+    let generated = Glass3DGeneratedLooks()
     /// Directory of imported USDZ models.
     static var modelsFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
@@ -140,12 +142,14 @@ import UIKit
     @discardableResult
     func apply(_ template: CharacterTemplate?, to holder: Entity, ownerID: String, action: CharacterAction, direction: Int) -> Bool {
         guard let template else { remove(ownerID); return false }
-        let key = "\(template.id)|\(template.mode.rawValue)|\(action.rawValue)|\(direction)|\(template.height)|\(template.aspect)|\(template.footAnchor)|\(template.opacity)"
+        let actionKey = template.mode == .generated ? RigClip.id(for: action) + (generated.isReady(template) ? "" : "-loading") : action.rawValue
+        let key = "\(template.id)|\(template.mode.rawValue)|\(actionKey)|\(direction)|\(template.height)|\(template.aspect)|\(template.footAnchor)|\(template.opacity)"
         if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
         remove(ownerID)
         let entity: Entity?
         switch template.mode {
         case .model: entity = model(template)
+        case .generated: entity = generated.entity(template, action: action)
         case .layered: entity = layered(template, action: action)
         default: entity = billboard(template, action: action, direction: direction)
         }

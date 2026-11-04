@@ -446,8 +446,20 @@ struct Glass3DScreen: View {
                 }.font(.caption)
             }
         case .creature:
-            Picker(L10n.t("生物", "Creature"), selection: $controller.creatureKind) { ForEach(CreatureKind.allCases, id: \.self) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).font(.caption)
+            VStack(alignment: .leading, spacing: 6) {
+                Picker(L10n.t("生物", "Creature"), selection: $controller.creatureKind) { ForEach(CreatureKind.allCases, id: \.self) { Text($0.title).tag($0) } }
+                    .pickerStyle(.segmented)
+                HStack {
+                    Text(L10n.t("外观", "Look"))
+                    Picker(L10n.t("外观", "Look"), selection: $controller.creatureLook) {
+                        Text(L10n.t("默认外观", "Default")).tag(String?.none)
+                        ForEach(controller.world.characters ?? []) { Text($0.name).tag(String?.some($0.id)) }
+                    }
+                    .accessibilityIdentifier("glass3d-creature-look")
+                    Spacer(minLength: 0)
+                }
+            }
+            .font(.caption)
         case .track:
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {

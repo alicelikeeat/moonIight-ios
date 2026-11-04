@@ -338,6 +338,16 @@ struct RigClip: Codable, Equatable, Identifiable, Sendable {
     var period: Float
     var channels: [Channel]
 
+    /// Which standard clip plays for a character action in the world.
+    static func id(for action: CharacterAction) -> String {
+        switch action {
+        case .walk: "walk"
+        case .run, .jump, .dodge: "run"
+        case .attack, .skill, .transform, .interact: "wave"
+        case .idle, .fall, .hurt, .death: "idle"
+        }
+    }
+
     func angle(_ c: Channel, at t: Float) -> Float { c.bias + c.amplitude * sin(2 * .pi * c.frequency * t / max(0.01, period) + c.phase) }
 
     /// Idle, walk, run and wave for the ten-bone skeleton. x axis swings

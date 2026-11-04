@@ -2010,4 +2010,21 @@ do {
     print("RPG model quality: \(checks) total checks passed")
 }
 
+// P34: v1.69 generated characters in the world.
+do {
+    check(RigClip.id(for: .walk) == "walk" && RigClip.id(for: .run) == "run" && RigClip.id(for: .attack) == "wave" && RigClip.id(for: .idle) == "idle" && RigClip.id(for: .hurt) == "idle", "world actions pick rig clips")
+    check(CharacterAction.allCases.allSatisfy { action in RigClip.standard.contains { $0.id == RigClip.id(for: action) } }, "every action has a clip")
+    var generated = CharacterTemplate(id: "char:g", name: "Hachi")
+    generated.mode = .generated
+    check(!generated.valid, "generated look needs a model id")
+    generated.generatedModelID = "model-1"
+    check(generated.valid, "generated look valid with a model id")
+    let oldTemplate = try JSONDecoder().decode(CharacterTemplate.self, from: Data(#"{"id":"c1","name":"Old","mode":"model","clips":{},"height":1.6,"aspect":0.6,"footAnchor":0,"opacity":1,"shadow":true,"colliderRadius":0.3,"colliderHeight":1.5,"hurtScale":1,"modelMediaID":"a.usdz","layerDepth":0.12}"#.utf8))
+    check(oldTemplate.mode == .model && oldTemplate.generatedModelID == nil, "v1.68 character templates still open")
+    var placed = CreatureEntity(id: "c:x", kind: .enemy, position: SpatialVector(1, 1, 0), home: SpatialVector(1, 1, 0), health: 30, maxHealth: 30, damage: 6)
+    placed.characterID = generated.id
+    check(placed.characterID == "char:g", "one creature can carry its own look")
+    print("RPG world characters: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

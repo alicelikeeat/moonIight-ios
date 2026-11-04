@@ -81,6 +81,8 @@ struct Glass3DPending {
     @Published var heightSnap = 0.25
     @Published var buildingKind = BuildingKind.hut
     @Published var creatureKind = CreatureKind.enemy
+    /// Look for the next placed creature (a character template id; nil = default body).
+    @Published var creatureLook: String?
     @Published var trackPoints: [SpatialVector] = []
     @Published var trackSmooth = true
     @Published var trackClosed = false
@@ -212,6 +214,7 @@ struct Glass3DPending {
         }
         renderer.place(camera: camera, eye: SpatialCameraRules.position(camera) + effects.shakeOffset(dt: dt))
         updateCharacters()
+        characters.generated.tick(Float(dt))
         renderer.animate(clock: world.clock)
         // Native glass is its own layer over the 3D view: shown and redrawn
         // every frame while the camera is still, faded out while it moves
@@ -798,8 +801,11 @@ struct Glass3DPending {
             let kind = creatureKind, cell = first.cell, height = first.kind == "block" ? first.height : 0
             let base: (Int, Int) = switch kind { case .neutral: (10, 0); case .enemy: (30, 6); case .guardian: (45, 8); case .miniBoss: (160, 12); case .boss: (420, 16) }
             let position = SpatialVector(Double(cell.x) + 0.5, Double(cell.z) + 0.5, height)
+            let look = creatureLook.flatMap { id in (world.characters ?? []).contains { $0.id == id } ? id : nil }
             edit(L10n.t("放置", "Place ") + kind.title) { w in
-                w.creatures.append(CreatureEntity(id: "c:" + UUID().uuidString, kind: kind, position: position, home: position, health: base.0, maxHealth: base.0, damage: base.1))
+                var creature = CreatureEntity(id: "c:" + UUID().uuidString, kind: kind, position: position, home: position, health: base.0, maxHealth: base.0, damage: base.1)
+                creature.characterID = look
+                w.creatures.append(creature)
             }
         case .maze:
             proposeMaze(at: first.cell)

@@ -579,9 +579,11 @@ struct Generated3DDetailView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let controller, current.usdzFile != nil {
-                Button { useAsCharacter(controller) } label: { Label(L10n.t("用作 3D 世界角色外观（静态模型）", "Use as a 3D World Character Look (static)"), systemImage: "person.crop.square") }
-                    .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true))
+            if let controller, current.meshFile != nil || current.usdzFile != nil {
+                Button { useAsCharacter(controller) } label: {
+                    Label(current.rigFile != nil ? L10n.t("加入 3D 世界角色（带动作）", "Add as a 3D World Character (animated)") : L10n.t("加入 3D 世界角色", "Add as a 3D World Character"), systemImage: "person.crop.square")
+                }
+                .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true)).accessibilityIdentifier("generate3d-use-in-world")
             }
             HStack(spacing: 10) {
                 if exportFiles.isEmpty {
@@ -636,15 +638,22 @@ struct Generated3DDetailView: View {
         try? store.save(updated)
     }
 
+    /// Depth models are used directly (no USDZ needed; animated when
+    /// rigged); reconstructed models through their USDZ.
     private func useAsCharacter(_ controller: Glass3DController) {
-        guard let usdz = store.usdzURL(current) else { return }
-        let name = UUID().uuidString + ".usdz"
-        do { try FileManager.default.copyItem(at: usdz, to: Glass3DCharacters.modelsFolder.appendingPathComponent(name)) }
-        catch { message = error.localizedDescription; return }
         var template = CharacterTemplate(id: "char:" + UUID().uuidString, name: String(current.name.prefix(60)))
-        template.mode = .model
-        template.modelMediaID = name
+        if current.meshFile != nil {
+            template.mode = .generated
+            template.generatedModelID = current.id
+        } else if let usdz = store.usdzURL(current) {
+            let name = UUID().uuidString + ".usdz"
+            do { try FileManager.default.copyItem(at: usdz, to: Glass3DCharacters.modelsFolder.appendingPathComponent(name)) }
+            catch { message = error.localizedDescription; return }
+            template.mode = .model
+            template.modelMediaID = name
+        } else { return }
         controller.saveCharacter(template, bindings: [])
-        message = L10n.t("已加入角色编辑器，可在那里设为主角或敌人外观。", "Added to the Character Editor; set it for the player or enemies there.")
+        controller.creatureLook = template.id
+        message = L10n.t("已加入：设计模式「生物」工具的「外观」已选好它，点地面就能放一个；也可在角色编辑器里设为主角或整类生物。", "Added: it is selected as the Look in the Creature tool — tap the ground to place one; or set it for the player or a whole kind in the Character Editor.")
     }
 }
