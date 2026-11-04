@@ -28,6 +28,8 @@ struct Generate3DScreen: View {
     @State private var importingFile = false
     @State private var fileIsVideo = false
     @State private var opened: Generated3DManifest?
+    @State private var importingGLB = false
+    @State private var glbMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -51,6 +53,9 @@ struct Generate3DScreen: View {
         .fileImporter(isPresented: $importingFile, allowedContentTypes: fileIsVideo ? [.movie, .mpeg4Movie, .quickTimeMovie] : [.jpeg, .png, .heic, .image]) { result in
             if case .success(let url) = result { startFromFile(url, video: fileIsVideo) }
         }
+        .background(Color.clear.fileImporter(isPresented: $importingGLB, allowedContentTypes: [UTType(filenameExtension: "glb") ?? .data]) { result in
+            if case .success(let url) = result { importGLB(url) }
+        })
         .onChange(of: photoItem) { _, item in if let item { startFromPhotos(item) } }
         .onChange(of: tasks.phase) { _, phase in
             if case .finished(let id) = phase, let manifest = store.models.first(where: { $0.id == id }) { opened = manifest }
@@ -68,7 +73,7 @@ struct Generate3DScreen: View {
             capability(L10n.t("人像照片自带深度", "Portrait photo depth"), L10n.t("可用（无需 AI）", "Ready (no AI needed)"), true)
             capability(L10n.t("视频多视角重建", "Multi-view video"), capabilities.objectCapture ? L10n.t("本机支持", "Supported") : L10n.t("本机不支持，可用基础立体化", "Not on this device; basic depth model available"), capabilities.objectCapture)
             capability(L10n.t("USDZ 导出", "USDZ export"), capabilities.usdzExport ? L10n.t("可用（保存时实际加载验证）", "Ready (verified by loading)") : L10n.t("不可用，可导出 OBJ", "Unavailable; OBJ export works"), capabilities.usdzExport)
-            capability(L10n.t("自动骨骼 / 动画 / 换装", "Auto rig / animation / outfits"), L10n.t("实验性，尚未实现", "Experimental, not implemented"), false)
+            capability(L10n.t("自动骨骼 / 动画", "Auto rig / animation"), L10n.t("可用：本机 27 关节自动绑定与 8 项动作测试（未经真机验收）；换装尚未实现", "Available: on-device 27-joint auto rig and 8 motion tests (not yet accepted on a device); outfits not implemented"), true)
             HStack {
                 Text(L10n.t("精度", "Quality")).font(.subheadline)
                 Spacer()
@@ -114,6 +119,25 @@ struct Generate3DScreen: View {
             }
             Text(L10n.t("先抽帧检查清晰度、重复和视角覆盖；绕物体拍摄且本机支持时可多视角重建，否则可用最清晰一帧做深度立体模型。", "Frames are checked for sharpness, duplicates and view coverage first. Orbit videos can be reconstructed on supported devices; otherwise the sharpest frame makes a depth relief."))
                 .font(.caption).foregroundStyle(.secondary)
+            Text(L10n.t("导入 3D 模型", "Import a 3D Model")).font(.headline).padding(.top, 6)
+            bigButton(L10n.t("导入 GLB", "Import GLB"), "cube.transparent", [.gray, .blue]) { importingGLB = true }
+                .accessibilityIdentifier("generate3d-import-glb")
+            if let glbMessage { Text(glbMessage).font(.caption).foregroundStyle(.orange) }
+            Text(L10n.t("读取 GLB（二进制 glTF 2.0）中的网格和贴图，之后可以自动绑定骨骼。文件里原有的骨骼和动画不会被读取。", "Reads the mesh and texture of a GLB (binary glTF 2.0); you can then rig it automatically. Skeletons and animations in the file are not read."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func importGLB(_ url: URL) {
+        let access = url.startAccessingSecurityScopedResource()
+        let data = try? Data(contentsOf: url)
+        if access { url.stopAccessingSecurityScopedResource() }
+        guard let data else { glbMessage = L10n.t("文件无法读取", "The file could not be read"); return }
+        let name = url.deletingPathExtension().lastPathComponent
+        glbMessage = nil
+        Task {
+            do { opened = try await store.storeImported(data, name: name) }
+            catch { glbMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
         }
     }
 
@@ -408,6 +432,7 @@ struct Generated3DDetailView: View {
     @State private var confirmDelete = false
     @State private var message: String?
     @State private var rigging = false
+    @State private var workbench = false
     // Claude motion design (online, opt-in).
     @State private var aiPrompt = ""
     @State private var aiKeyDraft = ""
@@ -443,11 +468,14 @@ struct Generated3DDetailView: View {
         .confirmationDialog(L10n.t("删除这个模型？", "Delete this model?"), isPresented: $confirmDelete, titleVisibility: .visible) {
             Button(L10n.t("删除", "Delete"), role: .destructive) { store.delete(current); dismiss() }
         } message: { Text(L10n.t("模型、贴图、皮肤预设都会从本机删除。", "The model, its texture and skin presets are removed from this device.")) }
+        .fullScreenCover(isPresented: $workbench, onDismiss: { Task { counts = try? await scene.load(current, store: store) } }) {
+            AutoRigView(manifest: current, store: store)
+        }
     }
 
     /// No 3D rendering while the app is not in front (keeps the phone cool).
     @ViewBuilder private var preview: some View {
-        if scenePhase == .active { livePreview } else {
+        if scenePhase == .active && !workbench { livePreview } else {
             RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.black).frame(height: 340)
         }
     }
@@ -526,6 +554,12 @@ struct Generated3DDetailView: View {
                 Text(L10n.t("骨骼与动作", "Rig & Motion")).font(.headline)
                 Text(L10n.t("实验性", "Experimental")).font(.caption2.weight(.bold)).foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 2).background(Color.orange, in: Capsule())
             }
+            Button { workbench = true } label: {
+                Label(L10n.t("自动骨骼工作台（27 关节 · 动作测试）", "Auto Rig Workbench (27 joints · motion tests)"), systemImage: "figure.arms.open").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).accessibilityIdentifier("generate3d-rig-workbench")
+            Text(L10n.t("v1.73 新骨骼：从 3D 网格本身识别关节，每顶点最多 4 个权重，8 项动作自动测试，可手动修正。保存后放进世界会优先使用它。下面是 v1.72 的旧版 10 骨骼绑定。", "v1.73 rig: joints from the 3D mesh itself, up to 4 weights per vertex, 8 automatic motion tests, manual correction. Once saved, the world uses it first. Below is the older v1.72 10-bone rig."))
+                .font(.caption2).foregroundStyle(.secondary)
             if let rig = scene.rig {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {

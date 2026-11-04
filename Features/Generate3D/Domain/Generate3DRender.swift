@@ -40,7 +40,8 @@ enum ModelRasterizer {
     /// Renders `positions` (the model, deformed or not) with the mesh's
     /// normals, UVs and triangles. The model is expected inside the unit
     /// cube (generated models are normalised that way).
-    static func render(_ mesh: GeneratedMesh, positions: [Float]? = nil, normals: [Float]? = nil, texture: RasterImage?,
+    /// `colors` (RGB per vertex) replaces the texture, e.g. for weight heatmaps.
+    static func render(_ mesh: GeneratedMesh, positions: [Float]? = nil, normals: [Float]? = nil, texture: RasterImage?, colors: [UInt8]? = nil,
                        camera: RasterCamera, width: Int, height: Int, background: [UInt8] = [0, 0, 0, 0], supersample: Int = 2) -> RasterImage {
         let ss = max(1, supersample), w = width * ss, h = height * ss
         let p = positions ?? mesh.positions, n = normals ?? mesh.normals
@@ -100,7 +101,13 @@ enum ModelRasterizer {
                     let v = (w0 * mesh.uvs[a * 2 + 1] * inv[a] + w1 * mesh.uvs[b * 2 + 1] * inv[b] + w2 * mesh.uvs[c * 2 + 1] * inv[c]) * z
                     let shade = w0 * lit[a] + w1 * lit[b] + w2 * lit[c]
                     var rgb: (Float, Float, Float) = (230, 230, 235)
-                    if let texture {
+                    if let colors, colors.count >= mesh.vertexCount * 3 {
+                        let ca = a * 3, cb = b * 3, cc = c * 3
+                        let r0 = w0 * Float(colors[ca]) + w1 * Float(colors[cb]) + w2 * Float(colors[cc])
+                        let g0 = w0 * Float(colors[ca + 1]) + w1 * Float(colors[cb + 1]) + w2 * Float(colors[cc + 1])
+                        let b0 = w0 * Float(colors[ca + 2]) + w1 * Float(colors[cb + 2]) + w2 * Float(colors[cc + 2])
+                        rgb = (r0, g0, b0)
+                    } else if let texture {
                         let tx = min(texture.width - 1, max(0, Int(u * Float(texture.width - 1) + 0.5)))
                         let ty = min(texture.height - 1, max(0, Int((1 - v) * Float(texture.height - 1) + 0.5)))
                         let o = (ty * texture.width + tx) * 4

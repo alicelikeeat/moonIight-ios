@@ -497,16 +497,20 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
         case depthRelief
         /// Multi-view photogrammetry (Object Capture).
         case photogrammetry
+        /// v1.73: a GLB model imported from Files.
+        case imported
         var title: String {
             switch self {
+            case .imported: L10n.t("导入的 3D 模型（GLB）", "Imported 3D model (GLB)")
             case .depthRelief: L10n.t("深度立体模型（正面为真实深度，背面为封闭平板，非完整 360°）", "Depth relief (real depth on the front, closed flat back; not a full 360° model)")
             case .photogrammetry: L10n.t("多视角重建模型", "Multi-view reconstruction")
             }
         }
     }
-    enum DepthSource: String, Codable, Sendable { case cameraDepth, depthAnythingV2, objectCapture
+    enum DepthSource: String, Codable, Sendable { case cameraDepth, depthAnythingV2, objectCapture, none
         var title: String {
             switch self {
+            case .none: L10n.t("无（直接导入的网格）", "None (imported mesh)")
             case .cameraDepth: L10n.t("照片自带的相机深度", "Camera depth stored in the photo")
             case .depthAnythingV2: L10n.t("本地 AI 深度估计（Depth Anything V2 Small）", "On-device AI depth (Depth Anything V2 Small)")
             case .objectCapture: L10n.t("RealityKit Object Capture", "RealityKit Object Capture")
