@@ -10,6 +10,14 @@ import SwiftUI
 @MainActor final class Glass3DNativeGlass: ObservableObject {
     @Published private(set) var shape = Path()
     @Published private(set) var faces = 0
+    /// Fades the glass out while the camera moves (see `NativeGlassFade`).
+    @Published private(set) var opacity = 1.0
+    func setOpacity(_ value: Double) {
+        let v = min(1, max(0, value))
+        if abs(v - opacity) > 0.02 || (v != opacity && (v == 0 || v == 1)) { opacity = v }
+    }
+    /// Blocks drawn last time (kept steady at the budget edge).
+    private var chosenIDs: Set<String> = []
     /// Lock-on reticle over the locked target (screen point).
     @Published var reticle: CGPoint?
     /// Move handles for the selection: centre and the screen direction and
@@ -22,10 +30,15 @@ import SwiftUI
     func update(projection: SpatialProjection, blocks: [SpatialBlock], frames: [String: GroupFrame], characters: [Character], budget: Int) {
         guard budget > 0, projection.viewSize.width > 0 else {
             if faces != 0 { shape = Path(); faces = 0 }
+            chosenIDs = []
             return
         }
         let eye = projection.eye
-        let chosen = SpatialFaces.nearest(blocks.filter { $0.collision != .trigger }, to: projection.target, budget: budget)
+        // Moving platforms stay in the 3D scene only: the separate glass
+        // layer would trail them by a frame.
+        let still = blocks.filter { $0.collision != .trigger && $0.groupID.map { frames[$0] == nil } ?? true }
+        let chosen = SpatialFaces.nearest(still, to: projection.target, budget: budget, keeping: chosenIDs)
+        chosenIDs = Set(chosen.map(\.id))
         // Screen rectangles of characters, with their distance from the camera.
         let cutouts: [(rect: CGRect, depth: Double)] = characters.compactMap { character in
             guard let foot = projection.project(character.position),
@@ -55,7 +68,8 @@ import SwiftUI
                 path.addPath(facePath); count += 1
             }
         }
-        shape = path; faces = count
+        shape = path
+        if faces != count { faces = count }
     }
 }
 
@@ -65,10 +79,13 @@ struct Glass3DNativeGlassLayer: View {
     @ObservedObject var glass: Glass3DNativeGlass
     var body: some View {
         if #available(iOS 26.0, *) {
-            Color.clear
-                .glassEffect(.clear, in: PathShape(path: glass.shape))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if glass.opacity > 0 {
+                Color.clear
+                    .glassEffect(.clear, in: PathShape(path: glass.shape))
+                    .opacity(glass.opacity)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
     }
 }

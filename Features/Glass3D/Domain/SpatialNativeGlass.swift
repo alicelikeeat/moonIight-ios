@@ -66,16 +66,52 @@ enum SpatialFaces {
 
     /// The nearest blocks to the focus point, up to `budget` (cost control:
     /// one merged glass pass, but its shape still grows with face count).
-    static func nearest(_ blocks: [SpatialBlock], to focus: SpatialVector, budget: Int) -> [SpatialBlock] {
+    /// Blocks chosen last time get `margin` cells of head start, so blocks
+    /// at the edge of the budget do not pop in and out as the camera drifts.
+    static func nearest(_ blocks: [SpatialBlock], to focus: SpatialVector, budget: Int,
+                        keeping previous: Set<String> = [], margin: Double = 1.5) -> [SpatialBlock] {
         guard blocks.count > budget else { return blocks }
-        return Array(blocks.sorted { a, b in
-            let da = hypot(Double(a.x) + 0.5 - focus.x, Double(a.y) + 0.5 - focus.y), db = hypot(Double(b.x) + 0.5 - focus.x, Double(b.y) + 0.5 - focus.y)
-            return da == db ? a.id < b.id : da < db
-        }.prefix(budget))
+        let scored = blocks.map { block -> (block: SpatialBlock, score: Double) in
+            let d = hypot(Double(block.x) + 0.5 - focus.x, Double(block.y) + 0.5 - focus.y)
+            return (block, previous.contains(block.id) ? d - margin : d)
+        }
+        return scored.sorted { a, b in a.score == b.score ? a.block.id < b.block.id : a.score < b.score }
+            .prefix(budget).map(\.block)
     }
 
     /// Faces drawn with native glass per quality level (0: off, SceneKit glass only).
     static func budget(_ quality: RPGGlassQuality) -> Int {
         switch quality { case .high: 360; case .standard: 220; case .performance: 0 }
+    }
+}
+
+/// Native glass is a separate layer from the 3D scene, so while the camera
+/// moves the two can be a frame apart and the glass looks shaky. The glass
+/// fades out while the camera moves and back in once it has settled; the 3D
+/// glass blocks underneath carry the look meanwhile.
+struct NativeGlassFade: Equatable, Sendable {
+    /// 0 hidden … 1 fully shown.
+    private(set) var visibility = 1.0
+    private(set) var still = 0.0
+    private var last: SpatialCameraState?
+
+    static let settle = 0.2, fadeOut = 0.1, fadeIn = 0.25
+
+    static func moved(_ a: SpatialCameraState, _ b: SpatialCameraState) -> Bool {
+        let yaw = abs((a.yaw - b.yaw).remainder(dividingBy: 360))
+        let t = a.target - b.target
+        return yaw > 0.02 || abs(a.tilt - b.tilt) > 0.02 || abs(a.distance - b.distance) > 0.002
+            || (t.x * t.x + t.y * t.y + t.z * t.z) > 0.000004
+    }
+
+    /// Advances one frame and returns the new visibility.
+    mutating func step(camera: SpatialCameraState, dt: Double, shaking: Bool = false) -> Double {
+        guard dt.isFinite, dt > 0 else { return visibility }
+        let moving = shaking || last.map { Self.moved($0, camera) } ?? false
+        last = camera
+        still = moving ? 0 : still + dt
+        if still >= Self.settle { visibility = min(1, visibility + dt / Self.fadeIn) }
+        else if moving { visibility = max(0, visibility - dt / Self.fadeOut) }
+        return visibility
     }
 }

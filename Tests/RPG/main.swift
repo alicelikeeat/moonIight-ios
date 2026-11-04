@@ -1609,4 +1609,38 @@ do {
     print("RPG gamepad: \(checks) total checks passed")
 }
 
+// P27: v1.62 native glass steadiness: fade while the camera moves, steady
+// face selection at the budget edge.
+do {
+    var fade = NativeGlassFade()
+    var cam = SpatialCameraState()
+    check(fade.step(camera: cam, dt: 1.0 / 60) == 1, "starts shown with a still camera")
+    for _ in 0..<12 { cam.yaw += 1; _ = fade.step(camera: cam, dt: 1.0 / 60) }
+    check(fade.visibility == 0, "hidden within 0.1 s of camera motion")
+    _ = fade.step(camera: cam, dt: 1.0 / 60)
+    for _ in 0..<10 { _ = fade.step(camera: cam, dt: 1.0 / 60) }
+    check(fade.visibility == 0, "stays hidden until the camera has settled 0.2 s")
+    for _ in 0..<8 { _ = fade.step(camera: cam, dt: 1.0 / 60) }
+    check(fade.visibility > 0 && fade.visibility < 1, "fades back in after settling (\(fade.visibility))")
+    for _ in 0..<30 { _ = fade.step(camera: cam, dt: 1.0 / 60) }
+    check(fade.visibility == 1, "fully shown again")
+    _ = fade.step(camera: cam, dt: 1.0 / 60, shaking: true)
+    check(fade.visibility < 1, "screen shake counts as motion")
+    var wrap = SpatialCameraState(); wrap.yaw = 359.99
+    var wrapped = wrap; wrapped.yaw = -0.005
+    check(!NativeGlassFade.moved(wrap, wrapped), "yaw wrap-around is not motion")
+    var nudge = SpatialCameraState(); nudge.target = nudge.target + SpatialVector(0.01, 0, 0)
+    check(NativeGlassFade.moved(SpatialCameraState(), nudge), "a small pan is motion")
+    check(fade.step(camera: cam, dt: .nan) == fade.visibility, "bad frame time ignored")
+
+    let row = (0..<20).map { SpatialBlock(id: String(format: "b%02d", $0), x: $0, y: 0, elevation: 0) }
+    let first = SpatialFaces.nearest(row, to: SpatialVector(0.5, 0.5, 0), budget: 5)
+    check(first.map(\SpatialBlock.id) == ["b00", "b01", "b02", "b03", "b04"], "nearest five")
+    let drifted = SpatialFaces.nearest(row, to: SpatialVector(1.2, 0.5, 0), budget: 5, keeping: Set(first.map(\SpatialBlock.id)))
+    check(Set(drifted.map(\SpatialBlock.id)) == Set(first.map(\SpatialBlock.id)), "a small drift keeps the same blocks")
+    let far = SpatialFaces.nearest(row, to: SpatialVector(10.5, 0.5, 0), budget: 5, keeping: Set(first.map(\SpatialBlock.id)))
+    check(Set(far.map(\SpatialBlock.id)) == ["b08", "b09", "b10", "b11", "b12"], "a real move picks the new nearest blocks")
+    print("RPG glass steadiness: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

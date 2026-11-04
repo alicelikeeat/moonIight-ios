@@ -40,7 +40,7 @@ import Metal
     static func position(_ v: SpatialVector) -> SIMD3<Float> { SIMD3(Float(v.x), Float(v.z), Float(-v.y)) }
 
     init() {
-        for entity in [ground, blocksRoot, plantsRoot, creaturesRoot, pickupsRoot, effects, previewRoot, selectionRoot, playerEntity] { root.addChild(entity) }
+        for entity in [ground, blocksRoot, movingBlocksRoot, plantsRoot, creaturesRoot, pickupsRoot, effects, previewRoot, selectionRoot, playerEntity] { root.addChild(entity) }
         camera.camera.fieldOfViewInDegrees = Float(SpatialCameraRules.fieldOfView)
         camera.camera.near = 0.1; camera.camera.far = 600
         root.addChild(camera)
@@ -171,9 +171,20 @@ import Metal
 
     private func groupEntity(_ id: String) -> Entity {
         if let entity = groupEntities[id] { return entity }
-        let entity = Entity(); blocksRoot.addChild(entity); groupEntities[id] = entity
+        let entity = Entity(); movingBlocksRoot.addChild(entity); groupEntities[id] = entity
         return entity
     }
+
+    /// Still blocks fade to a faint body while native glass covers them
+    /// (1 = full 3D glass). Moving platforms are never covered, never faded.
+    func setBlockGlassOpacity(_ value: Float) {
+        guard abs(value - blockGlassOpacity) > 0.01 || (value == 1 && blockGlassOpacity != 1) else { return }
+        blockGlassOpacity = value
+        if value >= 1 { blocksRoot.components.remove(OpacityComponent.self) }
+        else { blocksRoot.components.set(OpacityComponent(opacity: value)) }
+    }
+    private var blockGlassOpacity: Float = 1
+    private let movingBlocksRoot = Entity()
 
     func place(frames: [String: GroupFrame]) {
         for (id, frame) in frames {
@@ -196,10 +207,10 @@ import Metal
         let key = "glass|\(glass.tintHex ?? "-")|\(glass.density)|\(glass.frosted)|\(glass.glow)|\(collision == .trigger)"
         if let cached = materialCache[key] { return cached }
         let tint = glass.tintHex.map { UIColor(rpgHex: $0) } ?? UIColor(white: 0.94, alpha: 1)
-        // With native glass on, these meshes keep only their edges and a
-        // faint body: depth and outline, the system glass does the rest.
+        // With native glass shown, `setBlockGlassOpacity` thins these out
+        // (edges and a faint body); while the camera moves they carry the
+        // full look on their own.
         var opacity = Float(collision == .trigger ? 0.18 : 0.3 + glass.density * 0.5)
-        if nativeGlass { opacity = min(opacity, 0.22) }
         let result: RealityKit.Material
         switch quality {
         case .performance:

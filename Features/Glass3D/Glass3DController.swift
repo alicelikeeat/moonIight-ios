@@ -51,7 +51,7 @@ struct Glass3DPending {
         didSet { UserDefaults.standard.set(nativeGlassEnabled, forKey: "moonlight.glass3d.native"); applyQuality(); rebuildAll() }
     }
     static var nativeGlassAvailable: Bool { if #available(iOS 26.0, *) { return true }; return false }
-    private var nativeTimer = 0.0
+    private var glassFade = NativeGlassFade()
     private var visibleBlockCache: [SpatialBlock] = []
 
     /// The world changes every frame (clock, positions); SwiftUI only
@@ -212,8 +212,13 @@ struct Glass3DPending {
         renderer.place(camera: camera, eye: SpatialCameraRules.position(camera) + effects.shakeOffset(dt: dt))
         updateCharacters()
         renderer.animate(clock: world.clock)
-        nativeTimer += dt
-        if nativeTimer >= 1.0 / 30 { nativeTimer = 0; updateNativeGlass(frames: frames) }
+        // Native glass is its own layer over the 3D view: shown and redrawn
+        // every frame while the camera is still, faded out while it moves
+        // (the 3D glass blocks fade back in underneath meanwhile).
+        let visibility = nativeGlassActive ? glassFade.step(camera: camera, dt: dt, shaking: effects.shake > 0.001) : 0
+        nativeGlass.setOpacity(visibility)
+        renderer.setBlockGlassOpacity(nativeGlassActive ? Float(1 - 0.55 * visibility) : 1)
+        updateNativeGlass(frames: frames, drawFaces: visibility > 0)
         renderTimer += dt
         if renderTimer > 0.25 { renderTimer = 0; refreshVisible() }
         renderer.media.update(visibleMedia: visibleMediaIDs, clock: world.clock, paused: pausedMedia(frames: frames))
@@ -711,7 +716,7 @@ struct Glass3DPending {
     }
     var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && SpatialFaces.budget(quality) > 0 }
 
-    private func updateNativeGlass(frames: [String: GroupFrame]) {
+    private func updateNativeGlass(frames: [String: GroupFrame], drawFaces: Bool) {
         let projection = self.projection
         // Reticle and gizmo (also without native block glass).
         let reticle = lockedTarget.flatMap { id in world.creatures.first { $0.id == id } }.flatMap { projection.project($0.position + SpatialVector(0, 0, 1))?.point }
@@ -731,6 +736,7 @@ struct Glass3DPending {
         }
         if gizmo != nativeGlass.gizmo { nativeGlass.gizmo = gizmo }
         guard nativeGlassActive else { nativeGlass.update(projection: projection, blocks: [], frames: [:], characters: [], budget: 0); return }
+        guard drawFaces else { return }
         var characters = [Glass3DNativeGlass.Character(position: world.player.position, radius: 0.35, height: 1.5)]
         for creature in world.creatures where creature.alive && (creature.position - camera.target).flatLength < camera.distance * 3 + 10 {
             let big = creature.kind == .boss ? 1.1 : creature.kind == .miniBoss ? 0.7 : 0.4
