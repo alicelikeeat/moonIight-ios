@@ -4,6 +4,22 @@ import RealityKit
 
 @MainActor
 final class Local3DIntegrationTests: XCTestCase {
+    func testBundledCoreMLModelCompilesAndPredictsOffline() async throws {
+        guard #available(iOS 17.0, *) else { throw XCTSkip("The bundled spec-8 model requires iOS 17") }
+        let source = try XCTUnwrap(Bundle.main.url(forResource: "ph_aerial_rocks_02", withExtension: "jpg", subdirectory: "Glass3DStarter"))
+        // A bundled CC0 texture is used to test real inference and resource paths;
+        // this is not a subject-segmentation or reconstruction quality test.
+        let output = try await Task.detached(priority: .userInitiated) {
+            let image = try ImageGenerationPipeline.decode(source, edge: 1024)
+            return try ImageGenerationPipeline.estimateDepth(image)
+        }.value
+        XCTAssertEqual(output.width, 518)
+        XCTAssertEqual(output.height, 392)
+        XCTAssertEqual(output.values.count, 518 * 392)
+        XCTAssertTrue(output.values.allSatisfy(\.isFinite))
+        XCTAssertGreaterThan((output.values.max() ?? 0) - (output.values.min() ?? 0), 0.0001)
+    }
+
     func testSavedDepthMeshLoadsInRealityKitAndReopensFromDisk() async throws {
         let fm = FileManager.default
         let directory = fm.temporaryDirectory.appendingPathComponent("local3d-integration-\(UUID())")

@@ -76,7 +76,7 @@ enum ImageGenerationPipeline {
     }
 
     @available(iOS 17.0, *)
-    private static func estimateDepth(_ image: CGImage) throws -> (width: Int, height: Int, values: [Float]) {
+    static func estimateDepth(_ image: CGImage) throws -> (width: Int, height: Int, values: [Float]) {
         let url = try compiledModelURL()
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .all
