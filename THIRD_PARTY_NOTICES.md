@@ -15,6 +15,16 @@ CC0 作品已进入公有领域，可自由使用、修改、分发和商用，�
 
 CC0 works are in the public domain: free to use, change, share and sell, no credit required. Licence texts: `LICENSE-Kenney.txt`, `LICENSE-PolyHaven.txt` in the same folder.
 
+## 本地 AI 模型 / On-device AI model（`Resources/DepthModel/`）
+
+| 模型 | 作者 | 授权 | 来源 |
+|---|---|---|---|
+| Depth Anything V2 Small（Apple Core ML 转换版 `DepthAnythingV2SmallF16`） | Lihe Yang 等；Core ML 转换：Apple | Apache License 2.0 | https://huggingface.co/apple/coreml-depth-anything-v2-small |
+
+只在 iPhone 本地运行，用于从单张图片估计深度。权重文件在构建时按固定版本下载并校验 SHA-256，授权全文见 `Resources/DepthModel/LICENSE-Apache-2.0.txt`。
+
+Runs only on the device to estimate depth from one picture. The weights are downloaded at build time from a pinned revision and checked by SHA-256; the licence text is in `Resources/DepthModel/LICENSE-Apache-2.0.txt`.
+
 ## 在线服务 / Online services
 
 - **Poly Haven API**（api.polyhaven.com）：按其[服务条款](https://github.com/Poly-Haven/Public-API/blob/master/ToS.md)，请求带有本应用的 User-Agent，界面中注明 “Powered by Poly Haven”。贴图本身为 CC0。本项目只调用其接口，不包含其 AGPL 代码。

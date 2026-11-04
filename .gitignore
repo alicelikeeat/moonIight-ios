@@ -2,3 +2,4 @@
 build/
 DerivedData/
 *.xcuserstate
+Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights/weight.bin

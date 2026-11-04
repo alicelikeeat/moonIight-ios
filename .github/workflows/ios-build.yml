@@ -83,7 +83,7 @@ jobs:
       - name: Test RPG pure domain
         run: |
           mkdir -p build
-          swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Domain/World/RPGGlassLab.swift Features/RPG/Domain/World/RPGMapEditor.swift Features/RPG/Domain/World/RPGGlassWorld.swift Features/RPG/Domain/Blocks/RPGEditDraft.swift Shared/Localization/L10n.swift Features/GlassShapeEditor/Domain/GlassShapeGeometry.swift Features/GlassShapeEditor/Domain/GlassShapeDocument.swift Features/Glass3D/Domain/SpatialModel.swift Features/Glass3D/Domain/SpatialMotion.swift Features/Glass3D/Domain/SpatialPhysics.swift Features/Glass3D/Domain/SpatialBuilding.swift Features/Glass3D/Domain/SpatialEcology.swift Features/Glass3D/Domain/SpatialGenerator.swift Features/Glass3D/Domain/SpatialNativeGlass.swift Features/Glass3D/Domain/SpatialProjection.swift Features/Glass3D/Domain/SpatialSkills.swift Features/Glass3D/Domain/SpatialBattle.swift Features/Glass3D/Domain/SpatialGamepad.swift Features/Glass3D/Domain/SpatialAssetLibrary.swift Features/RPG/Domain/World/RPGWorldRoute.swift Features/RPG/Domain/World/RPGFrameMetrics.swift Features/RPG/Domain/Blocks/RPGBehaviorRules.swift Features/RPG/Domain/Story/RPGStoryAuthoring.swift Features/RPG/Domain/Story/RPGStoryGraph.swift Features/RPG/Domain/Story/RPGOfficialStory.swift Features/RPG/Domain/Story/RPGStoryRuntime.swift Features/RPG/Domain/Combat/RPGCombatRules.swift Features/RPG/Media/RPGMediaPolicy.swift Features/RPG/Domain/World/RPGProjectionRules.swift Features/RPG/Domain/Blocks/RPGWorldEditing.swift Features/RPG/Persistence/RPGWorldDiskStore.swift Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
+          swiftc Features/RPG/Media/RPGGIFTiming.swift Features/RPG/Domain/World/RPGGlassLab.swift Features/RPG/Domain/World/RPGMapEditor.swift Features/RPG/Domain/World/RPGGlassWorld.swift Features/RPG/Domain/Blocks/RPGEditDraft.swift Shared/Localization/L10n.swift Features/GlassShapeEditor/Domain/GlassShapeGeometry.swift Features/GlassShapeEditor/Domain/GlassShapeDocument.swift Features/Glass3D/Domain/SpatialModel.swift Features/Glass3D/Domain/SpatialMotion.swift Features/Glass3D/Domain/SpatialPhysics.swift Features/Glass3D/Domain/SpatialBuilding.swift Features/Glass3D/Domain/SpatialEcology.swift Features/Glass3D/Domain/SpatialGenerator.swift Features/Glass3D/Domain/SpatialNativeGlass.swift Features/Glass3D/Domain/SpatialProjection.swift Features/Glass3D/Domain/SpatialSkills.swift Features/Glass3D/Domain/SpatialBattle.swift Features/Glass3D/Domain/SpatialGamepad.swift Features/Glass3D/Domain/SpatialAssetLibrary.swift Features/Generate3D/Domain/Generate3DCore.swift Features/RPG/Domain/World/RPGWorldRoute.swift Features/RPG/Domain/World/RPGFrameMetrics.swift Features/RPG/Domain/Blocks/RPGBehaviorRules.swift Features/RPG/Domain/Story/RPGStoryAuthoring.swift Features/RPG/Domain/Story/RPGStoryGraph.swift Features/RPG/Domain/Story/RPGOfficialStory.swift Features/RPG/Domain/Story/RPGStoryRuntime.swift Features/RPG/Domain/Combat/RPGCombatRules.swift Features/RPG/Media/RPGMediaPolicy.swift Features/RPG/Domain/World/RPGProjectionRules.swift Features/RPG/Domain/Blocks/RPGWorldEditing.swift Features/RPG/Persistence/RPGWorldDiskStore.swift Features/RPG/Domain/World/RPGWorldGenerator.swift Features/RPG/Domain/World/WorldState.swift Features/RPG/Domain/World/WorldProjection.swift Features/RPG/Persistence/RPGWorldCodec.swift Tests/RPG/main.swift -o build/rpg-tests
           build/rpg-tests
       - name: Test versioned file persistence
         run: |
@@ -104,6 +104,16 @@ jobs:
         run: |
           python3 scripts/audit_controls.py
           git diff --exit-code -- docs/CONTROL_INVENTORY.md
+      - name: Fetch on-device depth model weights
+        run: |
+          # Depth Anything V2 Small, Apple's Core ML conversion (Apache-2.0), pinned revision + SHA-256.
+          set -euo pipefail
+          DIR="Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights"
+          mkdir -p "$DIR"
+          URL="https://huggingface.co/apple/coreml-depth-anything-v2-small/resolve/cfef6f6f2a70783dedc0bfae40cecbc2052285d3/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+          for attempt in 1 2 3; do curl -fsSL --retry 3 -o "$DIR/weight.bin" "$URL" && break || sleep 5; done
+          echo "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed  $DIR/weight.bin" | shasum -a 256 -c -
+          echo "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042  Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/model.mlmodel" | shasum -a 256 -c -
       - name: Compile simulator build
         if: steps.version.outputs.release != 'true'
         env:

@@ -1702,4 +1702,102 @@ do {
     print("RPG asset library: \(checks) total checks passed")
 }
 
+// P30: v1.67 local 3D generation core: depth → real mesh, mesh file, OBJ,
+// manifest, video frame quality and assessment.
+do {
+    // A dome: nearer in the middle, subject = disc.
+    let side = 64
+    var near = [Float](repeating: 0, count: side * side), disc = near
+    for y in 0..<side { for x in 0..<side {
+        let dx = Double(x - side / 2) / Double(side / 2), dy = Double(y - side / 2) / Double(side / 2)
+        let r = (dx * dx + dy * dy).squareRoot()
+        disc[y * side + x] = r < 0.8 ? 1 : 0
+        near[y * side + x] = Float(max(0, 1 - r))
+    } }
+    let field = DepthField(width: side, height: side, nearness: near, mask: disc)
+    check(field.valid && abs(field.subjectCoverage() - 0.5) < 0.05, "depth field and subject coverage")
+    var options = DepthMeshBuilder.Options(); options.resolution = 48
+    var dome = try DepthMeshBuilder.build(field, aspect: 1, options: options)
+    check(dome.valid, "mesh is valid")
+    check(dome.depthExtent > 0.2, "real 3D: the mesh has depth, not a flat card (\(dome.depthExtent))")
+    let zs = stride(from: 2, to: dome.positions.count, by: 3).map { dome.positions[$0] }
+    check(Set(zs.map { Int($0 * 100) }).count > 10, "many distinct depths across the surface")
+    let frontVertices = dome.vertexCount / 2
+    let centre = (0..<frontVertices).min { a, b in
+        let pa = (dome.positions[a * 3], dome.positions[a * 3 + 1]), pb = (dome.positions[b * 3], dome.positions[b * 3 + 1])
+        return pa.0 * pa.0 + pa.1 * pa.1 < pb.0 * pb.0 + pb.1 * pb.1
+    }!
+    check(dome.positions[centre * 3 + 2] > 0.25, "the nearest part (centre of the dome) comes forward")
+    var openOptions = options; openOptions.closed = false
+    let open = try DepthMeshBuilder.build(field, aspect: 1, options: openOptions)
+    check(dome.triangleCount > open.triangleCount * 2, "closed model adds a back and side walls")
+    // Watertight: every edge of the closed model is shared by exactly two triangles.
+    var edges: [String: Int] = [:]
+    for t in 0..<dome.triangleCount {
+        let tri = (0..<3).map { Int(dome.indices[t * 3 + $0]) }
+        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] { edges["\(min(a, b))-\(max(a, b))", default: 0] += 1 }
+    }
+    check(edges.values.allSatisfy { $0 == 2 }, "closed model is watertight")
+    check(dome.uvs.allSatisfy { $0 >= 0 && $0 <= 1 }, "texture coordinates inside the picture")
+    let normalLengths: [Float] = (0..<dome.vertexCount).map { i -> Float in
+        let nx: Float = dome.normals[i * 3], ny: Float = dome.normals[i * 3 + 1], nz: Float = dome.normals[i * 3 + 2]
+        return (nx * nx + ny * ny + nz * nz).squareRoot()
+    }
+    check(normalLengths.allSatisfy { abs($0 - 1) < 0.01 }, "unit normals")
+    dome.normalize(size: 1)
+    let b = dome.bounds
+    check(abs(b.max[0] + b.min[0]) < 0.01 && max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) <= 1.0001, "normalised: centred, fits in 1")
+    let wide = try DepthMeshBuilder.build(field, aspect: 2, options: options)
+    let wb = wide.bounds
+    check((wb.max[0] - wb.min[0]) > (wb.max[1] - wb.min[1]) * 1.5, "picture aspect kept")
+    check((try? DepthMeshBuilder.build(DepthField(width: side, height: side, nearness: near, mask: near.map { _ in 0 }), aspect: 1)) == nil, "no subject, no model")
+    check((try? DepthMeshBuilder.build(DepthField(width: 1, height: 1, nearness: [0], mask: [1]), aspect: 1)) == nil, "invalid field rejected")
+    let flat = try DepthMeshBuilder.build(DepthField(width: side, height: side, nearness: near.map { _ in 0.5 }, mask: disc), aspect: 1, options: options)
+    check(flat.valid, "flat depth still gives a valid closed plate")
+
+    let encoded = GeneratedMeshCodec.encode(dome)
+    check(GeneratedMeshCodec.decode(encoded) == dome, "mesh file round trip")
+    check(GeneratedMeshCodec.decode(encoded.dropLast(4)) == nil && GeneratedMeshCodec.decode(Data("nope".utf8)) == nil, "broken mesh files rejected")
+    let obj = OBJWriter.obj(open, materialFile: "model.mtl")
+    check(obj.contains("mtllib model.mtl") && obj.components(separatedBy: "\nv ").count - 1 == open.vertexCount && obj.components(separatedBy: "\nf ").count - 1 == open.triangleCount, "OBJ export")
+    check(OBJWriter.mtl(texture: "texture.jpg").contains("map_Kd texture.jpg"), "MTL points at the texture")
+
+    let manifest = Generated3DManifest(id: "m1", name: "Dome", createdAt: Date(timeIntervalSince1970: 0), source: .image, sourceName: "dome.jpg", sourceHash: "abc",
+                                       engine: "DepthMesh", engineVersion: "1.0", depthSource: .depthAnythingV2, geometry: .depthRelief, quality: .medium,
+                                       vertexCount: dome.vertexCount, triangleCount: dome.triangleCount, textureWidth: 1024, textureHeight: 1024,
+                                       meshFile: "mesh.m3dg", textureFile: "texture.jpg", usdzFile: nil, thumbnailFile: nil,
+                                       humanoidDetected: false, rigging: .experimentalNotImplemented, animation: .experimentalNotImplemented, separableParts: .notAvailable)
+    let reopened = try JSONDecoder().decode(Generated3DManifest.self, from: JSONEncoder().encode(manifest))
+    check(reopened == manifest && reopened.valid, "manifest round trip")
+    check(reopened.rigging != .ready && reopened.animation != .ready, "experimental rigging is never marked ready")
+    check(GenerationQuality.recommended(memory: 8_000_000_000, thermal: 0) == .high && GenerationQuality.recommended(memory: 8_000_000_000, thermal: 2) == .low && GenerationQuality.recommended(memory: 4_000_000_000, thermal: 0) == .medium, "quality follows memory and temperature")
+    check(GenerationQuality.allCases.allSatisfy { (1024...2048).contains($0.textureSize) }, "textures 1024–2048")
+
+    // Frames.
+    let sharpImage = (0..<(32 * 32)).map { UInt8(($0 % 2 == 0) != (($0 / 32) % 2 == 0) ? 255 : 0) }
+    let blurImage = [UInt8](repeating: 128, count: 32 * 32)
+    check(FrameQuality.sharpness(sharpImage, width: 32, height: 32) > 1000 && FrameQuality.sharpness(blurImage, width: 32, height: 32) == 0, "sharpness: checkerboard sharp, flat grey blurry")
+    let ramp = (0..<72).map { UInt8(($0 % 9) * 20) }
+    check(FrameQuality.differenceHash(ramp) == 0 && FrameQuality.differenceHash(ramp.reversed()) != 0, "difference hash")
+    check(FrameQuality.downscale(sharpImage, width: 32, height: 32, to: 9, 8).count == 72, "downscale for hashing")
+    var frames: [FrameStat] = []
+    for i in 0..<40 { frames.append(FrameStat(index: i, time: Double(i) / 2, sharpness: i % 10 == 0 ? 1 : 200, hash: UInt64(i) * 0x0F0F_0F0F, shiftX: 0.06)) }
+    frames.append(FrameStat(index: 40, time: 20, sharpness: 200, hash: UInt64(39) * 0x0F0F_0F0F, shiftX: 0.06))
+    let picked = FrameQuality.select(frames)
+    check(picked.blurry == 4 && picked.duplicates == 1 && picked.kept.count == 36, "blurry and duplicate frames dropped (\(picked.blurry), \(picked.duplicates), \(picked.kept.count))")
+    check(VideoAssessment.assess(picked.kept).canReconstruct, "orbit video: multi-view ready")
+    let still = picked.kept.map { f -> FrameStat in var g = f; g.shiftX = 0.002; return g }
+    check(VideoAssessment.assess(still) == .insufficientViews(frames: still.count, sweep: still.reduce(0) { $0 + abs($1.shiftX) }), "camera barely moved: not reconstructable")
+    let person = still.map { f -> FrameStat in var g = f; g.person = true; return g }
+    check(VideoAssessment.assess(person) == .personFixedCamera, "fixed-camera person video recognised")
+    check(VideoAssessment.assess(Array(picked.kept.prefix(3))) == .tooFewFrames(frames: 3), "too few frames")
+    check(!VideoAssessment.personFixedCamera.canReconstruct && !VideoAssessment.personFixedCamera.message.isEmpty, "only multi-view input goes to reconstruction")
+
+    check(PixelMath.half(0x3C00) == 1 && PixelMath.half(0xC000) == -2 && PixelMath.half(0x0000) == 0 && abs(PixelMath.half(0x3555) - 0.3333) < 0.001, "half floats")
+    check(PixelMath.nearness(fromDepth: [2, 0, .nan]) == [0.5, 0, 0], "metric depth to nearness")
+    let otsu = PixelMath.otsuMask([0.1, 0.12, 0.11, 0.9, 0.95, 0.92])
+    check(otsu == [0, 0, 0, 1, 1, 1], "depth-only subject mask")
+    print("RPG generate 3D: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
