@@ -55,6 +55,7 @@ actor GeneratedAssetStore {
     }
 
     func saveImage(_ result: GeneratedImage, source: URL, title: String, libraryID: String?, elapsed: Double) throws -> GeneratedModelManifest {
+        let savingStarted = Date()
         try prepare()
         try GenerationResources.checkDisk(at: root, bytes: Int64(result.texture.count * 4 + (30 << 20)))
         let id = UUID(), texture = root.appendingPathComponent("Textures/.\(id).png")
@@ -78,13 +79,14 @@ actor GeneratedAssetStore {
             engine: GeneratedModelManifest.engineVersion + ";DepthAnythingV2SmallF16@cfef6f6",
             kind: .depthSurface, quality: result.quality, vertices: result.mesh.positions.count,
             triangles: result.mesh.triangleCount, textureWidth: result.width, textureHeight: result.height,
-            textureHash: textureHash, modelBytes: bytes, elapsedSeconds: elapsed, realityKitValidated: false)
+            textureHash: textureHash, modelBytes: bytes, elapsedSeconds: elapsed + Date().timeIntervalSince(savingStarted), realityKitValidated: false)
         try file(id).save(manifest, revision: 1)
         committed = true
         return manifest
     }
 
     func saveReconstruction(model: URL, source: URL, title: String, elapsed: Double) throws -> GeneratedModelManifest {
+        let savingStarted = Date()
         try prepare()
         let id = UUID(), target = modelURL(id)
         let sourceInfo = try preserveSource(source)
@@ -98,16 +100,17 @@ actor GeneratedAssetStore {
         let manifest = GeneratedModelManifest(id: id, createdAt: .now, title: title, sourceName: title,
             sourceHash: sourceInfo.hash, sourceExtension: sourceInfo.ext, engine: GeneratedModelManifest.engineVersion + ";AppleObjectCapture",
             kind: .photogrammetry, quality: "ObjectCapture-reduced-unverified", vertices: 0, triangles: 0,
-            textureWidth: 0, textureHeight: 0, modelBytes: bytes, elapsedSeconds: elapsed, realityKitValidated: false)
+            textureWidth: 0, textureHeight: 0, modelBytes: bytes, elapsedSeconds: elapsed + Date().timeIntervalSince(savingStarted), realityKitValidated: false)
         try file(id).save(manifest, revision: 1)
         committed = true
         return manifest
     }
 
-    func confirmRealityKit(_ id: UUID) throws -> GeneratedModelManifest {
+    func confirmRealityKit(_ id: UUID, sampledPeak: UInt64? = nil) throws -> GeneratedModelManifest {
         let snapshot = try file(id).load()
         guard var manifest = snapshot?.payload else { throw GenerationError.corruptAsset }
         manifest.realityKitValidated = true
+        if let sampledPeak { manifest.sampledPeakFootprintBytes = sampledPeak }
         try file(id).save(manifest, revision: (snapshot?.revision ?? 0) + 1)
         return manifest
     }

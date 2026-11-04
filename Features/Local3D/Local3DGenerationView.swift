@@ -155,6 +155,9 @@ struct Local3DGenerationView: View {
             Text(manifest.triangles > 0 ? "\(manifest.vertices) 顶点 · \(manifest.triangles) 三角面" : "摄影测量几何统计：暂不可用")
             Text(manifest.textureWidth > 0 ? "贴图 \(manifest.textureWidth) × \(manifest.textureHeight)" : "摄影测量贴图尺寸：暂不可用")
             Text("USDZ \(ByteCountFormatter.string(fromByteCount: Int64(manifest.modelBytes), countStyle: .file)) · 生成 \(manifest.elapsedSeconds, specifier: "%.1f") 秒")
+            if let bytes = manifest.sampledPeakFootprintBytes {
+                Text("进程内存采样峰值 \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory))（200 ms 采样，非系统峰值）")
+            }
         }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
     }
 

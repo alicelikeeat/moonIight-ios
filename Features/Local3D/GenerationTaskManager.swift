@@ -102,6 +102,7 @@ final class GenerationTaskManager: ObservableObject {
     private var source: Local3DSource?
     private let loader = GeneratedModelLoader()
     private var cancellationReason: GenerationError?
+    private var sampledPeak: UInt64 = 0
 
     private var progress: GenerationProgress {
         { [weak self] label, fraction in
@@ -216,7 +217,14 @@ final class GenerationTaskManager: ObservableObject {
         busy = true; error = nil; fraction = nil; cancellationReason = nil
         stage = "准备本地任务"
         task = Task { @MainActor in
-            defer { busy = false; task = nil; fraction = nil; if Task.isCancelled { entity = nil; selection = nil; preset = nil } }
+            sampledPeak = GenerationResources.footprintBytes ?? 0
+            let memorySampler = Task { @MainActor in
+                while !Task.isCancelled {
+                    sampledPeak = max(sampledPeak, GenerationResources.footprintBytes ?? 0)
+                    do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                }
+            }
+            defer { memorySampler.cancel(); busy = false; task = nil; fraction = nil; if Task.isCancelled { entity = nil; selection = nil; preset = nil } }
             do {
                 try await operation()
                 try Task.checkCancellation()
@@ -265,11 +273,13 @@ final class GenerationTaskManager: ObservableObject {
             let extent = max(bounds.extents.x, bounds.extents.y, bounds.extents.z)
             guard hasGeometry(loaded), extent.isFinite, extent > 0.00001 else { throw GenerationError.corruptAsset }
             let skin = try await GeneratedAssetStore.shared.preset(manifest.id)
-            let confirmed = try await GeneratedAssetStore.shared.confirmRealityKit(manifest.id)
+            sampledPeak = max(sampledPeak, GenerationResources.footprintBytes ?? 0)
+            let confirmed = try await GeneratedAssetStore.shared.confirmRealityKit(manifest.id, sampledPeak: rollback && sampledPeak > 0 ? sampledPeak : nil)
             try Task.checkCancellation()
             entity = loaded; selection = confirmed; preset = skin
             stage = manifest.kind == .depthSurface ? "深度立体模型已保存并通过 RealityKit 加载；背面未恢复。" : "摄影测量模型已保存并通过 RealityKit 加载；请旋转检查几何质量。"
             await refresh()
+            try Task.checkCancellation()
         } catch {
             if rollback { try? await GeneratedAssetStore.shared.delete(manifest.id) }
             throw error

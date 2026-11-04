@@ -119,6 +119,8 @@ struct GeneratedModelManifest: Codable, Equatable, Identifiable, Sendable {
     var textureHash: String?
     var modelBytes: Int
     var elapsedSeconds: Double
+    /// Sampled process physical footprint, not the OS high-water mark or GPU total.
+    var sampledPeakFootprintBytes: UInt64? = nil
     // Only set after the actual saved file has loaded in RealityKit.
     var realityKitValidated: Bool
     var skeletonStatus = "notImplemented"

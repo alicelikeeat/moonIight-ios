@@ -1,0 +1,7 @@
+{
+  "platform": "Linux x86_64; Swift 6.0.3",
+  "scope": "Synthetic depth mesh/serialization/quality rules ONLY, no Core ML, Vision, RealityKit or iPhone",
+  "wallSeconds": 0.3195,
+  "maximumResidentBytes": 24838144,
+  "output": "Local3D: 31 checks passed; USDZ fixture: /workspace/moonIight-ios/build/local3d/fixture.usdz"
+}

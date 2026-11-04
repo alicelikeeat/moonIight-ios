@@ -36,13 +36,18 @@ enum ImageGenerationPipeline {
         try await GenerationResources.checkpoint()
         let context = CIContext(options: [.cacheIntermediates: false])
         let maskImage = CIImage(cvPixelBuffer: maskBuffer)
-        let scaledMask = maskImage.transformed(by: .init(scaleX: CGFloat(field.width) / maskImage.extent.width,
-                                                        y: CGFloat(field.height) / maskImage.extent.height))
+        guard let maskCGImage = context.createCGImage(maskImage, from: maskImage.extent) else { throw GenerationError.noSubject }
         var mask = [UInt8](repeating: 0, count: field.width * field.height)
-        mask.withUnsafeMutableBytes { bytes in
-            context.render(scaledMask, toBitmap: bytes.baseAddress!, rowBytes: field.width,
-                           bounds: CGRect(x: 0, y: 0, width: field.width, height: field.height), format: .L8, colorSpace: nil)
+        let rendered = mask.withUnsafeMutableBytes { bytes -> Bool in
+            guard let bitmap = CGContext(data: bytes.baseAddress, width: field.width, height: field.height,
+                bitsPerComponent: 8, bytesPerRow: field.width, space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            // Same CGImage -> CGContext convention as the Core ML input path,
+            // avoiding a different CI bitmap row convention for the mask.
+            bitmap.draw(maskCGImage, in: CGRect(x: 0, y: 0, width: field.width, height: field.height))
+            return true
         }
+        guard rendered else { throw GenerationError.memory }
         await progress("根据深度构建三维顶点和三角网格", nil)
         let edge = GenerationResources.gridEdge
         let mesh = try ModelOptimizationService.depthMesh(width: field.width, height: field.height,

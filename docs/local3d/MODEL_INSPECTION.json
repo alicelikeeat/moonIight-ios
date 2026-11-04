@@ -1,0 +1,22 @@
+{
+  "specificationVersion": 8,
+  "minimumOS": "iOS 17 (Core ML spec 8)",
+  "inputs": [
+    [
+      "image",
+      518,
+      392,
+      "20"
+    ]
+  ],
+  "outputs": [
+    [
+      "depth",
+      518,
+      392,
+      "40"
+    ]
+  ],
+  "license": "Apache 2",
+  "runtimeTested": false
+}
