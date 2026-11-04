@@ -1,0 +1,28 @@
+{
+  "repository": "https://huggingface.co/apple/coreml-depth-anything-v2-small",
+  "revision": "cfef6f6f2a70783dedc0bfae40cecbc2052285d3",
+  "license": "Apache-2.0",
+  "variant": "Small F16",
+  "files": [
+    {
+      "path": "DepthAnythingV2SmallF16.mlpackage/Manifest.json",
+      "sha256": "2883ae290c48fe916dc5ececac03a7d847fa277165a49ef5652fa1d2b9cb55f7",
+      "bytes": 617
+    },
+    {
+      "path": "DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+      "sha256": "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042",
+      "bytes": 399433
+    },
+    {
+      "path": "DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+      "sha256": "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed",
+      "bytes": 49419072
+    },
+    {
+      "path": "MODEL_CARD.md",
+      "sha256": "a3280768d250f8a0c38f1f60971284e9658bc000eeb897eab126e20bd7cdee46",
+      "bytes": 3900
+    }
+  ]
+}

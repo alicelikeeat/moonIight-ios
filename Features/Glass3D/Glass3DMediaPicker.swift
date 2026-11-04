@@ -110,6 +110,8 @@ struct Glass3DMediaThumbnail: View {
 struct Glass3DMediaPicker: View {
     @ObservedObject var store: MediaStore
     var title = L10n.t("选择媒体", "Choose Media")
+    /// The offline generator reuses local entries and owns its bounded imports.
+    var selectionOnly = false
     var current: String?
     /// Library media this world already uses, newest first.
     var used: [String] = []
@@ -145,7 +147,7 @@ struct Glass3DMediaPicker: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if !selecting { importRow }
+                    if !selecting && !selectionOnly { importRow }
                     if let progress {
                         HStack(spacing: 10) {
                             ProgressView()
@@ -174,7 +176,7 @@ struct Glass3DMediaPicker: View {
                             }
                         }
                     }
-                    if !selecting { starterSection }
+                    if !selecting && !selectionOnly { starterSection }
                     VStack(alignment: .leading, spacing: 10) {
                         sectionTitle(L10n.t("媒体库", "Library"), detail: L10n.t("\(items.count) 项 · 长按可删除", "\(items.count) items · long press to delete"))
                         if !items.isEmpty {

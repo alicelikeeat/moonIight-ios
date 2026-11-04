@@ -22,6 +22,7 @@ struct Glass3DScreen: View {
     @State private var panel = true
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
+    @State private var local3D = false
     @AppStorage(Glass3DLaunch.key) private var openAtLaunch = true
     @Namespace private var modeNamespace
 
@@ -94,6 +95,7 @@ struct Glass3DScreen: View {
         .onDisappear { controller.stop() }
         .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .sheet(isPresented: $local3D) { NavigationStack { Local3DGenerationView() } }
         .sheet(item: $editor) { kind in
             switch kind {
             case .characters: Glass3DCharacterEditor(controller: controller, store: model.mediaStore)
@@ -193,6 +195,7 @@ struct Glass3DScreen: View {
                 Button { editor = .bosses } label: { Label(L10n.t("Boss 阶段编辑器", "Boss Phase Editor"), systemImage: "crown") }
             }
             Button { credits = true } label: { Label(L10n.t("素材来源与授权", "Credits & Licences"), systemImage: "checkmark.seal") }
+            Button { local3D = true } label: { Label("本地图片 / 视频转 3D", systemImage: "cube") }
             Section(L10n.t("显示", "Display")) {
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
                 Toggle(L10n.t("第三人称镜头", "Third-Person Camera"), isOn: $controller.thirdPerson)
