@@ -26,15 +26,25 @@ actor GeneratedAssetStore {
     func list() throws -> [GeneratedModelManifest] {
         try prepare()
         let urls = try fm.contentsOfDirectory(at: root.appendingPathComponent("Manifests"), includingPropertiesForKeys: nil)
-        let ids = Set(urls.compactMap { UUID(uuidString: $0.lastPathComponent.components(separatedBy: ".")[0]) })
+        let ids = Set(urls.compactMap { url -> UUID? in
+            let stem = url.lastPathComponent.components(separatedBy: ".")[0]
+            guard url.lastPathComponent == stem + ".json" || url.lastPathComponent == stem + ".backup.json" else { return nil }
+            return UUID(uuidString: stem)
+        })
         var items: [GeneratedModelManifest] = []
         for id in ids {
-            guard let manifest = try file(id).load()?.payload else { throw GenerationError.corruptAsset }
+            // VersionedJSONFile quarantines unreadable copies. Keep other assets
+            // usable while preserving every file referenced by the damaged record.
+            guard let manifest = try file(id).load()?.payload else { continue }
             guard manifest.id == id else { throw GenerationError.corruptAsset }
             try validate(manifest)
             items.append(manifest)
         }
         return items.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func hasQuarantinedManifests() throws -> Bool {
+        try fm.contentsOfDirectory(atPath: root.appendingPathComponent("Manifests").path).contains { $0.contains(".corrupt-") }
     }
 
     func manifest(_ id: UUID) throws -> GeneratedModelManifest {
@@ -143,6 +153,9 @@ actor GeneratedAssetStore {
     /// Only call after all manifests load; future/corrupt manifests block GC.
     func removeUnreferencedContent() throws {
         let manifests = try list()
+        // Unknown references may live in quarantined records: preserve content
+        // until those records are repaired, instead of guessing what is unused.
+        guard try !hasQuarantinedManifests() else { return }
         let sources = Set(manifests.map { "\($0.sourceHash).\($0.sourceExtension)" })
         let textures = Set(manifests.compactMap { $0.textureHash.map { $0 + ".png" } })
         for (directory, keep) in [("Sources", sources), ("Textures", textures)] {

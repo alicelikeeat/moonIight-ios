@@ -115,6 +115,9 @@ final class GenerationTaskManager: ObservableObject {
     func refresh() async {
         do {
             models = try await GeneratedAssetStore.shared.list()
+            if try await GeneratedAssetStore.shared.hasQuarantinedManifests() {
+                error = "部分模型清单损坏，已隔离并保留资源供恢复；其余模型仍可打开。"
+            }
             if !busy { try await GeneratedAssetStore.shared.removeUnreferencedContent() }
         }
         catch { self.error = "资产库读取失败：\(error.localizedDescription)" }

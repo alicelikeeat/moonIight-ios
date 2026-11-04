@@ -75,4 +75,21 @@ final class Local3DIntegrationTests: XCTestCase {
         try handle.close()
         XCTAssertThrowsError(try Local3DPhotoFile.stage(source, video: false))
     }
+
+    func testCorruptManifestIsQuarantinedWithoutDeletingUnknownContent() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("local3d-corrupt-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = GeneratedAssetStore(root: root)
+        _ = try await store.list()
+        let id = UUID()
+        try Data("invalid-json".utf8).write(to: root.appendingPathComponent("Manifests/\(id).json"))
+        let orphan = root.appendingPathComponent("Models/\(id).usdz")
+        try Data("preserve-for-recovery".utf8).write(to: orphan)
+        let models = try await store.list()
+        XCTAssertTrue(models.isEmpty)
+        let quarantined = try await store.hasQuarantinedManifests()
+        XCTAssertTrue(quarantined)
+        try await store.removeUnreferencedContent()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: orphan.path))
+    }
 }
