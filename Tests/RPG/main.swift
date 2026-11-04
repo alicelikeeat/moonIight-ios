@@ -2067,4 +2067,72 @@ do {
     print("RPG clear world: \(checks) total checks passed")
 }
 
+// P37: model renderer for GIF / video export and eight-direction characters.
+do {
+    // Dome, textured solid red.
+    let side = 40
+    var near = [Float](repeating: 0, count: side * side), disc = near
+    for y in 0..<side { for x in 0..<side {
+        let dx = Double(x - side / 2) / Double(side / 2), dy = Double(y - side / 2) / Double(side / 2)
+        let r = (dx * dx + dy * dy).squareRoot()
+        disc[y * side + x] = r < 0.8 ? 1 : 0; near[y * side + x] = Float(max(0, 1 - r))
+    } }
+    var o = DepthMeshBuilder.Options(); o.resolution = 32; o.back = .inflated
+    var dome = try DepthMeshBuilder.build(DepthField(width: side, height: side, nearness: near, mask: disc), aspect: 1, options: o)
+    dome.normalize(size: 1)
+    let red = RasterImage(width: 4, height: 4, fill: [220, 30, 40, 255])
+    let frame = ModelRasterizer.render(dome, texture: red, camera: RasterCamera(), width: 64, height: 64)
+    check(frame.width == 64 && frame.rgba.count == 64 * 64 * 4, "frame size")
+    check(frame.coverage > 0.15 && frame.coverage < 0.9, "the model fills part of the frame (\(frame.coverage))")
+    let centre = frame.pixel(32, 32)
+    check(centre[3] == 255 && centre[0] > 200 && centre[1] < 60, "centre shows the texture")
+    check(frame.pixel(0, 0)[3] == 0, "background stays transparent")
+    let side90 = ModelRasterizer.render(dome, texture: red, camera: RasterCamera(yaw: .pi / 2), width: 64, height: 64)
+    check(side90.coverage > 0.05 && side90.coverage < frame.coverage, "turned 90°: thinner profile, still solid (\(side90.coverage))")
+    let lit = ModelRasterizer.render(dome, texture: red, camera: RasterCamera(lighting: true), width: 64, height: 64)
+    check(lit.pixel(32, 32)[0] <= centre[0], "lighting shades")
+    let solid = ModelRasterizer.render(dome, texture: red, camera: RasterCamera(), width: 32, height: 32, background: [10, 20, 30, 255])
+    check(solid.pixel(0, 0) == [10, 20, 30, 255], "solid background for video")
+
+    // Depth test: a near red quad in front of a far blue one, drawn last.
+    let texture = RasterImage(width: 2, height: 1, rgba: [255, 0, 0, 255, 0, 0, 255, 255])
+    var quads = GeneratedMesh()
+    quads.positions = [-0.3, -0.3, 0.2, 0.3, -0.3, 0.2, 0.3, 0.3, 0.2, -0.3, 0.3, 0.2,   -0.4, -0.4, -0.2, 0.4, -0.4, -0.2, 0.4, 0.4, -0.2, -0.4, 0.4, -0.2]
+    quads.uvs = [0.1, 0.5, 0.1, 0.5, 0.1, 0.5, 0.1, 0.5,   0.9, 0.5, 0.9, 0.5, 0.9, 0.5, 0.9, 0.5]
+    quads.indices = [0, 1, 2, 0, 2, 3,   4, 5, 6, 4, 6, 7]
+    quads.computeNormals()
+    let layered = ModelRasterizer.render(quads, texture: texture, camera: RasterCamera(pitch: 0), width: 40, height: 40, supersample: 1)
+    check(layered.pixel(20, 20)[0] > 240 && layered.pixel(20, 20)[2] == 0, "nearer surface wins")
+    check(layered.pixel(10, 20)[2] > 240 && layered.pixel(10, 20)[0] == 0 && layered.pixel(29, 20)[2] > 240, "farther surface visible around it")
+    let behind = ModelRasterizer.render(quads, texture: texture, camera: RasterCamera(yaw: .pi, pitch: 0), width: 40, height: 40, supersample: 1)
+    check(behind.coverage == 0, "back faces are culled (open quads seen from behind)")
+
+    // Animated frames really differ.
+    let w = 100, h = 160
+    var mask = [Float](repeating: 0, count: w * h), depth = mask
+    func fill(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int) { for y in y0..<y1 { for x in x0..<x1 { mask[y * w + x] = 1; depth[y * w + x] = 1 } } }
+    fill(42, 4, 58, 26); fill(34, 28, 66, 82); fill(22, 30, 32, 80); fill(68, 30, 78, 80); fill(36, 84, 48, 154); fill(52, 84, 64, 154)
+    var fo = DepthMeshBuilder.Options(); fo.resolution = 64; fo.smoothingPasses = 0
+    var figure = try DepthMeshBuilder.build(DepthField(width: w, height: h, nearness: depth, mask: mask), aspect: Double(w) / Double(h), options: fo)
+    figure.normalize(size: 1)
+    func jp(_ x: Double, _ y: Double) -> BodyJoints2D.Point { .init(u: x / Double(w), v: y / Double(h), confidence: 0.9) }
+    let pose = BodyJoints2D(points: ["neck_1_joint": jp(50, 28), "root": jp(50, 82), "right_shoulder_1_joint": jp(27, 32), "right_forearm_joint": jp(27, 55), "right_hand_joint": jp(27, 78),
+                                     "left_shoulder_1_joint": jp(73, 32), "left_forearm_joint": jp(73, 55), "left_hand_joint": jp(73, 78), "right_upLeg_joint": jp(42, 86), "right_leg_joint": jp(42, 118),
+                                     "right_foot_joint": jp(42, 150), "left_upLeg_joint": jp(58, 86), "left_leg_joint": jp(58, 118), "left_foot_joint": jp(58, 150)])
+    let skeleton = try AutoRig.skeleton(for: figure, joints: pose)
+    let skin = AutoRig.weights(for: figure, skeleton: skeleton)
+    let wave = RigClip.standard.first { $0.id == "wave" }!
+    let posed = RigPose.deform(figure, skin: skin, matrices: RigPose.matrices(skeleton, clip: wave, time: 0.3))
+    let restFrame = ModelRasterizer.render(figure, texture: red, camera: RasterCamera(), width: 48, height: 48, supersample: 1)
+    let waveFrame = ModelRasterizer.render(figure, positions: posed.positions, normals: posed.normals, texture: red, camera: RasterCamera(), width: 48, height: 48, supersample: 1)
+    let changed = stride(from: 3, to: restFrame.rgba.count, by: 4).filter { restFrame.rgba[$0] != waveFrame.rgba[$0] }.count
+    check(changed > 20, "animated frame differs from the rest pose (\(changed) pixels)")
+
+    check(ModelExportPlan.turntable(frames: 36).count == 36 && ModelExportPlan.directionYaws.count == 8, "turntable and eight directions")
+    check(ModelExportPlan.times(period: 1.1, fps: 20).count == 22, "clip frame times")
+    let mapped = ModelExportPlan.spriteClips.flatMap(\.actions)
+    check(Set(mapped).count == mapped.count && Set(mapped) == Set(CharacterAction.allCases), "every action maps to exactly one baked clip")
+    print("RPG model render: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

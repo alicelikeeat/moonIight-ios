@@ -309,8 +309,8 @@ enum ImageGenerationPipeline {
         var r = 0.0, g = 0.0, b = 0.0, n = 0.0
         if let data = small.data?.assumingMemoryBound(to: UInt8.self) {
             for y in 0..<64 { for x in 0..<64 {
-                // Context rows go bottom-up; the mask's go top-down.
-                let inside = mask.sample(mask.mask, u: Double(x) / 63, v: 1 - Double(y) / 63) >= 0.5
+                // Bitmap context memory starts with the top row, like the mask.
+                let inside = mask.sample(mask.mask, u: Double(x) / 63, v: Double(y) / 63) >= 0.5
                 guard inside else { continue }
                 let o = (y * 64 + x) * 4
                 r += Double(data[o]); g += Double(data[o + 1]); b += Double(data[o + 2]); n += 1

@@ -112,7 +112,7 @@ struct Glass3DScreen: View {
         } message: {
             Text(L10n.t("会删除所有方块、建筑、动态、植物、生物和宝箱，主角回到出生点。角色、技能、Boss 阶段、建筑模板和生成的 3D 模型都保留。可以用「撤销」恢复。", "Removes every block, building, motion, plant, creature and chest; the player returns to the spawn. Characters, skills, Boss phases, building templates and generated 3D models are kept. Undo restores it."))
         }
-        .fullScreenCover(isPresented: $generate3D) { Generate3DScreen(controller: controller) { generate3D = false } }
+        .fullScreenCover(isPresented: $generate3D) { Generate3DScreen(controller: controller, mediaStore: model.mediaStore) { generate3D = false } }
         .sheet(item: $editor) { kind in
             switch kind {
             case .characters: Glass3DCharacterEditor(controller: controller, store: model.mediaStore)

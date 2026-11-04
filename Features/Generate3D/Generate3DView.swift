@@ -12,6 +12,8 @@ import ImageIO
 struct Generate3DScreen: View {
     /// The 3D world, when opened from it (enables "use as character look").
     var controller: Glass3DController?
+    /// Media library (exported GIFs / videos and picture characters go here).
+    var mediaStore: MediaStore?
     /// Closes this screen (back to the world, e.g. to place a model).
     var onDone: (() -> Void)?
     @StateObject private var tasks = GenerationTaskManager()
@@ -43,7 +45,7 @@ struct Generate3DScreen: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(L10n.t("关闭", "Close")) { tasks.cancel(); tasks.reset(); dismiss() } }
             }
-            .navigationDestination(item: $opened) { manifest in Generated3DDetailView(manifest: manifest, store: store, controller: controller, onPlace: { tasks.reset(); if let onDone { onDone() } else { dismiss() } }) }
+            .navigationDestination(item: $opened) { manifest in Generated3DDetailView(manifest: manifest, store: store, controller: controller, mediaStore: mediaStore, onPlace: { tasks.reset(); if let onDone { onDone() } else { dismiss() } }) }
         }
         .photosPicker(isPresented: $choosingPhoto, selection: $photoItem, matching: photoFilter, preferredItemEncoding: .current)
         .fileImporter(isPresented: $importingFile, allowedContentTypes: fileIsVideo ? [.movie, .mpeg4Movie, .quickTimeMovie] : [.jpeg, .png, .heic, .image]) { result in
@@ -376,8 +378,16 @@ struct Generated3DDetailView: View {
     let manifest: Generated3DManifest
     @ObservedObject var store: Generated3DStore
     var controller: Glass3DController?
+    var mediaStore: MediaStore?
     /// Goes back to the world with the Creature tool and this look selected.
     var onPlace: (() -> Void)?
+    @State private var exportOptions = ModelAnimationExport.Options()
+    /// Export progress (nil = idle); a class so background work can report into it.
+    @StateObject private var exportProgress = ExportProgressBox()
+    private var exporting: Double? { exportProgress.value }
+    @State private var exportTask: Task<Void, Never>?
+    @State private var exported: URL?
+    @State private var exportMessage: String?
     @StateObject private var scene = Generated3DPreviewScene()
     @Environment(\.dismiss) private var dismiss
     @State private var counts: (triangles: Int, vertices: Int)?
@@ -404,6 +414,7 @@ struct Generated3DDetailView: View {
                 controls
                 if let message { Label(message, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
                 infoCard
+                if depthModel { exportCard }
                 if depthModel { rigCard }
                 if depthModel { skinCard }
                 actions
@@ -534,6 +545,127 @@ struct Generated3DDetailView: View {
             }
         }
         .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    // MARK: GIF / video export
+
+    private var exportCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L10n.t("动图与视频", "GIFs & Video")).font(.headline)
+            Text(L10n.t("把模型真实渲染成动图或视频：转一圈展示，或播放骨骼动作；可存入媒体库贴到方块上，也可分享。", "Render the model into a GIF or video: a full turn, or a rig motion. Save to the media library for blocks, or share."))
+                .font(.caption).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    contentChip(.turntable)
+                    if let rig = scene.rig { ForEach(rig.clips) { clip in contentChip(.clip(clip.id)) } }
+                }
+            }
+            Picker(L10n.t("格式", "Format"), selection: $exportOptions.format) { ForEach(ModelAnimationExport.Format.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
+            HStack {
+                Picker(L10n.t("背景", "Background"), selection: $exportOptions.background) {
+                    ForEach(ModelAnimationExport.Background.allCases.filter { $0 != .clear || exportOptions.format == .gif }, id: \.self) { Text($0.title).tag($0) }
+                }.pickerStyle(.segmented)
+                Picker(L10n.t("尺寸", "Size"), selection: $exportOptions.size) { Text("360").tag(360); Text("540").tag(540); Text("720").tag(720) }.pickerStyle(.menu)
+            }
+            if let exporting {
+                HStack {
+                    ProgressView(value: exporting).tint(.accentColor)
+                    Button(L10n.t("取消", "Cancel")) { exportTask?.cancel() }.buttonStyle(Glass3DChipStyle(tint: .red))
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button { startExport() } label: { Label(L10n.t("生成", "Render"), systemImage: "film.stack") }
+                        .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true)).accessibilityIdentifier("generate3d-export")
+                    if controller != nil, mediaStore != nil {
+                        Button { makeSpriteCharacter() } label: { Label(L10n.t("做成八方向动图角色", "Make an 8-Direction Picture Character"), systemImage: "rotate.3d") }
+                            .buttonStyle(Glass3DChipStyle(tint: .accentColor)).accessibilityIdentifier("generate3d-sprite-character")
+                    }
+                }
+            }
+            if let exported {
+                HStack(spacing: 8) {
+                    ShareLink(item: exported) { Label(L10n.t("分享 / 存到相册", "Share / Save"), systemImage: "square.and.arrow.up") }.buttonStyle(Glass3DChipStyle(tint: .accentColor))
+                    Text(exported.lastPathComponent.hasSuffix("gif") ? "GIF" : "MP4").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
+                }
+            }
+            if let exportMessage { Text(exportMessage).font(.caption).foregroundStyle(.secondary) }
+            Text(L10n.t("「八方向动图角色」会从 8 个方向渲染待机、行走、挥手动图，做成一个图片角色：在世界里不用实时计算骨骼，更省电。", "An 8-direction picture character renders idle, walk and wave from eight directions into GIFs: no live skinning in the world, so it uses less power."))
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func contentChip(_ content: ModelAnimationExport.Content) -> some View {
+        Button(content.title) { exportOptions.content = content }
+            .buttonStyle(Glass3DChipStyle(tint: exportOptions.content == content ? .accentColor : .primary, prominent: exportOptions.content == content))
+    }
+
+    private func exportSource() async throws -> ModelAnimationExport.Source {
+        guard let meshURL = store.meshURL(current) else { throw Generate3DError.meshFailed }
+        let textureURL = store.textureURL(current)
+        let rig = await Generate3DRigging.load(current)
+        return try await Task.detached(priority: .userInitiated) { try ModelAnimationExport.loadSource(mesh: meshURL, texture: textureURL, rig: rig) }.value
+    }
+
+    private func startExport() {
+        exported = nil; exportMessage = nil; exportProgress.value = 0
+        var options = exportOptions
+        if options.format == .mp4 && options.background == .clear { options.background = .dark }
+        let progress = exportProgress.reporter
+        let title = current.name + " · " + options.content.title
+        exportTask = Task {
+            do {
+                let source = try await exportSource()
+                let job = Task.detached(priority: .userInitiated) { try await ModelAnimationExport.export(source, options: options, progress: progress) }
+                let url = try await withTaskCancellationHandler { try await job.value } onCancel: { job.cancel() }
+                exported = url
+                if let mediaStore, (await mediaStore.importLocalFile(url, title: title, kind: options.format == .gif ? .image : .video)) != nil {
+                    exportMessage = L10n.t("已存入媒体库（可在方块的媒体里选用）。", "Saved to the media library (choose it as block media).")
+                }
+            } catch {
+                exportMessage = (error as? Generate3DError) == .cancelled || error is CancellationError ? L10n.t("已取消。", "Cancelled.") : ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+            exportProgress.value = nil
+        }
+    }
+
+    /// Bakes the model into an 8-direction GIF character and selects it.
+    private func makeSpriteCharacter() {
+        guard let controller, let mediaStore else { return }
+        exported = nil; exportMessage = nil; exportProgress.value = 0
+        let progress = exportProgress.reporter
+        let name = String(current.name.prefix(48))
+        exportTask = Task {
+            do {
+                let source = try await exportSource()
+                let job = Task.detached(priority: .userInitiated) { try await ModelAnimationExport.spriteSheets(source, progress: progress) }
+                let sheets = try await withTaskCancellationHandler { try await job.value } onCancel: { job.cancel() }
+                var bindings: [MediaBinding] = []
+                var byClip: [String: [String]] = [:]
+                for sheet in sheets.files.sorted(by: { ($0.clip, $0.direction) < ($1.clip, $1.direction) }) {
+                    guard let entry = await mediaStore.importLocalFile(sheet.url, title: "\(name) · \(sheet.clip) · \(sheet.direction + 1)", kind: .image) else { continue }
+                    try? FileManager.default.removeItem(at: sheet.url)
+                    let binding = MediaBinding(id: "cb:" + UUID().uuidString, mediaID: entry.id, kind: .gif, fit: .fit)
+                    bindings.append(binding); byClip[sheet.clip, default: []].append(binding.id)
+                }
+                var template = CharacterTemplate(id: "char:" + UUID().uuidString, name: String((name + L10n.t(" · 动图", " · Pictures")).prefix(64)))
+                template.mode = .directional8
+                template.aspect = 1
+                template.height = min(8, max(0.5, 1.6 / max(0.2, sheets.figure)))
+                template.footAnchor = min(0.5, max(0, sheets.foot))
+                for entry in ModelExportPlan.spriteClips {
+                    guard let ids = byClip[entry.clip] ?? byClip["idle"], ids.count == 8 else { continue }
+                    for action in entry.actions { template.clips[action.rawValue] = ActionClip(bindingIDs: ids, speed: 1, loop: true) }
+                }
+                guard !template.clips.isEmpty else { throw Generate3DError.saveFailed(L10n.t("动图没有生成", "No pictures were made")) }
+                controller.saveCharacter(template, bindings: bindings)
+                controller.creatureLook = template.id
+                exportMessage = L10n.t("已做成「\(template.name)」：在「生物」或「主角」工具的外观里可以选它。", "Made \(template.name): pick it under Look in the Creature or Player tool.")
+            } catch {
+                exportMessage = (error as? Generate3DError) == .cancelled || error is CancellationError ? L10n.t("已取消。", "Cancelled.") : ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+            }
+            exportProgress.value = nil
+        }
     }
 
     private func autoRig() {
@@ -669,5 +801,13 @@ struct Generated3DDetailView: View {
         controller.mode = .edit
         controller.tool = .creature
         if let onPlace { onPlace() } else { message = L10n.t("已选好：在设计模式「生物」工具里轻点地面放置。", "Selected: tap the ground with the Creature tool in design mode.") }
+    }
+}
+
+/// Progress of a running export, reported from background work.
+@MainActor final class ExportProgressBox: ObservableObject {
+    @Published var value: Double?
+    var reporter: @Sendable (Double) -> Void {
+        { [weak self] v in Task { @MainActor in if self?.value != nil { self?.value = v } } }
     }
 }
