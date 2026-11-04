@@ -119,6 +119,8 @@ struct Glass3DMediaPicker: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importingFiles = false
     @State private var choosingPhotos = false
+    @State private var browsingOnline = false
+    @State private var loadingStarter: String?
     @State private var progress: (done: Int, total: Int)?
     @State private var message: String?
     @State private var selecting = false
@@ -172,6 +174,7 @@ struct Glass3DMediaPicker: View {
                             }
                         }
                     }
+                    if !selecting { starterSection }
                     VStack(alignment: .leading, spacing: 10) {
                         sectionTitle(L10n.t("媒体库", "Library"), detail: L10n.t("\(items.count) 项 · 长按可删除", "\(items.count) items · long press to delete"))
                         if !items.isEmpty {
@@ -229,6 +232,12 @@ struct Glass3DMediaPicker: View {
                 Button(L10n.t("取消", "Cancel"), role: .cancel) { pendingDelete = [] }
             } message: { Text(deleteMessage) }
         }
+        .sheet(isPresented: $browsingOnline) {
+            Glass3DOnlineAssetsView(store: store) { entry in
+                browsingOnline = false
+                if let item = glass3DMediaItems(store).first(where: { $0.id == entry.id }) { pick(item) }
+            }
+        }
         .photosPicker(isPresented: $choosingPhotos, selection: $photoItems, maxSelectionCount: 20, matching: .any(of: [.images, .videos]))
         .fileImporter(isPresented: $importingFiles, allowedContentTypes: [.image, .gif, .movie], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { importFiles(urls) }
@@ -242,33 +251,73 @@ struct Glass3DMediaPicker: View {
     // MARK: Pieces
 
     private var importRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button { choosingPhotos = true } label: {
-                importTile(L10n.t("相册", "Photos"), L10n.t("图片 · GIF · 视频", "Images · GIFs · videos"), "photo.on.rectangle.angled", [.orange, .pink])
+                importTile(L10n.t("相册", "Photos"), L10n.t("图片 · GIF · 视频", "Photos & videos"), "photo.on.rectangle.angled", [.orange, .pink])
             }
             .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-photos")
             Button { importingFiles = true } label: {
-                importTile(L10n.t("文件", "Files"), L10n.t("从「文件」App 导入", "From the Files app"), "folder.fill", [.blue, .cyan])
+                importTile(L10n.t("文件", "Files"), L10n.t("「文件」App", "Files app"), "folder.fill", [.blue, .cyan])
             }
             .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-files")
+            Button { browsingOnline = true } label: {
+                importTile(L10n.t("在线素材", "Online"), L10n.t("开源 · 可商用", "Open licences"), "globe", [.green, .teal])
+            }
+            .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-online")
         }
         .disabled(progress != nil)
     }
 
     private func importTile(_ title: String, _ detail: String, _ symbol: String, _ colors: [Color]) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol).font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
-                .frame(width: 38, height: 38)
-                .background(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 0)
+        VStack(spacing: 6) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 42, height: 42)
+                .background(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
+            Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
-        .padding(10).frame(maxWidth: .infinity)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.vertical, 12).padding(.horizontal, 6).frame(maxWidth: .infinity)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    /// Built-in CC0 pack: textures and character poses, one tap to use.
+    @ViewBuilder private var starterSection: some View {
+        if let manifest = Glass3DStarterPack.manifest {
+            VStack(alignment: .leading, spacing: 8) {
+                sectionTitle(L10n.t("内置素材", "Built-in"), detail: L10n.t("CC0 · 免费商用 · 不用联网", "CC0 · free for any use · offline"))
+                starterRow(L10n.t("贴图", "Textures"), manifest.items.filter { $0.group == "textures" })
+                starterRow(L10n.t("角色动作", "Character Poses"), manifest.items.filter { $0.group == "characters" })
+            }
+        }
+    }
+    private func starterRow(_ title: String, _ assets: [StarterAsset]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 8) {
+                    ForEach(assets) { asset in
+                        Button { useStarter(asset) } label: {
+                            Glass3DMediaThumbnail(url: Glass3DStarterPack.url(asset), kind: Glass3DStarterPack.kind(asset), side: 64, corner: 12)
+                                .overlay { if loadingStarter == asset.id { RoundedRectangle(cornerRadius: 12).fill(.black.opacity(0.35)); ProgressView().tint(.white) } }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(loadingStarter != nil)
+                        .accessibilityLabel(Glass3DStarterPack.title(asset))
+                    }
+                }
+            }
+            .frame(height: 64)
+        }
+    }
+    private func useStarter(_ asset: StarterAsset) {
+        loadingStarter = asset.id
+        Task {
+            let entry = await Glass3DStarterPack.importAsset(asset, store: store)
+            loadingStarter = nil
+            if let entry, let item = glass3DMediaItems(store).first(where: { $0.id == entry.id }) { pick(item) }
+            else { message = store.notice ?? L10n.t("导入失败", "Import failed") }
+        }
     }
 
     private func sectionTitle(_ title: String, detail: String) -> some View {

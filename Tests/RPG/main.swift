@@ -1661,4 +1661,44 @@ do {
     print("RPG revive: \(checks) total checks passed")
 }
 
+// P29: v1.65 open asset libraries: starter pack manifest, character recipe,
+// Poly Haven and Openverse parsing, licence labels.
+do {
+    let manifestData = try Data(contentsOf: URL(fileURLWithPath: "Resources/Glass3DStarter/manifest.json"))
+    let manifest = StarterManifest.decode(manifestData)
+    check(manifest != nil && manifest!.items.count >= 40, "starter manifest decodes")
+    if let manifest {
+        check(manifest.items.allSatisfy { FileManager.default.fileExists(atPath: "Resources/Glass3DStarter/" + $0.file) }, "every starter file is bundled")
+        check(manifest.items.allSatisfy { $0.license.hasPrefix("CC0") && !$0.attribution.needsCredit }, "starter pack is all CC0")
+        check(manifest.characters.count == 5 && manifest.characters.allSatisfy { $0.poses.count == 7 }, "five starter characters, seven poses each")
+        check(manifest.items.filter { $0.group == "textures" }.count >= 10, "starter textures")
+    }
+    let poseBindings = ["idle": "b-idle", "walk": "b-walk", "jump": "b-jump", "fall": "b-fall", "attack": "b-attack", "hurt": "b-hurt", "cheer": "b-cheer"]
+    let hero = StarterCharacterRecipe.template(id: "char:starter", name: "Adventurer", bindings: poseBindings)
+    check(hero.valid, "starter character is valid")
+    check(hero.clips["run"]?.bindingIDs == ["b-walk"] && (hero.clips["run"]?.speed ?? 0) > 1, "run reuses the walk GIF, faster")
+    check(hero.clips["attack"]?.loop == false && hero.clips["idle"]?.loop == true, "attack plays once, idle loops")
+    check(hero.clips.count == CharacterAction.allCases.count, "every action has a pose")
+    check(StarterCharacterRecipe.clips(bindings: ["idle": "x"]).keys.sorted() == ["idle"], "missing poses are left out")
+
+    let haven = Data(#"{"red_brick":{"name":"Red Brick","categories":["brick","wall"],"tags":["red"],"authors":{"Rob Tuytel":"All"},"download_count":900},"plywood":{"name":"Plywood","categories":["wood"],"download_count":1200}}"#.utf8)
+    let textures = OnlineAssetParsing.polyHaven(haven)
+    check(textures.map(\.id) == ["plywood", "red_brick"], "Poly Haven: most downloaded first")
+    check(textures.last?.attribution.author == "Rob Tuytel" && textures.last?.thumbnail.absoluteString.hasPrefix("https://cdn.polyhaven.com/") == true, "Poly Haven author and thumbnail")
+    check(OnlineAssetParsing.filter(textures, query: "RED wall").map(\.id) == ["red_brick"], "Poly Haven search by tag and category")
+    let files = Data(#"{"Diffuse":{"1k":{"jpg":{"url":"https://dl.polyhaven.org/a/red_brick_diff_1k.jpg"}}}}"#.utf8)
+    check(OnlineAssetParsing.polyHavenDiffuse(files)?.lastPathComponent == "red_brick_diff_1k.jpg", "Poly Haven colour map")
+    check(OnlineAssetParsing.polyHavenDiffuse(Data("{}".utf8)) == nil, "no colour map, no download")
+
+    let verse = Data(#"{"results":[{"id":"a1","title":"Resume - Glasses","url":"https://live.staticflickr.com/7068/13903383190_5920c870e1_b.jpg","creator":"flazingo_photos","license":"by-sa","license_version":"2.0","license_url":"https://creativecommons.org/licenses/by-sa/2.0/","provider":"flickr","foreign_landing_url":"https://www.flickr.com/photos/x","thumbnail":"https://api.openverse.org/v1/images/a1/thumb/","attribution":"\"Resume - Glasses\" by flazingo_photos is licensed under CC BY-SA 2.0."},{"id":"a2","title":" ","url":"http://example.org/pic.png","license":"cc0","thumbnail":"https://api.openverse.org/v1/images/a2/thumb/"}]}"#.utf8)
+    let images = OnlineAssetParsing.openverse(verse)
+    check(images.count == 2, "Openverse results")
+    check(images[0].download?.host == "live.staticflickr.com" && images[0].attribution.license == "CC BY-SA 2.0" && images[0].attribution.needsCredit, "Openverse original, licence label, needs credit")
+    check(images[1].download?.host == "api.openverse.org" && images[1].title == "Untitled" && !images[1].attribution.needsCredit, "http original falls back to the https thumbnail; CC0 needs no credit")
+    check(OnlineAssetParsing.openverseURL(query: " moon ", page: 2, cc0Only: true)?.query?.contains("license=cc0,pdm") == true, "CC0-only search")
+    check(OnlineAssetParsing.openverseURL(query: "moon", page: 1, cc0Only: false)?.query?.contains("license_type=commercial") == true, "default search allows commercial use")
+    check(OnlineAssetParsing.licenseLabel("pdm", "") == "Public Domain" && OnlineAssetParsing.licenseLabel("by", "4.0") == "CC BY 4.0", "licence labels")
+    print("RPG asset library: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

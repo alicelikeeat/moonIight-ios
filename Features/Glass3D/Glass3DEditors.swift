@@ -13,10 +13,41 @@ struct Glass3DCharacterEditor: View {
     @ObservedObject var controller: Glass3DController
     let store: MediaStore
     @Environment(\.dismiss) private var dismiss
+    @State private var creating: String?
+    @State private var created: String?
 
     var body: some View {
         NavigationStack {
             List {
+                if let manifest = Glass3DStarterPack.manifest {
+                    Section {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(manifest.characters) { character in
+                                    Button { create(character.id, poses: character.poses) } label: {
+                                        VStack(spacing: 6) {
+                                            ZStack {
+                                                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.accentColor.opacity(0.1))
+                                                if let idle = character.poses["walk"] ?? character.poses["idle"] {
+                                                    Glass3DMediaThumbnail(url: Glass3DStarterPack.url(idle), kind: Glass3DStarterPack.kind(idle), side: 64, corner: 12)
+                                                }
+                                                if creating == character.id { ProgressView() }
+                                            }
+                                            .frame(width: 78, height: 78)
+                                            Text(Glass3DStarterPack.characterName(character.id)).font(.caption.weight(.semibold))
+                                        }
+                                    }
+                                    .buttonStyle(.plain).disabled(creating != nil)
+                                    .accessibilityIdentifier("glass3d-starter-character-\(character.id)")
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        if let created { Label(created, systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green) }
+                    } header: { Text(L10n.t("内置角色 · 一键创建", "Built-in Characters · One Tap")) } footer: {
+                        Text(L10n.t("Kenney 的 CC0 角色：待机、行走、跳跃、下落、攻击、受伤、欢呼都已配好，点一下就会加入下面的列表，可再设为主角或敌人外观。", "Kenney's CC0 characters with idle, walk, jump, fall, attack, hurt and cheer set up. Tap to add one below, then use it for the player or enemies."))
+                    }
+                }
                 Section {
                     ForEach(controller.world.characters ?? []) { template in
                         NavigationLink {
@@ -37,6 +68,15 @@ struct Glass3DCharacterEditor: View {
             }
             .navigationTitle(L10n.t("角色编辑器", "Character Editor")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { dismiss() } } }
+        }
+    }
+
+    private func create(_ id: String, poses: [String: StarterAsset]) {
+        creating = id; created = nil
+        Task {
+            let template = await Glass3DStarterPack.createCharacter(id, poses: poses, controller: controller, store: store)
+            creating = nil
+            created = template.map { L10n.t("已创建「\($0.name)」", "Created \($0.name)") } ?? L10n.t("创建失败", "Could not create")
         }
     }
 }
