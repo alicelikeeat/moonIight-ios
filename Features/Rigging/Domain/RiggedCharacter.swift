@@ -57,7 +57,7 @@ struct RigXform: Equatable, Sendable {
     /// Inverse (nil when singular).
     var inverse: RigXform? {
         let det = determinant
-        guard abs(det) > 1e-9, det.isFinite else { return nil }
+        guard abs(det) > 1e-30, det.isFinite else { return nil }
         var r = RigXform()
         r.a = (e * i - h * f) / det; r.b = (h * c - b * i) / det; r.c = (b * f - e * c) / det
         r.d = (g * f - d * i) / det; r.e = (a * i - g * c) / det; r.f = (d * c - a * f) / det
@@ -200,7 +200,7 @@ struct SkeletonDefinition: Codable, Equatable, Sendable {
         }
         for (i, j) in joints.enumerated() {
             if let p = parentIndex(i), p >= i { throw SkeletonError.cycle(j.jointID) }
-            guard let rest = RigXform(matrix: j.restTransform), abs(rest.determinant) > 1e-6, RigXform(matrix: j.inverseBindMatrix) != nil else { throw SkeletonError.badMatrix(j.jointID) }
+            guard let rest = RigXform(matrix: j.restTransform), abs(rest.determinant) > 1e-30, RigXform(matrix: j.inverseBindMatrix) != nil else { throw SkeletonError.badMatrix(j.jointID) }
         }
         let world = worldRest
         for (i, j) in joints.enumerated() {

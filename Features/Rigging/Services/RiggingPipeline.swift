@@ -41,11 +41,14 @@ enum RiggingError: Error, Equatable, LocalizedError {
 extension SkeletonDefinition {
     /// The same skeleton after p ↦ p × scale + offset (model frames).
     func transformed(scale: Float, offset: SIMD3<Float>) -> SkeletonDefinition {
+        // Translations scale; rest rotations stay (uniform scale commutes).
         var s = self
         for i in s.joints.indices {
-            var t = s.joints[i].rest.origin * scale
+            var rest = s.joints[i].rest
+            var t = rest.origin * scale
             if s.joints[i].parentID == nil { t += offset }
-            s.joints[i].restTransform = RigXform.translation(t).matrix
+            rest.tx = t.x; rest.ty = t.y; rest.tz = t.z
+            s.joints[i].restTransform = rest.matrix
         }
         s.refreshBindMatrices()
         return s

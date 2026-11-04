@@ -49,15 +49,10 @@ enum SkeletonBuilder {
 
     /// Moves one joint to a new model-space position (children stay put).
     static func moving(_ skeleton: SkeletonDefinition, joint: Int, to position: SIMD3<Float>) -> SkeletonDefinition {
-        var s = skeleton
-        var world = s.worldRest.map(\.origin)
+        var world = skeleton.worldRest.map(\.origin)
         world[joint] = position
-        for i in s.joints.indices {
-            let parent = s.parentIndex(i).map { world[$0] } ?? .zero
-            s.joints[i].restTransform = RigXform.translation(world[i] - parent).matrix
-        }
+        var s = skeleton.withWorldOrigins(world)
         s.joints[joint].confidence = 1
-        s.refreshBindMatrices()
         return s
     }
 
@@ -89,14 +84,8 @@ enum SkeletonBuilder {
                 for k in (a + 1)..<b { p[chain[k]] = start + (end - start) * (lengths[k - a] / total) }
             }
         }
-        var out = s
-        for i in out.joints.indices {
-            let tag = out.joints[i].semanticTag
-            let parent = out.parentIndex(i).flatMap { p[out.joints[$0].semanticTag] } ?? .zero
-            out.joints[i].restTransform = RigXform.translation((p[tag] ?? world[i]) - parent).matrix
-            if fixed.contains(tag) { out.joints[i].confidence = 1 }
-        }
-        out.refreshBindMatrices()
+        var out = s.withWorldOrigins(s.joints.indices.map { p[s.joints[$0].semanticTag] ?? world[$0] })
+        for i in out.joints.indices where fixed.contains(out.joints[i].semanticTag) { out.joints[i].confidence = 1 }
         do { try out.validate() } catch { return s }
         return out
     }
@@ -126,15 +115,20 @@ enum SkeletonBuilder {
 struct SkeletonPose: Equatable, Sendable {
     var rotations: [SIMD3<Float>]
     var rootOffset: SIMD3<Float> = .zero
+    /// v1.76: full local transforms (keyframed clips from model files);
+    /// when set, rotations and the root offset are not used.
+    var locals: [RigXform]? = nil
     static func rest(_ skeleton: SkeletonDefinition) -> SkeletonPose { SkeletonPose(rotations: Array(repeating: .zero, count: skeleton.joints.count)) }
 
-    /// Model-space joint transforms.
+    /// Model-space joint transforms. Rotations turn each joint about its own
+    /// rest frame (identity for the built-in skeletons).
     func world(_ skeleton: SkeletonDefinition) -> [RigXform] {
+        if let locals, locals.count == skeleton.joints.count { return skeleton.worldTransforms(local: locals) }
         let deg: Float = .pi / 180
         let local = skeleton.joints.indices.map { i -> RigXform in
-            var t = skeleton.joints[i].rest.origin
-            if skeleton.joints[i].parentID == nil { t += rootOffset }
-            return RigXform.translation(t) * RigXform.euler(rotations[i] * deg)
+            var rest = skeleton.joints[i].rest
+            if skeleton.joints[i].parentID == nil { rest.tx += rootOffset.x; rest.ty += rootOffset.y; rest.tz += rootOffset.z }
+            return rest * RigXform.euler(rotations[i] * deg)
         }
         return skeleton.worldTransforms(local: local)
     }
