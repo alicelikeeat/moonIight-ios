@@ -61,7 +61,7 @@ let data = try JSONEncoder().encode(mesh)
 let reloaded = try JSONDecoder().decode(DepthMesh.self, from: data)
 check(reloaded == mesh, "Geometry survives serialization/reload")
 let output = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "/tmp/local3d-test.usdz")
-let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII=")!
+let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFUlEQVR4nGP4//+/QsJ/hv8OCkAWAD42CNkhL6KjAAAAAElFTkSuQmCC")!
 try DepthUSDZWriter.write(mesh: reloaded, png: png, to: output)
 check((try? Data(contentsOf: output).count) ?? 0 > 20000, "USDZ contains mesh, not a picture-only file")
 

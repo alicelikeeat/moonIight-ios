@@ -25,14 +25,14 @@ final class Local3DIntegrationTests: XCTestCase {
         let directory = fm.temporaryDirectory.appendingPathComponent("local3d-integration-\(UUID())")
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: directory) }
-        let png = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aRZkAAAAASUVORK5CYII="))
+        let png = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFUlEQVR4nGP4//+/QsJ/hv8OCkAWAD42CNkhL6KjAAAAAElFTkSuQmCC"))
         let source = directory.appendingPathComponent("source.png")
         try png.write(to: source)
         let edge = 32
         let depth = (0..<(edge * edge)).map { Float($0 % edge) / Float(edge - 1) }
         let mesh = try ModelOptimizationService.depthMesh(width: edge, height: edge, inverseDepth: depth,
             mask: Array(repeating: 255, count: depth.count), imageAspect: 1, maximumEdge: edge)
-        let generated = GeneratedImage(mesh: mesh, texture: png, width: 1, height: 1, quality: "test-fixture")
+        let generated = GeneratedImage(mesh: mesh, texture: png, width: 2, height: 2, quality: "test-fixture")
         let store = GeneratedAssetStore(root: directory.appendingPathComponent("Generated3D"))
         let manifest = try await store.saveImage(generated, source: source, title: "geometry-test", libraryID: nil, elapsed: 0)
         XCTAssertFalse(manifest.realityKitValidated)

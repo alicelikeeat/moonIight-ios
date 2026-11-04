@@ -9,6 +9,7 @@ import re
 import struct
 import sys
 import zipfile
+import zlib
 
 root = Path(__file__).resolve().parents[1]
 provenance = json.loads((root / "Resources/Local3D/provenance.json").read_text())
@@ -40,6 +41,15 @@ if len(sys.argv) > 1:
                 assert (info.header_offset + 30 + name_size + extra_size) % 64 == 0
         usd = archive.read("model.usda").decode()
         assert 'def Mesh "Geometry"' in usd and 'inputs:file = @texture.png@' in usd
+        png = archive.read("texture.png")
+        assert png[:8] == b"\x89PNG\r\n\x1a\n"
+        offset = 8
+        while offset < len(png):
+            length = struct.unpack(">I", png[offset:offset + 4])[0]
+            payload = png[offset + 4:offset + 8 + length]
+            crc = struct.unpack(">I", png[offset + 8 + length:offset + 12 + length])[0]
+            assert zlib.crc32(payload) == crc, "PNG chunk CRC"
+            offset += length + 12
     print("PASS: independent ZIP CRC, uncompressed USDZ, 64-byte alignment, mesh + texture")
     try:
         from pxr import Usd, UsdGeom, UsdShade

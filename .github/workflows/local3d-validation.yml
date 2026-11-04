@@ -2,6 +2,17 @@ name: Local 3D validation
 on:
   push:
     branches: [codex/local-3d-v166]
+    paths:
+      - 'Features/Local3D/**'
+      - 'Features/Glass3D/Glass3DMediaPicker.swift'
+      - 'Features/Glass3D/Glass3DView.swift'
+      - 'Features/Settings/SettingsView.swift'
+      - 'Moonlight-iOS.xcodeproj/**'
+      - 'Resources/Local3D/**'
+      - 'Shared/Persistence/**'
+      - 'tests/local3d*/**'
+      - 'scripts/validate_local3d.py'
+      - '.github/workflows/local3d-validation.yml'
   workflow_dispatch:
 permissions:
   contents: read

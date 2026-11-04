@@ -93,18 +93,20 @@ enum ImageGenerationPipeline {
         let status = CVPixelBufferCreate(kCFAllocatorDefault, input.pixelsWide, input.pixelsHigh,
             kCVPixelFormatType_32BGRA, [kCVPixelBufferCGImageCompatibilityKey: true, kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary, &buffer)
         guard status == kCVReturnSuccess, let buffer else { throw GenerationError.memory }
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
-        guard let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: input.pixelsWide, height: input.pixelsHigh,
-            bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { throw GenerationError.memory }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: input.pixelsWide, height: input.pixelsHigh))
+        try autoreleasepool {
+            guard CVPixelBufferLockBaseAddress(buffer, []) == kCVReturnSuccess else { throw GenerationError.memory }
+            defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+            guard let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: input.pixelsWide, height: input.pixelsHigh,
+                bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { throw GenerationError.memory }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: input.pixelsWide, height: input.pixelsHigh))
+        }
         try Task.checkCancellation()
         let provider = try MLDictionaryFeatureProvider(dictionary: ["image": MLFeatureValue(pixelBuffer: buffer)])
         let output = try model.prediction(from: provider)
         try Task.checkCancellation()
         guard let depth = output.featureValue(for: "depth")?.imageBufferValue else { throw GenerationError.modelMissing }
-        CVPixelBufferLockBaseAddress(depth, .readOnly)
+        guard CVPixelBufferLockBaseAddress(depth, .readOnly) == kCVReturnSuccess else { throw GenerationError.memory }
         defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
         let width = CVPixelBufferGetWidth(depth), height = CVPixelBufferGetHeight(depth)
         guard width > 0, height > 0, width <= 4096, height <= 4096,
