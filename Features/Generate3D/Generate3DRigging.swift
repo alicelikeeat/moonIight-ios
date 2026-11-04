@@ -187,3 +187,55 @@ enum Generate3DRigging {
         }
     }
 }
+
+// v1.72: clips designed with Claude. Checked on the device like the
+// standard clips; only a passing clip is saved into the rig.
+@available(iOS 18.0, *)
+extension Generate3DRigging {
+    /// Validates `clip` on this model's mesh and saves it; returns the
+    /// updated package and the check.
+    @MainActor static func addClip(_ clip: RigClip, to manifest: Generated3DManifest, store: Generated3DStore) async throws -> RigPackage {
+        guard let id = manifest.rigFile, let meshURL = store.meshURL(manifest) else { throw Generate3DRigError.noMesh }
+        let skeletonURL = Generated3DStore.folder("Skeletons").appendingPathComponent(id + ".json")
+        let skinURL = Generated3DStore.folder("Skeletons").appendingPathComponent(id + ".skin")
+        let clipsURL = Generated3DStore.folder("Animations").appendingPathComponent(id + ".json")
+        return try await Task.detached(priority: .userInitiated) { () -> RigPackage in
+            guard let package = (try? Data(contentsOf: skeletonURL)).flatMap({ try? JSONDecoder().decode(RigPackage.self, from: $0) }),
+                  let skin = (try? Data(contentsOf: skinURL)).flatMap(SkinWeights.decode),
+                  let data = try? Data(contentsOf: meshURL), let mesh = GeneratedMeshCodec.decode(data) else { throw Generate3DRigError.noMesh }
+            let check = RigValidation.run(mesh, skeleton: package.skeleton, skin: skin, clips: [clip])
+            guard check.passed else { throw Generate3DRigError.failedCheck(check.problems) }
+            let updated = ClaudeMotion.adding(clip, to: package)
+            try JSONEncoder().encode(updated).write(to: skeletonURL, options: .atomic)
+            try JSONEncoder().encode(updated.clips).write(to: clipsURL, options: .atomic)
+            return updated
+        }.value
+    }
+
+    /// Removes a designed clip (standard clips cannot be removed).
+    static func removeClip(_ clipID: String, from manifest: Generated3DManifest) async throws -> RigPackage {
+        guard clipID.hasPrefix("ai-"), let id = manifest.rigFile else { throw Generate3DRigError.noMesh }
+        let skeletonURL = Generated3DStore.folder("Skeletons").appendingPathComponent(id + ".json")
+        let clipsURL = Generated3DStore.folder("Animations").appendingPathComponent(id + ".json")
+        return try await Task.detached(priority: .userInitiated) { () -> RigPackage in
+            guard var package = (try? Data(contentsOf: skeletonURL)).flatMap({ try? JSONDecoder().decode(RigPackage.self, from: $0) }) else { throw Generate3DRigError.noMesh }
+            package.clips.removeAll { $0.id == clipID }
+            try JSONEncoder().encode(package).write(to: skeletonURL, options: .atomic)
+            try JSONEncoder().encode(package.clips).write(to: clipsURL, options: .atomic)
+            return package
+        }.value
+    }
+}
+
+/// Sends a motion description to the Messages API with the user's key.
+enum ClaudeMotionClient {
+    static func design(description: String, skeleton: RigSkeleton, model: ClaudeMotion.ModelChoice, apiKey: String) async throws -> RigClip {
+        guard !apiKey.isEmpty else { throw ClaudeMotionError.noKey }
+        var request = URLRequest(url: ClaudeMotion.endpoint, timeoutInterval: 180)
+        request.httpMethod = "POST"
+        for (k, v) in ClaudeMotion.headers(apiKey: apiKey, model: model) { request.setValue(v, forHTTPHeaderField: k) }
+        request.httpBody = try ClaudeMotion.requestBody(description: description, skeleton: skeleton, model: model)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        return try ClaudeMotion.clip(fromResponse: data, status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+    }
+}

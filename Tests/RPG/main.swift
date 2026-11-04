@@ -2132,6 +2132,41 @@ do {
     check(ModelExportPlan.times(period: 1.1, fps: 20).count == 22, "clip frame times")
     let mapped = ModelExportPlan.spriteClips.flatMap(\.actions)
     check(Set(mapped).count == mapped.count && Set(mapped) == Set(CharacterAction.allCases), "every action maps to exactly one baked clip")
+
+    // P38: Claude motion design: request shape, reply parsing, clamping,
+    // stop reasons and the on-device check of a designed clip.
+    let opus = ClaudeMotion.models[0]
+    let bodyData = try ClaudeMotion.requestBody(description: "jump for joy", skeleton: skeleton, model: opus)
+    let body = try JSONSerialization.jsonObject(with: bodyData) as! [String: Any]
+    let outputConfig = body["output_config"] as? [String: Any]
+    let format = outputConfig?["format"] as? [String: Any]
+    check(body["model"] as? String == "claude-opus-5-5" && body["fallbacks"] as? String == "default", "Claude request: model and fallbacks")
+    check(format?["type"] as? String == "json_schema" && body["thinking"] == nil && body["tool_choice"] == nil, "Claude request: structured output, no forced tools")
+    let userText = ((body["messages"] as? [[String: Any]])?.first?["content"] as? String) ?? ""
+    check(userText.contains("right_upper_arm") && userText.contains("jump for joy"), "Claude request carries skeleton and description")
+    check(ClaudeMotion.headers(apiKey: "k", model: opus)["anthropic-beta"] == ClaudeMotion.fallbackBeta && ClaudeMotion.headers(apiKey: "k", model: ClaudeMotion.models[1])["anthropic-beta"] == nil, "fallback beta header only with fallbacks")
+    let answer = #"{"name":"欢跳","period_seconds":9,"channels":[{"bone":"right_upper_arm","axis":"z","amplitude_degrees":30,"bias_degrees":-200,"phase_turns":0.25,"cycles_per_period":7},{"bone":"left_thigh","axis":"x","amplitude_degrees":25,"bias_degrees":0,"phase_turns":0.5,"cycles_per_period":1},{"bone":"tail","axis":"x","amplitude_degrees":10,"bias_degrees":0,"phase_turns":0,"cycles_per_period":1}]}"#
+    let reply: [String: Any] = ["stop_reason": "end_turn", "content": [["type": "text", "text": answer]]]
+    let designed = try ClaudeMotion.clip(fromResponse: try JSONSerialization.data(withJSONObject: reply), status: 200)
+    let arm = designed.channels.first
+    check(designed.channels.count == 2 && designed.name == "欢跳" && designed.id.hasPrefix("ai-"), "designed clip parsed, unknown bones dropped")
+    check(designed.period == 4 && arm?.frequency == 4 && abs((arm?.bias ?? 0) + .pi / 2) < 1e-4, "designed clip clamped to safe ranges")
+    func failure(_ object: [String: Any], _ status: Int) -> ClaudeMotionError? {
+        do { _ = try ClaudeMotion.clip(fromResponse: try JSONSerialization.data(withJSONObject: object), status: status); return nil } catch { return error as? ClaudeMotionError }
+    }
+    check(failure(["stop_reason": "refusal", "stop_details": ["category": "cyber"], "content": []], 200) == .refused("cyber"), "refusal handled before reading content")
+    check(failure(["stop_reason": "max_tokens", "content": [["type": "text", "text": "{"]]], 200) == .truncated, "max_tokens handled")
+    check(failure(["type": "error", "error": ["type": "authentication_error", "message": "invalid x-api-key"]], 401) == .http(401, "invalid x-api-key"), "HTTP error message surfaced")
+    check(failure(["stop_reason": "end_turn", "content": [["type": "text", "text": #"{"name":"x","period_seconds":1,"channels":[]}"#]]], 200) == .emptyClip, "empty clip rejected")
+    let designedCheck = RigValidation.run(figure, skeleton: skeleton, skin: skin, clips: [designed])
+    check(designedCheck.passed, "designed clip passes the deformation check \(designedCheck.problems)")
+    let package = RigPackage(skeleton: skeleton, joints: pose, clips: RigClip.standard, validation: designedCheck)
+    var grown = package
+    for _ in 0..<10 { grown = ClaudeMotion.adding(try ClaudeMotion.clip(fromJSON: Data(answer.utf8)), to: grown) }
+    check(grown.clips.count == RigClip.standard.count + 1, "same-name designed clip replaces the old one")
+    var many = package
+    for i in 0..<12 { var c = designed; c.id = "ai-\(i)"; c.name = "m\(i)"; many = ClaudeMotion.adding(c, to: many) }
+    check(many.clips.count == RigClip.standard.count + 8 && many.clips.filter { !$0.id.hasPrefix("ai-") }.count == RigClip.standard.count, "designed clips capped, standard clips kept")
     print("RPG model render: \(checks) total checks passed")
 }
 

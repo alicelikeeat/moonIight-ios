@@ -218,3 +218,11 @@
 ## 未验证
 
 真机上的生成效果、动画角色较多时的帧率，以及拼接贴图在 RealityKit 中的显示，都还没有在真机上验证。
+
+## v1.72：可选的 Claude 动作设计（联网例外）
+
+- 生成 3D 模型仍完全本机离线。唯一的联网功能是用户主动开启的「用 Claude 设计动作」。
+- 需要用户自己的 Anthropic API Key，保存在本机钥匙串中。每次发送前都会弹窗确认要发送的内容：只有文字描述和 10 根骨骼的关节坐标，不包含图片、贴图或网格。
+- 请求：Messages API，默认 `claude-opus-5-5`。用结构化输出（`output_config.format` json_schema）限定动作格式，并开启服务端 `fallbacks: "default"`（beta `server-side-fallback-2026-07-01`）：主模型拒绝时，由 Anthropic 推荐的备用模型重试。
+- 回答处理：先检查 `stop_reason`（`refusal` / `max_tokens`），再把动作夹到安全范围（角度 ±90°，躯干和头部 ±45°；周期 0.4–4 s；整数循环数）。动作必须通过与标准动作相同的 `RigValidation` 变形检查才会保存；AI 动作最多保留 8 个，可长按删除。
+- 未完成：Claude 不修改骨骼结构或蒙皮；没有用真实 API 联调，也没有真机验证。

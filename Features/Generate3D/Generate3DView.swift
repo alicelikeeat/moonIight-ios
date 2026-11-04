@@ -356,6 +356,12 @@ struct Generate3DScreen: View {
         keyLight.isEnabled = lit; fillLight.isEnabled = lit
     }
 
+    /// After a clip was designed or removed.
+    func replaceRig(_ package: RigPackage) {
+        rig = package
+        if let clip, !package.clips.contains(where: { $0.id == clip.id }) { play(nil) }
+    }
+
     /// Plays a clip (nil = rest pose).
     func play(_ next: RigClip?) {
         clip = next; clipTime = 0
@@ -402,6 +408,15 @@ struct Generated3DDetailView: View {
     @State private var confirmDelete = false
     @State private var message: String?
     @State private var rigging = false
+    // Claude motion design (online, opt-in).
+    @State private var aiPrompt = ""
+    @State private var aiKeyDraft = ""
+    @State private var aiHasKey = SecureSettings.read(ClaudeMotion.keyAccount)?.isEmpty == false
+    @AppStorage("generate3d.claude.model") private var aiModelID = ClaudeMotion.models[0].id
+    @State private var aiConfirm = false
+    @State private var aiBusy = false
+    @State private var aiMessage: String?
+    @State private var aiTask: Task<Void, Never>?
 
     @Environment(\.scenePhase) private var scenePhase
     private var current: Generated3DManifest { store.models.first { $0.id == manifest.id } ?? manifest }
@@ -516,12 +531,19 @@ struct Generated3DDetailView: View {
                     HStack(spacing: 8) {
                         Button(L10n.t("静止", "Rest")) { scene.play(nil) }.buttonStyle(Glass3DChipStyle(tint: scene.clip == nil ? .accentColor : .primary, prominent: scene.clip == nil))
                         ForEach(rig.clips) { clip in
-                            Button(clip.name) { scene.play(clip) }.buttonStyle(Glass3DChipStyle(tint: scene.clip?.id == clip.id ? .accentColor : .primary, prominent: scene.clip?.id == clip.id))
+                            Button(clip.id.hasPrefix("ai-") ? "✦ " + clip.name : clip.name) { scene.play(clip) }
+                                .buttonStyle(Glass3DChipStyle(tint: scene.clip?.id == clip.id ? .accentColor : .primary, prominent: scene.clip?.id == clip.id))
+                                .contextMenu {
+                                    if clip.id.hasPrefix("ai-") {
+                                        Button(role: .destructive) { removeAIClip(clip.id) } label: { Label(L10n.t("删除这个动作", "Delete This Motion"), systemImage: "trash") }
+                                    }
+                                }
                         }
                     }
                 }
                 let seams = rig.validation.seamStretch.map { "\($0.key) \(String(format: "%.2f", $0.value * 100))%" }.sorted().joined(separator: " · ")
                 Text(L10n.t("自动检查：通过 · 接缝拉伸 ", "Automatic check: passed · seam stretch ") + seams).font(.caption2).foregroundStyle(.secondary)
+                claudeSection(rig)
                 Text(L10n.t("身体分区颜色（不是独立服装）", "Body region colours (not separate clothes)")).font(.caption.weight(.semibold))
                 ForEach(0..<4, id: \.self) { region in
                     HStack(spacing: 8) {
@@ -665,6 +687,97 @@ struct Generated3DDetailView: View {
                 exportMessage = (error as? Generate3DError) == .cancelled || error is CancellationError ? L10n.t("已取消。", "Cancelled.") : ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             }
             exportProgress.value = nil
+        }
+    }
+
+    // MARK: Claude motion design
+
+    private var aiModel: ClaudeMotion.ModelChoice { ClaudeMotion.models.first { $0.id == aiModelID } ?? ClaudeMotion.models[0] }
+
+    @ViewBuilder private func claudeSection(_ rig: RigPackage) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Label(L10n.t("用 Claude 设计动作", "Design a Motion with Claude"), systemImage: "sparkles").font(.caption.weight(.semibold))
+                Text(L10n.t("联网 · 可选", "Online · optional")).font(.caption2.weight(.bold)).foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 2).background(Color.purple, in: Capsule())
+            }
+            Text(L10n.t("用一句话描述动作（如「开心地跳舞，双手举过头顶」）。Claude 按这具骨骼写出动作，回到手机后照样做变形检查，通过才保存。只发送文字描述和骨骼关节坐标，不发送图片和模型；费用记在你自己的 API Key 上。",
+                        "Describe a motion in a sentence (e.g. \"dance happily, hands above the head\"). Claude writes it for this skeleton; back on the phone it goes through the same deformation check and is kept only if it passes. Only the text and the joint positions are sent, never the picture or the model; usage is billed to your own API key."))
+                .font(.caption2).foregroundStyle(.secondary)
+            if aiHasKey {
+                HStack(spacing: 6) {
+                    Picker(L10n.t("模型", "Model"), selection: $aiModelID) { ForEach(ClaudeMotion.models) { Text($0.name).tag($0.id) } }
+                        .pickerStyle(.menu).font(.caption)
+                    Spacer()
+                    Button(L10n.t("移除 Key", "Remove Key")) { SecureSettings.delete(ClaudeMotion.keyAccount); aiHasKey = false }.font(.caption2)
+                }
+                TextField(L10n.t("描述一个动作…", "Describe a motion…"), text: $aiPrompt, axis: .vertical)
+                    .lineLimit(1...3).textFieldStyle(.roundedBorder).font(.caption).accessibilityIdentifier("generate3d-claude-prompt")
+                if aiBusy {
+                    HStack {
+                        ProgressView()
+                        Text(L10n.t("Claude 正在设计，随后本机检查…", "Claude is designing, then the phone checks it…")).font(.caption)
+                        Spacer()
+                        Button(L10n.t("取消", "Cancel")) { aiTask?.cancel() }.font(.caption)
+                    }
+                } else {
+                    Button { aiConfirm = true } label: { Label(L10n.t("设计动作", "Design Motion"), systemImage: "wand.and.stars") }
+                        .buttonStyle(Glass3DChipStyle(tint: .purple, prominent: true))
+                        .disabled(aiPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("generate3d-claude-design")
+                }
+            } else {
+                HStack(spacing: 6) {
+                    SecureField("Anthropic API Key", text: $aiKeyDraft).textFieldStyle(.roundedBorder).font(.caption)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button(L10n.t("保存", "Save")) {
+                        let key = aiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !key.isEmpty else { return }
+                        SecureSettings.write(key, account: ClaudeMotion.keyAccount); aiKeyDraft = ""; aiHasKey = true
+                    }.buttonStyle(Glass3DChipStyle(tint: .purple, prominent: true))
+                }
+                Text(L10n.t("Key 只存在本机钥匙串里。", "The key is kept only in this phone's keychain.")).font(.caption2).foregroundStyle(.secondary)
+            }
+            if let aiMessage { Text(aiMessage).font(.caption2).foregroundStyle(.secondary) }
+        }
+        .padding(10).background(Color.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .confirmationDialog(L10n.t("发送给 Claude？", "Send to Claude?"), isPresented: $aiConfirm, titleVisibility: .visible) {
+            Button(L10n.t("发送", "Send")) { designWithClaude(rig) }
+            Button(L10n.t("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.t("将通过网络发送到 Anthropic（\(aiModel.name)）：你的动作描述和 10 根骨骼的关节坐标。不发送图片、贴图或模型。费用记在你的 API Key 上。", "This sends to Anthropic (\(aiModel.name)) over the network: your description and the joint positions of the 10 bones. No picture, texture or model is sent. Usage is billed to your API key.")
+                 + (aiModel.fallbacks ? L10n.t("若该模型拒绝，会由 Anthropic 推荐的备用模型自动重试（已开启）。", " If the model declines, Anthropic's recommended fallback model retries automatically (on).") : ""))
+        }
+    }
+
+    private func designWithClaude(_ rig: RigPackage) {
+        let text = aiPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let key = SecureSettings.read(ClaudeMotion.keyAccount) else { aiMessage = ClaudeMotionError.noKey.errorDescription; return }
+        aiBusy = true; aiMessage = nil
+        let model = aiModel, manifest = current
+        aiTask = Task {
+            do {
+                let clip = try await ClaudeMotionClient.design(description: String(text.prefix(500)), skeleton: rig.skeleton, model: model, apiKey: key)
+                try Task.checkCancellation()
+                let updated = try await Generate3DRigging.addClip(clip, to: manifest, store: store)
+                scene.replaceRig(updated)
+                if let saved = updated.clips.last { scene.play(saved) }
+                aiMessage = L10n.t("「\(clip.name)」已通过本机检查并保存，正在预览；也可以在动图导出里选它。", "\"\(clip.name)\" passed the check and was saved; it is playing now and can be exported.")
+                aiPrompt = ""
+            } catch is CancellationError {
+                aiMessage = L10n.t("已取消。", "Cancelled.")
+            } catch let error as URLError where error.code == .cancelled {
+                aiMessage = L10n.t("已取消。", "Cancelled.")
+            } catch {
+                aiMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            aiBusy = false
+        }
+    }
+
+    private func removeAIClip(_ id: String) {
+        let manifest = current
+        Task {
+            if let updated = try? await Generate3DRigging.removeClip(id, from: manifest) { scene.replaceRig(updated) }
         }
     }
 
