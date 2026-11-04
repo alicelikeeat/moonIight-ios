@@ -54,7 +54,15 @@ enum DepthUSDZWriter {
             }
         }
         """
-        try archive(entries: [("model.usda", Data(usd.utf8)), ("texture.png", png)]).write(to: url, options: .atomic)
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID()).partial")
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: temporary) }
+        // Publish a completed regular file by rename. Foundation's atomic Data
+        // writer can treat the final .usdz extension as a document package.
+        try archive(entries: [("model.usda", Data(usd.utf8)), ("texture.png", png)]).write(to: temporary)
+        try Task.checkCancellation()
+        if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
+        try fm.moveItem(at: temporary, to: url)
     }
 
     private static func crc32(_ data: Data) -> UInt32 {

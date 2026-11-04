@@ -81,7 +81,8 @@ actor GeneratedAssetStore {
         if !fm.fileExists(atPath: textureTarget.path) { try fm.copyItem(at: texture, to: textureTarget) }
         let sourceInfo = try preserveSource(source)
         try Task.checkCancellation()
-        try DepthUSDZWriter.write(mesh: result.mesh, png: result.texture, to: target)
+        do { try DepthUSDZWriter.write(mesh: result.mesh, png: result.texture, to: target) }
+        catch { throw GenerationError.invalidInput("USDZ 写出失败：\(error.localizedDescription)") }
         try Task.checkCancellation()
         let bytes = (try fm.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.intValue ?? 0
         let manifest = GeneratedModelManifest(id: id, createdAt: .now, title: title, sourceName: title,
