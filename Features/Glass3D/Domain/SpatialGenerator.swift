@@ -50,6 +50,17 @@ struct WorldGenerationConfiguration: Codable, Equatable, Sendable {
     var miniBoss = true
     var bigBoss = true
     var seed: UInt64 = 20_261_103
+    // v1.60 amounts (optional so saved settings from v1.58 still open):
+    // multipliers on the style's defaults, and floating islands anywhere.
+    var buildingAmount: Double?
+    var plantAmount: Double?
+    var creatureAmount: Double?
+    var enemyAmount: Double?
+    var floatingIslands: Bool?
+    var buildingFactor: Double { min(3, max(0, buildingAmount ?? 1)) }
+    var plantFactor: Double { min(3, max(0, plantAmount ?? 1)) }
+    var creatureFactor: Double { min(3, max(0, creatureAmount ?? 1)) }
+    var enemyFactor: Double { min(3, max(0, enemyAmount ?? 1)) }
 }
 
 /// What a generation would add and replace (shown before confirming).
@@ -201,18 +212,18 @@ enum SpatialWorldGenerator {
         for region in regions {
             switch region.kind {
             case "nature":
-                let count = Int(Double(style == .nature ? 360 : style == .ruins ? 90 : 200) * density)
+                let count = Int(Double(style == .nature ? 360 : style == .ruins ? 90 : 200) * density * configuration.plantFactor)
                 for _ in 0..<count {
                     guard let (x, y) = groundPoint(in: region) else { continue }
                     let roll = random.unit()
                     let kind: PlantKind = roll < 0.4 ? .grass : roll < 0.62 ? .flower : roll < 0.76 ? .bush : roll < 0.9 ? .tree : .glow
                     plant(kind, x: x, y: y)
                 }
-                for _ in 0..<Int(8 * density) { if let (x, y) = groundPoint(in: region) { creature(.neutral, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
-                if style == .islands { islands(in: region) }
+                for _ in 0..<Int(8 * density * configuration.creatureFactor) { if let (x, y) = groundPoint(in: region) { creature(.neutral, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
+                if style == .islands || configuration.floatingIslands == true { islands(in: region) }
             case "buildings":
                 let kinds: [BuildingKind] = [.hut, .tower, .hut, .altar, .mediaWall, .bridge, .floatingPlatform]
-                for index in 0..<Int((style == .nature ? 3 : 6) * density) {
+                for index in 0..<Int((style == .nature ? 3 : 6) * density * configuration.buildingFactor) {
                     let kind = kinds[index % kinds.count]
                     let size = SpatialBuilder.footprint(kind)
                     if kind == .floatingPlatform {
@@ -224,15 +235,15 @@ enum SpatialWorldGenerator {
                         addBuilding(kind, at: x + (kind == .bridge ? 1 : 0), y, variant: random.int(0...7))
                     }
                 }
-                for _ in 0..<Int(4 * density) { if let (x, y) = groundPoint(in: region) { creature(.enemy, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
-                for _ in 0..<2 { if let (x, y) = groundPoint(in: region) { creature(.guardian, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
+                for _ in 0..<Int(4 * density * configuration.enemyFactor) { if let (x, y) = groundPoint(in: region) { creature(.enemy, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
+                for _ in 0..<Int((2 * configuration.enemyFactor).rounded()) { if let (x, y) = groundPoint(in: region) { creature(.guardian, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
                 for _ in 0..<Int(30 * density) { if let (x, y) = groundPoint(in: region) { plant(random.unit() < 0.5 ? .grass : .flower, x: x, y: y) } }
-                if style == .islands { islands(in: region) }
+                if style == .islands || configuration.floatingIslands == true { islands(in: region) }
             case "ruins":
-                for index in 0..<Int((style == .ruins ? 7 : 4) * density) {
+                for index in 0..<Int((style == .ruins ? 7 : 4) * density * configuration.buildingFactor) {
                     if let (x, y) = spot(in: region, 6, 6) { addBuilding(.ruins, at: x, y, variant: index + random.int(0...99)); pickup(x: Double(x) + 3, y: Double(y) + 3, z: 0, shards: 2) }
                 }
-                for _ in 0..<Int(6 * density) { if let (x, y) = groundPoint(in: region) { creature(.enemy, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
+                for _ in 0..<Int(6 * density * configuration.enemyFactor) { if let (x, y) = groundPoint(in: region) { creature(.enemy, x: Double(x) + 0.5, y: Double(y) + 0.5) } }
                 if configuration.miniBoss && !configuration.maze, let (x, y) = groundPoint(in: region) { creature(.miniBoss, x: Double(x) + 0.5, y: Double(y) + 0.5) }
                 for _ in 0..<Int(20 * density) { if let (x, y) = groundPoint(in: region) { plant(.grass, x: x, y: y) } }
             case "maze":

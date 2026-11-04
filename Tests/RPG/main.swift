@@ -1575,6 +1575,11 @@ do {
     check(stander.position.z == 0, "no hole, no fall")
     check(SpatialNavigator(geometry: cave).surfaces(x: 30, y: 30) == [-4], "navigation sees the basement, not the ground")
     check(SpatialBlock(id: "deep", x: 1, y: 1, elevation: -16).valid && !SpatialBlock(id: "too deep", x: 1, y: 1, elevation: -17).valid, "underground down to 16 below")
+    var sparse = WorldGenerationConfiguration(); sparse.plantAmount = 0; sparse.enemyAmount = 0; sparse.floatingIslands = true; sparse.seed = 77
+    let sparseWorld = SpatialWorldGenerator.generate(sparse, keeping: .blank())
+    check(sparseWorld.summary.enemies == 0 && sparseWorld.summary.guards <= 1 && sparseWorld.summary.problems.isEmpty, "amount sliders: no plants or enemies (\(sparseWorld.summary))")
+    let oldRecord = try JSONDecoder().decode(WorldGenerationConfiguration.self, from: Data(#"{"style":"mixed","density":"medium","difficulty":"normal","maze":true,"miniBoss":true,"bigBoss":true,"seed":5}"#.utf8))
+    check(oldRecord.buildingFactor == 1 && oldRecord.floatingIslands == nil, "v1.58 generator settings still open")
     print("RPG battle: \(checks) total checks passed")
 }
 

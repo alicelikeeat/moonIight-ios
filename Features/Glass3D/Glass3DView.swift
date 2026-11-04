@@ -569,6 +569,11 @@ struct Glass3DGeneratorSheet: View {
                     Picker(L10n.t("风格", "Style"), selection: $configuration.style) { ForEach(WorldStyle.allCases, id: \.self) { Text($0.title).tag($0) } }
                     Picker(L10n.t("内容密度", "Density"), selection: $configuration.density) { ForEach(ContentDensity.allCases, id: \.self) { Text($0.title).tag($0) } }
                     Picker(L10n.t("难度", "Difficulty"), selection: $configuration.difficulty) { ForEach(GameDifficulty.allCases, id: \.self) { Text($0.title).tag($0) } }
+                    amount(L10n.t("建筑数量", "Buildings"), \.buildingAmount)
+                    amount(L10n.t("植物数量", "Plants"), \.plantAmount)
+                    amount(L10n.t("生物数量", "Creatures"), \.creatureAmount)
+                    amount(L10n.t("敌人数量", "Enemies"), \.enemyAmount)
+                    Toggle(L10n.t("浮岛", "Floating Islands"), isOn: Binding(get: { configuration.floatingIslands ?? (configuration.style == .islands) }, set: { configuration.floatingIslands = $0 }))
                     Toggle(L10n.t("生成迷宫", "Maze"), isOn: $configuration.maze)
                     Toggle(L10n.t("生成小 Boss", "Mini Boss"), isOn: $configuration.miniBoss)
                     Toggle(L10n.t("生成大 Boss", "Boss"), isOn: $configuration.bigBoss)
@@ -602,6 +607,11 @@ struct Glass3DGeneratorSheet: View {
             }
             .onChange(of: configuration) { _ in result = nil }
         }
+    }
+
+    private func amount(_ title: String, _ key: WritableKeyPath<WorldGenerationConfiguration, Double?>) -> some View {
+        let value = configuration[keyPath: key] ?? 1
+        return Stepper(title + " ×" + String(format: "%.1f", value), value: Binding(get: { value }, set: { configuration[keyPath: key] = $0 }), in: 0...3, step: 0.5)
     }
 
     private func preview() {
