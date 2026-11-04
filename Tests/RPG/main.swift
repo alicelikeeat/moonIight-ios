@@ -1507,4 +1507,63 @@ do {
     print("RPG skills: \(checks) total checks passed")
 }
 
+
+// P25: v1.60 battle: player casts, Boss phases, summons, statuses.
+do {
+    var arena = SpatialWorld.blank()
+    arena.player.position = SpatialVector(100, 100, 0)
+    arena.creatures = [CreatureEntity(id: "goblin", kind: .enemy, position: SpatialVector(103, 100, 0), home: SpatialVector(103, 100, 0), health: 20, maxHealth: 20, damage: 5),
+                       CreatureEntity(id: "boss", kind: .boss, position: SpatialVector(106, 100, 0), home: SpatialVector(106, 100, 0), health: 400, maxHealth: 400, damage: 16, state: .chase)]
+    var battle = SpatialBattle()
+    var stamina = 100, health = 60
+    check(battle.castPlayer("tpl.fireball", world: arena, origin: arena.player.position, facing: 0, target: nil, clock: 0, stamina: &stamina, health: &health) == .cast && stamina == 82, "player casts a skill, stamina spent")
+    if case .cooldown = battle.castPlayer("tpl.fireball", world: arena, origin: arena.player.position, facing: 0, target: nil, clock: 0.5, stamina: &stamina, health: &health) { check(true, "cooldown respected") } else { check(false, "cooldown respected") }
+    var low = 5
+    check(battle.castPlayer("tpl.beam", world: arena, origin: arena.player.position, facing: 0, target: nil, clock: 1, stamina: &low, health: &health) == .stamina, "not enough stamina")
+    check(battle.castPlayer("tpl.heal", world: arena, origin: arena.player.position, facing: 0, target: nil, clock: 1, stamina: &stamina, health: &health) == .cast && health == 95, "healing restores health")
+    var defeated: [CreatureEntity] = [], visuals = 0, dealt = 0
+    for frame in 0..<180 {
+        let out = battle.step(1.0 / 60, world: &arena, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, n in Double(n % 10) / 10 })
+        defeated += out.defeated; visuals += out.visuals.count; dealt += out.playerDamage
+    }
+    check(defeated.map(\.id) == ["goblin"] && arena.creatures.first { $0.id == "goblin" }?.state == .dead, "fireball defeats the goblin")
+    check(visuals > 10, "casts produce visuals")
+    // Boss: casts by phase, changes phase, summons within the cap.
+    var bossWorld = SpatialWorld.blank()
+    bossWorld.player.position = SpatialVector(50, 50, 0)
+    bossWorld.creatures = [CreatureEntity(id: "b", kind: .boss, position: SpatialVector(54, 50, 0), home: SpatialVector(54, 50, 0), health: 400, maxHealth: 400, damage: 16, state: .chase)]
+    var fight = SpatialBattle(), bossDamage = 0
+    for frame in 0..<600 {
+        let out = fight.step(1.0 / 60, world: &bossWorld, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, n in Double(n % 7) / 7 })
+        bossDamage += out.playerDamage
+    }
+    check(bossDamage > 0, "the boss casts its phase skills at the player (\(bossDamage) damage)")
+    bossWorld.creatures[0].health = 240
+    var changes: [(id: String, phase: Int, appearance: String?)] = []
+    for frame in 600..<620 { changes += fight.step(1.0 / 60, world: &bossWorld, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, _ in 0.5 }).phaseChanges }
+    check(changes.map(\.phase) == [1], "phase 2 starts below two thirds")
+    let summons = bossWorld.creatures.filter { $0.id.hasPrefix("summon:b:") }
+    check(summons.count == 2, "phase 2 summons two helpers")
+    bossWorld.creatures[0].health = 100
+    for frame in 620..<640 { _ = fight.step(1.0 / 60, world: &bossWorld, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, _ in 0.5 }) }
+    check(bossWorld.creatures.filter { $0.id.hasPrefix("summon:b:") }.count == 2, "phase 3 has no summons; the cap is never passed")
+    var safe = SpatialWorld.blank()
+    safe.player.position = SpatialVector(10, 10, 0)
+    safe.creatures = [CreatureEntity(id: "far", kind: .boss, position: SpatialVector(60, 60, 0), home: SpatialVector(60, 60, 0), health: 400, maxHealth: 400, damage: 16, state: .chase)]
+    var quiet = SpatialBattle(), quietDamage = 0
+    for frame in 0..<300 { quietDamage += quiet.step(1.0 / 60, world: &safe, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, _ in 0.3 }).playerDamage }
+    check(quietDamage == 0, "a distant boss never attacks")
+    var dodge = SpatialBattle(), dodgeDamage = 0
+    var close = bossWorld; close.creatures = [CreatureEntity(id: "b2", kind: .boss, position: SpatialVector(52, 50, 0), home: SpatialVector(52, 50, 0), health: 400, maxHealth: 400, damage: 16, state: .chase)]
+    for frame in 0..<400 { dodgeDamage += dodge.step(1.0 / 60, world: &close, playerFacing: 0, playerInvulnerable: true, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, n in Double(n % 5) / 5 }).playerDamage }
+    check(dodgeDamage == 0, "invulnerable frames ignore boss hits")
+    // Statuses tick on creatures.
+    var burning = SpatialWorld.blank()
+    burning.creatures = [CreatureEntity(id: "x", kind: .enemy, position: SpatialVector(5, 5, 0), home: .zero, health: 10, maxHealth: 10, damage: 1, statuses: [StatusEffect(kind: .burn, perSecond: 5, remaining: 3)])]
+    var ticks = SpatialBattle()
+    for frame in 0..<180 { _ = ticks.step(1.0 / 60, world: &burning, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, _ in 0 }) }
+    check(burning.creatures[0].health == 0 && burning.creatures[0].state == .dead, "burning finishes off a weak enemy")
+    print("RPG battle: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
