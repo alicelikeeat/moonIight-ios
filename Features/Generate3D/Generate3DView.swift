@@ -68,7 +68,7 @@ struct Generate3DScreen: View {
 
     private var capabilityCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(L10n.t("完全在本机运行，不上传任何图片或视频", "Runs fully on this iPhone; nothing is uploaded"), systemImage: "lock.shield").font(.subheadline.weight(.semibold))
+            Label(L10n.t("图片和视频只在本机处理；只有你选择「Claude 设计」时才会联网发送文字描述", "Pictures and videos stay on this iPhone; only Claude design sends your text, when you choose it"), systemImage: "lock.shield").font(.subheadline.weight(.semibold))
             capability(L10n.t("AI 深度估计", "AI depth"), capabilities.depthModelReady ? L10n.t("可用", "Ready") : capabilities.depthModelBundled ? L10n.t("需要 iOS 17", "Needs iOS 17") : L10n.t("本安装包未内置", "Not in this build"), capabilities.depthModelReady)
             capability(L10n.t("人像照片自带深度", "Portrait photo depth"), L10n.t("可用（无需 AI）", "Ready (no AI needed)"), true)
             capability(L10n.t("视频多视角重建", "Multi-view video"), capabilities.objectCapture ? L10n.t("本机支持", "Supported") : L10n.t("本机不支持，可用基础立体化", "Not on this device; basic depth model available"), capabilities.objectCapture)
@@ -105,6 +105,8 @@ struct Generate3DScreen: View {
 
     private var startButtons: some View {
         VStack(alignment: .leading, spacing: 10) {
+            AICharacterCard(store: store, tasks: tasks, quality: quality) { opened = $0 }
+            MultiViewCard(store: store) { opened = $0 }
             Text(L10n.t("图片生成 3D", "Picture to 3D")).font(.headline)
             HStack(spacing: 10) {
                 bigButton(L10n.t("相册图片", "Photo"), "photo", [.orange, .pink]) { photoFilter = .images; choosingPhoto = true }

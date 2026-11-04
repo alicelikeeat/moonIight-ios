@@ -70,7 +70,10 @@ extension RigXform {
     private var player: SkinnedMeshPlayer?
     private var body: ModelEntity?
     private var texture: TextureResource?
+    /// Skeleton the weights were made for (deforms the mesh)…
     private var skeleton: SkeletonDefinition?
+    /// …and the one being edited (drawn joints).
+    private var shown: SkeletonDefinition?
     private var skin: SkinInfluences?
     private var markers: [ModelEntity] = []
     private var bones: [ModelEntity] = []
@@ -129,8 +132,15 @@ extension RigXform {
     }
 
     /// Shows a rig (nil hides joints and plays nothing).
+    /// Joints moved but weights not recomputed yet: the mesh keeps its
+    /// weights, only the joint markers move.
+    func showEdited(_ edited: SkeletonDefinition) {
+        guard edited.joints.count == markers.count else { return }
+        shown = edited; needsPose = true
+    }
+
     func setRig(_ skeleton: SkeletonDefinition?, skin: SkinInfluences?) {
-        self.skeleton = skeleton; self.skin = skin
+        self.skeleton = skeleton; self.skin = skin; shown = nil
         if let manual, manual.rotations.count != skeleton?.joints.count { self.manual = nil }
         for m in markers { m.removeFromParent() }
         for b in bones { b.removeFromParent() }
@@ -167,6 +177,14 @@ extension RigXform {
     func rotation(_ joint: Int) -> SIMD3<Float> { manual?.rotations[safe: joint] ?? .zero }
     func restPose() { manual = nil; playing = nil; needsPose = true }
 
+    /// Screen directions in model space (for dragging joints).
+    var screenAxes: (right: SIMD3<Float>, up: SIMD3<Float>) {
+        let q = (simd_quatf(angle: pitch, axis: [1, 0, 0]) * simd_quatf(angle: yaw, axis: [0, 1, 0])).inverse
+        return (q.act([1, 0, 0]), q.act([0, 1, 0]))
+    }
+    /// Model units per screen point at the model's distance (preview 300 pt tall).
+    var unitsPerPoint: Float { 2 * distance * tan(20 * .pi / 180) / 300 }
+
     func tick(_ dt: Float) {
         clock += dt; sinceUpdate += dt
         guard needsPose || playing != nil, sinceUpdate >= 1.0 / 30 else { return }
@@ -180,10 +198,11 @@ extension RigXform {
         else { pose = manual ?? SkeletonPose.rest(skeleton) }
         let deformed = SkinWeightSolver.deform(player.mesh, skin: skin, matrices: pose.skinning(skeleton))
         player.update(positions: deformed.positions, normals: deformed.normals)
-        let world = pose.world(skeleton)
+        let drawn = shown ?? skeleton
+        let world = shown != nil && playing == nil && manual == nil ? drawn.worldRest : pose.world(skeleton)
         for (i, m) in markers.enumerated() where i < world.count { m.position = world[i].origin }
         for (i, bone) in bones.enumerated() where i < world.count {
-            guard let p = skeleton.parentIndex(i) else { bone.isEnabled = false; continue }
+            guard let p = drawn.parentIndex(i) else { bone.isEnabled = false; continue }
             let a = world[p].origin, b = world[i].origin, d = b - a, length = simd_length(d)
             bone.isEnabled = length > 1e-4
             guard length > 1e-4 else { continue }

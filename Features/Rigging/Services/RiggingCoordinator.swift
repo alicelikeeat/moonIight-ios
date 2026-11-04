@@ -192,7 +192,7 @@ final class RigCancelFlag: @unchecked Sendable {
         skeleton = result.skeleton; skin = result.skin; diagnostics = result.diagnostics; sockets = result.sockets
         optimized = result.optimized; engineRoute = route; timings = result.timings
         history = []; undoDepth = 0; dirty = true; needsReskin = false
-        selectedJoint = nil
+        selectedJoint = nil; editedJoints = []
     }
 
     // MARK: Editing
@@ -209,12 +209,60 @@ final class RigCancelFlag: @unchecked Sendable {
         retest()
     }
 
+    /// Joints the user placed by hand (kept by AI assist).
+    @Published private(set) var editedJoints: Set<JointTag> = []
+    /// Edits also move the mirrored joint.
+    @Published var symmetric = true
+    private var dragStart: SkeletonDefinition?
+
     /// Moves a joint (model units); weights are recomputed on request.
     func nudge(_ joint: Int, by delta: SIMD3<Float>) {
         guard let s = skeleton, s.joints.indices.contains(joint) else { return }
         if !needsReskin { pushHistory() }
-        skeleton = SkeletonBuilder.moving(s, joint: joint, to: s.worldRest[joint].origin + delta)
+        skeleton = place(s, joint: joint, at: s.worldRest[joint].origin + delta, from: s)
         needsReskin = true; dirty = true
+    }
+
+    /// Dragging on the preview: `delta` is from where the drag began.
+    func drag(_ joint: Int, by delta: SIMD3<Float>) {
+        guard let s = skeleton, s.joints.indices.contains(joint) else { return }
+        if dragStart == nil { dragStart = s; if !needsReskin { pushHistory() } }
+        let start = dragStart!
+        skeleton = place(start, joint: joint, at: start.worldRest[joint].origin + delta, from: start)
+        needsReskin = true; dirty = true
+    }
+    func endDrag() { dragStart = nil }
+
+    private func place(_ s: SkeletonDefinition, joint: Int, at position: SIMD3<Float>, from reference: SkeletonDefinition) -> SkeletonDefinition {
+        let tag = s.joints[joint].semanticTag
+        editedJoints.insert(tag)
+        var out = SkeletonBuilder.moving(s, joint: joint, to: position)
+        if symmetric, let m = tag.mirror, let mi = out.index(m), let centre = reference.position(.pelvis)?.x {
+            out = SkeletonBuilder.moving(out, joint: mi, to: SIMD3(2 * centre - position.x, position.y, position.z))
+            editedJoints.insert(m)
+        }
+        return out
+    }
+
+    /// AI assist: re-finds the joints the user did not place from the
+    /// mesh, fits limb joints between placed ones, mirrors placed joints.
+    func assist() {
+        guard let mesh, let skeleton, !running else { return }
+        pushHistory()
+        let locked = editedJoints, mirror = symmetric
+        start { _, report in
+            report(.joints, 0)
+            let framed = MeshAnalyzer.rigFrame(mesh)
+            let a = MeshAnalyzer.analyze(mesh)
+            let estimate = JointEstimator.estimate(framed.mesh, meanEdge: a.meanEdge / max(1e-6, a.height))
+            let offset = SIMD3(framed.offset[0], framed.offset[1], framed.offset[2])
+            let automatic = estimate.positions.mapValues { $0 * framed.scale + offset }
+            return SkeletonBuilder.assisted(skeleton, automatic: automatic, locked: locked, mirror: mirror)
+        } done: { [weak self] (result: SkeletonDefinition) in
+            guard let self else { return }
+            self.skeleton = result; self.needsReskin = true; self.dirty = true
+            self.message = L10n.t("AI 已按你放好的 \(locked.count) 个关节重新推算其余关节，请检查后重算权重", "AI re-fitted the other joints around the \(locked.count) you placed; check them, then recompute the weights")
+        }
     }
 
     /// Reach of one joint's weights (×factor), then recompute.

@@ -61,6 +61,46 @@ enum SkeletonBuilder {
         return s
     }
 
+    /// Manual + automatic: joints the user placed (`locked`) stay; the
+    /// others take the automatic positions; a joint between two placed
+    /// joints on a limb is put between them in proportion; with `mirror`,
+    /// an untouched joint copies its placed counterpart across the body.
+    static func assisted(_ s: SkeletonDefinition, automatic: [JointTag: SIMD3<Float>], locked: Set<JointTag>, mirror: Bool) -> SkeletonDefinition {
+        let world = s.worldRest.map(\.origin)
+        var p: [JointTag: SIMD3<Float>] = [:]
+        for (i, j) in s.joints.enumerated() { p[j.semanticTag] = world[i] }
+        let original = p
+        for tag in p.keys where !locked.contains(tag) { if let a = automatic[tag] { p[tag] = a } }
+        var fixed = locked
+        if mirror, let centre = p[.pelvis]?.x {
+            for tag in locked { if let m = tag.mirror, !locked.contains(m), let q = p[tag] { p[m] = SIMD3(2 * centre - q.x, q.y, q.z); fixed.insert(m) } }
+        }
+        let chains: [[JointTag]] = [[.rightUpperArm, .rightForearm, .rightHand, .rightHandEnd], [.leftUpperArm, .leftForearm, .leftHand, .leftHandEnd],
+                                    [.rightThigh, .rightShin, .rightFoot], [.leftThigh, .leftShin, .leftFoot], [.pelvis, .spine, .spine1, .chest, .neck]]
+        for chain in chains {
+            let anchors = chain.indices.filter { fixed.contains(chain[$0]) }
+            for (a, b) in zip(anchors, anchors.dropFirst()) where b - a > 1 {
+                // Keep the automatic (or original) spacing between the anchors.
+                let ref = chain.map { automatic[$0] ?? original[$0] ?? .zero }
+                var lengths: [Float] = [0]
+                for k in (a + 1)...b { lengths.append(lengths.last! + rigLength(ref[k] - ref[k - 1])) }
+                let total = max(1e-5, lengths.last!)
+                guard let start = p[chain[a]], let end = p[chain[b]] else { continue }
+                for k in (a + 1)..<b { p[chain[k]] = start + (end - start) * (lengths[k - a] / total) }
+            }
+        }
+        var out = s
+        for i in out.joints.indices {
+            let tag = out.joints[i].semanticTag
+            let parent = out.parentIndex(i).flatMap { p[out.joints[$0].semanticTag] } ?? .zero
+            out.joints[i].restTransform = RigXform.translation((p[tag] ?? world[i]) - parent).matrix
+            if fixed.contains(tag) { out.joints[i].confidence = 1 }
+        }
+        out.refreshBindMatrices()
+        do { try out.validate() } catch { return s }
+        return out
+    }
+
     /// Standard sockets for the skill editor.
     static func sockets(_ skeleton: SkeletonDefinition) -> [AttachmentSocket] {
         func offset(_ from: JointTag, _ to: JointTag, _ f: Float) -> [Float] {

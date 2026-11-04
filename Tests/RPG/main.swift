@@ -2479,6 +2479,23 @@ do {
     check(noFront, "a front photo is required")
     let weld = MeshAnalyzer.weldMap(GeneratedMesh(positions: [0, 0, 0, 1, 0, 0, 0, 0, 0], normals: [Float](repeating: 0, count: 9), uvs: [Float](repeating: 0, count: 6), indices: []))
     check(weld == [0, 1, 0], "seam vertices welded for rigging")
+    // Manual + AI joint editing.
+    let built = ProceduralCharacterBuilder.build(CharacterKeywords.spec(for: "战士"))
+    let base = built.skeleton
+    let r = base.index(.rightHand)!, rightUpper = base.index(.rightUpperArm)!
+    let moved = SkeletonBuilder.moving(base, joint: r, to: base.worldRest[r].origin + SIMD3(-0.05, 0.12, 0.1))
+    var automatic: [JointTag: SIMD3<Float>] = [:]
+    for (i, j) in base.joints.enumerated() { automatic[j.semanticTag] = base.worldRest[i].origin + SIMD3(0, 0.01, 0) }
+    let assisted = SkeletonBuilder.assisted(moved, automatic: automatic, locked: [.rightHand, .rightUpperArm], mirror: true)
+    let rh = assisted.position(.rightHand)!, lh = assisted.position(.leftHand)!, re = assisted.position(.rightForearm)!
+    let ru = assisted.position(.rightUpperArm)!
+    let centre = assisted.position(.pelvis)!.x
+    check(rigLength(rh - moved.worldRest[r].origin) < 1e-4 && rigLength(ru - moved.worldRest[rightUpper].origin) < 1e-4, "AI assist keeps the joints placed by hand")
+    check(abs(lh.x - (2 * centre - rh.x)) < 1e-4 && abs(lh.y - rh.y) < 1e-4, "AI assist mirrors the placed hand to the other side")
+    let toHand = rh - ru, toElbow = re - ru
+    let along = (toElbow * toHand).sum() / max(1e-6, (toHand * toHand).sum())
+    check(along > 0.2 && along < 0.8 && rigLength(toElbow - toHand * along) < 1e-3, "the elbow is placed between the shoulder and the moved hand")
+    check(abs(assisted.position(.head)!.y - base.position(.head)!.y - 0.01) < 1e-4, "untouched joints take the automatic positions")
     print("RPG v1.74 generation: \(checks) total checks passed")
 }
 

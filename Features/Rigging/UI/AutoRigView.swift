@@ -36,6 +36,7 @@ struct AutoRigView: View {
     @State private var heatYaw: Float = 0.3
     @State private var heatmap: UIImage?
     @State private var rotation: SIMD3<Float> = .zero
+    @State private var dragJoints = false
 
     init(manifest: Generated3DManifest, store: Generated3DStore) {
         self.store = store
@@ -78,7 +79,9 @@ struct AutoRigView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { rig.suspend(L10n.t("已离开应用，绑定已暂停并保存进度", "You left the app; rigging paused and progress kept")) }
         }
-        .onChange(of: rig.skeleton) { _, _ in scene.setRig(rig.skeleton, skin: rig.skin) }
+        .onChange(of: rig.skeleton) { _, now in
+            if rig.needsReskin, let now { scene.showEdited(now) } else { scene.setRig(rig.skeleton, skin: rig.skin) }
+        }
         .onChange(of: rig.skin) { _, _ in scene.setRig(rig.skeleton, skin: rig.skin); renderHeatmap() }
         .onChange(of: page) { _, now in if now == .skin { renderHeatmap() } }
         .onChange(of: rig.selectedJoint) { _, joint in scene.select(joint); rotation = joint.map { scene.rotation($0) } ?? .zero; renderHeatmap() }
@@ -118,11 +121,18 @@ struct AutoRigView: View {
                 Toggle(L10n.t("骨骼透视", "X-ray"), isOn: $scene.showSkeleton).toggleStyle(.button).font(.caption).padding(22)
             }
             .gesture(DragGesture(minimumDistance: 1).onChanged { value in
+                // Joint drag only in the explicit edit mode; otherwise the
+                // preview always turns.
+                if dragJoints, page == .skeleton, let joint = rig.selectedJoint {
+                    let axes = scene.screenAxes, k = scene.unitsPerPoint
+                    rig.drag(joint, by: axes.right * Float(value.translation.width) * k - axes.up * Float(value.translation.height) * k)
+                    return
+                }
                 let start = dragStart ?? (scene.yaw, scene.pitch)
                 dragStart = start
                 scene.yaw = start.0 + Float(value.translation.width) * 0.01
                 scene.pitch = max(-1.4, min(1.4, start.1 + Float(value.translation.height) * 0.01))
-            }.onEnded { _ in dragStart = nil })
+            }.onEnded { _ in dragStart = nil; rig.endDrag() })
             .simultaneousGesture(MagnifyGesture().onChanged { value in
                 let start = zoomStart ?? scene.distance
                 zoomStart = start
@@ -235,6 +245,20 @@ struct AutoRigView: View {
         if let skeleton = rig.skeleton {
             Text(L10n.t("点关节选中；长按关节可打开菜单。绿色=可信，黄色=一般，红色=请检查。", "Tap a joint to select it; long-press for its menu. Green = confident, yellow = fair, red = please check."))
                 .font(.caption).foregroundStyle(.secondary)
+            card {
+                Toggle(isOn: $dragJoints) { Label(L10n.t("在预览上拖动选中的关节", "Drag the selected joint on the preview"), systemImage: "hand.draw") }.font(.caption)
+                Text(dragJoints ? L10n.t("拖动预览会移动关节（沿屏幕方向）；关掉后拖动恢复为旋转视角。", "Dragging the preview moves the joint (in the screen plane); turn this off to rotate the view again.")
+                     : L10n.t("拖动预览只会旋转视角。", "Dragging the preview only turns the view."))
+                    .font(.caption2).foregroundStyle(.secondary)
+                Toggle(isOn: $rig.symmetric) { Label(L10n.t("左右对称编辑", "Mirror edits left / right"), systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") }.font(.caption)
+                Button { rig.assist() } label: {
+                    Label(L10n.t("AI 协助：保留我放好的关节，重新推算其余关节", "AI assist: keep my joints, re-fit the others"), systemImage: "sparkles").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered).font(.caption).disabled(rig.running)
+                if !rig.editedJoints.isEmpty {
+                    Text(L10n.t("已手动放置：", "Placed by hand: ") + rig.editedJoints.map(\.title).sorted().joined(separator: "、")).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
             ForEach(0..<4, id: \.self) { region in jointGroup(skeleton, region: region) }
             if let j = rig.selectedJoint, skeleton.joints.indices.contains(j) { jointEditor(skeleton, j) }
             if rig.needsReskin {
