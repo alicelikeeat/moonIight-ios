@@ -1696,7 +1696,8 @@ do {
     check(images[0].download?.host == "live.staticflickr.com" && images[0].attribution.license == "CC BY-SA 2.0" && images[0].attribution.needsCredit, "Openverse original, licence label, needs credit")
     check(images[1].download?.host == "api.openverse.org" && images[1].title == "Untitled" && !images[1].attribution.needsCredit, "http original falls back to the https thumbnail; CC0 needs no credit")
     check(OnlineAssetParsing.openverseURL(query: " moon ", page: 2, cc0Only: true)?.query?.contains("license=cc0,pdm") == true, "CC0-only search")
-    check(OnlineAssetParsing.openverseURL(query: "moon", page: 1, cc0Only: false)?.query?.contains("license_type=commercial") == true, "default search allows commercial use")
+    let defaultSearch = OnlineAssetParsing.openverseURL(query: "moon", page: 1, cc0Only: false)?.query ?? ""
+    check(defaultSearch.contains("license=by,by-sa,cc0,pdm") && !defaultSearch.contains("nd") && !defaultSearch.contains("nc"), "default search: commercial use and adaptation allowed, no ND / NC")
     check(OnlineAssetParsing.licenseLabel("pdm", "") == "Public Domain" && OnlineAssetParsing.licenseLabel("by", "4.0") == "CC BY 4.0", "licence labels")
     print("RPG asset library: \(checks) total checks passed")
 }

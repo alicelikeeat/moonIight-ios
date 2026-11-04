@@ -243,7 +243,8 @@ struct Glass3DOnlineAssetsView: View {
             if source == .polyHaven {
                 Text(L10n.t("贴图由 Poly Haven 提供（Powered by Poly Haven），全部为 CC0，可免费商用、无需署名。", "Powered by Poly Haven. All textures are CC0: free for any use, no credit needed."))
             } else {
-                Text(L10n.t("图片来自 Openverse 搜索，版权归原作者；绿色标签无需署名，橙色标签需要署名，导入时已自动记录到「素材来源与授权」。", "Images found with Openverse; rights stay with their authors. Green: no credit needed. Orange: credit needed, recorded under Credits when imported."))
+                Text(L10n.t("图片来自 Openverse 搜索，版权归原作者；只显示允许商用和改编的授权（不含「禁止改编」「非商业」）。绿色标签无需署名，橙色标签需要署名，导入时已自动记录到「素材来源与授权」。", "Images found with Openverse; rights stay with their authors. Only licences that allow commercial use and changes are shown (no ND / NC). Green: no credit needed. Orange: credit needed, recorded under Credits when imported."))
+                Text(L10n.t("授权信息由 Openverse 提供，以原始页面为准；照片中的人像、商标不在授权范围内，公开使用前请留意。长按一张图可打开原始页面。", "Licence details come from Openverse; the original page is authoritative. People and trademarks in photos are not covered by the licence. Long press an image to open its page."))
             }
         }
         .font(.caption).foregroundStyle(.secondary).padding(.top, 8)

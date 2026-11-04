@@ -26,3 +26,9 @@ To build without owning a Mac, upload this project to a private GitHub repositor
 
 Do not paste signing certificates or passwords into chat or commit them to the repository.
 
+
+## License
+
+The source code is released under the [MIT License](LICENSE). Bundled assets (Kenney characters, Poly Haven textures) are CC0 and online services (Poly Haven, Openverse) have their own terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+源代码使用 [MIT 许可证](LICENSE)。内置素材（Kenney 角色、Poly Haven 贴图）为 CC0，在线服务（Poly Haven、Openverse）有各自条款，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

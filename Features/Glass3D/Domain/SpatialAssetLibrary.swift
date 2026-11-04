@@ -169,13 +169,16 @@ enum OnlineAssetParsing {
         }
     }
 
-    /// Openverse search address. `cc0Only` keeps to no-credit works.
+    /// Openverse search address. `cc0Only` keeps to no-credit works; the
+    /// default allows commercial use and adaptation (BY, BY-SA, CC0, public
+    /// domain). No-derivatives (ND) and non-commercial (NC) works are left
+    /// out: putting a picture on a block, cropping or splitting it adapts it.
     static func openverseURL(query: String, page: Int, cc0Only: Bool) -> URL? {
         var parts = URLComponents(string: "https://api.openverse.org/v1/images/")
         var items = [URLQueryItem(name: "q", value: query.trimmingCharacters(in: .whitespacesAndNewlines)),
                      URLQueryItem(name: "page", value: String(max(1, page))), URLQueryItem(name: "page_size", value: "30"),
                      URLQueryItem(name: "mature", value: "false")]
-        items.append(cc0Only ? URLQueryItem(name: "license", value: "cc0,pdm") : URLQueryItem(name: "license_type", value: "commercial"))
+        items.append(URLQueryItem(name: "license", value: cc0Only ? "cc0,pdm" : "by,by-sa,cc0,pdm"))
         parts?.queryItems = items
         return parts?.url
     }
