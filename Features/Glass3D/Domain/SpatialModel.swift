@@ -382,7 +382,9 @@ extension SpatialWorld {
         next.history = SpatialHistory()
         try body(&next)
         let diff = SpatialDiff.between(self, next, title: title)
-        guard !diff.isEmpty else { return }
+        // Changes outside the undo diff (characters, looks, spawn, ground
+        // holes, skills…) are kept even though they cannot be undone.
+        guard !diff.isEmpty else { next.history = history; self = next; return }
         var history = self.history
         history.push(diff)
         next.history = history

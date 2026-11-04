@@ -2024,6 +2024,14 @@ do {
     var placed = CreatureEntity(id: "c:x", kind: .enemy, position: SpatialVector(1, 1, 0), home: SpatialVector(1, 1, 0), health: 30, maxHealth: 30, damage: 6)
     placed.characterID = generated.id
     check(placed.characterID == "char:g", "one creature can carry its own look")
+    // v1.72 fix: edits that only touch looks, spawn or ground holes are kept.
+    var lookWorld = SpatialWorld()
+    lookWorld.edit("look") { w in w.characters = [generated] }
+    lookWorld.edit("player look") { w in w.playerCharacterID = generated.id }
+    lookWorld.edit("spawn") { w in w.spawn = SpatialVector(3.5, 4.5, 0) }
+    lookWorld.edit("dig") { w in w.groundHoles = [7] }
+    check(lookWorld.characters?.first?.id == "char:g" && lookWorld.playerCharacterID == "char:g", "picking a look saves the character")
+    check(lookWorld.spawn == SpatialVector(3.5, 4.5, 0) && lookWorld.groundHoles == [7] && lookWorld.history.undo.isEmpty, "spawn and holes kept without undo entries")
     print("RPG world characters: \(checks) total checks passed")
 }
 

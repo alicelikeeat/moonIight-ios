@@ -631,14 +631,15 @@ struct Generated3DDetailView: View {
 
     private func startExport() {
         exported = nil; exportMessage = nil; exportProgress.value = 0
-        var options = exportOptions
-        if options.format == .mp4 && options.background == .clear { options.background = .dark }
+        var draft = exportOptions
+        if draft.format == .mp4 && draft.background == .clear { draft.background = .dark }
+        let options = draft
         let progress = exportProgress.reporter
         let title = current.name + " · " + options.content.title
         exportTask = Task {
             do {
                 let source = try await exportSource()
-                let job = Task.detached(priority: .userInitiated) { try await ModelAnimationExport.export(source, options: options, progress: progress) }
+                let job = Task.detached(priority: .userInitiated) { [options] in try await ModelAnimationExport.export(source, options: options, progress: progress) }
                 let url = try await withTaskCancellationHandler { try await job.value } onCancel: { job.cancel() }
                 exported = url
                 if let mediaStore, (await mediaStore.importLocalFile(url, title: title, kind: options.format == .gif ? .image : .video)) != nil {
