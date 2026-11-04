@@ -29,6 +29,7 @@ struct Generate3DScreen: View {
     @State private var fileIsVideo = false
     @State private var opened: Generated3DManifest?
     @State private var importingGLB = false
+    @State private var importingBusy = false
     @State private var glbMessage: String?
 
     var body: some View {
@@ -53,8 +54,8 @@ struct Generate3DScreen: View {
         .fileImporter(isPresented: $importingFile, allowedContentTypes: fileIsVideo ? [.movie, .mpeg4Movie, .quickTimeMovie] : [.jpeg, .png, .heic, .image]) { result in
             if case .success(let url) = result { startFromFile(url, video: fileIsVideo) }
         }
-        .background(Color.clear.fileImporter(isPresented: $importingGLB, allowedContentTypes: [UTType(filenameExtension: "glb") ?? .data]) { result in
-            if case .success(let url) = result { importGLB(url) }
+        .background(Color.clear.fileImporter(isPresented: $importingGLB, allowedContentTypes: Generated3DStore.importTypes, allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { importModel(urls) }
         })
         .onChange(of: photoItem) { _, item in if let item { startFromPhotos(item) } }
         .onChange(of: tasks.phase) { _, phase in
@@ -123,23 +124,29 @@ struct Generate3DScreen: View {
             Text(L10n.t("先抽帧检查清晰度、重复和视角覆盖；绕物体拍摄且本机支持时可多视角重建，否则可用最清晰一帧做深度立体模型。", "Frames are checked for sharpness, duplicates and view coverage first. Orbit videos can be reconstructed on supported devices; otherwise the sharpest frame makes a depth relief."))
                 .font(.caption).foregroundStyle(.secondary)
             Text(L10n.t("导入 3D 模型", "Import a 3D Model")).font(.headline).padding(.top, 6)
-            bigButton(L10n.t("导入 GLB", "Import GLB"), "cube.transparent", [.gray, .blue]) { importingGLB = true }
+            bigButton(importingBusy ? L10n.t("正在导入…", "Importing…") : L10n.t("导入模型文件", "Import Model File"), "cube.transparent", [.gray, .blue]) { importingGLB = true }
+                .disabled(importingBusy)
                 .accessibilityIdentifier("generate3d-import-glb")
             if let glbMessage { Text(glbMessage).font(.caption).foregroundStyle(.orange) }
-            Text(L10n.t("读取 GLB（二进制 glTF 2.0）中的网格和贴图，之后可以自动绑定骨骼。文件里原有的骨骼和动画不会被读取。", "Reads the mesh and texture of a GLB (binary glTF 2.0); you can then rig it automatically. Skeletons and animations in the file are not read."))
+            Text(L10n.t("支持 GLB、glTF、FBX、OBJ、STL、3MF、USDZ / USD。GLB、glTF、FBX 自带的骨骼和动画会保留；OBJ 请同时选中 .mtl 和贴图，glTF 请同时选中 .bin。",
+                        "Supports GLB, glTF, FBX, OBJ, STL, 3MF and USDZ / USD. Skeletons and animations in GLB, glTF and FBX are kept; pick the .mtl and texture with an OBJ, and the .bin with a glTF."))
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
 
-    private func importGLB(_ url: URL) {
-        let access = url.startAccessingSecurityScopedResource()
-        let data = try? Data(contentsOf: url)
-        if access { url.stopAccessingSecurityScopedResource() }
-        guard let data else { glbMessage = L10n.t("文件无法读取", "The file could not be read"); return }
-        let name = url.deletingPathExtension().lastPathComponent
+    private func importModel(_ urls: [URL]) {
+        var files: [(name: String, data: Data)] = []
+        for url in urls {
+            let access = url.startAccessingSecurityScopedResource()
+            if let data = try? Data(contentsOf: url) { files.append((url.lastPathComponent, data)) }
+            if access { url.stopAccessingSecurityScopedResource() }
+        }
+        guard !files.isEmpty else { glbMessage = L10n.t("文件无法读取", "The file could not be read"); return }
         glbMessage = nil
+        importingBusy = true
         Task {
-            do { opened = try await store.storeImported(data, name: name) }
+            defer { importingBusy = false }
+            do { opened = try await store.storeImported(files: files) }
             catch { glbMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
         }
     }
@@ -349,6 +356,8 @@ struct Generate3DScreen: View {
         let span = max(bounds.extents.x, bounds.extents.y, bounds.extents.z)
         if span > 0 { entity.scale = SIMD3(repeating: 1 / span); entity.position = -bounds.center / span }
         pivot.addChild(entity)
+        // v1.76: USD files with animations loop the first one.
+        if let first = entity.availableAnimations.first { entity.playAnimation(first.repeat()) }
         return (Generated3DStore.triangles(in: entity), 0)
     }
 

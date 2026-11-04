@@ -398,6 +398,26 @@ struct AutoRigView: View {
     // MARK: Page 4: motion tests
 
     @ViewBuilder private var motionPage: some View {
+        if !rig.fileClips.isEmpty {
+            card {
+                Text(L10n.t("模型文件自带的动作（\(rig.fileClips.count) 个）", "Animations from the model file (\(rig.fileClips.count))")).font(.caption.weight(.semibold))
+                ForEach(rig.fileClips) { clip in
+                    let playing = scene.playing?.id == clip.id
+                    Button { scene.play(playing ? nil : clip) } label: {
+                        HStack {
+                            Text(clip.name).font(.subheadline)
+                            Spacer()
+                            Text(String(format: "%.1fs", clip.period)).font(.caption2).foregroundStyle(.secondary)
+                            Image(systemName: playing ? "stop.fill" : "play.fill").font(.caption)
+                        }
+                    }
+                    .buttonStyle(.plain).accessibilityIdentifier("autorig-file-clip-" + clip.id)
+                }
+                Text(L10n.t("放进 3D 世界后，名字含 idle / walk / run / jump / attack 的动作会对应角色的待机、行走、奔跑、跳跃、攻击；其余动作用第一个。",
+                            "In the 3D world, clips named idle / walk / run / jump / attack drive those actions; other actions use the first clip."))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
         if let diagnostics = rig.diagnostics {
             let fails = diagnostics.results.filter { $0.status == .fail }.count, warns = diagnostics.results.filter { $0.status == .warning }.count
             Text(L10n.t("\(diagnostics.results.count) 项测试：\(diagnostics.results.count - fails - warns) 通过、\(warns) 警告、\(fails) 失败。自动检测不能代替人工判断画面效果。",

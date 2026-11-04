@@ -191,7 +191,12 @@ import UIKit
 
     private func model(_ template: CharacterTemplate) -> Entity? {
         guard let file = template.modelMediaID else { return nil }
-        if let loaded = models[file] { return Self.fitted(loaded.clone(recursive: true), height: template.height) }
+        if let loaded = models[file] {
+            let copy = loaded.clone(recursive: true)
+            // v1.76: models with their own animations loop the first one.
+            if let first = copy.availableAnimations.first { copy.playAnimation(first.repeat()) }
+            return Self.fitted(copy, height: template.height)
+        }
         guard !loading.contains(file) else { return nil }
         loading.insert(file)
         let url = Self.modelsFolder.appendingPathComponent(file)

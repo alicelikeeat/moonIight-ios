@@ -3,7 +3,8 @@ import Foundation
 // v1.76: binary FBX (7.x) reader: meshes (positions, UVs, normals),
 // embedded textures, skin clusters → skeleton + weights, and animation
 // stacks → keyframe clips. Transforms use T · Rpre · R · Rpost⁻¹ · S
-// (rotation and scaling pivots are ignored). ASCII FBX is not supported.
+// (rotation and scaling pivots are ignored). ASCII FBX 7.x is read into
+// the same node tree.
 
 enum FBXImporter {
     indirect enum Value {
@@ -36,7 +37,7 @@ enum FBXImporter {
     static func parse(_ data: Data) throws -> Node {
         let b = [UInt8](data)
         guard b.count > 27, String(decoding: b[0..<18], as: UTF8.self) == "Kaydara FBX Binary" else {
-            if String(decoding: b.prefix(200), as: UTF8.self).contains("FBXHeaderExtension") { throw ImportError.unsupported("ASCII FBX") }
+            if String(decoding: b.prefix(4096), as: UTF8.self).contains("FBXHeaderExtension") { return try parseASCII(b) }
             throw ImportError.damaged("not an FBX file")
         }
         func u32(_ o: Int) -> UInt32 { UInt32(b[o]) | UInt32(b[o + 1]) << 8 | UInt32(b[o + 2]) << 16 | UInt32(b[o + 3]) << 24 }
@@ -73,14 +74,14 @@ enum FBXImporter {
                     guard pos + len <= b.count else { throw ImportError.damaged("string") }
                     let raw = Array(b[pos..<(pos + len)]); pos += len
                     props.append(type == UInt8(ascii: "S") ? .string(String(decoding: raw, as: UTF8.self)) : .bytes(raw))
-                case UInt8(ascii: "f"), UInt8(ascii: "d"), UInt8(ascii: "l"), UInt8(ascii: "i"), UInt8(ascii: "b"):
+                case UInt8(ascii: "f"), UInt8(ascii: "d"), UInt8(ascii: "l"), UInt8(ascii: "i"), UInt8(ascii: "b"), UInt8(ascii: "c"):
                     let n = Int(u32(pos)), encoding = u32(pos + 4), len = Int(u32(pos + 8)); pos += 12
                     guard pos + len <= b.count, n < 200_000_000 else { throw ImportError.damaged("array") }
                     var raw = Array(b[pos..<(pos + len)]); pos += len
                     if encoding == 1 { raw = try Inflate.zlib(raw) }
                     func r32(_ o: Int) -> UInt32 { UInt32(raw[o]) | UInt32(raw[o + 1]) << 8 | UInt32(raw[o + 2]) << 16 | UInt32(raw[o + 3]) << 24 }
                     func r64(_ o: Int) -> UInt64 { UInt64(r32(o)) | UInt64(r32(o + 4)) << 32 }
-                    let size = type == UInt8(ascii: "d") || type == UInt8(ascii: "l") ? 8 : type == UInt8(ascii: "b") ? 1 : 4
+                    let size = type == UInt8(ascii: "d") || type == UInt8(ascii: "l") ? 8 : type == UInt8(ascii: "b") || type == UInt8(ascii: "c") ? 1 : 4
                     guard raw.count >= n * size else { throw ImportError.damaged("array size") }
                     switch type {
                     case UInt8(ascii: "f"): props.append(.doubles((0..<n).map { Double(Float(bitPattern: r32($0 * 4))) }))
@@ -99,6 +100,95 @@ enum FBXImporter {
         }
         let root = Node(name: "", props: [])
         while pos + (wide ? 25 : 13) <= b.count { guard let n = try node(0) else { break }; root.children.append(n) }
+        return root
+    }
+
+    /// ASCII FBX (7.x): `Name: props { children }`, arrays as `*N { a: … }`.
+    static func parseASCII(_ b: [UInt8]) throws -> Node {
+        var pos = 0
+        let n = b.count
+        func skipSpace(newlines: Bool) {
+            while pos < n {
+                let c = b[pos]
+                if c == UInt8(ascii: ";") { while pos < n && b[pos] != 10 { pos += 1 }; continue }
+                if c == 32 || c == 9 || c == 13 || (newlines && c == 10) { pos += 1 } else { break }
+            }
+        }
+        func isWord(_ c: UInt8) -> Bool { (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c == 124 || c == 45 || c == 46 }
+        func value() throws -> Value? {
+            guard pos < n else { return nil }
+            let c = b[pos]
+            if c == UInt8(ascii: "\"") {
+                pos += 1
+                let start = pos
+                while pos < n && b[pos] != UInt8(ascii: "\"") { pos += 1 }
+                guard pos < n else { throw ImportError.damaged("string") }
+                let text = String(decoding: b[start..<pos], as: UTF8.self)
+                pos += 1
+                return .string(text)
+            }
+            if c == UInt8(ascii: "*") {   // array length marker; the values follow in `a:`
+                pos += 1
+                while pos < n && b[pos] >= 48 && b[pos] <= 57 { pos += 1 }
+                return nil
+            }
+            let start = pos
+            while pos < n && (isWord(b[pos]) || b[pos] == 43) { pos += 1 }
+            guard pos > start else { throw ImportError.damaged("token at \(pos)") }
+            let token = String(decoding: b[start..<pos], as: UTF8.self)
+            if let i = Int64(token) { return .int(i) }
+            if let d = Double(token) { return .double(d) }
+            return .string(token)
+        }
+        func node(_ depth: Int) throws -> Node? {
+            guard depth < 64 else { throw ImportError.damaged("FBX nesting") }
+            skipSpace(newlines: true)
+            guard pos < n, b[pos] != UInt8(ascii: "}") else { return nil }
+            let start = pos
+            while pos < n && isWord(b[pos]) { pos += 1 }
+            guard pos > start, pos < n, b[pos] == UInt8(ascii: ":") else { throw ImportError.damaged("node name at \(start)") }
+            let item = Node(name: String(decoding: b[start..<pos], as: UTF8.self), props: [])
+            pos += 1
+            var expectValue = true
+            while true {
+                skipSpace(newlines: false)
+                guard pos < n else { break }
+                let c = b[pos]
+                if c == 10 { if expectValue && !item.props.isEmpty { pos += 1; continue }; pos += 1; break }
+                if c == UInt8(ascii: ",") { pos += 1; expectValue = true; skipSpace(newlines: true); continue }
+                if c == UInt8(ascii: "{") {
+                    pos += 1
+                    while let child = try node(depth + 1) { item.children.append(child) }
+                    skipSpace(newlines: true)
+                    guard pos < n, b[pos] == UInt8(ascii: "}") else { throw ImportError.damaged("missing }") }
+                    pos += 1
+                    break
+                }
+                if c == UInt8(ascii: "}") { break }
+                if let v = try value() { item.props.append(v) }
+                expectValue = false
+            }
+            // `*N { a: … }` → the array becomes this node's property.
+            if item.props.isEmpty, item.children.count == 1, item.children[0].name == "a" {
+                let values = item.children[0].props
+                item.children = []
+                if values.allSatisfy({ if case .int = $0 { true } else { false } }) { item.props = [.ints(values.compactMap(\.int))] }
+                else { item.props = [.doubles(values.compactMap(\.double))] }
+            }
+            // Embedded files are base64 strings.
+            if item.name == "Content", !item.props.isEmpty, item.props.allSatisfy({ $0.string != nil }) {
+                let text = item.props.compactMap(\.string).joined()
+                if let raw = Data(base64Encoded: text, options: .ignoreUnknownCharacters) { item.props = [.bytes([UInt8](raw))] }
+            }
+            return item
+        }
+        let root = Node(name: "", props: [])
+        while true {
+            skipSpace(newlines: true)
+            guard pos < n else { break }
+            guard let child = try node(0) else { pos += 1; continue }
+            root.children.append(child)
+        }
         return root
     }
 
@@ -129,6 +219,11 @@ enum FBXImporter {
         x.tx = Float(tv.x); x.ty = Float(tv.y); x.tz = Float(tv.z)
         return (x, rot)
     }
+    static func distance(_ x: RigXform, _ y: RigXform) -> Float {
+        let scale = max(1, abs(x.tx) + abs(x.ty) + abs(x.tz))
+        return (abs(x.a - y.a) + abs(x.b - y.b) + abs(x.c - y.c) + abs(x.d - y.d) + abs(x.e - y.e) + abs(x.f - y.f) + abs(x.g - y.g) + abs(x.h - y.h) + abs(x.i - y.i))
+            + (abs(x.tx - y.tx) + abs(x.ty - y.ty) + abs(x.tz - y.tz)) / scale
+    }
     static func matrix(_ v: [Double]) -> RigXform? { v.count == 16 ? RigXform(matrix: v.map(Float.init)) : nil }
 
     // MARK: Scene
@@ -145,7 +240,11 @@ enum FBXImporter {
             parentsOf[child, default: []].append((parent, prop)); childrenOf[parent, default: []].append((child, prop))
         }
         func kind(_ n: Node) -> String { n.props.count > 2 ? (n.props[2].string ?? "") : "" }
-        func name(_ n: Node) -> String { (n.props.count > 1 ? n.props[1].string ?? "" : "").components(separatedBy: "\u{0}").first ?? "" }
+        func name(_ n: Node) -> String {
+            let raw = n.props.count > 1 ? n.props[1].string ?? "" : ""
+            if let r = raw.range(of: "::") { return String(raw[r.upperBound...]) }   // ASCII "Model::Name"
+            return raw.components(separatedBy: "\u{0}").first ?? ""
+        }
         func modelParent(_ id: Int64) -> Int64? { parentsOf[id]?.first { byID[$0.0]?.name == "Model" }?.0 }
         var worldCache: [Int64: RigXform] = [:]
         func world(_ id: Int64, depth: Int = 0) -> RigXform {
@@ -223,13 +322,23 @@ enum FBXImporter {
             // Skin of this geometry: control point → weights.
             var weights: [Int: [(Int, Float)]] = [:]
             var meshBind: RigXform?
+            var binds: [(RigXform, RigXform)] = []
             if let skinID = childrenOf[gid]?.first(where: { byID[$0.0]?.name == "Deformer" && kind(byID[$0.0]!) == "Skin" })?.0 {
                 for (cid, _) in childrenOf[skinID] ?? [] {
                     guard let c = byID[cid], kind(c) == "Cluster", let bone = childrenOf[cid]?.first(where: { byID[$0.0]?.name == "Model" })?.0, let j = jointIndex[bone] else { continue }
                     let idx = c.child("Indexes")?.props.first?.ints ?? [], w = c.child("Weights")?.props.first?.doubles ?? []
                     for (k, i) in idx.enumerated() where k < w.count { weights[Int(i), default: []].append((j, Float(w[k]))) }
-                    if meshBind == nil { meshBind = c.child("Transform").flatMap { matrix($0.props.first?.doubles ?? []) } }
+                    if let t = c.child("Transform").flatMap({ matrix($0.props.first?.doubles ?? []) }) {
+                        binds.append((t, c.child("TransformLink").flatMap { matrix($0.props.first?.doubles ?? []) } ?? world(bone)))
+                    }
                 }
+            }
+            // The SDK writes the mesh's bind matrix as "Transform"; Blender
+            // writes link⁻¹ × mesh. Use whichever reading agrees across clusters.
+            if let first = binds.first {
+                func spread(_ list: [RigXform]) -> Float { list.map { Self.distance($0, list[0]) }.max() ?? 0 }
+                let sdk = binds.map(\.0), blender = binds.map { $0.1 * $0.0 }
+                meshBind = binds.count > 1 && spread(blender) + 1e-4 < spread(sdk) * 0.5 ? blender[0] : first.0
             }
             let geometric = byID[model ?? -1].map { m -> RigXform in
                 var x = euler(m.vector("GeometricRotation", .zero))
@@ -239,7 +348,7 @@ enum FBXImporter {
                 return x
             } ?? .identity
             let skinned = !weights.isEmpty && skeleton != nil
-            let placement = (skinned ? (meshBind ?? model.map { world($0) } ?? .identity) : axis * (model.map { world($0) } ?? .identity)) * geometric
+            let placement = axis * (skinned ? (meshBind ?? model.map { world($0) } ?? .identity) : (model.map { world($0) } ?? .identity)) * geometric
             var holder = model
             while let h = holder, jointIndex[h] == nil { holder = modelParent(h) }
             let rigid = holder.flatMap { jointIndex[$0] } ?? 0
@@ -294,7 +403,7 @@ enum FBXImporter {
 
         // Animations.
         var rig: ImportedRig?
-        if var skeleton {
+        if var skeleton, skeleton.joints.count <= 256 {
             var skin = SkinInfluences(count: out.vertexCount)
             for (v, row) in rows.enumerated() {
                 SkinWeightSolver.write(Array(row.sorted { $0.1 > $1.1 }.prefix(4)), into: &skin, vertex: v)

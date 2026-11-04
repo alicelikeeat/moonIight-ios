@@ -74,7 +74,7 @@ import UIKit
             if let rigged = model.rigged {
                 let skeleton = rigged.character.skeleton, height = skeleton.height
                 for (clipID, player) in model.players {
-                    guard let clip = rigged.character.clips.first(where: { $0.id == clipID }) ?? MotionClip.standard(clipID) else { continue }
+                    guard let clip = MotionClip.resolve(clipID, in: rigged.character.clips) else { continue }
                     let pose = clip.pose(skeleton, at: clock.truncatingRemainder(dividingBy: clip.period), height: height)
                     let deformed = SkinWeightSolver.deform(model.mesh, skin: rigged.skin, matrices: pose.skinning(skeleton))
                     player.update(positions: deformed.positions, normals: deformed.normals)

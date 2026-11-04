@@ -605,52 +605,6 @@ enum VideoReconstructionPipeline {
         return manifest
     }
 
-    /// v1.73: saves a GLB model imported from Files (mesh normalised to the
-    /// app's unit size, embedded texture kept as is, thumbnail rendered).
-    @available(iOS 18.0, *)
-    func storeImported(_ glb: Data, name: String) async throws -> Generated3DManifest {
-        let model = try await Task.detached(priority: .userInitiated) { () throws -> GLBModel in
-            var m = try GLBCodec.read(glb)
-            m.mesh.normalize(size: 1)
-            // v1.75: colours per vertex (TripoSR and others) become a texture.
-            if m.texture == nil, let colors = m.colors {
-                let baked = VertexColorBaker.bake(m.mesh, colors: colors)
-                m.mesh = baked.mesh
-                if let cg = ModelAnimationExport.cgImage(baked.texture), let jpeg = PixelReader.jpeg(cg, quality: 0.92) { m.texture = jpeg; m.textureMime = "image/jpeg" }
-            }
-            return m
-        }.value
-        let id = UUID().uuidString
-        let meshFile = id + ".m3dg"
-        let ext = model.textureMime == "image/jpeg" ? "jpg" : "png"
-        let textureFile: String? = model.texture == nil ? nil : id + "." + ext
-        let meshURL = Self.folder("Models").appendingPathComponent(meshFile)
-        let mesh = model.mesh
-        do {
-            try await Task.detached(priority: .userInitiated) { try GeneratedMeshCodec.encode(mesh).write(to: meshURL, options: .atomic) }.value
-            if let textureFile, let texture = model.texture { try texture.write(to: Self.folder("Textures").appendingPathComponent(textureFile), options: .atomic) }
-        } catch { throw Generate3DError.saveFailed(error.localizedDescription) }
-        // Thumbnail with the software renderer.
-        var thumbnailFile: String?
-        let textureImage = model.texture.flatMap { CGImageSourceCreateWithData($0 as CFData, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
-        let thumbData = await Task.detached(priority: .utility) { () -> Data? in
-            let texture = textureImage.flatMap { ModelAnimationExport.raster($0) }
-            let image = ModelRasterizer.render(mesh, texture: texture, camera: RasterCamera(yaw: 0.35, lighting: true), width: 256, height: 256, background: [40, 44, 56, 255])
-            return ModelAnimationExport.cgImage(image).flatMap { PixelReader.jpeg($0, quality: 0.8) }
-        }.value
-        if let thumbData, (try? thumbData.write(to: Self.folder("Thumbnails").appendingPathComponent(id + ".jpg"), options: .atomic)) != nil { thumbnailFile = id + ".jpg" }
-        let manifest = Generated3DManifest(
-            id: id, name: name, createdAt: Date(), source: .image, sourceName: name + ".glb", sourceHash: SHA256.hash(data: glb).map { String(format: "%02x", $0) }.joined(),
-            engine: "GLB import", engineVersion: "glTF 2.0", depthSource: .none, geometry: .imported, quality: .medium,
-            vertexCount: mesh.vertexCount, triangleCount: mesh.triangleCount, textureWidth: textureImage?.width ?? 0, textureHeight: textureImage?.height ?? 0,
-            meshFile: meshFile, textureFile: textureFile, usdzFile: nil, thumbnailFile: thumbnailFile,
-            humanoidDetected: false, rigging: .experimentalNotImplemented, animation: .experimentalNotImplemented, separableParts: .notAvailable,
-            notes: [L10n.t("从 GLB 导入：\(mesh.vertexCount) 个顶点、\(mesh.triangleCount) 个三角面。原文件中的骨骼和动画不会被读取，可用「自动骨骼」重新绑定。",
-                           "Imported from GLB: \(mesh.vertexCount) vertices, \(mesh.triangleCount) triangles. Skeletons and animations in the file are not read; use Auto Rig to rig it again.")])
-        try save(manifest)
-        return manifest
-    }
-
     /// Saves a reconstructed USDZ (Object Capture).
     @available(iOS 18.0, *)
     func storeReconstruction(_ usdz: URL, thumbnail: URL?, name: String, sourceName: String, hash: String) async throws -> Generated3DManifest {
@@ -702,7 +656,7 @@ enum VideoReconstructionPipeline {
         reload()
     }
 
-    /// Files to share: OBJ + MTL + texture for depth models, plus USDZ when there is one.
+    /// Files to share: OBJ + MTL + texture, GLB, STL, plus USDZ when there is one.
     func exportFiles(_ m: Generated3DManifest) async -> [URL] {
         var files: [URL] = []
         let folder = Self.folder("Exports").appendingPathComponent(m.id, isDirectory: true)
@@ -720,6 +674,21 @@ enum VideoReconstructionPipeline {
                 } catch { return false }
             }.value
             if ok { files += [objURL, mtlURL, texURL] }
+        }
+        // v1.76: GLB (shape + texture) and STL (shape, for 3D printing).
+        if let meshURL = meshURL(m) {
+            let glbURL = folder.appendingPathComponent("model.glb"), stlURL = folder.appendingPathComponent("model.stl")
+            let textureURL = textureURL(m)
+            let written = await Task.detached(priority: .userInitiated) { () -> [URL] in
+                guard let data = try? Data(contentsOf: meshURL), let mesh = GeneratedMeshCodec.decode(data) else { return [] }
+                var out: [URL] = []
+                let texture = textureURL.flatMap { try? Data(contentsOf: $0) }
+                let mime = texture.map { $0.starts(with: [0xFF, 0xD8]) ? "image/jpeg" : "image/png" } ?? "image/png"
+                if (try? GLBCodec.write(mesh, texture: texture, textureMime: mime).write(to: glbURL, options: .atomic)) != nil { out.append(glbURL) }
+                if (try? STLWriter.binary(mesh).write(to: stlURL, options: .atomic)) != nil { out.append(stlURL) }
+                return out
+            }.value
+            files += written
         }
         if let usdz = usdzURL(m), FileManager.default.fileExists(atPath: usdz.path) { files.append(usdz) }
         return files

@@ -56,7 +56,7 @@ enum OBJImporter {
         if out.normals.contains(where: { $0.isNaN }) { out.computeNormals() }
         // Texture named by the material library (map_Kd).
         var textureName: String?
-        if let lib = mtllib, let mtl = companions[(lib as NSString).lastPathComponent.lowercased()] {
+        if let lib = mtllib, let mtl = companions[(lib.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent.lowercased()] {
             var current: String?
             for raw in String(decoding: mtl, as: UTF8.self).split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
                 let parts = raw.split(whereSeparator: { $0 == " " || $0 == "\t" })
@@ -97,7 +97,7 @@ enum STLImporter {
             if let id = map[p] { out.indices.append(id); continue }
             let id = UInt32(out.vertexCount)
             map[p] = id
-            out.positions += [p.x, p.y, p.z]; out.uvs += [0, 0]; out.indices.append(id)
+            out.positions += [p.x, p.z, -p.y]; out.uvs += [0, 0]; out.indices.append(id)   // z-up → y-up
         }
         out.computeNormals()
         return ImportedModel(mesh: out, colors: nil, texture: nil, textureName: nil, name: nil, rig: nil,

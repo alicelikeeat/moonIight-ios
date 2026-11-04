@@ -27,12 +27,13 @@ struct ImportedModel: Sendable {
 }
 
 enum ImportError: Error, Equatable, LocalizedError {
-    case unsupported(String), empty, damaged(String)
+    case unsupported(String), empty, damaged(String), missingCompanion(String)
     var errorDescription: String? {
         switch self {
         case .unsupported(let ext): L10n.t("不支持的格式：\(ext)", "Unsupported format: \(ext)")
         case .empty: L10n.t("文件里没有可用的三角网格", "No usable triangle mesh in the file")
         case .damaged(let why): L10n.t("文件无法读取：", "The file could not be read: ") + why
+        case .missingCompanion(let name): L10n.t("缺少配套文件 \(name)：导入时请一起选中", "Missing companion file \(name): pick it together with the model")
         }
     }
 }
@@ -43,9 +44,10 @@ enum ModelImport {
     /// `companions`: other picked files by lower-cased name (MTL, textures).
     static func read(_ data: Data, fileName: String, companions: [String: Data] = [:]) throws -> ImportedModel {
         let ext = (fileName as NSString).pathExtension.lowercased()
+        let companions = Dictionary(companions.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { a, _ in a })
         var model: ImportedModel
         switch ext {
-        case "glb": model = try GLTFImporter.read(data)
+        case "glb", "gltf": model = try GLTFImporter.read(data, companions: companions)
         case "fbx": model = try FBXImporter.read(data)
         case "obj": model = try OBJImporter.read(data, companions: companions)
         case "stl": model = try STLImporter.read(data)
@@ -57,6 +59,9 @@ enum ModelImport {
             model.texture = companions[key]
         }
         if model.name == nil { model.name = (fileName as NSString).deletingPathExtension }
+        if model.rig == nil, model.notes.isEmpty, ext == "glb" || ext == "gltf" || ext == "fbx", model.mesh.vertexCount > 0 {
+            model.notes.append(L10n.t("文件里没有可用的骨骼蒙皮（或关节超过 255 个），可以用「自动骨骼」绑定", "No usable skinned skeleton in the file (or more than 255 joints); use Auto Rig"))
+        }
         guard model.mesh.triangleCount > 0 else { throw ImportError.empty }
         return normalized(model)
     }
@@ -94,12 +99,28 @@ enum GLTFImporter {
         o.tx += b.tx * w; o.ty += b.ty * w; o.tz += b.tz * w
         return o
     }
-    static func read(_ data: Data) throws -> ImportedModel {
+    /// Data of a glTF `uri`: a data: URI or a picked companion file.
+    static func resource(_ uri: String, _ companions: [String: Data]) -> Data? {
+        if uri.hasPrefix("data:"), let comma = uri.firstIndex(of: ",") { return Data(base64Encoded: String(uri[uri.index(after: comma)...])) }
+        let name = ((uri.removingPercentEncoding ?? uri).replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent.lowercased()
+        return companions[name]
+    }
+
+    static func read(_ data: Data, companions: [String: Data] = [:]) throws -> ImportedModel {
         let bytes = [UInt8](data)
         func u32(_ o: Int) -> Int { Int(UInt32(bytes[o]) | UInt32(bytes[o + 1]) << 8 | UInt32(bytes[o + 2]) << 16 | UInt32(bytes[o + 3]) << 24) }
-        guard bytes.count >= 20, u32(0) == 0x4654_6C67 else { throw GLBError.notGLB }
         var offset = 12, json: [String: Any]?, bin: [UInt8] = []
-        while offset + 8 <= min(bytes.count, u32(8)) {
+        if bytes.first(where: { $0 > 32 }) == UInt8(ascii: "{") {
+            // .gltf: JSON with the buffer next to it (or inside a data: URI).
+            json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            if let uri = (json?["buffers"] as? [[String: Any]])?.first?["uri"] as? String {
+                guard let raw = resource(uri, companions) else { throw ImportError.missingCompanion(uri) }
+                bin = [UInt8](raw)
+            }
+        } else {
+            guard bytes.count >= 20, u32(0) == 0x4654_6C67 else { throw GLBError.notGLB }
+        }
+        while json == nil, offset + 8 <= min(bytes.count, u32(8)) {
             let length = u32(offset), type = u32(offset + 4)
             guard offset + 8 + length <= bytes.count else { throw GLBError.badChunk }
             let body = bytes[(offset + 8)..<(offset + 8 + length)]
@@ -300,11 +321,14 @@ enum GLTFImporter {
            let t = ref["index"] as? Int, t < textures.count, let src = textures[t]["source"] as? Int, src < images.count, let vi = images[src]["bufferView"] as? Int, vi < views.count {
             let v = views[vi], start = v["byteOffset"] as? Int ?? 0, length = v["byteLength"] as? Int ?? 0
             if start + length <= bin.count { texture = Data(bin[start..<(start + length)]) }
+        } else if let m = material, m < materials.count, let pbr = materials[m]["pbrMetallicRoughness"] as? [String: Any], let ref = pbr["baseColorTexture"] as? [String: Any],
+                  let t = ref["index"] as? Int, t < textures.count, let src = textures[t]["source"] as? Int, src < images.count, let uri = images[src]["uri"] as? String {
+            texture = resource(uri, companions)
         }
 
         // Rig and animations.
         var rig: ImportedRig?
-        if let skeleton {
+        if let skeleton, skeleton.joints.count <= 256 {
             var skin = SkinInfluences(count: out.vertexCount)
             for (v, row) in skinRows.enumerated() {
                 let top = row.sorted { $0.1 > $1.1 }.prefix(4)
@@ -344,4 +368,53 @@ enum GLTFImporter {
         if skins.count > 1 { notes.append(L10n.t("文件有 \(skins.count) 套蒙皮，只使用第一套", "The file has \(skins.count) skins; only the first is used")) }
         return ImportedModel(mesh: out, colors: anyColor ? colors : nil, texture: texture, textureName: nil, name: meshes.first?["name"] as? String, rig: rig, notes: notes)
     }
+}
+
+// MARK: Helpers
+
+extension SkinInfluences {
+    /// Weights for a re-indexed mesh: new vertex i takes old vertex map[i].
+    func remapped(_ map: [Int]) -> SkinInfluences {
+        var out = SkinInfluences(count: map.count)
+        for (i, old) in map.enumerated() where old < count {
+            for k in 0..<4 { out.joints[i * 4 + k] = joints[old * 4 + k]; out.weights[i * 4 + k] = weights[old * 4 + k] }
+        }
+        return out
+    }
+}
+
+extension ModelImport {
+    /// Vertex colours → a texture atlas (the app draws textures, not
+    /// colours); the skin follows the re-indexed vertices.
+    static func baked(_ m: ImportedModel) -> (model: ImportedModel, texture: RasterImage)? {
+        guard m.texture == nil, let colors = m.colors, colors.count >= m.mesh.vertexCount * 3 else { return nil }
+        let b = VertexColorBaker.bake(m.mesh, colors: colors)
+        var out = m
+        out.mesh = b.mesh
+        out.colors = nil
+        if var rig = out.rig {
+            rig.skin = rig.skin.remapped(m.mesh.indices.prefix(b.mesh.vertexCount).map { Int($0) })
+            out.rig = rig
+        }
+        return (out, b.texture)
+    }
+}
+
+enum STLWriter {
+    /// Binary STL (shape only), model units as millimetres ×100.
+    static func binary(_ mesh: GeneratedMesh, scale: Float = 100) -> Data {
+        var d = Data(count: 80)
+        var count = UInt32(mesh.triangleCount).littleEndian
+        d.append(Data(bytes: &count, count: 4))
+        func f(_ v: Float) { var b = v.bitPattern.littleEndian; d.append(Data(bytes: &b, count: 4)) }
+        for t in 0..<mesh.triangleCount {
+            let p = (0..<3).map { k -> SIMD3<Float> in let i = Int(mesh.indices[t * 3 + k]); return SIMD3(mesh.positions[i * 3], mesh.positions[i * 3 + 1], mesh.positions[i * 3 + 2]) * scale }
+            var n = cross(p[1] - p[0], p[2] - p[0]); let l = rigLength(n); if l > 0 { n /= l }
+            // STL is z-up: (x, y, z) → (x, -z, y).
+            for v in [n] + p { f(v.x); f(-v.z); f(v.y) }
+            d.append(contentsOf: [0, 0])
+        }
+        return d
+    }
+    private static func cross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> { SIMD3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x) }
 }

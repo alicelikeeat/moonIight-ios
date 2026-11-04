@@ -31,6 +31,8 @@ final class RigCancelFlag: @unchecked Sendable {
     @Published private(set) var skin: SkinInfluences?
     @Published private(set) var diagnostics: RiggingDiagnostics?
     @Published private(set) var sockets: [AttachmentSocket] = []
+    /// v1.76: animations that came with an imported model (its own skeleton).
+    @Published private(set) var fileClips: [MotionClip] = []
     @Published private(set) var optimized = false
     @Published private(set) var engineRoute = "local"
     @Published private(set) var timings: [String: Double] = [:]
@@ -110,6 +112,7 @@ final class RigCancelFlag: @unchecked Sendable {
             guard rigMesh.vertexCount == character.vertexCount else { mesh = source; return }
             mesh = rigMesh
             skeleton = character.skeleton; self.skin = skin; diagnostics = character.diagnostics; sockets = character.sockets
+            fileClips = character.clips.filter { $0.keyframes != nil }
             optimized = character.optimizedMeshFile != nil; engineRoute = character.metadata.route; savedOnce = true
         } else {
             mesh = source
@@ -193,6 +196,7 @@ final class RigCancelFlag: @unchecked Sendable {
         optimized = result.optimized; engineRoute = route; timings = result.timings
         history = []; undoDepth = 0; dirty = true; needsReskin = false
         selectedJoint = nil; editedJoints = []
+        fileClips = []   // a new skeleton: the file's animations no longer fit
     }
 
     // MARK: Editing
@@ -299,7 +303,8 @@ final class RigCancelFlag: @unchecked Sendable {
                                    route: route ?? .local, mesh: mesh, optimized: optimized, skeleton: skeleton, skin: skin, diagnostics: diagnostics,
                                    sockets: sockets.isEmpty ? [] : sockets, frameScale: 1, frameOffset: .zero, timings: timings)
         let character = RiggingPipeline.character(result, modelID: id, meshFile: manifest.meshFile ?? "", optimizedMeshFile: optimized ? id + ".opt.mesh" : nil,
-                                                  skinFile: id + ".skin", route: engineRoute, engine: engineRoute == "cloud" ? "Cloud rig service" : "Moonlight Local Rig")
+                                                  skinFile: id + ".skin", route: engineRoute, engine: engineRoute == "cloud" ? "Cloud rig service" : engineRoute == "file" ? "Model file" : "Moonlight Local Rig",
+                                                  fileClips: fileClips)
         do {
             try assets.save(character, skin: skin, optimizedMesh: optimized ? mesh : nil)
             var updated = store.models.first { $0.id == id } ?? manifest

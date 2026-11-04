@@ -36,6 +36,9 @@ struct MotionClip: Codable, Equatable, Identifiable, Sendable {
     var period: Float
     var channels: [Channel]
     var root: [RootChannel] = []
+    /// v1.76: keyframed animation from a model file; when set it drives the
+    /// pose (period = its duration) and the sine channels are unused.
+    var keyframes: KeyframeClip? = nil
 
     func value(amplitude: Float, phase: Float, bias: Float, cycles: Float, rectified: Bool = false, at t: Float) -> Float {
         let s = sin(2 * .pi * (cycles * t / max(0.01, period) + phase))
@@ -43,6 +46,10 @@ struct MotionClip: Codable, Equatable, Identifiable, Sendable {
     }
     func pose(_ skeleton: SkeletonDefinition, at t: Float) -> SkeletonPose {
         var pose = SkeletonPose.rest(skeleton)
+        if let keyframes {
+            pose.locals = keyframes.locals(skeleton, at: t)
+            return pose
+        }
         for c in channels {
             guard let j = skeleton.index(c.joint), (0..<3).contains(c.axis) else { continue }
             pose.rotations[j][c.axis] += value(amplitude: c.amplitude, phase: c.phase, bias: c.bias, cycles: c.cycles, at: t)
@@ -113,6 +120,29 @@ struct MotionClip: Codable, Equatable, Identifiable, Sendable {
     static func standard(_ id: String) -> MotionClip? { library.first { $0.id == id } }
 
     /// Clip a world action plays.
+    /// Clips from a model file, named after the standard motion they match
+    /// (idle / walk / run / jump / attack / wave) so world actions find them.
+    static func fromFile(_ clips: [KeyframeClip]) -> [MotionClip] {
+        let rules: [(String, [String])] = [("idle", ["idle", "待机", "stand", "breath"]), ("walk", ["walk", "行走", "走"]), ("run", ["run", "sprint", "奔跑", "跑"]),
+                                           ("jump", ["jump", "跳"]), ("swordSwing", ["attack", "slash", "swing", "punch", "hit", "攻击", "砍"]), ("wave", ["wave", "挥手", "greet"])]
+        var used = Set<String>(), out: [MotionClip] = []
+        for (i, k) in clips.enumerated() {
+            let name = k.name.lowercased()
+            var id = "file-\(i)"
+            if let rule = rules.first(where: { r in !used.contains(r.0) && r.1.contains { name.contains($0) } }) { id = rule.0; used.insert(id) }
+            out.append(MotionClip(id: id, name: k.name, period: max(0.04, k.duration), channels: [], keyframes: k))
+        }
+        return out
+    }
+
+    /// The clip for a world action: a matching clip, else the file's first
+    /// clip (a file skeleton cannot use the built-in motions), else built-in.
+    static func resolve(_ id: String, in clips: [MotionClip]) -> MotionClip? {
+        let file = clips.filter { $0.keyframes != nil }
+        if !file.isEmpty { return file.first { $0.id == id } ?? file[0] }
+        return clips.first { $0.id == id } ?? standard(id)
+    }
+
     static func id(for action: CharacterAction) -> String {
         switch action {
         case .walk: "walk"

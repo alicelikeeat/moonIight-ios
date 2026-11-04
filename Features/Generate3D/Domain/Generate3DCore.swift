@@ -507,7 +507,7 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
             switch self {
             case .procedural: L10n.t("文字生成的 3D 角色（完整 360°，自带骨骼）", "3D character from text (full 360°, rigged)")
             case .multiView: L10n.t("多张照片建模（按轮廓雕刻的 360° 模型）", "Model from several photos (360°, carved from outlines)")
-            case .imported: L10n.t("导入的 3D 模型（GLB）", "Imported 3D model (GLB)")
+            case .imported: L10n.t("导入的 3D 模型", "Imported 3D model")
             case .depthRelief: L10n.t("深度立体模型（正面为真实深度，背面为封闭平板，非完整 360°）", "Depth relief (real depth on the front, closed flat back; not a full 360° model)")
             case .photogrammetry: L10n.t("多视角重建模型", "Multi-view reconstruction")
             }

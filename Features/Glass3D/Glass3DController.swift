@@ -93,7 +93,7 @@ struct Glass3DPending {
             template.mode = .generated
             template.generatedModelID = model.id
         } else if let usdz = Generated3DStore.shared.usdzURL(model) {
-            let file = UUID().uuidString + ".usdz"
+            let file = UUID().uuidString + "." + (usdz.pathExtension.isEmpty ? "usdz" : usdz.pathExtension)
             guard (try? FileManager.default.copyItem(at: usdz, to: Glass3DCharacters.modelsFolder.appendingPathComponent(file))) != nil else { return creatureLook ?? "" }
             template.mode = .model
             template.modelMediaID = file

@@ -184,9 +184,9 @@ enum RiggingPipeline {
 
     /// Assembles the saved character.
     static func character(_ result: RiggingResult, modelID: String, meshFile: String, optimizedMeshFile: String?, skinFile: String,
-                          route: String = "local", engine: String = "Moonlight Local Rig") -> RiggedCharacter {
+                          route: String = "local", engine: String = "Moonlight Local Rig", fileClips: [MotionClip] = []) -> RiggedCharacter {
         RiggedCharacter(modelID: modelID, meshFile: optimizedMeshFile ?? meshFile, optimizedMeshFile: optimizedMeshFile, skinFile: skinFile,
-                        vertexCount: result.mesh.vertexCount, skeleton: result.skeleton, clips: MotionClip.library, sockets: result.sockets,
+                        vertexCount: result.mesh.vertexCount, skeleton: result.skeleton, clips: fileClips + MotionClip.library, sockets: result.sockets,
                         diagnostics: result.diagnostics,
                         metadata: RiggedCharacterMetadata(engine: engine, engineVersion: "1.73.0", route: route, createdAt: Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down)),
                                                           poseType: result.estimate.pose.rawValue, notes: result.estimate.notes))
