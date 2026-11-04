@@ -8,12 +8,18 @@
       <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="B10000000000000000000008" BuildableName="MoonlightUITests.xctest" BlueprintName="MoonlightUITests" ReferencedContainer="container:Moonlight-iOS.xcodeproj"/>
       </BuildActionEntry>
+      <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="AD66EE000000000000000008" BuildableName="Local3DIntegrationTests.xctest" BlueprintName="Local3DIntegrationTests" ReferencedContainer="container:Moonlight-iOS.xcodeproj"/>
+      </BuildActionEntry>
     </BuildActionEntries>
   </BuildAction>
   <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger" selectedLauncherIdentifier="Xcode.DebuggerFoundation.Launcher" shouldUseLaunchSchemeArgsEnv="YES">
     <Testables>
       <TestableReference skipped="NO">
         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="B10000000000000000000008" BuildableName="MoonlightUITests.xctest" BlueprintName="MoonlightUITests" ReferencedContainer="container:Moonlight-iOS.xcodeproj"/>
+      </TestableReference>
+      <TestableReference skipped="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="AD66EE000000000000000008" BuildableName="Local3DIntegrationTests.xctest" BlueprintName="Local3DIntegrationTests" ReferencedContainer="container:Moonlight-iOS.xcodeproj"/>
       </TestableReference>
     </Testables>
   </TestAction>

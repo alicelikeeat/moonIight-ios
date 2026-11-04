@@ -30,6 +30,7 @@ actor GeneratedAssetStore {
         var items: [GeneratedModelManifest] = []
         for id in ids {
             guard let manifest = try file(id).load()?.payload else { throw GenerationError.corruptAsset }
+            guard manifest.id == id else { throw GenerationError.corruptAsset }
             try validate(manifest)
             items.append(manifest)
         }
@@ -38,6 +39,7 @@ actor GeneratedAssetStore {
 
     func manifest(_ id: UUID) throws -> GeneratedModelManifest {
         guard let manifest = try file(id).load()?.payload else { throw GenerationError.corruptAsset }
+        guard manifest.id == id else { throw GenerationError.corruptAsset }
         try validate(manifest)
         return manifest
     }
@@ -143,6 +145,14 @@ actor GeneratedAssetStore {
         for (directory, keep) in [("Sources", sources), ("Textures", textures)] {
             for url in try fm.contentsOfDirectory(at: root.appendingPathComponent(directory), includingPropertiesForKeys: nil) {
                 if !keep.contains(url.lastPathComponent) { try fm.removeItem(at: url) }
+            }
+        }
+        let liveIDs = Set(manifests.map(\.id))
+        for folder in ["Models", "Presets"] {
+            for url in try fm.contentsOfDirectory(at: root.appendingPathComponent(folder), includingPropertiesForKeys: nil) {
+                if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), !liveIDs.contains(id) {
+                    try fm.removeItem(at: url)
+                }
             }
         }
     }

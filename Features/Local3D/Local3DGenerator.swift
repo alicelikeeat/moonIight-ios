@@ -1,6 +1,14 @@
 import Foundation
 import RealityKit
 
+@available(iOS 17.0, *)
+@MainActor
+private final class ObjectCaptureControl {
+    let session: PhotogrammetrySession
+    init(_ session: PhotogrammetrySession) { self.session = session }
+    func cancel() { session.cancel() }
+}
+
 /// Single isolated worker for decoding, Vision, inference, mesh generation and disk IO.
 actor Local3DGenerator {
     static let shared = Local3DGenerator()
@@ -50,6 +58,7 @@ enum LocalObjectCapture {
         }
         defer { try? FileManager.default.removeItem(at: images) }
         let session = try PhotogrammetrySession(input: images)
+        let control = ObjectCaptureControl(session)
         var thermalFailure = false
         let monitor = Task { @MainActor in
             while !Task.isCancelled {
@@ -76,7 +85,7 @@ enum LocalObjectCapture {
             }
             throw GenerationError.invalidInput("摄影测量未生成模型。请增加静止物体的环绕视角后重试。")
         } onCancel: {
-            Task { @MainActor in session.cancel() }
+            Task { @MainActor in control.cancel() }
         }
     }
 }

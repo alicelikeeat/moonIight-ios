@@ -112,7 +112,10 @@ final class GenerationTaskManager: ObservableObject {
     private func updateProgress(_ label: String, _ value: Double?) { stage = label; fraction = value }
 
     func refresh() async {
-        do { models = try await GeneratedAssetStore.shared.list() }
+        do {
+            models = try await GeneratedAssetStore.shared.list()
+            if !busy { try await GeneratedAssetStore.shared.removeUnreferencedContent() }
+        }
         catch { self.error = "资产库读取失败：\(error.localizedDescription)" }
     }
 
@@ -249,11 +252,18 @@ final class GenerationTaskManager: ObservableObject {
             try Task.checkCancellation()
             stage = "RealityKit 正在加载已保存的 USDZ"
             entity = nil; selection = nil; preset = nil
-            let loaded = try await loader.load(GeneratedAssetStore.shared.modelURL(manifest.id))
+            let url = GeneratedAssetStore.shared.modelURL(manifest.id)
+            let bytes = ((try FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? NSNumber)?.uint64Value ?? 0
+            guard bytes > 0, bytes <= 256 << 20 else { throw GenerationError.invalidInput("模型为空或超过 256 MB 预览预算。") }
+            try await GenerationResources.checkpoint(minimumMemory: bytes * 4 + (200 << 20))
+            let loaded = try await loader.load(url)
             try Task.checkCancellation()
+            func hasGeometry(_ entity: Entity) -> Bool {
+                entity.components[ModelComponent.self] != nil || entity.children.contains(where: hasGeometry)
+            }
             let bounds = loaded.visualBounds(relativeTo: nil)
             let extent = max(bounds.extents.x, bounds.extents.y, bounds.extents.z)
-            guard extent.isFinite, extent > 0.00001 else { throw GenerationError.corruptAsset }
+            guard hasGeometry(loaded), extent.isFinite, extent > 0.00001 else { throw GenerationError.corruptAsset }
             let skin = try await GeneratedAssetStore.shared.preset(manifest.id)
             let confirmed = try await GeneratedAssetStore.shared.confirmRealityKit(manifest.id)
             try Task.checkCancellation()
