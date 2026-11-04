@@ -10,6 +10,12 @@ import SwiftUI
 @MainActor final class Glass3DNativeGlass: ObservableObject {
     @Published private(set) var shape = Path()
     @Published private(set) var faces = 0
+    /// Lock-on reticle over the locked target (screen point).
+    @Published var reticle: CGPoint?
+    /// Move handles for the selection: centre and the screen direction and
+    /// length of one step along x, map-y and height.
+    @Published var gizmo: Gizmo?
+    struct Gizmo: Equatable { var center: CGPoint; var axes: [CGPoint] }
 
     struct Character { let position: SpatialVector; let radius: Double; let height: Double }
 

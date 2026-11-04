@@ -45,6 +45,8 @@ struct SpatialGeometry: Sendable {
     private var cells: [Int: [SpatialBox]] = [:]
     private(set) var moving: [SpatialBox] = []
     private(set) var frames: [String: GroupFrame]
+    /// Dug-out ground cells: no glass floor at height 0 there.
+    var groundHoles: Set<Int> = []
     /// Blocks of moving groups (re-placed every frame by `moved(frames:)`).
     private var movingBlocks: [SpatialBlock] = []
 
@@ -104,7 +106,9 @@ struct SpatialGeometry: Sendable {
     /// The highest surface to stand on at or below `z + stepUp` (the glass
     /// ground at 0 counts everywhere). One-way platforms count only from above.
     func support(x: Double, y: Double, z: Double, radius: Double = playerRadius, stepUp: Double = 0.05, falling: Bool = true) -> (height: Double, box: SpatialBox?) {
-        var best: (Double, SpatialBox?) = (0, nil)
+        // The glass ground (height 0) holds unless the cell under the centre is dug out.
+        let cell = Int(y.rounded(.down)) * WorldGeometry.width + Int(x.rounded(.down))
+        var best: (Double, SpatialBox?) = groundHoles.contains(cell) || z < -0.01 ? (-Double.infinity, nil) : (0, nil)
         for box in boxes(x: x, y: y, radius: radius) where box.collision.supports {
             if box.collision == .oneWay && !falling { continue }
             if box.maxZ <= z + stepUp && box.maxZ >= best.0 { best = (box.maxZ, box) }
@@ -142,7 +146,7 @@ enum SpatialPhysics {
     static let gravity = 22.0
     static let jumpSpeed = 8.2
     static let stepUp = 0.5
-    static let fallLimit = -8.0
+    static let fallLimit = -24.0
 
     /// Jump apex in cells (for reachability checks): v² / 2g.
     static var jumpHeight: Double { jumpSpeed * jumpSpeed / (2 * gravity) }

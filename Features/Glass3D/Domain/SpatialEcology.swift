@@ -20,7 +20,7 @@ final class SpatialNavigator: @unchecked Sendable {
         if let cached = cache[key] { return cached }
         let cx = Double(x) + 0.5, cy = Double(y) + 0.5
         let boxes = geometry.boxes(x: cx, y: cy, radius: 0.25)
-        var heights = [0.0] + boxes.filter { $0.collision.supports }.map(\.maxZ)
+        var heights = (geometry.groundHoles.contains(key) ? [] : [0.0]) + boxes.filter { $0.collision.supports }.map(\.maxZ)
         heights = Array(Set(heights.map { ($0 * 20).rounded() / 20 })).sorted()
         let result = heights.filter { h in !boxes.contains { $0.collision.blocksSides && $0.maxZ > h + 0.05 && $0.minZ < h + Self.headroom } }
         cache[key] = result

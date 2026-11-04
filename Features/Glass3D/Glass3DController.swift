@@ -7,17 +7,17 @@ enum Glass3DMode: String, CaseIterable { case play, edit
 }
 
 enum Glass3DTool: String, CaseIterable {
-    case select, place, draw, area, erase, building, media, creature, maze, track
+    case select, place, draw, area, erase, dig, building, media, creature, maze, track
     var title: String {
         switch self {
         case .select: L10n.t("选择", "Select"); case .place: L10n.t("放置", "Place"); case .draw: L10n.t("连续绘制", "Draw")
-        case .area: L10n.t("区域", "Area"); case .erase: L10n.t("橡皮擦", "Erase"); case .building: L10n.t("建筑", "Building")
+        case .area: L10n.t("区域", "Area"); case .erase: L10n.t("橡皮擦", "Erase"); case .dig: L10n.t("挖地下", "Dig"); case .building: L10n.t("建筑", "Building")
         case .media: L10n.t("媒体", "Media"); case .creature: L10n.t("生物", "Creature"); case .maze: L10n.t("迷宫", "Maze"); case .track: L10n.t("轨道", "Track")
         }
     }
     var symbol: String {
         switch self {
-        case .select: "hand.point.up.left"; case .place: "plus.square"; case .draw: "scribble"; case .area: "rectangle.dashed"; case .erase: "eraser"
+        case .select: "hand.point.up.left"; case .place: "plus.square"; case .draw: "scribble"; case .area: "rectangle.dashed"; case .erase: "eraser"; case .dig: "arrow.down.to.line"
         case .building: "building.2"; case .media: "photo.on.rectangle"; case .creature: "pawprint"; case .maze: "square.grid.3x3.middle.filled"; case .track: "point.topleft.down.to.point.bottomright.curvepath"
         }
     }
@@ -26,6 +26,7 @@ enum Glass3DTool: String, CaseIterable {
 /// An edit waiting for confirmation (draw strokes, areas, buildings,
 /// generation): preview, conflicts, then one undoable commit.
 struct Glass3DChoice: Identifiable, Equatable { let id: String; let title: String }
+struct Glass3DHotbarSlot: Identifiable, Equatable { let index: Int; let id: String; let name: String; let symbol: String; let cooldown: Double; var identity: Int { index } }
 
 struct Glass3DPending {
     var title: String
@@ -85,6 +86,18 @@ struct Glass3DPending {
     @Published var trackClosed = false
 
     private var link: CADisplayLink?
+    // v1.60 battle, characters, camera.
+    private var battle = SpatialBattle()
+    let effects = Glass3DEffects()
+    let characters = Glass3DCharacters()
+    private var animations: [String: CharacterAnimationState] = [:]
+    private var creatureSpeed: [String: Double] = [:]
+    @Published var lockedTarget: String?
+    @Published var thirdPerson = true
+    @Published private(set) var hotbarSlots: [Glass3DHotbarSlot] = []
+    @Published var buildLayers = 1
+    private var manualCameraUntil = 0.0
+    private var preferredDistance = ThirdPersonCamera.distance
     private var activeAI = 0
     private var staminaBuffer = 0.0
     private var lastTime: CFTimeInterval?
@@ -115,6 +128,8 @@ struct Glass3DPending {
         if world.player.position == SpatialVector(128.5, 128.5, 0) { world.player.position = world.spawn }
         applyQuality()
         renderer.media.binding = { [weak session] id in session?.world.mediaBindings.first { $0.id == id } }
+        renderer.root.addChild(effects.root)
+        characters.media = renderer.media
         camera.target = world.player.position
         health = session.playerHealth; stamina = session.playerStamina
         geometryChanged()
@@ -139,7 +154,7 @@ struct Glass3DPending {
     private func modeChanged() {
         pending = nil; selection = []; trackPoints = []
         camera.tilt = mode == .edit ? SpatialCameraRules.editTilt : SpatialCameraRules.playTilt
-        if mode == .play { camera.target = world.player.position }
+        if mode == .play { camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() } }
         clampCamera()
     }
 
@@ -161,7 +176,8 @@ struct Glass3DPending {
         renderer.place(frames: frames)
         renderer.placePlayer(world.player)
         if mode == .play { follow(dt: dt) }
-        renderer.place(camera: camera, eye: SpatialCameraRules.position(camera))
+        renderer.place(camera: camera, eye: SpatialCameraRules.position(camera) + effects.shakeOffset(dt: dt))
+        updateCharacters()
         renderer.animate(clock: world.clock)
         nativeTimer += dt
         if nativeTimer >= 1.0 / 30 { nativeTimer = 0; updateNativeGlass(frames: frames) }
@@ -206,14 +222,16 @@ struct Glass3DPending {
             active += near ? 1 : 0
             var brain = brains[world.creatures[index].id] ?? CreatureBrain()
             let events = SpatialAI.step(&world.creatures[index], brain: &brain, player: world.player.position, playerAlive: alive,
-                                        dt: near ? dt : 0.5, geometry: geometry, navigator: navigator, random: random.unit())
+                                        dt: (near ? dt : 0.5) * (creatureSpeed[world.creatures[index].id] ?? 1), geometry: geometry, navigator: navigator, random: random.unit())
             brains[world.creatures[index].id] = brain
             for event in events { handle(event, from: world.creatures[index]) }
             let creature = world.creatures[index]
             if creature.kind.isBoss, creature.state == .chase || creature.state == .attack || creature.state == .alert, distance < 14 { boss = creature }
             dirtyRuntime = true
         }
-        let bar = boss.map { ($0.kind.title, $0.health, $0.maxHealth, $0.phase) }
+        runBattle(dt: dt, geometry: geometry, alive: alive)
+        if let id = lockedTarget, !(world.creatures.first { $0.id == id }.map { $0.alive && ($0.position - world.player.position).flatLength < 20 } ?? false) { lockedTarget = nil }
+        let bar = boss.map { ($0.kind.title, $0.health, $0.maxHealth, (battle.bosses[$0.id]?.phase ?? 0) + 1) }
         if bar?.0 != bossBar?.name || bar?.1 != bossBar?.health || bar?.3 != bossBar?.phase { bossBar = bar }
         activeAI = active
         if health != session.playerHealth || stamina != session.playerStamina { session.applySpatialVitals(health: health, stamina: stamina) }
@@ -249,7 +267,119 @@ struct Glass3DPending {
     private func follow(dt: Double) {
         let target = world.player.position
         let k = min(1, dt * 6)
-        camera.target = SpatialVector.lerp(camera.target, SpatialVector(target.x, target.y, target.z * 0.8), k)
+        camera.target = SpatialVector.lerp(camera.target, SpatialVector(target.x, target.y, target.z), k)
+        guard thirdPerson else { return }
+        let manual = world.clock < manualCameraUntil
+        // Combat: keep the player and the locked target in view.
+        if !manual, let id = lockedTarget, let foe = world.creatures.first(where: { $0.id == id }) {
+            camera.yaw = ThirdPersonCamera.approach(camera.yaw, ThirdPersonCamera.combatYaw(player: target, target: foe.position), rate: 140, dt: dt)
+        }
+        if !manual { camera.tilt += (ThirdPersonCamera.tilt - camera.tilt) * min(1, dt * 3) }
+        // Pull in in front of walls, ease back out when clear.
+        let clear = ThirdPersonCamera.clearDistance(camera, wanted: preferredDistance, geometry: staticGeometry)
+        camera.distance += (clear - camera.distance) * min(1, dt * (clear < camera.distance ? 12 : 3))
+    }
+
+    /// Puts the camera behind the player (third person) or back to the orbit view.
+    func cameraBehindPlayer() {
+        camera.yaw = ThirdPersonCamera.yawBehind(facing: world.player.facing); camera.tilt = ThirdPersonCamera.tilt
+        preferredDistance = ThirdPersonCamera.distance; manualCameraUntil = 0
+    }
+
+    // MARK: Battle (v1.60)
+
+    var hotbar: [String] { world.hotbar ?? SpatialBattle.defaultHotbar() }
+
+    func castHotbar(_ slot: Int) {
+        guard mode == .play, health > 0, hotbar.indices.contains(slot) else { return }
+        let id = hotbar[slot]
+        if let lockID = lockedTarget, let foe = world.creatures.first(where: { $0.id == lockID }) {
+            world.player.facing = atan2(foe.position.y - world.player.position.y, foe.position.x - world.player.position.x) * 180 / .pi
+        }
+        var newStamina = stamina, newHealth = health
+        switch battle.castPlayer(id, world: world, origin: world.player.position, facing: world.player.facing, target: lockedTarget, clock: world.clock, stamina: &newStamina, health: &newHealth) {
+        case .cast:
+            stamina = newStamina; health = newHealth
+            if let skill = SpatialBattle.skill(id, in: world), let action = skill.events.compactMap({ event -> CharacterAction? in if case .action(let a) = event.kind { return a }; return nil }).first {
+                requestAnimation(SpatialBattle.playerID, action, length: 0.6)
+            }
+        case .cooldown(let left): notice = L10n.t("冷却中 \(String(format: "%.1f", left)) 秒", "Cooling down \(String(format: "%.1f", left))s")
+        case .stamina: notice = L10n.t("耐力不足", "Not enough stamina")
+        case .unknown: notice = L10n.t("技能不存在", "Unknown skill")
+        }
+    }
+
+    func toggleLock() {
+        if lockedTarget != nil { lockedTarget = nil; return }
+        lockedTarget = ThirdPersonCamera.lockTarget(player: world.player.position, facing: world.player.facing, creatures: world.creatures)
+        if lockedTarget == nil { notice = L10n.t("附近没有可锁定的敌人", "No enemy nearby to lock") }
+    }
+
+    private func runBattle(dt: Double, geometry: SpatialGeometry, alive: Bool) {
+        let out = battle.step(dt, world: &world, playerFacing: world.player.facing, playerInvulnerable: invulnerable > 0, playerAlive: alive,
+                              geometry: geometry, clock: world.clock, roll: { id, n in
+                                  var r = SpatialRandom(seed: UInt64(id.unicodeScalars.reduce(0) { $0 &* 31 &+ Int($1.value) } & 0xFFFF_FFFF) &+ UInt64(n)); return r.unit() })
+        creatureSpeed = out.creatureSpeed
+        if out.playerDamage > 0 { hurt(out.playerDamage) }
+        if out.playerHealing > 0 { health = min(100, health + out.playerHealing) }
+        if out.playerDash.flatLength > 0 {
+            let steps = max(1, Int(out.playerDash.flatLength * 4))
+            for _ in 0..<steps {
+                let next = world.player.position + out.playerDash * (1 / Double(steps))
+                if geometry.blocked(x: next.x, y: next.y, z: world.player.position.z) { break }
+                world.player.position = SpatialVector(next.x, next.y, world.player.position.z)
+            }
+        }
+        if !out.visuals.isEmpty || !battle.casts.isEmpty { effects.show(out.visuals, clock: world.clock, quality: quality, renderer: renderer) }
+        var shards = 0
+        for creature in out.defeated {
+            shards += creature.kind == .boss ? (SpatialBattle.script(for: creature, in: world)?.rewardShards ?? 25) : SpatialCombat.reward(creature.kind)
+            effects.burst(.explosion, at: creature.position + SpatialVector(0, 0, 0.8), seconds: 0.4, clock: world.clock, quality: quality)
+            if creature.kind == .boss { notice = L10n.t("大 Boss 已击败！", "Boss defeated!") } else if creature.kind == .miniBoss { notice = L10n.t("小 Boss 已击败！", "Mini boss defeated!") }
+        }
+        for change in out.phaseChanges {
+            notice = L10n.t("Boss 进入第 \(change.phase + 1) 阶段", "Boss enters phase \(change.phase + 1)")
+            if let appearance = change.appearance, let i = world.creatures.firstIndex(where: { $0.id == change.id }) {
+                world.creatures[i].characterID = appearance
+                requestAnimation(change.id, .transform, length: 1.2)
+            }
+        }
+        if shards > 0 { session.applySpatialVitals(health: health, stamina: stamina, shardDelta: shards); persist(force: true) }
+        let slots = hotbar.enumerated().map { index, id -> Glass3DHotbarSlot in
+            let skill = SpatialBattle.skill(id, in: world)
+            let left = battle.cooldownLeft(id, clock: world.clock)
+            return Glass3DHotbarSlot(index: index, id: id, name: skill?.name ?? id, symbol: skill?.symbol ?? "questionmark", cooldown: skill.map { $0.cooldown > 0 ? (left / $0.cooldown * 10).rounded() / 10 : 0 } ?? 0)
+        }
+        if slots != hotbarSlots { hotbarSlots = slots }
+    }
+
+    // MARK: Characters (v1.60)
+
+    func requestAnimation(_ owner: String, _ action: CharacterAction, length: Double) {
+        var state = animations[owner] ?? CharacterAnimationState()
+        CharacterAnimator.request(&state, action, clock: world.clock, length: length)
+        animations[owner] = state
+    }
+
+    private var lastPlayerPosition = SpatialVector.zero
+    private func updateCharacters() {
+        let templates = world.characters ?? []
+        guard !templates.isEmpty else { renderer.playerBodyVisible = true; return }
+        let speed = (world.player.position - lastPlayerPosition).flatLength / max(0.001, 1.0 / 60) ; lastPlayerPosition = world.player.position
+        requestAnimation(SpatialBattle.playerID, health == 0 ? .death : CharacterAnimator.movement(speed: speed, grounded: world.player.grounded, verticalSpeed: world.player.verticalSpeed), length: 0.6)
+        let playerTemplate = world.playerCharacterID.flatMap { id in templates.first { $0.id == id } }
+        let playerState = animations[SpatialBattle.playerID] ?? CharacterAnimationState()
+        let applied = characters.apply(playerTemplate, to: renderer.playerEntity, ownerID: SpatialBattle.playerID, action: playerState.action,
+                                       direction: CharacterAnimator.direction(facing: world.player.facing, cameraYaw: camera.yaw, count: playerTemplate?.mode.directions ?? 1))
+        renderer.playerBodyVisible = !applied
+        for creature in world.creatures {
+            guard let id = creature.characterID, let template = templates.first(where: { $0.id == id }), let holder = renderer.creatureEntity(creature.id) else { continue }
+            requestAnimation(creature.id, CharacterAnimator.action(for: creature.state, moving: creature.state == .chase || creature.state == .wander || creature.state == .returning), length: 0.6)
+            let facing = atan2(world.player.position.y - creature.position.y, world.player.position.x - creature.position.x) * 180 / .pi
+            let shown = characters.apply(template, to: holder, ownerID: creature.id, action: animations[creature.id]?.action ?? .idle,
+                                         direction: CharacterAnimator.direction(facing: facing, cameraYaw: camera.yaw, count: template.mode.directions))
+            renderer.setCreatureBodyVisible(creature.id, !shown)
+        }
     }
 
     // MARK: Input (HUD)
@@ -309,9 +439,21 @@ struct Glass3DPending {
         camera.distance = SpatialCameraRules.clampDistance(camera, aspect: aspect)
         camera.target = SpatialVector(min(255.5, max(0.5, camera.target.x)), min(255.5, max(0.5, camera.target.y)), camera.target.z)
     }
-    func zoom(by factor: Double) { camera.distance /= max(0.2, factor); clampCamera() }
-    func turn(by degrees: Double) { camera.yaw = (camera.yaw + degrees).truncatingRemainder(dividingBy: 360); clampCamera() }
-    func tilt(by degrees: Double) { camera.tilt += degrees; clampCamera() }
+    func zoom(by factor: Double) { camera.distance /= max(0.2, factor); preferredDistance = camera.distance; clampCamera() }
+    func turn(by degrees: Double) { camera.yaw = (camera.yaw + degrees).truncatingRemainder(dividingBy: 360); manualCameraUntil = world.clock + 1.5; clampCamera() }
+    func tilt(by degrees: Double) { camera.tilt += degrees; manualCameraUntil = world.clock + 1.5; clampCamera() }
+    /// Free camera (design): fly up and down, look at the selection, look
+    /// straight down, come back to the character.
+    func fly(_ dz: Double) { camera.target = camera.target + SpatialVector(0, 0, dz); clampCamera() }
+    func focusSelection() {
+        let blocks = selectedBlocks
+        guard !blocks.isEmpty else { return }
+        let n = Double(blocks.count)
+        camera.target = SpatialVector(blocks.map { Double($0.x) + 0.5 }.reduce(0, +) / n, blocks.map { Double($0.y) + 0.5 }.reduce(0, +) / n, blocks.map(\.elevation).reduce(0, +) / n)
+        camera.distance = 10; clampCamera()
+    }
+    func lookStraightDown() { camera.tilt = 0; clampCamera() }
+    func backToCharacter() { camera.target = world.player.position; clampCamera() }
     func pan(screenDX: Double, screenDY: Double) {
         let scale = camera.distance / 400
         let direction = SpatialCameraRules.worldDirection(stickX: -screenDX, stickY: -screenDY, yaw: camera.yaw)
@@ -337,7 +479,7 @@ struct Glass3DPending {
         var chunks = Set<Int>()
         for x in max(0, cx - radius)...min(7, cx + radius) { for y in max(0, cy - radius)...min(7, cy + radius) { chunks.insert(y * 8 + x) } }
         loadedChunks = chunks
-        renderer.showGround(chunks: chunks)
+        renderer.showGround(chunks: chunks, holes: Set(world.groundHoles ?? []))
         let all = allBlocks
         let visible = all.filter { chunks.contains(($0.y / 32) * 8 + $0.x / 32) }
         renderer.showBlocks(visible, pivots: pivots)
@@ -347,6 +489,8 @@ struct Glass3DPending {
         renderer.showPickups(world.pickups, near: center, radius: reach + 8)
         let bindings = Dictionary(session.world.mediaBindings.map { ($0.id, $0.mediaID) }, uniquingKeysWith: { first, _ in first })
         visibleMediaIDs = Set(visible.compactMap { block in block.media.flatMap { bindings[$0.bindingID] } })
+        // Media characters play too.
+        for template in world.characters ?? [] { for clip in template.clips.values { for id in clip.bindingIDs { if let media = bindings[id] { visibleMediaIDs.insert(media) } } } }
         let average = frameTimes.isEmpty ? 0 : frameTimes.reduce(0, +) / Double(frameTimes.count)
         stats = (SpatialCameraRules.visibleCells(camera, aspect: aspect), renderer.blockNodeCount, renderer.creatureNodeCount, activeAI, renderer.media.decoderCount, average > 0 ? 1 / average : 0)
     }
@@ -371,6 +515,7 @@ struct Glass3DPending {
     private func geometryChanged() {
         pivots = world.motionPivots()
         staticGeometry = SpatialGeometry(blocks: allBlocks, plants: world.plants, frames: world.groupFrames(pivots: pivots, clock: world.clock))
+        staticGeometry.groundHoles = Set(world.groundHoles ?? [])
         navigator = SpatialNavigator(geometry: staticGeometry)
         previousGeometry = nil
     }
@@ -448,6 +593,24 @@ struct Glass3DPending {
     var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && SpatialFaces.budget(quality) > 0 }
 
     private func updateNativeGlass(frames: [String: GroupFrame]) {
+        let projection = self.projection
+        // Reticle and gizmo (also without native block glass).
+        let reticle = lockedTarget.flatMap { id in world.creatures.first { $0.id == id } }.flatMap { projection.project($0.position + SpatialVector(0, 0, 1))?.point }
+        if reticle != nativeGlass.reticle { nativeGlass.reticle = reticle }
+        var gizmo: Glass3DNativeGlass.Gizmo?
+        let blocks = selectedBlocks
+        if mode == .edit, !blocks.isEmpty {
+            let n = Double(blocks.count)
+            let center = SpatialVector(blocks.map { Double($0.x) + 0.5 }.reduce(0, +) / n, blocks.map { Double($0.y) + 0.5 }.reduce(0, +) / n, blocks.map(\.top).max() ?? 0)
+            if let c = projection.project(center)?.point {
+                let axes = [SpatialVector(1, 0, 0), SpatialVector(0, 1, 0), SpatialVector(0, 0, 0.25)].map { axis -> CGPoint in
+                    guard let p = projection.project(center + axis)?.point else { return .zero }
+                    return CGPoint(x: p.x - c.x, y: p.y - c.y)
+                }
+                gizmo = Glass3DNativeGlass.Gizmo(center: c, axes: axes)
+            }
+        }
+        if gizmo != nativeGlass.gizmo { nativeGlass.gizmo = gizmo }
         guard nativeGlassActive else { nativeGlass.update(projection: projection, blocks: [], frames: [:], characters: [], budget: 0); return }
         var characters = [Glass3DNativeGlass.Character(position: world.player.position, radius: 0.35, height: 1.5)]
         for creature in world.creatures where creature.alive && (creature.position - camera.target).flatLength < camera.distance * 3 + 10 {
@@ -492,6 +655,14 @@ struct Glass3DPending {
             notice = L10n.t("已添加路径点 \(trackPoints.count)", "Waypoint \(trackPoints.count) added")
         case .media:
             if first.kind == "block", !first.id.hasPrefix("legacy:") { if selection.contains(first.id) { selection.removeAll { $0 == first.id } } else { selection.append(first.id) } }
+        case .dig:
+            // Toggle a hole in the glass ground: the way to underground space.
+            let key = first.cell.z * 256 + first.cell.x
+            edit((world.groundHoles ?? []).contains(key) ? L10n.t("填回地面", "Fill Ground") : L10n.t("挖开地面", "Dig Ground")) { w in
+                var holes = w.groundHoles ?? []
+                if let i = holes.firstIndex(of: key) { holes.remove(at: i) } else { holes.append(key) }
+                w.groundHoles = holes.isEmpty ? nil : holes
+            }
         case .draw, .area: break
         }
     }
@@ -533,7 +704,11 @@ struct Glass3DPending {
             if areaStart == nil { areaStart = hit.cell }
             drawCells = RPGEditDraft.rectangle(areaStart!, hit.cell)
         }
-        let blocks = drawCells.prefix(RPGWorldEditing.maximumBatch).map { newBlock(at: $0, elevation: stackHeight(at: $0)) }
+        // Area with layers fills a volume (layers × thickness high).
+        let layers = tool == .area ? max(1, buildLayers) : 1
+        let blocks = Array(drawCells.prefix(RPGWorldEditing.maximumBatch / layers).flatMap { cell in
+            (0..<layers).map { layer in newBlock(at: cell, elevation: stackHeight(at: cell) + Double(layer) * buildThickness) }
+        })
         let conflicts = Set(SpatialBuilder.conflicts(blocks, in: world))
         let title = tool == .draw ? L10n.t("连续绘制 \(blocks.count) 格", "Draw \(blocks.count) cells") : L10n.t("区域建造 \(blocks.count) 格", "Area \(blocks.count) cells")
         let fine = blocks.filter { !conflicts.contains($0.id) }
@@ -607,6 +782,54 @@ struct Glass3DPending {
         selection = world.blocks.filter { $0.groupID == new }.map(\.id)
     }
     func moveGroup(dx: Int, dy: Int, dz: Double) { guard let group = selectedGroup else { return }; edit(L10n.t("移动建筑", "Move Building")) { w in SpatialBuilder.move(group: group.id, dx: dx, dy: dy, dz: dz, world: &w) } }
+    /// Mirror a building left-right around its middle.
+    func mirrorGroup() {
+        guard let group = selectedGroup else { return }
+        edit(L10n.t("镜像建筑", "Mirror Building")) { w in
+            let members = w.blocks.filter { $0.groupID == group.id }
+            guard let minX = members.map(\.x).min(), let maxX = members.map(\.x).max() else { return }
+            for i in w.blocks.indices where w.blocks[i].groupID == group.id { w.blocks[i].x = minX + maxX - w.blocks[i].x; w.blocks[i].yaw = -w.blocks[i].yaw; w.blocks[i].origin = .user }
+        }
+    }
+    /// Array copy: `count` copies, each `step` cells further east.
+    func arrayGroup(count: Int, step: Int) {
+        guard let group = selectedGroup else { return }
+        edit(L10n.t("阵列复制 ×\(count)", "Array Copy ×\(count)")) { w in
+            for n in 1...max(1, min(16, count)) {
+                let new = "g:" + UUID().uuidString
+                SpatialBuilder.copy(group: group.id, dx: step * n, dy: 0, dz: 0, newGroup: new, idPrefix: new, world: &w)
+            }
+        }
+    }
+    /// Scale a building's blocks (size and thickness) by a factor.
+    func scaleGroup(_ factor: Double) {
+        guard let group = selectedGroup else { return }
+        edit(L10n.t("缩放建筑", "Scale Building")) { w in
+            let members = w.blocks.filter { $0.groupID == group.id }
+            let base = members.map(\.elevation).min() ?? 0
+            for i in w.blocks.indices where w.blocks[i].groupID == group.id {
+                var b = w.blocks[i]
+                b.size = min(1, max(0.2, b.size * factor)); b.thickness = min(16, max(0.05, b.thickness * factor))
+                b.elevation = base + (b.elevation - base) * factor; b.origin = .user
+                if b.valid { w.blocks[i] = b }
+            }
+        }
+    }
+    /// Move the selection along one axis (gizmo and arrows): x and y in
+    /// cells, height in quarter cells.
+    func moveSelection(axis: Int, steps: Int) {
+        guard steps != 0, !selection.isEmpty else { return }
+        let ids = Set(selection)
+        edit(L10n.t("移动", "Move")) { w in
+            for i in w.blocks.indices where ids.contains(w.blocks[i].id) {
+                var b = w.blocks[i]
+                switch axis { case 0: b.x += steps; case 1: b.y += steps; default: b.elevation += Double(steps) * 0.25 }
+                b.origin = .user
+                if b.valid { w.blocks[i] = b }
+            }
+        }
+    }
+
     func turnGroup() { guard let group = selectedGroup else { return }; edit(L10n.t("旋转建筑", "Turn Building")) { w in SpatialBuilder.rotateQuarter(group: group.id, world: &w) } }
     func saveTemplate() {
         guard let group = selectedGroup, let template = SpatialBuilder.template(from: group.id, name: group.name, id: "t:" + UUID().uuidString, world: world) else { return }
@@ -681,6 +904,82 @@ struct Glass3DPending {
         }
     }
     func clearMedia() { updateSelected(L10n.t("移除媒体", "Remove Media")) { $0.media = nil } }
+
+    // MARK: Characters, skills and Boss scripts (v1.60 editors)
+
+    func saveCharacter(_ template: CharacterTemplate, bindings: [MediaBinding]) {
+        edit(L10n.t("保存角色 ", "Save Character ") + template.name, bindings: bindings) { w in
+            var list = w.characters ?? []
+            if let i = list.firstIndex(where: { $0.id == template.id }) { list[i] = template } else { list.append(template) }
+            w.characters = list
+        }
+    }
+    func deleteCharacter(_ id: String) {
+        edit(L10n.t("删除角色", "Delete Character")) { w in
+            w.characters?.removeAll { $0.id == id }
+            if w.playerCharacterID == id { w.playerCharacterID = nil }
+            for i in w.creatures.indices where w.creatures[i].characterID == id { w.creatures[i].characterID = nil }
+            for s in (w.bossScripts ?? []).indices { for p in w.bossScripts![s].phases.indices where w.bossScripts![s].phases[p].appearanceID == id { w.bossScripts![s].phases[p].appearanceID = nil } }
+        }
+    }
+    func setPlayerCharacter(_ id: String?) { edit(L10n.t("主角外观", "Player Look")) { w in w.playerCharacterID = id } }
+    /// Gives every creature of a kind this character look.
+    func applyCharacter(_ id: String?, to kind: CreatureKind) {
+        edit(L10n.t("外观 · ", "Look · ") + kind.title) { w in for i in w.creatures.indices where w.creatures[i].kind == kind { w.creatures[i].characterID = id } }
+    }
+    /// Copies a USDZ file into the app's models folder; returns its file name.
+    func importModel(from url: URL) -> String? {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard url.pathExtension.lowercased() == "usdz", let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int, size < 200_000_000 else {
+            notice = L10n.t("只支持 200 MB 以内的 USDZ 模型", "Only USDZ models under 200 MB"); return nil
+        }
+        let name = UUID().uuidString + ".usdz"
+        do { try FileManager.default.copyItem(at: url, to: Glass3DCharacters.modelsFolder.appendingPathComponent(name)); return name }
+        catch { notice = error.localizedDescription; return nil }
+    }
+
+    var allSkills: [SkillDefinition] { (world.skills ?? []) + SkillLibrary.templates().filter { t in !(world.skills ?? []).contains { $0.id == t.id } } }
+    func saveSkill(_ skill: SkillDefinition) {
+        guard skill.valid else { notice = L10n.t("技能设置不完整", "The skill is incomplete"); return }
+        edit(L10n.t("保存技能 ", "Save Skill ") + skill.name) { w in
+            var list = w.skills ?? []
+            if let i = list.firstIndex(where: { $0.id == skill.id }) { list[i] = skill } else { list.append(skill) }
+            w.skills = list
+        }
+    }
+    func deleteSkill(_ id: String) {
+        edit(L10n.t("删除技能", "Delete Skill")) { w in
+            w.skills?.removeAll { $0.id == id }
+            if let hotbar = w.hotbar { w.hotbar = hotbar.map { $0 == id ? "tpl.fireball" : $0 } }
+        }
+    }
+    func setHotbar(_ slot: Int, skill id: String) {
+        edit(L10n.t("技能栏", "Hotbar")) { w in
+            var bar = w.hotbar ?? SpatialBattle.defaultHotbar()
+            while bar.count < 4 { bar.append("tpl.fireball") }
+            if bar.indices.contains(slot) { bar[slot] = id }
+            w.hotbar = bar
+        }
+    }
+
+    func saveBossScript(_ script: BossScript) {
+        guard script.valid else { notice = L10n.t("Boss 阶段设置不完整（第一阶段需从满血开始）", "Phases are incomplete (the first starts at full health)"); return }
+        edit(L10n.t("保存 Boss ", "Save Boss ") + script.name) { w in
+            var list = w.bossScripts ?? []
+            if let i = list.firstIndex(where: { $0.id == script.id }) { list[i] = script } else { list.append(script) }
+            w.bossScripts = list
+        }
+    }
+    func deleteBossScript(_ id: String) {
+        edit(L10n.t("删除 Boss 阶段", "Delete Boss Script")) { w in
+            w.bossScripts?.removeAll { $0.id == id }
+            for i in w.creatures.indices where w.creatures[i].bossScriptID == id { w.creatures[i].bossScriptID = nil }
+        }
+    }
+    func applyBossScript(_ id: String, to kind: CreatureKind) {
+        edit(L10n.t("Boss 阶段 · ", "Boss Script · ") + kind.title) { w in for i in w.creatures.indices where w.creatures[i].kind == kind { w.creatures[i].bossScriptID = id } }
+    }
 
     // MARK: Generation
 

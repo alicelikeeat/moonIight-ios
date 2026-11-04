@@ -95,9 +95,11 @@ struct SpatialBlock: Codable, Equatable, Identifiable, Sendable {
 
     var top: Double { elevation + thickness }
     static let maximumHeight = 64.0
+    /// Underground space reaches 16 cells below the glass ground.
+    static let lowestElevation = -16.0
     var valid: Bool {
         !id.isEmpty && id.count <= 128 && (0..<WorldGeometry.width).contains(x) && (0..<WorldGeometry.width).contains(y) &&
-            elevation.isFinite && (-1...Self.maximumHeight).contains(elevation) && thickness.isFinite && (0.05...16).contains(thickness) &&
+            elevation.isFinite && (Self.lowestElevation...Self.maximumHeight).contains(elevation) && thickness.isFinite && (0.05...16).contains(thickness) &&
             size.isFinite && (0.2...1).contains(size) && yaw.isFinite && glass.valid && (media?.region?.valid ?? true)
     }
 }
@@ -220,6 +222,9 @@ struct SpatialWorld: Codable, Equatable, Sendable {
     /// The player's media character and skill hotbar (skill ids).
     var playerCharacterID: String?
     var hotbar: [String]?
+    /// Cells dug out of the glass ground (index y × 256 + x): the way into
+    /// underground space below height 0.
+    var groundHoles: [Int]?
 
     static func blank() -> SpatialWorld { SpatialWorld() }
 
@@ -238,6 +243,7 @@ struct SpatialWorld: Codable, Equatable, Sendable {
         else { throw RPGWorldError.invalidState }
         for block in blocks { if let media = block.media, !bindings.contains(media.bindingID) { throw RPGWorldError.missingReference } }
         let characterList = characters ?? [], skillList = skills ?? [], scripts = bossScripts ?? []
+        guard (groundHoles ?? []).count <= 65_536, (groundHoles ?? []).allSatisfy({ (0..<65_536).contains($0) }) else { throw RPGWorldError.invalidState }
         guard characterList.count <= 200, skillList.count <= 200, scripts.count <= 50, (hotbar ?? []).count <= 6,
               characterList.allSatisfy(\.valid), skillList.allSatisfy(\.valid), scripts.allSatisfy(\.valid),
               Set(characterList.map(\.id)).count == characterList.count, Set(skillList.map(\.id)).count == skillList.count else { throw RPGWorldError.invalidState }

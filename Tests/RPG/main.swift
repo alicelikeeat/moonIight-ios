@@ -1118,7 +1118,7 @@ var peak = 0.0
 for _ in 0..<120 { SpatialPhysics.step(&jumper, input: SpatialInput(), dt: 1.0 / 60, geometry: shelf, previous: shelf); peak = max(peak, jumper.position.z) }
 check(peak > 1.2 && abs(jumper.position.z - 1.2) < 1e-6 && jumper.grounded, "jumps up through a one-way platform and lands on it (peak \(peak))")
 check(SpatialPhysics.jumpHeight > 1.4 && SpatialPhysics.jumpHeight < 1.7, "jump height about 1.5 cells")
-var faller = SpatialPlayer(); faller.position = SpatialVector(60.5, 60.5, -9); faller.lastSafe = SpatialVector(61.5, 61.5, 0); faller.grounded = false
+var faller = SpatialPlayer(); faller.position = SpatialVector(60.5, 60.5, -25); faller.lastSafe = SpatialVector(61.5, 61.5, 0); faller.grounded = false
 SpatialPhysics.step(&faller, input: SpatialInput(), dt: 1.0 / 60, geometry: flat, previous: flat)
 check(faller.position == SpatialVector(61.5, 61.5, 0), "falling off the world returns to the last safe spot")
 // Moving platform carries its rider.
@@ -1563,6 +1563,18 @@ do {
     var ticks = SpatialBattle()
     for frame in 0..<180 { _ = ticks.step(1.0 / 60, world: &burning, playerFacing: 0, playerInvulnerable: false, playerAlive: true, geometry: nil, clock: Double(frame) / 60, roll: { _, _ in 0 }) }
     check(burning.creatures[0].health == 0 && burning.creatures[0].state == .dead, "burning finishes off a weak enemy")
+    // Underground: a dug hole drops the player onto a basement floor.
+    var cave = SpatialGeometry(blocks: [SpatialBlock(id: "basement", x: 30, y: 30, elevation: -4.3, thickness: 0.3)])
+    cave.groundHoles = [30 * 256 + 30]
+    var digger = SpatialPlayer(); digger.position = SpatialVector(30.5, 30.5, 0); digger.lastSafe = digger.position
+    for _ in 0..<120 { SpatialPhysics.step(&digger, input: SpatialInput(), dt: 1.0 / 60, geometry: cave, previous: cave) }
+    check(abs(digger.position.z + 4) < 1e-6 && digger.grounded, "falls through the hole onto the basement floor")
+    var solidGround = cave; solidGround.groundHoles = []
+    var stander = SpatialPlayer(); stander.position = SpatialVector(30.5, 30.5, 0)
+    for _ in 0..<30 { SpatialPhysics.step(&stander, input: SpatialInput(), dt: 1.0 / 60, geometry: solidGround, previous: solidGround) }
+    check(stander.position.z == 0, "no hole, no fall")
+    check(SpatialNavigator(geometry: cave).surfaces(x: 30, y: 30) == [-4], "navigation sees the basement, not the ground")
+    check(SpatialBlock(id: "deep", x: 1, y: 1, elevation: -16).valid && !SpatialBlock(id: "too deep", x: 1, y: 1, elevation: -17).valid, "underground down to 16 below")
     print("RPG battle: \(checks) total checks passed")
 }
 

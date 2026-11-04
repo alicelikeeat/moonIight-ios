@@ -13,6 +13,7 @@ struct Glass3DScreen: View {
     @State private var generator = false
     @State private var panel = true
     @State private var templates = false
+    @State private var editor: Glass3DEditorKind?
 
     init(session: RPGSession, onClose: @escaping () -> Void) {
         _controller = StateObject(wrappedValue: Glass3DController(session: session))
@@ -25,6 +26,7 @@ struct Glass3DScreen: View {
                 Glass3DWorldView(controller: controller).ignoresSafeArea()
                 Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
+                Glass3DOverlay(glass: controller.nativeGlass, controller: controller).ignoresSafeArea()
                 VStack(spacing: 8) {
                     topBar
                     if !controller.notice.isEmpty {
@@ -60,6 +62,13 @@ struct Glass3DScreen: View {
         }
         .onDisappear { controller.stop() }
         .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
+        .sheet(item: $editor) { kind in
+            switch kind {
+            case .characters: Glass3DCharacterEditor(controller: controller, store: model.mediaStore)
+            case .skills: Glass3DSkillEditor(controller: controller)
+            case .bosses: Glass3DBossEditor(controller: controller)
+            }
+        }
         .confirmationDialog(L10n.t("选择对象", "Choose Object"), isPresented: Binding(get: { !controller.pickChoices.isEmpty }, set: { if !$0 { controller.pickChoices = [] } }), titleVisibility: .visible) {
             ForEach(controller.pickChoices) { choice in Button(choice.title) { controller.selection = [choice.id]; controller.pickChoices = [] } }
             Button(L10n.t("取消", "Cancel"), role: .cancel) { controller.pickChoices = [] }
@@ -103,6 +112,12 @@ struct Glass3DScreen: View {
             Menu {
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
                 Button(L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
+                Section(L10n.t("编辑器", "Editors")) {
+                    Button { editor = .characters } label: { Label(L10n.t("角色编辑器", "Character Editor"), systemImage: "person.crop.square") }
+                    Button { editor = .skills } label: { Label(L10n.t("技能编辑器", "Skill Editor"), systemImage: "wand.and.rays") }
+                    Button { editor = .bosses } label: { Label(L10n.t("Boss 阶段编辑器", "Boss Phase Editor"), systemImage: "crown") }
+                }
+                Toggle(L10n.t("第三人称镜头", "Third-Person Camera"), isOn: $controller.thirdPerson)
                 if Glass3DController.nativeGlassAvailable {
                     Toggle(L10n.t("方块使用 iOS 原生玻璃", "Native iOS Glass on Blocks"), isOn: $controller.nativeGlassEnabled)
                 }
@@ -146,6 +161,13 @@ struct Glass3DScreen: View {
             } else {
                 RPGGlassGroup(spacing: 10) {
                     HStack(alignment: .bottom, spacing: 10) {
+                        // Skill hotbar (skill editor decides what is in it) and lock-on.
+                        VStack(spacing: 8) {
+                            round(controller.lockedTarget == nil ? "scope" : "xmark.circle", controller.lockedTarget == nil ? L10n.t("锁定", "Lock") : L10n.t("解除锁定", "Unlock"), 44, cooldown: 0, id: "glass3d-lock") { controller.toggleLock() }
+                            ForEach(controller.hotbarSlots) { slot in
+                                round(slot.symbol, slot.name, 46, cooldown: slot.cooldown, id: "glass3d-hotbar-\(slot.index)") { controller.castHotbar(slot.index) }
+                            }
+                        }
                         VStack(spacing: 10) {
                             round("sparkles", L10n.t("技能", "Skill"), 52, cooldown: controller.cooldowns[1], id: "glass3d-skill") { controller.attack(.skill) }
                             round("arrow.triangle.2.circlepath", L10n.t("闪避", "Dodge"), 48, cooldown: controller.cooldowns[2], id: "glass3d-roll") { controller.roll() }
@@ -205,6 +227,15 @@ struct Glass3DScreen: View {
                 .padding(.horizontal, 12).padding(.vertical, 8).hudGlass(.panel, radius: 16)
             }
             optionsBar
+            // Free camera: fly up / down, look at the selection, straight down, back to the character.
+            HStack(spacing: 4) {
+                icon("arrow.up.to.line", L10n.t("镜头上升", "Fly Up"), id: "glass3d-fly-up") { controller.fly(2) }
+                icon("arrow.down.to.line", L10n.t("镜头下降", "Fly Down"), id: "glass3d-fly-down") { controller.fly(-2) }
+                icon("viewfinder", L10n.t("聚焦选中", "Focus Selection"), id: "glass3d-focus") { controller.focusSelection() }
+                icon("square.grid.3x3", L10n.t("快速俯视", "Straight Down"), id: "glass3d-top-down") { controller.lookStraightDown() }
+                icon("figure.stand", L10n.t("回到角色", "Back to Character"), id: "glass3d-back-to-character") { controller.backToCharacter() }
+            }
+            .padding(.horizontal, 6).padding(.vertical, 2).hudGlass(.panel, radius: 14)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
                     ForEach(Glass3DTool.allCases, id: \.self) { tool in
@@ -232,6 +263,9 @@ struct Glass3DScreen: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     Toggle(L10n.t("叠放在最高处", "Stack on Top"), isOn: $controller.stackOnTop).fixedSize()
+                    if controller.tool == .area {
+                        Stepper(L10n.t("层数 \(controller.buildLayers)", "Layers \(controller.buildLayers)"), value: $controller.buildLayers, in: 1...12).fixedSize()
+                    }
                     Stepper(L10n.t("高度 \(String(format: "%.2f", controller.buildHeight))", "Height \(String(format: "%.2f", controller.buildHeight))"), value: $controller.buildHeight, in: -1...SpatialBlock.maximumHeight, step: controller.heightSnap).fixedSize()
                     Stepper(L10n.t("厚度 \(String(format: "%.2f", controller.buildThickness))", "Thickness \(String(format: "%.2f", controller.buildThickness))"), value: $controller.buildThickness, in: 0.05...16, step: 0.05).fixedSize()
                     Picker(L10n.t("吸附", "Snap"), selection: $controller.heightSnap) { Text("0.05").tag(0.05); Text("0.25").tag(0.25); Text("1").tag(1.0) }.fixedSize()
@@ -270,6 +304,9 @@ struct Glass3DScreen: View {
                 .font(.caption).padding(.horizontal, 10).padding(.vertical, 6).hudGlass(.panel, radius: 14)
         case .maze:
             Text(L10n.t("轻点地图放置 13×13 玻璃迷宫（入口在南侧），确认后写入", "Tap the map for a 13×13 glass maze (entrance south), then confirm"))
+                .font(.caption).padding(.horizontal, 10).padding(.vertical, 6).hudGlass(.panel, radius: 14)
+        case .dig:
+            Text(L10n.t("轻点地面挖开（再点填回），可在下方地下空间建造，方块最低到 -16", "Tap the ground to dig a hole (tap again to fill); build underground down to -16"))
                 .font(.caption).padding(.horizontal, 10).padding(.vertical, 6).hudGlass(.panel, radius: 14)
         case .select, .erase:
             EmptyView()
@@ -456,6 +493,7 @@ struct Glass3DPanel: View {
                                 Button("↑") { controller.moveGroup(dx: 0, dy: 1, dz: 0) }; Button("↓") { controller.moveGroup(dx: 0, dy: -1, dz: 0) }
                                 Button(L10n.t("升", "Up")) { controller.moveGroup(dx: 0, dy: 0, dz: 1) }; Button(L10n.t("降", "Down")) { controller.moveGroup(dx: 0, dy: 0, dz: -1) }
                             }.font(.caption)
+                            HStack { Button(L10n.t("镜像", "Mirror")) { controller.mirrorGroup() }; Button(L10n.t("阵列 ×3", "Array ×3")) { controller.arrayGroup(count: 3, step: 6) }; Button(L10n.t("放大", "Grow")) { controller.scaleGroup(1.25) }; Button(L10n.t("缩小", "Shrink")) { controller.scaleGroup(0.8) } }.font(.caption)
                             Button(L10n.t("保存为模板", "Save as Template")) { controller.saveTemplate() }.font(.caption)
                         } else if blocks.count > 1 {
                             Button(L10n.t("组合为建筑", "Group as Building")) { controller.groupSelection() }.font(.caption)
@@ -588,5 +626,56 @@ struct CommitSlider: View {
                 if !editing, let draft { commit(draft); self.draft = nil }
             }
         }
+    }
+}
+
+enum Glass3DEditorKind: String, Identifiable { case characters, skills, bosses; var id: String { rawValue } }
+
+/// Native glass in the world's UI layer: the lock-on reticle and the
+/// selection's move handles (drag a handle along its axis; each step moves
+/// one cell, a quarter cell for height). Only this layer redraws at 30 Hz.
+@available(iOS 18.0, *)
+struct Glass3DOverlay: View {
+    @ObservedObject var glass: Glass3DNativeGlass
+    let controller: Glass3DController
+    @State private var dragging: (axis: Int, steps: Int)?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear.allowsHitTesting(false)
+            if let point = glass.reticle {
+                Circle().strokeBorder(Color.red.opacity(0.9), lineWidth: 2.5).frame(width: 46, height: 46)
+                    .overlay(Circle().fill(Color.red).frame(width: 6, height: 6))
+                    .hudGlass(.interactive, in: Circle())
+                    .position(point).allowsHitTesting(false).accessibilityHidden(true)
+            }
+            if let gizmo = glass.gizmo {
+                ForEach(0..<3, id: \.self) { axis in handle(axis, gizmo: gizmo) }
+            }
+        }
+    }
+
+    private func handle(_ axis: Int, gizmo: Glass3DNativeGlass.Gizmo) -> some View {
+        let step = gizmo.axes[axis]
+        let length = max(1, (step.x * step.x + step.y * step.y).squareRoot())
+        let unit = CGPoint(x: step.x / length, y: step.y / length)
+        let reach: CGFloat = 70
+        let tip = CGPoint(x: gizmo.center.x + unit.x * reach, y: gizmo.center.y + unit.y * reach)
+        let colors: [Color] = [.red, .green, .blue]
+        let labels = ["X", "Z", "Y"]
+        return Text(dragging?.axis == axis ? "\(dragging!.steps > 0 ? "+" : "")\(dragging!.steps)" : labels[axis])
+            .font(.caption.weight(.bold)).foregroundStyle(colors[axis])
+            .frame(width: 40, height: 40)
+            .hudGlass(.interactive, in: Circle())
+            .overlay(Circle().strokeBorder(colors[axis].opacity(0.8), lineWidth: 2))
+            .position(tip)
+            .gesture(DragGesture().onChanged { value in
+                let along = value.translation.width * unit.x + value.translation.height * unit.y
+                dragging = (axis, Int((along / length).rounded()))
+            }.onEnded { _ in
+                if let drag = dragging { controller.moveSelection(axis: drag.axis, steps: drag.steps) }
+                dragging = nil
+            })
+            .accessibilityLabel(L10n.t("沿 \(labels[axis]) 轴移动", "Move along \(labels[axis])"))
     }
 }

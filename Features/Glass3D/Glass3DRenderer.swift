@@ -85,11 +85,19 @@ import Metal
 
     // MARK: Ground
 
-    func showGround(chunks: Set<Int>) {
-        for (key, entity) in chunkEntities where !chunks.contains(key) { entity.removeFromParent(); chunkEntities[key] = nil }
-        for key in chunks where chunkEntities[key] == nil {
+    private var chunkHoleSignature: [Int: Int] = [:]
+    /// Glass ground per chunk; chunks with dug holes get a mesh without
+    /// those cells, so the way underground is open.
+    func showGround(chunks: Set<Int>, holes: Set<Int> = []) {
+        for (key, entity) in chunkEntities where !chunks.contains(key) { entity.removeFromParent(); chunkEntities[key] = nil; chunkHoleSignature[key] = nil }
+        for key in chunks {
             let cx = key % 8, cy = key / 8
-            guard let groundMesh = groundMesh else { continue }
+            let chunkHoles = holes.filter { ($0 % 256) / 32 == cx && ($0 / 256) / 32 == cy }
+            let signature = chunkHoles.sorted().hashValue
+            if chunkEntities[key] != nil && chunkHoleSignature[key] == signature { continue }
+            chunkEntities[key]?.removeFromParent()
+            chunkHoleSignature[key] = signature
+            guard let groundMesh = chunkHoles.isEmpty ? groundMesh : Self.holedGround(cx: cx, cy: cy, holes: chunkHoles) else { continue }
             let plane = ModelEntity(mesh: groundMesh, materials: [groundMaterial()])
             plane.position = [Float(cx * 32 + 16), 0, Float(-(cy * 32 + 16))]
             ground.addChild(plane); chunkEntities[key] = plane
@@ -103,6 +111,26 @@ import Metal
         material.blending = .transparent(opacity: .init(floatLiteral: 0.9))
         materialCache["ground"] = material
         return material
+    }
+
+    /// A chunk's ground as one quad per cell, leaving out dug cells.
+    static func holedGround(cx: Int, cy: Int, holes: Set<Int>) -> MeshResource? {
+        var positions: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
+        for ly in 0..<32 { for lx in 0..<32 {
+            let x = cx * 32 + lx, y = cy * 32 + ly
+            if holes.contains(y * 256 + x) { continue }
+            let base = UInt32(positions.count)
+            let x0 = Float(lx) - 16, x1 = x0 + 1, z0 = 16 - Float(ly), z1 = z0 - 1
+            positions += [[x0, 0, z0], [x1, 0, z0], [x1, 0, z1], [x0, 0, z1]]
+            uvs += [[0, 0], [1, 0], [1, 1], [0, 1]]
+            indices += [base, base + 1, base + 2, base, base + 2, base + 3]
+        } }
+        var descriptor = MeshDescriptor(name: "groundHoles")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(Array(repeating: [0, 1, 0], count: positions.count))
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(indices)
+        return try? MeshResource.generate(from: [descriptor])
     }
 
     /// A 32 × 32 plane whose texture coordinates run 0…32, so the glass
@@ -331,6 +359,13 @@ import Metal
     }
 
     var blockNodeCount: Int { blockEntities.count }
+
+    /// The default player body hides while a media character is shown.
+    var playerBodyVisible = true {
+        didSet { guard playerBodyVisible != oldValue else { return }; for child in playerEntity.children.prefix(2) { child.isEnabled = playerBodyVisible } }
+    }
+    func creatureEntity(_ id: String) -> Entity? { creatureEntities[id] }
+    func setCreatureBodyVisible(_ id: String, _ visible: Bool) { creatureEntities[id]?.children.first?.isEnabled = visible }
     var creatureNodeCount: Int { creatureEntities.count }
 
     // MARK: Shared resources
@@ -444,6 +479,30 @@ import Metal
         let entity = ModelEntity(mesh: mesh, materials: [material])
         if let gifID { gifFaces[gifID, default: []].append(entity) }
         return entity
+    }
+
+    /// A material for a whole binding (characters): image, first GIF frame
+    /// or the shared video player; icons, numbers and text are drawn.
+    func material(forBinding id: String, opacity: Double) -> RealityKit.Material? {
+        guard let binding = binding?(id) else { return nil }
+        if binding.kind == .icon || binding.kind == .number || binding.kind == .text {
+            let image = RPGCellRenderer.image(kind: binding.kind, style: binding.style ?? RPGCellStyle())
+            guard let cg = image.cgImage, let texture = try? TextureResource(image: cg, options: .init(semantic: .color)) else { return nil }
+            var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(texture)); unlit.blending = .transparent(opacity: .init(floatLiteral: Float(opacity)))
+            return unlit
+        }
+        guard let (url, kind) = resolve?(binding.mediaID) else { return nil }
+        switch kind {
+        case .video: return VideoMaterial(avPlayer: videoPlayer(binding.mediaID, url: url))
+        case .gif:
+            guard let first = gif(binding.mediaID, url: url)?.frames.first else { return nil }
+            var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(first)); unlit.blending = .transparent(opacity: .init(floatLiteral: Float(opacity)))
+            return unlit
+        default:
+            guard let texture = image(binding.mediaID, url: url) else { return nil }
+            var unlit = UnlitMaterial(); unlit.color = .init(tint: .white, texture: .init(texture)); unlit.blending = .transparent(opacity: .init(floatLiteral: Float(opacity)))
+            return unlit
+        }
     }
 
     /// The piece's texture rectangle (bottom-left origin, v up).
