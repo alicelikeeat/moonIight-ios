@@ -2050,4 +2050,21 @@ do {
     print("RPG near glass: \(checks) total checks passed")
 }
 
+// P36: one-tap clear world keeps the user's designs.
+do {
+    var busy = SpatialWorld.blank()
+    busy.blocks = [SpatialBlock(id: "b", x: 3, y: 3, elevation: 0)]
+    busy.creatures = [CreatureEntity(id: "c", kind: .enemy, position: SpatialVector(5, 5, 0), home: SpatialVector(5, 5, 0), health: 30, maxHealth: 30, damage: 6)]
+    busy.groundHoles = [100]
+    busy.characters = [CharacterTemplate(id: "char:1", name: "Hero")]
+    busy.playerCharacterID = "char:1"
+    busy.skills = [SkillLibrary.templates()[0]]
+    busy.spawn = SpatialVector(40, 40, 2); busy.player.position = SpatialVector(41, 41, 0)
+    let clean = busy.cleared()
+    check(clean.blocks.isEmpty && clean.creatures.isEmpty && clean.groundHoles == nil && clean.plants.isEmpty && clean.pickups.isEmpty, "clear removes everything placed")
+    check(clean.characters?.count == 1 && clean.playerCharacterID == "char:1" && clean.skills?.count == 1, "clear keeps characters, the player's look and skills")
+    check(clean.player.position == clean.spawn && clean.spawn == SpatialWorld().spawn, "player back at the default spawn")
+    print("RPG clear world: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

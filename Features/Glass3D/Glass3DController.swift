@@ -7,18 +7,18 @@ enum Glass3DMode: String, CaseIterable { case play, edit
 }
 
 enum Glass3DTool: String, CaseIterable {
-    case select, place, draw, area, erase, dig, building, media, creature, maze, track
+    case select, place, draw, area, erase, dig, building, media, creature, player, maze, track
     var title: String {
         switch self {
         case .select: L10n.t("选择", "Select"); case .place: L10n.t("放置", "Place"); case .draw: L10n.t("连续绘制", "Draw")
         case .area: L10n.t("区域", "Area"); case .erase: L10n.t("橡皮擦", "Erase"); case .dig: L10n.t("挖地下", "Dig"); case .building: L10n.t("建筑", "Building")
-        case .media: L10n.t("媒体", "Media"); case .creature: L10n.t("生物", "Creature"); case .maze: L10n.t("迷宫", "Maze"); case .track: L10n.t("轨道", "Track")
+        case .media: L10n.t("媒体", "Media"); case .creature: L10n.t("生物", "Creature"); case .player: L10n.t("主角", "Player"); case .maze: L10n.t("迷宫", "Maze"); case .track: L10n.t("轨道", "Track")
         }
     }
     var symbol: String {
         switch self {
         case .select: "hand.point.up.left"; case .place: "plus.square"; case .draw: "scribble"; case .area: "rectangle.dashed"; case .erase: "eraser"; case .dig: "arrow.down.to.line"
-        case .building: "building.2"; case .media: "photo.on.rectangle"; case .creature: "pawprint"; case .maze: "square.grid.3x3.middle.filled"; case .track: "point.topleft.down.to.point.bottomright.curvepath"
+        case .building: "building.2"; case .media: "photo.on.rectangle"; case .creature: "pawprint"; case .player: "figure.stand"; case .maze: "square.grid.3x3.middle.filled"; case .track: "point.topleft.down.to.point.bottomright.curvepath"
         }
     }
 }
@@ -212,8 +212,27 @@ struct Glass3DPending {
         frame(min(0.05, max(0, dt)))
     }
 
+    /// Hidden (app in the background, another app in front, or a full-screen
+    /// page over the world): no simulation, no rendering work, videos paused —
+    /// keeps the phone cool. Saved on the way out.
+    private(set) var suspended = false
+    func setSuspended(_ value: Bool) {
+        guard value != suspended else { return }
+        suspended = value
+        if value {
+            renderer.media.pauseAll()
+            persist(force: true)
+            updates?.cancel(); updates = nil; driven = false
+            stick = (0, 0); look = (0, 0)
+            link?.isPaused = true
+        } else {
+            lastTime = nil
+            link?.isPaused = false
+        }
+    }
+
     private func frame(_ dt: Double) {
-        guard dt > 0 else { return }
+        guard dt > 0, !suspended else { return }
         frameTimes.append(dt); if frameTimes.count > 120 { frameTimes.removeFirst() }
         world.clock += dt
         pollGamepad(dt: dt)
@@ -830,6 +849,11 @@ struct Glass3DPending {
                 creature.characterID = look
                 w.creatures.append(creature)
             }
+        case .player:
+            // Moves the player here; it is also where revive returns.
+            let spot = SpatialVector(Double(first.cell.x) + 0.5, Double(first.cell.z) + 0.5, first.kind == "block" ? first.height : 0)
+            edit(L10n.t("主角位置", "Player Position")) { w in w.spawn = spot; w.player.position = spot; w.player.lastSafe = spot; w.player.verticalSpeed = 0 }
+            notice = L10n.t("主角已放到这里，复活也会回到这里", "Player moved here; revive returns here too")
         case .maze:
             proposeMaze(at: first.cell)
         case .track:
@@ -1112,6 +1136,14 @@ struct Glass3DPending {
         }
     }
     func setPlayerCharacter(_ id: String?) { edit(L10n.t("主角外观", "Player Look")) { w in w.playerCharacterID = id } }
+
+    /// Clears the world in one undoable step (see `SpatialWorld.cleared`).
+    func clearWorld() {
+        selection = []; pending = nil; trackPoints = []; lockedTarget = nil
+        edit(L10n.t("清空世界", "Clear World")) { w in w = w.cleared() }
+        camera.target = world.player.position
+        notice = L10n.t("世界已清空，可撤销；角色、技能和生成的模型都还在", "World cleared (undo to restore); characters, skills and generated models are kept")
+    }
     /// Gives every creature of a kind this character look.
     func applyCharacter(_ id: String?, to kind: CreatureKind) {
         edit(L10n.t("外观 · ", "Look · ") + kind.title) { w in for i in w.creatures.indices where w.creatures[i].kind == kind { w.creatures[i].characterID = id } }

@@ -228,6 +228,24 @@ struct SpatialWorld: Codable, Equatable, Sendable {
 
     static func blank() -> SpatialWorld { SpatialWorld() }
 
+    /// One-tap "clear world" (v1.72): removes everything built or placed —
+    /// blocks, buildings, motions, plants, creatures, pickups, dug holes —
+    /// and puts the player back at the default spawn. Keeps what the user
+    /// designed to reuse: characters, skills, Boss phases, the hotbar, the
+    /// player's look and saved building templates.
+    func cleared() -> SpatialWorld {
+        var fresh = SpatialWorld()
+        fresh.templates = templates
+        fresh.characters = characters
+        fresh.skills = skills
+        fresh.bossScripts = bossScripts
+        fresh.playerCharacterID = playerCharacterID
+        fresh.hotbar = hotbar
+        fresh.player.position = fresh.spawn
+        fresh.player.lastSafe = fresh.spawn
+        return fresh
+    }
+
     func validate(bindings: Set<String>) throws {
         guard blocks.count <= Self.blockLimit, plants.count <= 20_000, creatures.count <= 2_000, pickups.count <= 2_000,
               groups.count <= 4_000, motions.count <= 2_000, templates.count <= 200 else { throw RPGWorldError.oversized }

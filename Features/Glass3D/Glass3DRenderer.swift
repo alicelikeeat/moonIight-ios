@@ -615,4 +615,7 @@ import Metal
         players.values.forEach { $0.0.pause() }
         players.removeAll(); gifFaces.removeAll()
     }
+
+    /// Pauses every video (the world is hidden); they resume from the clock.
+    func pauseAll() { players.values.forEach { $0.0.pause() } }
 }

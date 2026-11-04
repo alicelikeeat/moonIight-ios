@@ -393,6 +393,7 @@ struct Generated3DDetailView: View {
     @State private var message: String?
     @State private var rigging = false
 
+    @Environment(\.scenePhase) private var scenePhase
     private var current: Generated3DManifest { store.models.first { $0.id == manifest.id } ?? manifest }
     private var depthModel: Bool { current.meshFile != nil }
 
@@ -418,7 +419,14 @@ struct Generated3DDetailView: View {
         } message: { Text(L10n.t("模型、贴图、皮肤预设都会从本机删除。", "The model, its texture and skin presets are removed from this device.")) }
     }
 
-    private var preview: some View {
+    /// No 3D rendering while the app is not in front (keeps the phone cool).
+    @ViewBuilder private var preview: some View {
+        if scenePhase == .active { livePreview } else {
+            RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.black).frame(height: 340)
+        }
+    }
+
+    private var livePreview: some View {
         RealityView { content in
             content.camera = .virtual
             content.add(scene.root)
@@ -588,6 +596,8 @@ struct Generated3DDetailView: View {
                     Label(current.rigFile != nil ? L10n.t("放进 3D 世界（带动作）", "Place in the 3D World (animated)") : L10n.t("放进 3D 世界", "Place in the 3D World"), systemImage: "mappin.and.ellipse")
                 }
                 .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true)).accessibilityIdentifier("generate3d-use-in-world")
+                Button { useAsPlayer(controller) } label: { Label(L10n.t("设为主角外观", "Use as the Player's Look"), systemImage: "figure.stand") }
+                    .buttonStyle(Glass3DChipStyle(tint: .accentColor)).accessibilityIdentifier("generate3d-use-as-player")
             }
             HStack(spacing: 10) {
                 if exportFiles.isEmpty {
@@ -644,6 +654,14 @@ struct Generated3DDetailView: View {
 
     /// Depth models are used directly (no USDZ needed; animated when
     /// rigged); reconstructed models through their USDZ.
+    /// Makes this model the player's look and goes back to the world.
+    private func useAsPlayer(_ controller: Glass3DController) {
+        controller.setPlayerCharacter(controller.characterID(forGenerated: current))
+        controller.mode = .edit
+        controller.tool = .player
+        if let onPlace { onPlace() } else { message = L10n.t("主角外观已更换。", "The player's look has changed.") }
+    }
+
     /// Picks this model as the Creature tool's look and goes back to the
     /// world in design mode, ready to tap the ground.
     private func useAsCharacter(_ controller: Glass3DController) {

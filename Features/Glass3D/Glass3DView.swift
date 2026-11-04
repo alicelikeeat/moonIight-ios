@@ -23,6 +23,11 @@ struct Glass3DScreen: View {
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
     @State private var generate3D = false
+    @State private var confirmClear = false
+    @Environment(\.scenePhase) private var scenePhase
+    /// The world stops while it cannot be seen (background, app switcher,
+    /// AI 3D page in front) so the phone does not heat up.
+    private var worldSuspended: Bool { scenePhase != .active || generate3D }
     @ObservedObject private var generatedStore = Generated3DStore.shared
     @AppStorage(Glass3DLaunch.key) private var openAtLaunch = true
     @Namespace private var modeNamespace
@@ -44,8 +49,12 @@ struct Glass3DScreen: View {
         GeometryReader { geometry in
             let portrait = geometry.size.height > geometry.size.width
             ZStack {
-                Glass3DWorldView(controller: controller).ignoresSafeArea()
-                Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
+                if worldSuspended {
+                    Color.black.ignoresSafeArea()
+                } else {
+                    Glass3DWorldView(controller: controller).ignoresSafeArea()
+                    Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
+                }
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
                 Glass3DOverlay(glass: controller.nativeGlass, controller: controller).ignoresSafeArea()
                 if controller.mode == .edit {
@@ -94,8 +103,15 @@ struct Glass3DScreen: View {
             controller.start()
         }
         .onDisappear { controller.stop() }
+        .onChange(of: worldSuspended) { _, hidden in controller.setSuspended(hidden) }
         .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .confirmationDialog(L10n.t("清空整个世界？", "Clear the whole world?"), isPresented: $confirmClear, titleVisibility: .visible) {
+            Button(L10n.t("清空世界", "Clear World"), role: .destructive) { controller.clearWorld() }
+            Button(L10n.t("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.t("会删除所有方块、建筑、动态、植物、生物和宝箱，主角回到出生点。角色、技能、Boss 阶段、建筑模板和生成的 3D 模型都保留。可以用「撤销」恢复。", "Removes every block, building, motion, plant, creature and chest; the player returns to the spawn. Characters, skills, Boss phases, building templates and generated 3D models are kept. Undo restores it."))
+        }
         .fullScreenCover(isPresented: $generate3D) { Generate3DScreen(controller: controller) { generate3D = false } }
         .sheet(item: $editor) { kind in
             switch kind {
@@ -197,6 +213,7 @@ struct Glass3DScreen: View {
             }
             Button { generate3D = true } label: { Label(L10n.t("AI 生成 3D 模型", "AI 3D Models"), systemImage: "cube.transparent") }
             Button { credits = true } label: { Label(L10n.t("素材来源与授权", "Credits & Licences"), systemImage: "checkmark.seal") }
+            Button(role: .destructive) { confirmClear = true } label: { Label(L10n.t("一键清空世界", "Clear World"), systemImage: "trash") }
             Section(L10n.t("显示", "Display")) {
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
                 Toggle(L10n.t("第三人称镜头", "Third-Person Camera"), isOn: $controller.thirdPerson)
@@ -413,6 +430,7 @@ struct Glass3DScreen: View {
         case .building: L10n.t("轻点地图放置，确认后写入", "Tap the map to place, then confirm")
         case .media: L10n.t("轻点方块多选，再在属性面板选择媒体；多个方块自动切格", "Tap blocks to pick several, then choose media in the panel; several blocks split it")
         case .creature: L10n.t("选类型和外观，轻点地面放置；外观里有你生成的 3D 模型", "Pick a kind and a look, then tap the ground; your generated 3D models are in the looks")
+        case .player: L10n.t("点卡片立即换主角外观；轻点地面把主角放到那里（也是复活点）", "Tap a card to change the player's look; tap the ground to move the player there (also the revive point)")
         case .maze: L10n.t("轻点地图放置 13×13 玻璃迷宫（入口在南侧）", "Tap the map for a 13×13 glass maze (entrance south)")
         case .track: L10n.t("依次点路径点，再选中建筑并选择「轨道」运动", "Tap waypoints, then select a building and choose Track motion")
         }
@@ -448,6 +466,12 @@ struct Glass3DScreen: View {
             }
         case .creature:
             creatureOptions
+        case .player:
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.t("主角外观（点一下立即生效）", "Player look (applies at once)")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                lookStrip(selected: controller.world.playerCharacterID) { id in controller.setPlayerCharacter(id) }
+            }
+            .font(.caption)
         case .track:
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
@@ -478,20 +502,31 @@ struct Glass3DScreen: View {
                 }
             }
             Text(L10n.t("外观（选好后轻点地面放置）", "Look (pick, then tap the ground)")).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            lookStrip(selected: controller.creatureLook) { id in controller.creatureLook = id }
+        }
+        .font(.caption)
+    }
+
+    /// Default, every generated 3D model, other characters, and "new
+    /// model". `pick` gets a character template id (nil = default body);
+    /// picking a model creates or reuses its template.
+    private func lookStrip(selected: String?, pick: @escaping (String?) -> Void) -> some View {
+        let selectedModel = selected.flatMap { id in (controller.world.characters ?? []).first { $0.id == id }?.generatedModelID }
+        return VStack(alignment: .leading, spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    lookCard(title: L10n.t("默认", "Default"), selected: controller.creatureLook == nil, id: "glass3d-look-default") {
-                        Image(systemName: "pawprint.fill").font(.system(size: 22)).foregroundStyle(.secondary)
-                    } action: { controller.creatureLook = nil }
+                    lookCard(title: L10n.t("默认", "Default"), selected: selected == nil, id: "glass3d-look-default") {
+                        Image(systemName: "person.fill").font(.system(size: 22)).foregroundStyle(.secondary)
+                    } action: { pick(nil) }
                     ForEach(generatedStore.models.filter { $0.meshFile != nil || $0.usdzFile != nil }) { model in
-                        lookCard(title: model.name, selected: controller.selectedLookModelID == model.id, badge: model.rigFile != nil ? L10n.t("动", "Anim") : nil, id: "glass3d-look-model-\(model.id)") {
+                        lookCard(title: model.name, selected: selectedModel == model.id, badge: model.rigFile != nil ? L10n.t("动", "Anim") : nil, id: "glass3d-look-model-\(model.id)") {
                             Glass3DMediaThumbnail(url: generatedStore.thumbnailURL(model), kind: .image, side: 54, corner: 10)
-                        } action: { controller.creatureLook = controller.characterID(forGenerated: model) }
+                        } action: { pick(controller.characterID(forGenerated: model)) }
                     }
                     ForEach((controller.world.characters ?? []).filter { $0.mode != .generated }) { template in
-                        lookCard(title: template.name, selected: controller.creatureLook == template.id, id: "glass3d-look-character-\(template.id)") {
+                        lookCard(title: template.name, selected: selected == template.id, id: "glass3d-look-character-\(template.id)") {
                             Image(systemName: template.mode == .model ? "cube.fill" : "person.crop.rectangle.fill").font(.system(size: 22)).foregroundStyle(Color.accentColor)
-                        } action: { controller.creatureLook = template.id }
+                        } action: { pick(template.id) }
                     }
                     lookCard(title: L10n.t("生成新模型", "New Model"), selected: false, id: "glass3d-look-generate") {
                         Image(systemName: "plus").font(.system(size: 22, weight: .semibold)).foregroundStyle(Color.accentColor)
@@ -503,7 +538,6 @@ struct Glass3DScreen: View {
                 Text(L10n.t("还没有生成的 3D 模型：点「生成新模型」从照片或视频生成。", "No generated 3D models yet: tap New Model to make one from a photo or video.")).font(.caption2).foregroundStyle(.secondary)
             }
         }
-        .font(.caption)
     }
 
     private func lookCard<Preview: View>(title: String, selected: Bool, badge: String? = nil, id: String, @ViewBuilder preview: () -> Preview, action: @escaping () -> Void) -> some View {
