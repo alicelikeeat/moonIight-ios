@@ -203,13 +203,14 @@ struct ImageGenerationOutput: Sendable {
     var depthSource: Generated3DManifest.DepthSource
     var humanoid: Bool
     var notes: [String]
+    var back: DepthMeshBuilder.BackStyle = .flat
 }
 
 /// Picture → subject mask → depth → closed depth-relief mesh + texture.
 enum ImageGenerationPipeline {
     typealias Progress = @Sendable (String, Double?) -> Void
 
-    static func run(_ url: URL, quality: GenerationQuality, progress: @escaping Progress) async throws -> ImageGenerationOutput {
+    static func run(_ url: URL, quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .flat, progress: @escaping Progress) async throws -> ImageGenerationOutput {
         var notes: [String] = []
         try await Generate3DGuard.checkpoint(progress: progress)
         progress(L10n.t("读取图片", "Reading the picture"), 0.05)
@@ -266,6 +267,7 @@ enum ImageGenerationPipeline {
         progress(L10n.t("生成三维网格", "Building the 3D mesh"), 0.7)
         var options = DepthMeshBuilder.Options()
         options.resolution = quality.gridResolution
+        options.back = back
         var mesh: GeneratedMesh
         do { mesh = try DepthMeshBuilder.build(field, aspect: Double(image.width) / Double(image.height), options: options) }
         catch DepthMeshBuilder.Failure.noSubject, DepthMeshBuilder.Failure.tooSmall { throw Generate3DError.noSubject }
@@ -277,7 +279,7 @@ enum ImageGenerationPipeline {
         guard let texture = PixelReader.jpeg(image) else { throw Generate3DError.saveFailed("texture") }
         let thumbnail = subjectThumbnail(image, mask: field)
         return ImageGenerationOutput(mesh: mesh, texture: texture, textureWidth: image.width, textureHeight: image.height, thumbnail: thumbnail,
-                                     depthSource: depthSource, humanoid: humanoid, notes: notes)
+                                     depthSource: depthSource, humanoid: humanoid, notes: notes, back: back)
     }
 
     /// Disparity stored by the camera (Portrait mode, dual cameras, LiDAR).
@@ -495,8 +497,8 @@ enum VideoReconstructionPipeline {
             .filter(\.valid).sorted { $0.createdAt > $1.createdAt }
     }
 
-    func existing(hash: String, quality: GenerationQuality) -> Generated3DManifest? {
-        models.first { $0.sourceHash == hash && $0.quality == quality && $0.geometry == .depthRelief }
+    func existing(hash: String, quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .flat) -> Generated3DManifest? {
+        models.first { $0.sourceHash == hash && $0.quality == quality && $0.geometry == .depthRelief && ($0.backStyle ?? .flat) == back }
     }
 
     func url(_ folder: String, _ file: String?) -> URL? { file.map { Self.folder(folder).appendingPathComponent($0) } }
@@ -550,7 +552,7 @@ enum VideoReconstructionPipeline {
             vertexCount: mesh.vertexCount, triangleCount: mesh.triangleCount, textureWidth: output.textureWidth, textureHeight: output.textureHeight,
             meshFile: meshFile, textureFile: textureFile, usdzFile: usdzFile, thumbnailFile: output.thumbnail == nil ? nil : thumbnailFile,
             humanoidDetected: output.humanoid, rigging: .experimentalNotImplemented, animation: .experimentalNotImplemented,
-            separableParts: .notAvailable, notes: notes)
+            separableParts: .notAvailable, notes: notes, backStyle: output.back)
         try save(manifest)
         return manifest
     }
@@ -596,6 +598,10 @@ enum VideoReconstructionPipeline {
         var urls = [meshURL(m), textureURL(m), usdzURL(m), thumbnailURL(m)].compactMap { $0 }
         urls += m.skinPresets.compactMap { url("Presets", $0.textureFile) }
         urls.append(Self.folder("Manifests").appendingPathComponent(m.id + ".json"))
+        if let rig = m.rigFile {
+            urls += [Self.folder("Skeletons").appendingPathComponent(rig + ".json"), Self.folder("Skeletons").appendingPathComponent(rig + ".skin"),
+                     Self.folder("Animations").appendingPathComponent(rig + ".json")]
+        }
         urls.append(Self.folder("Exports").appendingPathComponent(m.id, isDirectory: true))
         for url in urls { try? FileManager.default.removeItem(at: url) }
         reload()
@@ -678,7 +684,7 @@ enum Generate3DExport {
     }
 
     /// Picture → depth model (reuses an earlier result for the same file).
-    func generate(image url: URL, name: String, quality: GenerationQuality, store: Generated3DStore, removeAfter: Bool) {
+    func generate(image url: URL, name: String, quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .flat, store: Generated3DStore, removeAfter: Bool) {
         guard !running else { return }
         phase = .running; stage = L10n.t("准备", "Preparing"); fraction = 0
         let progress = report()
@@ -686,8 +692,8 @@ enum Generate3DExport {
             defer { if removeAfter { try? FileManager.default.removeItem(at: url) } }
             do {
                 let hash = (try? await Task.detached { try MediaImportIndex.sha256(of: url) }.value) ?? UUID().uuidString
-                if let existing = store.existing(hash: hash, quality: quality) { phase = .finished(existing.id); return }
-                let job = Task.detached(priority: .userInitiated) { try await ImageGenerationPipeline.run(url, quality: quality, progress: progress) }
+                if let existing = store.existing(hash: hash, quality: quality, back: back) { phase = .finished(existing.id); return }
+                let job = Task.detached(priority: .userInitiated) { try await ImageGenerationPipeline.run(url, quality: quality, back: back, progress: progress) }
                 let output = try await withTaskCancellationHandler { try await job.value } onCancel: { job.cancel() }
                 progress(L10n.t("保存", "Saving"), 0.95)
                 let manifest = try await store.store(output, name: name, source: .image, sourceName: name, hash: hash, quality: quality)
@@ -731,13 +737,13 @@ enum Generate3DExport {
     }
 
     /// The sharpest frame of the analysed video → depth relief.
-    func depthFromBestFrame(quality: GenerationQuality, store: Generated3DStore) {
+    func depthFromBestFrame(quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .flat, store: Generated3DStore) {
         guard !running, let frame = video?.bestFrame, let source = videoSource else { return }
         let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
         guard (try? FileManager.default.copyItem(at: frame, to: copy)) != nil else { return }
         let name = source.name
         reset()
-        generate(image: copy, name: name, quality: quality, store: store, removeAfter: true)
+        generate(image: copy, name: name, quality: quality, back: back, store: store, removeAfter: true)
     }
 
     /// Cancelled or failed. With `keepVideo` the video report stays, so the

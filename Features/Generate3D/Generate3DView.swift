@@ -17,6 +17,7 @@ struct Generate3DScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var capabilities = Generate3DCapabilities.current()
     @State private var quality = Generate3DCapabilities.current().recommended
+    @State private var backStyle = DepthMeshBuilder.BackStyle.flat
     @State private var photoItem: PhotosPickerItem?
     @State private var choosingPhoto = false
     @State private var photoFilter = PHPickerFilter.images
@@ -68,6 +69,14 @@ struct Generate3DScreen: View {
                 Text(L10n.t("精度", "Quality")).font(.subheadline)
                 Spacer()
                 Picker(L10n.t("精度", "Quality"), selection: $quality) { ForEach(GenerationQuality.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 240)
+            }
+            HStack {
+                Text(L10n.t("背面", "Back")).font(.subheadline)
+                Spacer()
+                Picker(L10n.t("背面", "Back"), selection: $backStyle) { ForEach(DepthMeshBuilder.BackStyle.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 240)
+            }
+            if backStyle == .mirrored {
+                Text(L10n.t("「镜像推测」让背面按正面的深度鼓起来，转动时更有体积感；这是推测，不是 AI 重建的真实背面。", "Mirrored guess makes the back bulge like the front for more volume when turned; it is a guess, not a reconstructed back.")).font(.caption2).foregroundStyle(.secondary)
             }
             if capabilities.thermal >= 2 { Label(L10n.t("设备温度较高，生成可能暂停", "The device is warm; generation may pause"), systemImage: "thermometer.sun").font(.caption).foregroundStyle(.orange) }
         }
@@ -160,7 +169,7 @@ struct Generate3DScreen: View {
                 }
             }
             if video.bestFrame != nil {
-                Button { tasks.depthFromBestFrame(quality: quality, store: store) } label: { Label(L10n.t("用最清晰一帧做深度立体模型", "Depth Relief from the Sharpest Frame"), systemImage: "photo") }
+                Button { tasks.depthFromBestFrame(quality: quality, back: backStyle, store: store) } label: { Label(L10n.t("用最清晰一帧做深度立体模型", "Depth Relief from the Sharpest Frame"), systemImage: "photo") }
                     .buttonStyle(Glass3DChipStyle(tint: .accentColor))
             }
             Button(L10n.t("放弃这个视频", "Discard Video")) { tasks.reset() }.buttonStyle(Glass3DChipStyle())
@@ -206,7 +215,7 @@ struct Generate3DScreen: View {
             guard let file = try? await item.loadTransferable(type: RPGPickedFile.self) else { return }
             let name = video ? L10n.t("相册视频", "Video") : L10n.t("相册图片", "Photo")
             if video { tasks.analyze(video: file.url, name: name) }
-            else { tasks.generate(image: file.url, name: name, quality: quality, store: store, removeAfter: true) }
+            else { tasks.generate(image: file.url, name: name, quality: quality, back: backStyle, store: store, removeAfter: true) }
         }
     }
 
@@ -217,7 +226,7 @@ struct Generate3DScreen: View {
         guard (try? FileManager.default.copyItem(at: url, to: copy)) != nil else { return }
         let name = url.deletingPathExtension().lastPathComponent
         if video { tasks.analyze(video: copy, name: name) }
-        else { tasks.generate(image: copy, name: name, quality: quality, store: store, removeAfter: true) }
+        else { tasks.generate(image: copy, name: name, quality: quality, back: backStyle, store: store, removeAfter: true) }
     }
 }
 
@@ -247,6 +256,14 @@ struct Generate3DScreen: View {
     @Published var backdropStyle = Backdrop.dark { didSet { paint() } }
     private var tint: String?
     private var texture: TextureResource?
+    /// Rigged models: per-region meshes, the playing clip and region colours.
+    private var animated: AnimatedRegionMesh?
+    @Published private(set) var rig: RigPackage?
+    @Published private(set) var clip: RigClip?
+    private var clipTime: Float = 0
+    private var sinceUpdate: Float = 0
+    @Published var regionTints: [Int: String] = [:] { didSet { Task { await restyle() } } }
+    var updates: EventSubscription?
 
     init() {
         root.addChild(pivot); root.addChild(camera); root.addChild(backdrop)
@@ -279,11 +296,17 @@ struct Generate3DScreen: View {
             descriptor.normals = MeshBuffers.Normals((0..<mesh.vertexCount).map { SIMD3(mesh.normals[$0 * 3], mesh.normals[$0 * 3 + 1], mesh.normals[$0 * 3 + 2]) })
             descriptor.textureCoordinates = MeshBuffers.TextureCoordinates((0..<mesh.vertexCount).map { SIMD2(mesh.uvs[$0 * 2], mesh.uvs[$0 * 2 + 1]) })
             descriptor.primitives = .triangles(mesh.indices)
-            let resource = try MeshResource.generate(from: [descriptor])
             if let textureURL = store.textureURL(manifest) { baseTexture = try? await TextureResource(contentsOf: textureURL, options: .init(semantic: .color)) }
-            let entity = ModelEntity(mesh: resource)
-            model = entity
-            pivot.addChild(entity)
+            animated = nil; rig = nil; clip = nil
+            if let loaded = await Generate3DRigging.load(manifest), loaded.1.count == mesh.vertexCount,
+               let regions = try? AnimatedRegionMesh(mesh: mesh, skin: loaded.1, skeleton: loaded.0.skeleton) {
+                animated = regions; rig = loaded.0
+                pivot.addChild(regions.root)
+            } else {
+                let entity = ModelEntity(mesh: try MeshResource.generate(from: [descriptor]))
+                model = entity
+                pivot.addChild(entity)
+            }
             await restyle()
             return (mesh.triangleCount, mesh.vertexCount)
         }
@@ -304,22 +327,44 @@ struct Generate3DScreen: View {
         await restyle()
     }
 
-    private func restyle() async {
-        guard let model else { return }
-        let color = tint.map { UIColor(rpgHex: $0) } ?? .white
+    private func material(_ hex: String?) -> RealityKit.Material {
+        let color = hex.map { UIColor(rpgHex: $0) } ?? .white
         let image = texture ?? baseTexture
         if lit {
             var material = PhysicallyBasedMaterial()
             if let image { material.baseColor = .init(tint: color, texture: .init(image)) } else { material.baseColor = .init(tint: color) }
             material.roughness = 0.7; material.metallic = 0.0
-            model.model?.materials = [material]
-        } else {
-            var material = UnlitMaterial()
-            if let image { material.color = .init(tint: color, texture: .init(image)) } else { material.color = .init(tint: color) }
-            model.model?.materials = [material]
+            return material
+        }
+        var material = UnlitMaterial()
+        if let image { material.color = .init(tint: color, texture: .init(image)) } else { material.color = .init(tint: color) }
+        return material
+    }
+
+    private func restyle() async {
+        if let animated {
+            for part in animated.regionEntities { part.entity.model?.materials = [material(regionTints[part.region] ?? tint)] }
+        } else if let model {
+            model.model?.materials = [material(tint)]
         }
         keyLight.isEnabled = lit; fillLight.isEnabled = lit
     }
+
+    /// Plays a clip (nil = rest pose).
+    func play(_ next: RigClip?) {
+        clip = next; clipTime = 0
+        if next == nil { animated?.pose(nil, time: 0) }
+    }
+
+    /// Called every rendered frame; skins at up to 30 fps.
+    func tick(_ dt: Float) {
+        guard let animated, let clip else { return }
+        clipTime += dt; sinceUpdate += dt
+        guard sinceUpdate >= 1.0 / 30 else { return }
+        sinceUpdate = 0
+        animated.pose(clip, time: clipTime.truncatingRemainder(dividingBy: clip.period))
+    }
+
 }
 
 @available(iOS 18.0, *)
@@ -340,6 +385,7 @@ struct Generated3DDetailView: View {
     @State private var exportFiles: [URL] = []
     @State private var confirmDelete = false
     @State private var message: String?
+    @State private var rigging = false
 
     private var current: Generated3DManifest { store.models.first { $0.id == manifest.id } ?? manifest }
     private var depthModel: Bool { current.meshFile != nil }
@@ -351,6 +397,7 @@ struct Generated3DDetailView: View {
                 controls
                 if let message { Label(message, systemImage: "info.circle").font(.caption).foregroundStyle(.secondary) }
                 infoCard
+                if depthModel { rigCard }
                 if depthModel { skinCard }
                 actions
             }
@@ -369,6 +416,10 @@ struct Generated3DDetailView: View {
         RealityView { content in
             content.camera = .virtual
             content.add(scene.root)
+            let scene = scene
+            scene.updates = content.subscribe(to: SceneEvents.Update.self) { event in
+                MainActor.assumeIsolated { scene.tick(Float(event.deltaTime)) }
+            }
         }
         .frame(height: 340)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -411,8 +462,9 @@ struct Generated3DDetailView: View {
             row(L10n.t("文件大小", "Size"), ByteCountFormatter.string(fromByteCount: store.size(current), countStyle: .file))
             row(L10n.t("USDZ", "USDZ"), current.usdzFile == nil ? L10n.t("无", "None") : L10n.t("已导出并通过加载检查", "Exported and verified"))
             row(L10n.t("人形检测", "Human pose"), current.humanoidDetected ? L10n.t("检测到人形姿态", "Human pose found") : L10n.t("未检测到", "Not found"))
-            row(L10n.t("骨骼 / 动画", "Rig / animation"), L10n.t("实验性，尚未实现，保存为静态模型", "Experimental, not implemented; kept as a static model"))
-            row(L10n.t("可换装部件", "Outfit parts"), L10n.t("无法从单张图片分离，已退化为整体材质编辑", "Cannot be separated from one picture; whole-model material editing instead"))
+            if current.backStyle == .mirrored { row(L10n.t("背面", "Back"), L10n.t("正面深度的镜像推测，不是 AI 重建", "Mirrored guess of the front, not an AI reconstruction")) }
+            row(L10n.t("骨骼 / 动画", "Rig / animation"), current.rigging == .experimentalVerified ? L10n.t("实验性：已通过本机自动检查，未经人工真机验收", "Experimental: passed the on-device automatic check, not yet accepted by a person") : L10n.t("未绑定，静态模型", "Not rigged; static model"))
+            row(L10n.t("可换装部件", "Outfit parts"), L10n.t("无法从单张图片分离衣服、头发；骨骼绑定后可按身体分区换色", "Clothes and hair cannot be separated from one picture; rigged models can colour body regions"))
             ForEach(current.notes, id: \.self) { Text("· " + $0).font(.caption).foregroundStyle(.secondary) }
         }
         .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -423,6 +475,64 @@ struct Generated3DDetailView: View {
             Text(title).font(.caption).foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
             Text(value).font(.caption)
             Spacer(minLength: 0)
+        }
+    }
+
+    private static let regionNames = [L10n.t("头部", "Head"), L10n.t("躯干", "Torso"), L10n.t("手臂", "Arms"), L10n.t("腿部", "Legs")]
+
+    private var rigCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(L10n.t("骨骼与动作", "Rig & Motion")).font(.headline)
+                Text(L10n.t("实验性", "Experimental")).font(.caption2.weight(.bold)).foregroundStyle(.white).padding(.horizontal, 6).padding(.vertical, 2).background(Color.orange, in: Capsule())
+            }
+            if let rig = scene.rig {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        Button(L10n.t("静止", "Rest")) { scene.play(nil) }.buttonStyle(Glass3DChipStyle(tint: scene.clip == nil ? .accentColor : .primary, prominent: scene.clip == nil))
+                        ForEach(rig.clips) { clip in
+                            Button(clip.name) { scene.play(clip) }.buttonStyle(Glass3DChipStyle(tint: scene.clip?.id == clip.id ? .accentColor : .primary, prominent: scene.clip?.id == clip.id))
+                        }
+                    }
+                }
+                let seams = rig.validation.seamStretch.map { "\($0.key) \(String(format: "%.2f", $0.value * 100))%" }.sorted().joined(separator: " · ")
+                Text(L10n.t("自动检查：通过 · 接缝拉伸 ", "Automatic check: passed · seam stretch ") + seams).font(.caption2).foregroundStyle(.secondary)
+                Text(L10n.t("身体分区颜色（不是独立服装）", "Body region colours (not separate clothes)")).font(.caption.weight(.semibold))
+                ForEach(0..<4, id: \.self) { region in
+                    HStack(spacing: 8) {
+                        Text(Self.regionNames[region]).font(.caption).frame(width: 40, alignment: .leading)
+                        ForEach([nil, "FFD27A", "8FD3FF", "FF8FB1", "7FE3C8", "3A3A48"], id: \.self) { hex in
+                            Button { scene.regionTints[region] = hex } label: {
+                                Circle().fill(hex.map { Color(UIColor(rpgHex: $0)) } ?? Color.white).frame(width: 22, height: 22)
+                                    .overlay(Circle().strokeBorder(scene.regionTints[region] == hex ? Color.accentColor : Color.primary.opacity(0.2), lineWidth: scene.regionTints[region] == hex ? 2.5 : 1))
+                            }
+                            .buttonStyle(.plain).accessibilityLabel(Self.regionNames[region] + " " + (hex ?? L10n.t("原色", "Original")))
+                        }
+                    }
+                }
+            } else if rigging {
+                HStack { ProgressView(); Text(L10n.t("正在识别姿态、绑定骨骼并自动检查…", "Finding the pose, rigging and checking…")).font(.caption) }
+            } else {
+                Text(L10n.t("用原图识别人体姿态，自动生成 10 根骨骼、计算蒙皮权重，并用待机、行走、奔跑、挥手 4 个动作实际变形检查；通过才会保存，否则保持静态模型。", "Finds the body pose in the picture, builds 10 bones and skin weights, and really deforms the model through idle, walk, run and wave; it is kept only if the check passes, otherwise the model stays static."))
+                    .font(.caption).foregroundStyle(.secondary)
+                Button { autoRig() } label: { Label(L10n.t("自动绑定骨骼", "Auto Rig"), systemImage: "figure.walk") }
+                    .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true)).accessibilityIdentifier("generate3d-auto-rig")
+            }
+        }
+        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func autoRig() {
+        rigging = true; message = nil
+        Task {
+            do {
+                let updated = try await Generate3DRigging.rig(current, store: store)
+                counts = try await scene.load(updated, store: store)
+                message = L10n.t("骨骼已绑定（实验），可以预览动作。", "Rigged (experimental); preview the motions.")
+            } catch {
+                message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+            rigging = false
         }
     }
 
@@ -443,7 +553,7 @@ struct Generated3DDetailView: View {
                 Button { choosingSkin = true } label: { Label(L10n.t("替换贴图", "Replace Texture"), systemImage: "photo") }.buttonStyle(Glass3DChipStyle())
                 if skinTexture != nil { Button(L10n.t("恢复原贴图", "Original Texture")) { skinTexture = nil; Task { await scene.applyLook(tint: tint, textureURL: nil) } }.buttonStyle(Glass3DChipStyle()) }
                 Button { savePreset() } label: { Label(L10n.t("保存为皮肤", "Save Skin"), systemImage: "square.and.arrow.down") }
-                    .buttonStyle(Glass3DChipStyle(tint: .accentColor)).disabled(tint == nil && skinTexture == nil)
+                    .buttonStyle(Glass3DChipStyle(tint: .accentColor)).disabled(tint == nil && skinTexture == nil && scene.regionTints.isEmpty)
             }
             if !current.skinPresets.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -451,6 +561,7 @@ struct Generated3DDetailView: View {
                         ForEach(current.skinPresets) { preset in
                             Button(preset.name) {
                                 tint = preset.tintHex; skinTexture = store.url("Presets", preset.textureFile)
+                                scene.regionTints = Dictionary(uniqueKeysWithValues: (preset.regionTints ?? [:]).compactMap { k, v in Int(k).map { ($0, v) } })
                                 Task { await scene.applyLook(tint: tint, textureURL: skinTexture) }
                             }
                             .buttonStyle(Glass3DChipStyle(tint: .accentColor))
@@ -511,7 +622,8 @@ struct Generated3DDetailView: View {
 
     private func savePreset() {
         var updated = current
-        updated.skinPresets.append(.init(id: UUID().uuidString, name: L10n.t("皮肤 \(updated.skinPresets.count + 1)", "Skin \(updated.skinPresets.count + 1)"), tintHex: tint, textureFile: skinTexture?.lastPathComponent))
+        let regions = scene.regionTints.isEmpty ? nil : Dictionary(uniqueKeysWithValues: scene.regionTints.map { (String($0.key), $0.value) })
+        updated.skinPresets.append(.init(id: UUID().uuidString, name: L10n.t("皮肤 \(updated.skinPresets.count + 1)", "Skin \(updated.skinPresets.count + 1)"), tintHex: tint, textureFile: skinTexture?.lastPathComponent, regionTints: regions))
         do { try store.save(updated); message = L10n.t("皮肤已保存。", "Skin saved.") } catch { message = error.localizedDescription }
     }
 

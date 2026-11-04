@@ -155,8 +155,15 @@ enum DepthMeshBuilder {
         var backThickness: Float = 0.04
         var maskThreshold: Float = 0.5
         var smoothingPasses = 2
-        /// Close the model with a flat back and side walls.
+        /// Close the model with a back and side walls.
         var closed = true
+        /// Back surface: a flat plate, or the front depth mirrored (a guess
+        /// for the unseen side, never a reconstruction).
+        var back = BackStyle.flat
+    }
+    enum BackStyle: String, Codable, CaseIterable, Sendable {
+        case flat, mirrored
+        var title: String { self == .flat ? L10n.t("平板", "Flat") : L10n.t("镜像推测", "Mirrored guess") }
     }
 
     enum Failure: Error, Equatable { case invalidField, noSubject, tooSmall }
@@ -215,8 +222,12 @@ enum DepthMeshBuilder {
         if options.closed {
             // Back: the same outline on a flat plate, reversed winding.
             let frontCount = mesh.vertexCount
+            // Mirrored: the back bulges like the front (70%), so a turned
+            // model has volume; the outline stays where the picture put it.
+            let frontZ = (0..<frontCount).map { mesh.positions[$0 * 3 + 2] }
             for i in 0..<frontCount {
-                mesh.positions += [mesh.positions[i * 3], mesh.positions[i * 3 + 1], back]
+                let z = options.back == .mirrored ? back - frontZ[i] * 0.7 : back
+                mesh.positions += [mesh.positions[i * 3], mesh.positions[i * 3 + 1], z]
                 mesh.uvs += [mesh.uvs[i * 2], mesh.uvs[i * 2 + 1]]
             }
             for t in 0..<frontTriangles {
@@ -325,7 +336,9 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
         }
     }
     /// Experimental features: never `.ready` without device-verified output.
-    enum Capability: String, Codable, Sendable { case ready, notAvailable, experimentalNotImplemented }
+    /// `.experimentalVerified`: built and passed the in-app automatic check
+    /// (deformation, movement, seams) on this device; still experimental.
+    enum Capability: String, Codable, Sendable { case ready, notAvailable, experimentalNotImplemented, experimentalVerified }
 
     var id: String
     var name: String
@@ -355,6 +368,10 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
     var separableParts: Capability
     var skinPresets: [SkinPreset] = []
     var notes: [String] = []
+    /// v1.68: back surface used (nil = flat, models before v1.68).
+    var backStyle: DepthMeshBuilder.BackStyle?
+    /// v1.68: rig files (Skeletons/<id>.json and .skin, Animations/<id>.json).
+    var rigFile: String?
 
     var valid: Bool { !id.isEmpty && !name.isEmpty && vertexCount >= 0 && triangleCount >= 0 && (meshFile != nil || usdzFile != nil) }
 
@@ -365,6 +382,9 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
         var tintHex: String?
         /// Replacement texture file in the model folder.
         var textureFile: String?
+        /// v1.68: colours per body region (0 head, 1 torso, 2 arms, 3 legs)
+        /// for rigged models; body regions, not separate clothes.
+        var regionTints: [String: String]?
     }
 }
 

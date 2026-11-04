@@ -1800,4 +1800,106 @@ do {
     print("RPG generate 3D: \(checks) total checks passed")
 }
 
+// P31: P2 experimental auto rig: skeleton from 2D joints, weights, clips,
+// skinning and the validator, on a synthetic standing figure.
+do {
+    // 100×160 picture: head, torso, arms hanging at the sides, two legs.
+    let w = 100, h = 160
+    var mask = [Float](repeating: 0, count: w * h), depth = mask
+    func fill(_ x0: Int, _ y0: Int, _ x1: Int, _ y1: Int, _ d: Float) { for y in y0..<y1 { for x in x0..<x1 { mask[y * w + x] = 1; depth[y * w + x] = d } } }
+    fill(42, 4, 58, 26, 0.9)     // head
+    fill(34, 28, 66, 82, 1.0)    // torso
+    fill(22, 30, 32, 80, 0.8)    // subject's right arm (picture left)
+    fill(68, 30, 78, 80, 0.8)    // subject's left arm
+    fill(36, 84, 48, 154, 0.85)  // right leg
+    fill(52, 84, 64, 154, 0.85)  // left leg
+    let figureField = DepthField(width: w, height: h, nearness: depth, mask: mask)
+    var figureOptions = DepthMeshBuilder.Options(); figureOptions.resolution = 96; figureOptions.smoothingPasses = 0
+    var figure = try DepthMeshBuilder.build(figureField, aspect: Double(w) / Double(h), options: figureOptions)
+    figure.normalize(size: 1)
+    func joint(_ x: Double, _ y: Double) -> BodyJoints2D.Point { .init(u: x / Double(w), v: y / Double(h), confidence: 0.9) }
+    let pose = BodyJoints2D(points: [
+        "head_joint": joint(50, 14), "neck_1_joint": joint(50, 28), "root": joint(50, 82),
+        "right_shoulder_1_joint": joint(27, 32), "right_forearm_joint": joint(27, 55), "right_hand_joint": joint(27, 78),
+        "left_shoulder_1_joint": joint(73, 32), "left_forearm_joint": joint(73, 55), "left_hand_joint": joint(73, 78),
+        "right_upLeg_joint": joint(42, 86), "right_leg_joint": joint(42, 118), "right_foot_joint": joint(42, 150),
+        "left_upLeg_joint": joint(58, 86), "left_leg_joint": joint(58, 118), "left_foot_joint": joint(58, 150),
+    ])
+    let map = AutoRig.uvToXY(figure)
+    check(map != nil && map!.ax > 0 && map!.ay < 0, "picture to model mapping fitted")
+    let skeleton = try AutoRig.skeleton(for: figure, joints: pose)
+    check(skeleton.bones.count == RigBone.allCases.count, "ten bones from a full pose (\(skeleton.bones.count))")
+    let torso = skeleton.bone(.torso)!, rightArm = skeleton.bone(.rightUpperArm)!
+    check(torso.tail[1] > torso.head[1] && rightArm.head[0] < torso.head[0], "torso points up; subject's right arm on the picture's left")
+    let fb = figure.bounds
+    check(skeleton.bones.allSatisfy { $0.head[2] >= fb.min[2] - 0.001 && $0.head[2] <= fb.max[2] + 0.001 }, "joints sit inside the model's depth")
+    let skin = AutoRig.weights(for: figure, skeleton: skeleton)
+    check(skin.valid && skin.count == figure.vertexCount, "skin weights for every vertex")
+    check(SkinWeights.decode(skin.encoded()) == skin && SkinWeights.decode(Data("SKN1".utf8)) == nil, "skin file round trip")
+    // Hand vertices follow the forearm; foot vertices the shin.
+    func nearest(_ x: Double, _ y: Double) -> Int {
+        let tx = map!.ax * Float(x / Double(w)) + map!.bx, ty = map!.ay * Float(y / Double(h)) + map!.by
+        return (0..<figure.vertexCount).min { a, b in
+            let da = pow(figure.positions[a * 3] - tx, 2) + pow(figure.positions[a * 3 + 1] - ty, 2)
+            let db = pow(figure.positions[b * 3] - tx, 2) + pow(figure.positions[b * 3 + 1] - ty, 2)
+            return da < db
+        }!
+    }
+    let hand = nearest(27, 76), foot = nearest(58, 150), chest = nearest(50, 50)
+    check(skin.bone0[hand] == UInt8(RigBone.rightForearm.rawValue), "hand bound to the forearm")
+    check(skin.bone0[foot] == UInt8(RigBone.leftShin.rawValue), "foot bound to the shin")
+    check(skin.bone0[chest] == UInt8(RigBone.torso.rawValue), "chest bound to the torso")
+    let rest = RigPose.deform(figure, skin: skin, matrices: RigPose.matrices(skeleton, clip: nil, time: 0))
+    check(zip(rest.positions, figure.positions).allSatisfy { abs($0 - $1) < 1e-5 }, "rest pose leaves the mesh unchanged")
+    let wave = RigClip.standard.first { $0.id == "wave" }!
+    let waved = RigPose.deform(figure, skin: skin, matrices: RigPose.matrices(skeleton, clip: wave, time: 0.3)).positions
+    func moved(_ i: Int) -> Float { (0..<3).map { waved[i * 3 + $0] - figure.positions[i * 3 + $0] }.reduce(0) { $0 + $1 * $1 }.squareRoot() }
+    check(moved(hand) > 0.2 && moved(foot) < 0.001 && waved[hand * 3 + 1] > figure.positions[hand * 3 + 1], "wave lifts the right hand, feet stay")
+    let walk = RigClip.standard.first { $0.id == "walk" }!
+    let walked = RigPose.deform(figure, skin: skin, matrices: RigPose.matrices(skeleton, clip: walk, time: 0.27)).positions
+    check(abs(walked[foot * 3 + 2] - figure.positions[foot * 3 + 2]) > 0.02, "walk swings the leg forward / back")
+    let validation = RigValidation.run(figure, skeleton: skeleton, skin: skin)
+    check(validation.passed, "validator passes the figure (\(validation.problems), stretch \(validation.maxStretch))")
+    check(validation.clips.count == 4 && validation.clips.values.allSatisfy { $0 > 0.004 } && validation.clips["walk"]! > 0.02, "every clip moves something")
+    let package = RigPackage(skeleton: skeleton, joints: pose, clips: RigClip.standard, validation: validation)
+    check((try? JSONDecoder().decode(RigPackage.self, from: JSONEncoder().encode(package))) == package, "rig package round trip")
+    let regions = RigPose.triangleRegions(figure, skin: skin)
+    check(Set(regions) == [0, 1, 2, 3], "four body regions for colours")
+
+    var partial = pose; partial.points["left_upLeg_joint"] = nil
+    check((try? AutoRig.skeleton(for: figure, joints: partial)) == nil, "missing hip: not humanoid, no rig")
+    var lowConfidence = pose; lowConfidence.points["neck_1_joint"]?.confidence = 0.1
+    check((try? AutoRig.skeleton(for: figure, joints: lowConfidence)) == nil, "unsure neck: no rig")
+    var noForearms = pose; noForearms.points["right_hand_joint"] = nil
+    check((try? AutoRig.skeleton(for: figure, joints: noForearms))?.bone(.rightForearm) == nil, "missing wrist: forearm left out, arm still rigged")
+    let identity = Mat4.rotation(axis: [0, 0, 1], angle: .pi / 2).point([1, 0, 0])
+    check(abs(identity[0]) < 1e-6 && abs(identity[1] - 1) < 1e-6, "rotation maths")
+    print("RPG auto rig: \(checks) total checks passed")
+}
+
+// P32: mirrored back (a guess for the unseen side, labelled as such).
+do {
+    let side = 48
+    var near = [Float](repeating: 0, count: side * side), disc = near
+    for y in 0..<side { for x in 0..<side {
+        let dx = Double(x - side / 2) / Double(side / 2), dy = Double(y - side / 2) / Double(side / 2)
+        let r = (dx * dx + dy * dy).squareRoot()
+        disc[y * side + x] = r < 0.8 ? 1 : 0; near[y * side + x] = Float(max(0, 1 - r))
+    } }
+    var flatOptions = DepthMeshBuilder.Options(); flatOptions.resolution = 40
+    var mirroredOptions = flatOptions; mirroredOptions.back = .mirrored
+    let field = DepthField(width: side, height: side, nearness: near, mask: disc)
+    let flatBack = try DepthMeshBuilder.build(field, aspect: 1, options: flatOptions)
+    let mirrored = try DepthMeshBuilder.build(field, aspect: 1, options: mirroredOptions)
+    check(mirrored.valid && mirrored.triangleCount == flatBack.triangleCount, "mirrored back keeps the same topology")
+    check(mirrored.depthExtent > flatBack.depthExtent * 1.4, "mirrored back adds volume behind")
+    let backZs = Set((flatBack.vertexCount / 2..<flatBack.vertexCount).map { flatBack.positions[$0 * 3 + 2] })
+    check(backZs.count == 1, "flat back is one plane")
+    var legacy = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Generated3DManifest(id: "x", name: "x", createdAt: Date(timeIntervalSince1970: 0), source: .image, sourceName: "x", sourceHash: "h", engine: "e", engineVersion: "1", depthSource: .cameraDepth, geometry: .depthRelief, quality: .low, vertexCount: 1, triangleCount: 1, textureWidth: 1, textureHeight: 1, meshFile: "m", textureFile: nil, usdzFile: nil, thumbnailFile: nil, humanoidDetected: true, rigging: .experimentalNotImplemented, animation: .experimentalNotImplemented, separableParts: .notAvailable))) as! [String: Any]
+    legacy["backStyle"] = nil; legacy["rigFile"] = nil
+    let old = try? JSONDecoder().decode(Generated3DManifest.self, from: JSONSerialization.data(withJSONObject: legacy))
+    check(old != nil && old!.backStyle == nil && old!.rigFile == nil, "v1.67 manifests still open")
+    print("RPG mirrored back: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
