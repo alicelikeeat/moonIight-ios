@@ -27,10 +27,13 @@ enum Generate3DRigError: LocalizedError {
 @available(iOS 18.0, *)
 enum Generate3DRigging {
     /// Vision body pose on the picture → joints in picture coordinates.
-    static func joints(in pictureURL: URL) throws -> BodyJoints2D {
-        guard let source = CGImageSourceCreateWithURL(pictureURL as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+    /// With `atlas`, the texture holds [picture | back colours]: the pose
+    /// is found on the left half and u is mapped back into the texture.
+    static func joints(in pictureURL: URL, atlas: Bool = false) throws -> BodyJoints2D {
+        guard let source = CGImageSourceCreateWithURL(pictureURL as CFURL, nil), let full = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw Generate3DRigError.noPicture
         }
+        guard let image = atlas ? full.cropping(to: CGRect(x: 0, y: 0, width: full.width / 2, height: full.height)) : full else { throw Generate3DRigError.noPicture }
         let request = VNDetectHumanBodyPoseRequest()
         try VNImageRequestHandler(cgImage: image, orientation: .up).perform([request])
         guard let body = request.results?.max(by: { $0.confidence < $1.confidence }) else { throw Generate3DRigError.notHumanoid }
@@ -38,7 +41,7 @@ enum Generate3DRigging {
         var out: [String: BodyJoints2D.Point] = [:]
         for (name, point) in points where point.confidence > 0 {
             // Vision: origin bottom-left. Picture coordinates: v down.
-            out[name.rawValue.rawValue] = .init(u: Double(point.location.x), v: 1 - Double(point.location.y), confidence: Double(point.confidence))
+            out[name.rawValue.rawValue] = .init(u: Double(point.location.x) * (atlas ? 0.5 : 1), v: 1 - Double(point.location.y), confidence: Double(point.confidence))
         }
         return BodyJoints2D(points: out)
     }
@@ -48,11 +51,12 @@ enum Generate3DRigging {
         guard let meshURL = store.meshURL(manifest) else { throw Generate3DRigError.noMesh }
         guard let pictureURL = store.textureURL(manifest) else { throw Generate3DRigError.noPicture }
         let id = manifest.id
+        let atlas = manifest.textureAtlas == true
         let skeletonURL = Generated3DStore.folder("Skeletons").appendingPathComponent(id + ".json")
         let skinURL = Generated3DStore.folder("Skeletons").appendingPathComponent(id + ".skin")
         let clipsURL = Generated3DStore.folder("Animations").appendingPathComponent(id + ".json")
         let validation = try await Task.detached(priority: .userInitiated) { () -> RigValidation in
-            let joints = try Generate3DRigging.joints(in: pictureURL)
+            let joints = try Generate3DRigging.joints(in: pictureURL, atlas: atlas)
             guard let data = try? Data(contentsOf: meshURL), let mesh = GeneratedMeshCodec.decode(data) else { throw Generate3DRigError.noMesh }
             let skeleton: RigSkeleton
             do { skeleton = try AutoRig.skeleton(for: mesh, joints: joints) } catch { throw Generate3DRigError.notHumanoid }

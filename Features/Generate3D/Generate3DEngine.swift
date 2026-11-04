@@ -210,7 +210,7 @@ struct ImageGenerationOutput: Sendable {
 enum ImageGenerationPipeline {
     typealias Progress = @Sendable (String, Double?) -> Void
 
-    static func run(_ url: URL, quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .flat, progress: @escaping Progress) async throws -> ImageGenerationOutput {
+    static func run(_ url: URL, quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .inflated, progress: @escaping Progress) async throws -> ImageGenerationOutput {
         var notes: [String] = []
         try await Generate3DGuard.checkpoint(progress: progress)
         progress(L10n.t("读取图片", "Reading the picture"), 0.05)
@@ -248,14 +248,25 @@ enum ImageGenerationPipeline {
         if mask == nil { notes.append(L10n.t("系统没有分出主体，改用深度区分前景。", "No subject from Vision; the nearer part of the depth was used.")) }
         let humanoid = detectsHuman(handler)
 
-        // Combine on the depth grid.
-        var maskValues: [Float]
-        if let mask {
-            maskValues = DepthField(width: mask.width, height: mask.height, nearness: mask.values, mask: mask.values).resampled(width: depth.width, height: depth.height).nearness
-        } else {
-            maskValues = PixelMath.otsuMask(depth.values)
+        // Work grid at up to 512 px: the depth is raised to it with the
+        // picture as a guide (depth edges land on picture edges), the mask
+        // is sampled from its own, finer resolution.
+        let longest = min(512, max(quality.gridResolution * 2, 256))
+        let k = Double(longest) / Double(max(image.width, image.height))
+        let gw = max(16, Int(Double(image.width) * k)), gh = max(16, Int(Double(image.height) * k))
+        var depthValues = DepthField(width: depth.width, height: depth.height, nearness: depth.values, mask: depth.values).resampled(width: gw, height: gh).nearness
+        if let guidePixels = PixelReader.gray(image, width: gw, height: gh) {
+            let guide = guidePixels.map { Float($0) / 255 }
+            let refined = DepthRefine.guidedUpsample(depth.values, width: depth.width, height: depth.height, guide: guide, guideWidth: gw, guideHeight: gh)
+            if refined.count == gw * gh { depthValues = refined }
         }
-        var field = DepthField(width: depth.width, height: depth.height, nearness: depth.values, mask: maskValues)
+        let maskValues: [Float]
+        if let mask {
+            maskValues = DepthField(width: mask.width, height: mask.height, nearness: mask.values, mask: mask.values).resampled(width: gw, height: gh).nearness
+        } else {
+            maskValues = PixelMath.otsuMask(depthValues)
+        }
+        var field = DepthField(width: gw, height: gh, nearness: depthValues, mask: maskValues)
         let coverage = field.subjectCoverage()
         if coverage < 0.02 { throw Generate3DError.noSubject }
         if coverage > 0.97 {
@@ -268,6 +279,9 @@ enum ImageGenerationPipeline {
         var options = DepthMeshBuilder.Options()
         options.resolution = quality.gridResolution
         options.back = back
+        options.snapEdges = true
+        options.smoothingPasses = 1
+        options.backAtlas = back == .inflated
         var mesh: GeneratedMesh
         do { mesh = try DepthMeshBuilder.build(field, aspect: Double(image.width) / Double(image.height), options: options) }
         catch DepthMeshBuilder.Failure.noSubject, DepthMeshBuilder.Failure.tooSmall { throw Generate3DError.noSubject }
@@ -276,10 +290,43 @@ enum ImageGenerationPipeline {
         guard mesh.valid, mesh.depthExtent > 0.01 else { throw Generate3DError.meshFailed }
 
         progress(L10n.t("制作贴图", "Making the texture"), 0.85)
-        guard let texture = PixelReader.jpeg(image) else { throw Generate3DError.saveFailed("texture") }
+        let textureImage = back == .inflated ? (backAtlas(image, mask: field) ?? image) : image
+        guard let texture = PixelReader.jpeg(textureImage) else { throw Generate3DError.saveFailed("texture") }
+        if back == .inflated { notes.append(L10n.t("形体按轮廓推测：每处厚度随该处宽度变化；背面用正面整体颜色推测，不是 AI 重建的真实背面。", "Shape guessed from the outline (thickness follows local width); the back uses the front's overall colours, not a reconstructed back.")) }
         let thumbnail = subjectThumbnail(image, mask: field)
         return ImageGenerationOutput(mesh: mesh, texture: texture, textureWidth: image.width, textureHeight: image.height, thumbnail: thumbnail,
                                      depthSource: depthSource, humanoid: humanoid, notes: notes, back: back)
+    }
+
+    /// Texture with the picture on the left and a colour-only back on the
+    /// right: the picture heavily blurred, mixed with the subject's average
+    /// colour (no face or details on the back).
+    static func backAtlas(_ image: CGImage, mask: DepthField) -> CGImage? {
+        let w = image.width, h = image.height
+        guard let small = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        small.draw(image, in: CGRect(x: 0, y: 0, width: 64, height: 64))
+        var r = 0.0, g = 0.0, b = 0.0, n = 0.0
+        if let data = small.data?.assumingMemoryBound(to: UInt8.self) {
+            for y in 0..<64 { for x in 0..<64 {
+                // Context rows go bottom-up; the mask's go top-down.
+                let inside = mask.sample(mask.mask, u: Double(x) / 63, v: 1 - Double(y) / 63) >= 0.5
+                guard inside else { continue }
+                let o = (y * 64 + x) * 4
+                r += Double(data[o]); g += Double(data[o + 1]); b += Double(data[o + 2]); n += 1
+            } }
+        }
+        guard let atlas = CGContext(data: nil, width: w * 2, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+              let tiny = PixelReader.scaled(image, maxSide: 12) else { return nil }
+        atlas.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        atlas.interpolationQuality = .high
+        atlas.draw(tiny, in: CGRect(x: w, y: 0, width: w, height: h))
+        if n > 0 {
+            atlas.setFillColor(red: r / n / 255, green: g / n / 255, blue: b / n / 255, alpha: 0.6)
+            atlas.fill(CGRect(x: w, y: 0, width: w, height: h))
+        }
+        return atlas.makeImage()
     }
 
     /// Disparity stored by the camera (Portrait mode, dual cameras, LiDAR).
@@ -552,7 +599,7 @@ enum VideoReconstructionPipeline {
             vertexCount: mesh.vertexCount, triangleCount: mesh.triangleCount, textureWidth: output.textureWidth, textureHeight: output.textureHeight,
             meshFile: meshFile, textureFile: textureFile, usdzFile: usdzFile, thumbnailFile: output.thumbnail == nil ? nil : thumbnailFile,
             humanoidDetected: output.humanoid, rigging: .experimentalNotImplemented, animation: .experimentalNotImplemented,
-            separableParts: .notAvailable, notes: notes, backStyle: output.back)
+            separableParts: .notAvailable, notes: notes, backStyle: output.back, textureAtlas: output.back == .inflated ? true : nil)
         try save(manifest)
         return manifest
     }

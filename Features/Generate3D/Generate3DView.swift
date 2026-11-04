@@ -17,7 +17,7 @@ struct Generate3DScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var capabilities = Generate3DCapabilities.current()
     @State private var quality = Generate3DCapabilities.current().recommended
-    @State private var backStyle = DepthMeshBuilder.BackStyle.flat
+    @State private var backStyle = DepthMeshBuilder.BackStyle.inflated
     @State private var photoItem: PhotosPickerItem?
     @State private var choosingPhoto = false
     @State private var photoFilter = PHPickerFilter.images
@@ -70,13 +70,15 @@ struct Generate3DScreen: View {
                 Spacer()
                 Picker(L10n.t("精度", "Quality"), selection: $quality) { ForEach(GenerationQuality.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 240)
             }
-            HStack {
-                Text(L10n.t("背面", "Back")).font(.subheadline)
-                Spacer()
-                Picker(L10n.t("背面", "Back"), selection: $backStyle) { ForEach(DepthMeshBuilder.BackStyle.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(maxWidth: 240)
-            }
-            if backStyle == .mirrored {
-                Text(L10n.t("「镜像推测」让背面按正面的深度鼓起来，转动时更有体积感；这是推测，不是 AI 重建的真实背面。", "Mirrored guess makes the back bulge like the front for more volume when turned; it is a guess, not a reconstructed back.")).font(.caption2).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.t("立体方式", "Shape")).font(.subheadline)
+                Picker(L10n.t("立体方式", "Shape"), selection: $backStyle) { ForEach(DepthMeshBuilder.BackStyle.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
+                Text(backStyle == .inflated
+                     ? L10n.t("按人看图想象形体的方式：每个部位的厚度随它在画面里的宽度变化（细的耳朵、四肢薄而圆，宽的身体厚而圆），正面细节来自深度，背面用整体颜色，正反面在轮廓处无缝闭合。这是推测，不是 360° 重建。", "Like a person imagining the shape: each part's thickness follows its width in the picture (thin ears and limbs round and slim, wide bodies round and full); front details come from depth, the back uses the overall colours, and front and back close at the outline. A guess, not a 360° reconstruction.")
+                     : backStyle == .mirrored
+                     ? L10n.t("背面按正面深度鼓起来；这是推测，不是 AI 重建的真实背面。", "The back bulges like the front; a guess, not a reconstructed back.")
+                     : L10n.t("正面深度 + 平板背面（旧方式）。", "Front depth with a flat back (the old way)."))
+                    .font(.caption2).foregroundStyle(.secondary)
             }
             if capabilities.thermal >= 2 { Label(L10n.t("设备温度较高，生成可能暂停", "The device is warm; generation may pause"), systemImage: "thermometer.sun").font(.caption).foregroundStyle(.orange) }
         }
@@ -452,7 +454,7 @@ struct Generated3DDetailView: View {
 
     private var infoCard: some View {
         VStack(alignment: .leading, spacing: 6) {
-            row(L10n.t("类型", "Type"), current.geometry.title)
+            row(L10n.t("类型", "Type"), current.backStyle == .inflated ? L10n.t("形体推测立体模型（正面细节来自深度，体积按轮廓推测，背面为颜色推测；非真实 360° 重建）", "Shape-guess model (front details from depth, volume from the outline, back from colours; not a 360° reconstruction)") : current.geometry.title)
             row(L10n.t("深度来源", "Depth"), current.depthSource.title)
             row(L10n.t("生成引擎", "Engine"), current.engine + " " + current.engineVersion)
             if depthModel { row(L10n.t("精度", "Quality"), current.quality.title) }

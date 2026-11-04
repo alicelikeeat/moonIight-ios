@@ -1902,4 +1902,112 @@ do {
     print("RPG mirrored back: \(checks) total checks passed")
 }
 
+// P33: v1.69 quality: shape from the outline (round cross sections),
+// no side walls, colour-only back, edge snapping, guided depth upsampling.
+do {
+    func radial(_ mesh: GeneratedMesh, _ i: Int) -> Float {
+        let x: Float = mesh.positions[i * 3], y: Float = mesh.positions[i * 3 + 1]
+        return (x * x + y * y).squareRoot()
+    }
+    func zOf(_ mesh: GeneratedMesh, _ i: Int) -> Float { mesh.positions[i * 3 + 2] }
+
+    // A long strip 21 cells wide: the cross-section should be a half circle.
+    let sw = 60, sh = 23
+    var strip = [Bool](repeating: false, count: sw * sh)
+    for y in 1..<22 { for x in 0..<sw { strip[y * sw + x] = true } }
+    let swell = DepthRefine.inflation(strip, width: sw, height: sh, iterations: 400)
+    let centre = swell[11 * sw + 30], quarter = swell[6 * sw + 30]
+    check(abs(centre - 11) < 1.5, "strip centre as high as half its width (\(centre))")
+    check(abs(quarter - (5 * 17 as Float).squareRoot()) < 1.5, "half-circle cross section (\(quarter))")
+
+    // Body with a thin arm: the arm is thinner than the body.
+    let bw = 80, bh = 60
+    var bodyMask = [Float](repeating: 0, count: bw * bh)
+    for y in 10..<50 { for x in 10..<40 { bodyMask[y * bw + x] = 1 } }   // wide body
+    for y in 26..<34 { for x in 40..<75 { bodyMask[y * bw + x] = 1 } }   // thin arm
+    var volume = DepthMeshBuilder.Options(); volume.resolution = 80; volume.smoothingPasses = 0; volume.back = .inflated
+    let flatDepth = [Float](repeating: 0.5, count: bw * bh)
+    let figure = try DepthMeshBuilder.build(DepthField(width: bw, height: bh, nearness: flatDepth, mask: bodyMask), aspect: Double(bw) / Double(bh), options: volume)
+    func nearestFront(_ px: Double, _ py: Double) -> Int {
+        let tx = Float((px / Double(bw - 1) - 0.5) * Double(bw) / Double(bh)), ty = Float(0.5 - py / Double(bh - 1))
+        var best = 0; var bestD = Float.infinity
+        for i in 0..<(figure.vertexCount / 2) {
+            let dx: Float = figure.positions[i * 3] - tx, dy: Float = figure.positions[i * 3 + 1] - ty
+            if dx * dx + dy * dy < bestD { bestD = dx * dx + dy * dy; best = i }
+        }
+        return best
+    }
+    let bodyZ = zOf(figure, nearestFront(25, 30)), armZ = zOf(figure, nearestFront(60, 30))
+    check(bodyZ > 0.15 && armZ > 0.02 && armZ < bodyZ * 0.5, "thin arm thinner than the body (\(armZ) vs \(bodyZ))")
+    check(figure.valid && figure.triangleCount % 2 == 0, "volume mesh valid, front and back only")
+    let fronts = figure.vertexCount / 2
+    let backMin = (fronts..<figure.vertexCount).map { zOf(figure, $0) }.min()!, frontMax = (0..<fronts).map { zOf(figure, $0) }.max()!
+    check(backMin < -frontMax * 0.6 && backMin > -frontMax * 1.1, "back has volume too (\(backMin) vs \(frontMax))")
+    // Closed: every edge, keyed by its end positions, is used exactly twice.
+    var edgeUse: [String: Int] = [:]
+    func posKey(_ i: Int) -> String { String(format: "%.5f,%.5f,%.5f", figure.positions[i * 3], figure.positions[i * 3 + 1], figure.positions[i * 3 + 2]) }
+    for t in 0..<figure.triangleCount {
+        let tri = (0..<3).map { Int(figure.indices[t * 3 + $0]) }
+        for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] { let ka = posKey(a), kb = posKey(b); edgeUse[ka < kb ? ka + "|" + kb : kb + "|" + ka, default: 0] += 1 }
+    }
+    check(edgeUse.values.allSatisfy { $0 % 2 == 0 }, "front and back meet on the outline: closed (no open edges) without side walls")
+    var atlas = volume; atlas.backAtlas = true
+    let atlased = try DepthMeshBuilder.build(DepthField(width: bw, height: bh, nearness: flatDepth, mask: bodyMask), aspect: Double(bw) / Double(bh), options: atlas)
+    let half = atlased.vertexCount / 2
+    check((0..<half).allSatisfy { atlased.uvs[$0 * 2] <= 0.5 } && (half..<atlased.vertexCount).allSatisfy { atlased.uvs[$0 * 2] >= 0.5 }, "front uses the picture, back the colour-only half")
+    check((0..<half).allSatisfy { zOf(atlased, $0) >= 0 }, "front never dips behind the outline")
+
+    // Outline snapping on a disc.
+    let side = 200
+    var disc = [Float](repeating: 0, count: side * side)
+    for y in 0..<side { for x in 0..<side {
+        let dx = (Double(x) + 0.5) / Double(side) - 0.5, dy = (Double(y) + 0.5) / Double(side) - 0.5
+        disc[y * side + x] = (dx * dx + dy * dy).squareRoot() < 0.4 ? 1 : 0
+    } }
+    let discField = DepthField(width: side, height: side, nearness: disc, mask: disc)
+    var plain = DepthMeshBuilder.Options(); plain.resolution = 40; plain.smoothingPasses = 0; plain.closed = false
+    var snapped = plain; snapped.snapEdges = true
+    func outline(_ mesh: GeneratedMesh) -> [Float] {
+        var use: [String: Int] = [:]
+        for t in 0..<mesh.triangleCount {
+            let tri = (0..<3).map { Int(mesh.indices[t * 3 + $0]) }
+            for (a, b) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] { use["\(min(a, b))-\(max(a, b))", default: 0] += 1 }
+        }
+        let ids = Set(use.filter { $0.value == 1 }.keys.flatMap { $0.split(separator: "-").compactMap { Int($0) } })
+        return ids.map { radial(mesh, $0) }
+    }
+    func spread(_ r: [Float]) -> Float {
+        let mean = r.reduce(0, +) / Float(r.count)
+        let variance = r.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Float(r.count)
+        return variance.squareRoot()
+    }
+    let before = outline(try DepthMeshBuilder.build(discField, aspect: 1, options: plain))
+    let after = outline(try DepthMeshBuilder.build(discField, aspect: 1, options: snapped))
+    check(spread(after) < spread(before) * 0.6, "snapped outline is smoother (\(spread(before)) → \(spread(after)))")
+
+    // Guided upsampling: a coarse depth step lands on the picture's edge.
+    let lw = 8, lh = 4, gw = 64, gh = 32
+    var low = [Float](repeating: 0, count: lw * lh)
+    for y in 0..<lh { for x in 0..<lw { low[y * lw + x] = x < 4 ? 1 : 0 } }
+    var guidePixels = [Float](repeating: 0, count: gw * gh)
+    for y in 0..<gh { for x in 0..<gw { guidePixels[y * gw + x] = x < 30 ? 0.9 : 0.1 } }
+    let up = DepthRefine.guidedUpsample(low, width: lw, height: lh, guide: guidePixels, guideWidth: gw, guideHeight: gh)
+    let row: [Float] = (0..<gw).map { up[16 * gw + $0] }
+    check(row[28] > 0.85 && row[31] < 0.15, "depth edge follows the picture edge (\(row[28]), \(row[31]))")
+    let soft = DepthField(width: lw, height: lh, nearness: low, mask: low).resampled(width: gw, height: gh).nearness
+    let softRow: [Float] = (0..<gw).map { soft[16 * gw + $0] }
+    let blurredGuided = row.filter { $0 > 0.15 && $0 < 0.85 }.count
+    let blurredPlain = softRow.filter { $0 > 0.15 && $0 < 0.85 }.count
+    check(blurredGuided < blurredPlain, "sharper than plain resizing (\(blurredPlain) → \(blurredGuided))")
+    check(DepthRefine.guidedUpsample([1], width: 1, height: 1, guide: guidePixels, guideWidth: gw, guideHeight: gh).isEmpty, "bad input rejected")
+    let square = (0..<25).map { i in i % 5 > 0 && i % 5 < 4 && i / 5 > 0 && i / 5 < 4 }
+    let squareDistance = DepthRefine.distanceToOutside(square, width: 5, height: 5)
+    check(squareDistance[12] == 2 && squareDistance[6] == 1 && squareDistance[0] == 0, "distance to the outline")
+    check(GenerationQuality.medium.gridResolution >= 192, "denser default mesh")
+    // Rig mapping still works on an atlas-textured volume model.
+    let atlasMap = AutoRig.uvToXY(atlased)
+    check(atlasMap != nil && atlasMap!.ax > 1.5, "picture mapping fitted on the front only (atlas u is halved)")
+    print("RPG model quality: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

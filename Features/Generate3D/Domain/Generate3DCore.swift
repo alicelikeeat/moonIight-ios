@@ -132,7 +132,7 @@ struct GeneratedMesh: Equatable, Sendable {
 enum GenerationQuality: String, Codable, CaseIterable, Sendable {
     case low, medium, high
     /// Grid points along the longer side of the picture.
-    var gridResolution: Int { switch self { case .low: 96; case .medium: 144; case .high: 208 } }
+    var gridResolution: Int { switch self { case .low: 128; case .medium: 192; case .high: 288 } }
     /// Longest side of the saved texture (1024–2048 per the spec).
     var textureSize: Int { switch self { case .low: 1024; case .medium: 1536; case .high: 2048 } }
     var title: String { switch self { case .low: L10n.t("省电", "Light"); case .medium: L10n.t("标准", "Standard"); case .high: L10n.t("精细", "Detailed") } }
@@ -160,10 +160,37 @@ enum DepthMeshBuilder {
         /// Back surface: a flat plate, or the front depth mirrored (a guess
         /// for the unseen side, never a reconstruction).
         var back = BackStyle.flat
+        /// 0 = straight cut-out edges, 1 = fully rounded rim: the surface
+        /// curves down towards the outline like a cushion (v1.69 quality).
+        var edgeRounding: Float = 0
+        /// Rim width as a share of the longer side.
+        var rimWidth: Float = 0.05
+        /// Moves outline vertices onto the mask's 0.5 line, so the outline
+        /// follows the subject instead of grid steps (v1.69 quality).
+        var snapEdges = false
+        /// Inflated: thickness of the front half-volume (1 = round cross
+        /// sections), the back's share of it, and how much the AI depth adds.
+        var inflation: Float = 0.9
+        var backShare: Float = 0.85
+        var detail: Float = 0.25
+        /// Inflated: the texture is two pictures side by side — the front on
+        /// the left, a colour-only back on the right.
+        var backAtlas = false
     }
     enum BackStyle: String, Codable, CaseIterable, Sendable {
-        case flat, mirrored
-        var title: String { self == .flat ? L10n.t("平板", "Flat") : L10n.t("镜像推测", "Mirrored guess") }
+        /// v1.69: volume from the outline (every cross-section a half
+        /// circle, like a person imagines the shape), front details from
+        /// depth, back from the overall colours. Front and back meet at the
+        /// outline: no side walls.
+        case inflated
+        case mirrored, flat
+        var title: String {
+            switch self {
+            case .inflated: L10n.t("形体推测（推荐）", "Shape guess (recommended)")
+            case .mirrored: L10n.t("镜像推测", "Mirrored guess")
+            case .flat: L10n.t("平板", "Flat")
+            }
+        }
     }
 
     enum Failure: Error, Equatable { case invalidField, noSubject, tooSmall }
@@ -187,15 +214,36 @@ enum DepthMeshBuilder {
         let range = max(hi - lo, 1e-6)
         let width = Float(aspect), heightUnits: Float = 1
         let depth = options.depthScale * heightUnits, back = -options.backThickness * heightUnits
+        // Distance to the outline (in cells) for the rounded rim.
+        let rounding = min(max(options.edgeRounding, 0), 1)
+        let edgeDistance = rounding > 0 ? DepthRefine.distanceToOutside(inside, width: cols, height: rows) : []
+        let rim = max(2, Float(longer) * options.rimWidth)
+        let inflated = options.back == .inflated
+        let swell = inflated ? DepthRefine.inflation(inside, width: cols, height: rows) : []
+        let cell = heightUnits / Float(rows - 1)
 
         var mesh = GeneratedMesh()
         var front = [Int32](repeating: -1, count: cols * rows)
+        var gridOf: [(Int, Int)] = []
         for y in 0..<rows {
             for x in 0..<cols where inside[y * cols + x] {
                 let u = Float(x) / Float(cols - 1), v = Float(y) / Float(rows - 1)
                 let n = min(max((field.nearness[y * cols + x] - lo) / range, 0), 1)
+                var z = n * depth
+                if inflated {
+                    // Round body from the outline; depth adds detail that
+                    // fades out towards the outline.
+                    let body = swell[y * cols + x] * cell * options.inflation
+                    let fade = min(1, swell[y * cols + x] / 3)
+                    z = max(0, body + (n - 0.5) * depth * options.detail * fade)
+                } else if rounding > 0 {
+                    // Circular profile: 0 at the outline, 1 one rim width in.
+                    let t = min(edgeDistance[y * cols + x] / rim, 1), profile = (1 - (1 - t) * (1 - t)).squareRoot()
+                    z *= 1 - rounding + rounding * profile
+                }
                 front[y * cols + x] = Int32(mesh.vertexCount)
-                mesh.positions += [(u - 0.5) * width, (0.5 - v) * heightUnits, n * depth]
+                gridOf.append((x, y))
+                mesh.positions += [(u - 0.5) * width, (0.5 - v) * heightUnits, z]
                 mesh.uvs += [u, 1 - v]
             }
         }
@@ -219,7 +267,65 @@ enum DepthMeshBuilder {
         guard mesh.triangleCount > 0 else { throw Failure.tooSmall }
         let frontTriangles = mesh.triangleCount
 
-        if options.closed {
+        if options.snapEdges {
+            // Outline vertices move onto the mask's threshold line.
+            var outline = Set<Int>()
+            for t in 0..<frontTriangles {
+                let tri = [Int32(mesh.indices[t * 3]), Int32(mesh.indices[t * 3 + 1]), Int32(mesh.indices[t * 3 + 2])]
+                for (p, q) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] where edgeUse[key(p, q)] == 1 { outline.insert(Int(p)); outline.insert(Int(q)) }
+            }
+            func m(_ x: Int, _ y: Int) -> Float { field.mask[min(max(y, 0), rows - 1) * cols + min(max(x, 0), cols - 1)] }
+            let cellX = width / Float(cols - 1), cellY = heightUnits / Float(rows - 1)
+            for i in outline {
+                let (x, y) = gridOf[i]
+                let gx = (m(x + 1, y) - m(x - 1, y)) / 2, gy = (m(x, y + 1) - m(x, y - 1)) / 2
+                let g = (gx * gx + gy * gy).squareRoot()
+                guard g > 1e-4 else { continue }
+                // Search the full-resolution mask along the outward normal for
+                // the threshold crossing (within one cell either way).
+                let nx = -gx / g, ny = -gy / g
+                func maskAt(_ t: Float) -> Float {
+                    source.sample(source.mask, u: Double((Float(x) + nx * t) / Float(cols - 1)), v: Double((Float(y) + ny * t) / Float(rows - 1)))
+                }
+                var inner: Float = -1, outer: Float = 1
+                guard maskAt(inner) >= options.maskThreshold, maskAt(outer) < options.maskThreshold else { continue }
+                for _ in 0..<12 { let mid = (inner + outer) / 2; if maskAt(mid) >= options.maskThreshold { inner = mid } else { outer = mid } }
+                let t = (inner + outer) / 2
+                let dx = nx * t, dy = ny * t
+                mesh.positions[i * 3] += dx * cellX
+                mesh.positions[i * 3 + 1] -= dy * cellY
+                mesh.uvs[i * 2] = min(max(mesh.uvs[i * 2] + dx / Float(cols - 1), 0), 1)
+                mesh.uvs[i * 2 + 1] = min(max(mesh.uvs[i * 2 + 1] - dy / Float(rows - 1), 0), 1)
+            }
+        }
+
+        var outlineVertices = Set<Int>()
+        if inflated {
+            for t in 0..<frontTriangles {
+                let tri = [Int32(mesh.indices[t * 3]), Int32(mesh.indices[t * 3 + 1]), Int32(mesh.indices[t * 3 + 2])]
+                for (p, q) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] where edgeUse[key(p, q)] == 1 { outlineVertices.insert(Int(p)); outlineVertices.insert(Int(q)) }
+            }
+            for i in outlineVertices { mesh.positions[i * 3 + 2] = 0 }
+        }
+
+        if options.closed && inflated {
+            // Back: the outline's own volume behind (no walls: front and
+            // back meet on the outline at z = 0, with separate texture).
+            let frontCount = mesh.vertexCount
+            for i in 0..<frontCount {
+                let (x, y) = gridOf[i]
+                let z = outlineVertices.contains(i) ? 0 : -swell[y * cols + x] * cell * options.inflation * options.backShare
+                mesh.positions += [mesh.positions[i * 3], mesh.positions[i * 3 + 1], z]
+                mesh.uvs += [mesh.uvs[i * 2], mesh.uvs[i * 2 + 1]]
+            }
+            for t in 0..<frontTriangles {
+                let a = mesh.indices[t * 3], b = mesh.indices[t * 3 + 1], c = mesh.indices[t * 3 + 2]
+                mesh.indices += [a + UInt32(frontCount), c + UInt32(frontCount), b + UInt32(frontCount)]
+            }
+            if options.backAtlas {
+                for i in 0..<mesh.vertexCount { mesh.uvs[i * 2] = mesh.uvs[i * 2] * 0.5 + (i >= frontCount ? 0.5 : 0) }
+            }
+        } else if options.closed {
             // Back: the same outline on a flat plate, reversed winding.
             let frontCount = mesh.vertexCount
             // Mirrored: the back bulges like the front (70%), so a turned
@@ -250,6 +356,78 @@ enum DepthMeshBuilder {
     private static func key(_ a: Int32, _ b: Int32) -> UInt64 {
         let lo = UInt64(UInt32(bitPattern: min(a, b))), hi = UInt64(UInt32(bitPattern: max(a, b)))
         return lo << 32 | hi
+    }
+}
+
+// MARK: Depth refinement
+
+enum DepthRefine {
+    /// Chamfer (3-4) distance in cells from each inside cell to the nearest
+    /// outside cell or picture edge.
+    static func distanceToOutside(_ inside: [Bool], width w: Int, height h: Int) -> [Float] {
+        let big = Int32.max / 4
+        var d = inside.map { $0 ? big : 0 }
+        func at(_ x: Int, _ y: Int) -> Int32 { x < 0 || y < 0 || x >= w || y >= h ? 0 : d[y * w + x] }
+        for y in 0..<h { for x in 0..<w where d[y * w + x] > 0 {
+            d[y * w + x] = min(d[y * w + x], at(x - 1, y) + 3, at(x, y - 1) + 3, at(x - 1, y - 1) + 4, at(x + 1, y - 1) + 4)
+        } }
+        for y in stride(from: h - 1, through: 0, by: -1) { for x in stride(from: w - 1, through: 0, by: -1) where d[y * w + x] > 0 {
+            d[y * w + x] = min(d[y * w + x], at(x + 1, y) + 3, at(x, y + 1) + 3, at(x + 1, y + 1) + 4, at(x - 1, y + 1) + 4)
+        } }
+        return d.map { Float($0) / 3 }
+    }
+
+    /// Volume from the outline: solves ∇²h = −2 inside (h = 0 outside) and
+    /// returns √h in cells. For any strip this is a half circle as wide as
+    /// the strip, so thin parts get thin round volumes and wide parts round
+    /// bodies — the way people picture a shape they see from the front.
+    static func inflation(_ inside: [Bool], width w: Int, height h: Int, iterations: Int? = nil) -> [Float] {
+        var v = [Float](repeating: 0, count: w * h)
+        let cells = (0..<(w * h)).filter { inside[$0] && $0 % w > 0 && $0 % w < w - 1 && $0 / w > 0 && $0 / w < h - 1 }
+        guard !cells.isEmpty else { return v }
+        // Start from the distance transform (squared, roughly the answer).
+        let d = distanceToOutside(inside, width: w, height: h)
+        for i in cells { v[i] = d[i] * d[i] }
+        let omega: Float = 2 / (1 + Float.pi / Float(max(w, h)))
+        let count = iterations ?? max(60, max(w, h) * 2)
+        for _ in 0..<count {
+            for i in cells {
+                let next = (v[i - 1] + v[i + 1] + v[i - w] + v[i + w] + 2) / 4
+                v[i] += omega * (next - v[i])
+            }
+        }
+        return v.map { $0 > 0 ? $0.squareRoot() : 0 }
+    }
+
+    /// Joint bilateral upsampling: a low-resolution depth map is raised to
+    /// the guide picture's resolution, keeping depth edges where the picture
+    /// has edges (instead of blurring across the outline).
+    static func guidedUpsample(_ depth: [Float], width w: Int, height h: Int, guide: [Float], guideWidth gw: Int, guideHeight gh: Int,
+                               radius: Int = 2, sigmaSpatial: Float = 1, sigmaRange: Float = 0.08) -> [Float] {
+        guard w > 1, h > 1, gw > 1, gh > 1, depth.count == w * h, guide.count == gw * gh else { return [] }
+        var out = [Float](repeating: 0, count: gw * gh)
+        let sx = Float(w - 1) / Float(gw - 1), sy = Float(h - 1) / Float(gh - 1)
+        let toGuideX = Float(gw - 1) / Float(w - 1), toGuideY = Float(gh - 1) / Float(h - 1)
+        let s2 = 2 * sigmaSpatial * sigmaSpatial, r2 = 2 * sigmaRange * sigmaRange
+        for y in 0..<gh {
+            let ly = Float(y) * sy, cy = Int(ly.rounded())
+            for x in 0..<gw {
+                let lx = Float(x) * sx, cx = Int(lx.rounded())
+                let g = guide[y * gw + x]
+                var sum: Float = 0, weight: Float = 0
+                for j in max(0, cy - radius)...min(h - 1, cy + radius) {
+                    for i in max(0, cx - radius)...min(w - 1, cx + radius) {
+                        let ds = (Float(i) - lx) * (Float(i) - lx) + (Float(j) - ly) * (Float(j) - ly)
+                        let gxp = min(gw - 1, Int((Float(i) * toGuideX).rounded())), gyp = min(gh - 1, Int((Float(j) * toGuideY).rounded()))
+                        let dg = guide[gyp * gw + gxp] - g
+                        let k = exp(-ds / s2) * exp(-(dg * dg) / r2)
+                        sum += k * depth[j * w + i]; weight += k
+                    }
+                }
+                out[y * gw + x] = weight > 1e-12 ? sum / weight : depth[min(h - 1, cy) * w + min(w - 1, cx)]
+            }
+        }
+        return out
     }
 }
 
@@ -372,6 +550,8 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
     var backStyle: DepthMeshBuilder.BackStyle?
     /// v1.68: rig files (Skeletons/<id>.json and .skin, Animations/<id>.json).
     var rigFile: String?
+    /// v1.69: texture is [picture | colour-only back] side by side.
+    var textureAtlas: Bool?
 
     var valid: Bool { !id.isEmpty && !name.isEmpty && vertexCount >= 0 && triangleCount >= 0 && (meshFile != nil || usdzFile != nil) }
 

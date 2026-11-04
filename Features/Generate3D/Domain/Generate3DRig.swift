@@ -137,7 +137,11 @@ enum AutoRig {
     static func uvToXY(_ mesh: GeneratedMesh) -> (ax: Float, bx: Float, ay: Float, by: Float)? {
         func fit(_ input: (Int) -> Float, _ output: (Int) -> Float) -> (Float, Float)? {
             var sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0, n = 0.0
-            for i in stride(from: 0, to: mesh.vertexCount, by: max(1, mesh.vertexCount / 4000)) {
+            // Front surface only (z > 0): back vertices may use another part
+            // of the texture (v1.69 back atlas).
+            let sample = Array(stride(from: 0, to: mesh.vertexCount, by: max(1, mesh.vertexCount / 4000)))
+            let front = sample.filter { mesh.positions[$0 * 3 + 2] > 0 }
+            for i in front.count >= 8 ? front : sample {
                 let x = Double(input(i)), y = Double(output(i))
                 sx += x; sy += y; sxx += x * x; sxy += x * y; n += 1
             }
