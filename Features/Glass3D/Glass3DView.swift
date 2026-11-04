@@ -684,7 +684,7 @@ struct Glass3DPanel: View {
         .hudGlass(.panel, radius: 24)
         .buttonStyle(.borderless)
         .sheet(isPresented: $pickingMedia) {
-            Glass3DMediaPicker(items: glass3DMediaItems(store), title: blocks.count > 1 ? L10n.t("选择媒体（切成 \(blocks.count) 格）", "Choose Media (split over \(blocks.count))") : L10n.t("选择媒体", "Choose Media"), current: currentMedia(blocks)?.id) { item in
+            Glass3DMediaPicker(store: store, title: blocks.count > 1 ? L10n.t("选择媒体（切成 \(blocks.count) 格）", "Choose Media (split over \(blocks.count))") : L10n.t("选择媒体", "Choose Media"), current: currentMedia(blocks)?.id, used: controller.worldMediaIDs) { item in
                 controller.assignMedia(id: item.id, kind: item.kind, face: face, stretch: stretch)
             }
         }

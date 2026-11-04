@@ -90,7 +90,7 @@ private struct Glass3DCharacterForm: View {
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("保存", "Save")) { save(); dismiss() }.disabled(!draft.valid) } }
         .sheet(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } })) {
             if let action = picking {
-                Glass3DMediaPicker(items: glass3DMediaItems(store), title: action.title) { item in add(item, to: action) }
+                Glass3DMediaPicker(store: store, title: action.title, used: controller.worldMediaIDs) { item in add(item, to: action) }
             }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [UTType.usdz]) { result in

@@ -1056,6 +1056,11 @@ struct Glass3DPending {
             SpatialBuilder.mediaGrid(bindingID: binding.id, blocks: ids, face: face, stretch: stretch, world: &w)
         }
     }
+    /// Library media this world shows, newest first (reuse row in the picker).
+    var worldMediaIDs: [String] {
+        var seen = Set<String>()
+        return session.world.mediaBindings.reversed().compactMap { seen.insert($0.mediaID).inserted ? $0.mediaID : nil }
+    }
     /// Library media behind a saved binding (previews in the editors).
     func mediaID(forBinding id: String) -> String? { session.world.mediaBindings.first { $0.id == id }?.mediaID }
     func clearMedia() { updateSelected(L10n.t("移除媒体", "Remove Media")) { $0.media = nil } }
