@@ -86,6 +86,11 @@ struct Glass3DPending {
     @Published var trackClosed = false
 
     private var link: CADisplayLink?
+    private var driven = false
+    /// RealityKit frame-update subscription (kept alive with the controller).
+    var updates: EventSubscription?
+    /// Right stick (look): turns and tilts the camera while held.
+    private var look = (x: 0.0, y: 0.0)
     // v1.60 battle, characters, camera.
     private var battle = SpatialBattle()
     let effects = Glass3DEffects()
@@ -147,6 +152,7 @@ struct Glass3DPending {
     }
     func stop() {
         link?.invalidate(); link = nil; lastTime = nil
+        updates?.cancel(); updates = nil; driven = false
         persist(force: true)
         renderer.media.stop()
     }
@@ -161,9 +167,22 @@ struct Glass3DPending {
     // MARK: Frame
 
     @objc private func tick(_ link: CADisplayLink) {
+        // Fallback only: once RealityKit's own update event drives frames
+        // (in step with rendering, no judder) the display link is idle.
+        guard !driven else { return }
         let now = link.timestamp
         let dt = min(0.05, max(0, now - (lastTime ?? now)))
         lastTime = now
+        frame(dt)
+    }
+
+    /// RealityKit calls this once per rendered frame.
+    func renderedFrame(_ dt: Double) {
+        driven = true
+        frame(min(0.05, max(0, dt)))
+    }
+
+    private func frame(_ dt: Double) {
         guard dt > 0 else { return }
         frameTimes.append(dt); if frameTimes.count > 120 { frameTimes.removeFirst() }
         world.clock += dt
@@ -175,7 +194,14 @@ struct Glass3DPending {
         previousGeometry = geometry
         renderer.place(frames: frames)
         renderer.placePlayer(world.player)
-        if mode == .play { follow(dt: dt) }
+        if mode == .play {
+            if abs(look.x) > 0.01 || abs(look.y) > 0.01 {
+                camera.yaw = (camera.yaw + look.x * 150 * dt).truncatingRemainder(dividingBy: 360)
+                camera.tilt = SpatialCameraRules.clampTilt(camera.tilt - look.y * 70 * dt)
+                manualCameraUntil = world.clock + 1.5
+            }
+            follow(dt: dt)
+        }
         renderer.place(camera: camera, eye: SpatialCameraRules.position(camera) + effects.shakeOffset(dt: dt))
         updateCharacters()
         renderer.animate(clock: world.clock)
@@ -385,6 +411,7 @@ struct Glass3DPending {
     // MARK: Input (HUD)
 
     func setStick(_ x: Double, _ y: Double) { stick = (x, y) }
+    func setLook(_ x: Double, _ y: Double) { look = (x, y) }
     func jump() { jumpRequested = true }
 
     func attack(_ kind: SpatialCombat.Attack) {
@@ -392,6 +419,16 @@ struct Glass3DPending {
         let cost = kind == .strike ? 8 : 25
         guard stamina >= cost else { notice = L10n.t("耐力不足", "Not enough stamina"); return }
         if kind == .strike { guard localCooldowns.strike <= 0 else { return }; localCooldowns.strike = 0.35 } else { guard localCooldowns.skill <= 0 else { return }; localCooldowns.skill = 3 }
+        // Always visible, hit or miss: a swing burst in front, or a ring around.
+        let radians = world.player.facing * .pi / 180
+        if kind == .strike {
+            effects.burst(.spark, at: world.player.position + SpatialVector(cos(radians) * 0.9, sin(radians) * 0.9, 0.9), seconds: 0.2, clock: world.clock, quality: quality)
+            renderer.punch(lunge: true)
+        } else {
+            effects.burst(.magic, at: world.player.position + SpatialVector(0, 0, 0.4), seconds: 0.5, clock: world.clock, quality: quality)
+            renderer.telegraph(id: "player-skill", at: world.player.position, radius: 3.5, seconds: 0.35)
+            renderer.punch(lunge: false)
+        }
         stamina -= cost
         let damage = (kind == .strike ? 12 : 25) + (session.world.player.weapon == .moonBlade ? 8 : 0)
         let before = world.creatures
@@ -413,6 +450,8 @@ struct Glass3DPending {
     func roll() {
         guard mode == .play, health > 0, localCooldowns.roll <= 0, stamina >= 18 else { return }
         localCooldowns.roll = 1.2; stamina -= 18; invulnerable = 0.35
+        effects.burst(.smoke, at: world.player.position + SpatialVector(0, 0, 0.3), seconds: 0.3, clock: world.clock, quality: quality)
+        renderer.punch(lunge: true)
         let radians = world.player.facing * .pi / 180
         let geometry = staticGeometry.moved(frames: world.groupFrames(pivots: pivots, clock: world.clock))
         for _ in 0..<10 {
@@ -436,7 +475,8 @@ struct Glass3DPending {
     }
     func clampCamera() {
         camera.tilt = SpatialCameraRules.clampTilt(camera.tilt)
-        camera.distance = SpatialCameraRules.clampDistance(camera, aspect: aspect)
+        // Full 3D uses real render cost, not the 2D 300-cell budget (spec 19.1).
+        camera.distance = min(80, max(SpatialCameraRules.minDistance, camera.distance.isFinite ? camera.distance : 8))
         camera.target = SpatialVector(min(255.5, max(0.5, camera.target.x)), min(255.5, max(0.5, camera.target.y)), camera.target.z)
     }
     func zoom(by factor: Double) { camera.distance /= max(0.2, factor); preferredDistance = camera.distance; clampCamera() }

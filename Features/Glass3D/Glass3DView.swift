@@ -155,6 +155,7 @@ struct Glass3DScreen: View {
                 Glass3DStick { x, y in controller.setStick(x, y) }
             }
             Spacer()
+            HStack(alignment: .bottom, spacing: 10) {
             if controller.health == 0 {
                 Button { controller.revive() } label: { Label(L10n.t("复苏", "Revive"), systemImage: "heart.fill").padding(.horizontal, 18).padding(.vertical, 12) }
                     .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 24).accessibilityIdentifier("glass3d-revive")
@@ -178,6 +179,9 @@ struct Glass3DScreen: View {
                         }
                     }
                 }
+            }
+                // Right stick: look around (turn and tilt the camera).
+                Glass3DStick(onVector: { x, y in controller.setLook(x, y) }, size: 112, symbol: "eye", label: L10n.t("视角摇杆", "Look Stick"), identifier: "glass3d-look-stick")
             }
         }
     }
@@ -325,6 +329,9 @@ struct Glass3DScreen: View {
 struct Glass3DStick: View {
     let onVector: (Double, Double) -> Void
     var size: CGFloat = 124
+    var symbol: String? = nil
+    var label = L10n.t("移动摇杆", "Movement Stick")
+    var identifier = "glass3d-stick"
     @State private var knob: CGSize = .zero
     @GestureState private var touching = false
 
@@ -333,7 +340,9 @@ struct Glass3DStick: View {
         ZStack {
             Color.clear.frame(width: size, height: size).hudGlass(.interactive, in: Circle())
             Color.clear.frame(width: 48, height: 48).hudGlass(.interactive, in: Circle())
-                .overlay(Circle().fill(Color.white.opacity(touching ? 0.28 : 0.12))).offset(knob)
+                .overlay(Circle().fill(Color.white.opacity(touching ? 0.28 : 0.12)))
+                .overlay { if let symbol { Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.secondary) } }
+                .offset(knob)
         }
         .frame(width: size, height: size).contentShape(Circle())
         .gesture(DragGesture(minimumDistance: 0).updating($touching) { _, state, _ in state = true }.onChanged { value in
@@ -345,7 +354,7 @@ struct Glass3DStick: View {
         })
         .onChange(of: touching) { active in if !active { knob = .zero; onVector(0, 0) } }
         .onDisappear { onVector(0, 0) }
-        .accessibilityElement().accessibilityLabel(L10n.t("移动摇杆", "Movement Stick")).accessibilityIdentifier("glass3d-stick")
+        .accessibilityElement().accessibilityLabel(label).accessibilityIdentifier(identifier)
     }
 }
 
@@ -358,6 +367,10 @@ struct Glass3DWorldView: View {
             RealityView { content in
                 content.camera = .virtual
                 content.add(controller.renderer.root)
+                // Drive the game from RealityKit's own frame updates (in step with rendering).
+                controller.updates = content.subscribe(to: SceneEvents.Update.self) { event in
+                    MainActor.assumeIsolated { controller.renderedFrame(event.deltaTime) }
+                }
             }
             .onAppear { controller.viewSize = geometry.size }
             .onChange(of: geometry.size) { _, size in controller.viewSize = size }

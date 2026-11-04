@@ -329,10 +329,19 @@ import Metal
         for entity in pickupEntities.values { entity.orientation = spin }
     }
 
+    private var punchStart = -10.0, punchLunge = true
     func placePlayer(_ player: SpatialPlayer) {
         playerEntity.position = Self.position(player.position)
+        // RealityKit turns counter-clockwise around +Y; map facing is the same sense.
         playerEntity.orientation = simd_quatf(angle: Float(player.facing * .pi / 180), axis: [0, 1, 0])
+        // A short squash and lean so every action button visibly does something.
+        let t = clock - punchStart
+        if t < 0.25 {
+            let k = Float(sin(t / 0.25 * .pi))
+            playerEntity.scale = punchLunge ? [1 + 0.25 * k, 1 - 0.15 * k, 1] : [1 + 0.2 * k, 1 + 0.2 * k, 1 + 0.2 * k]
+        } else if playerEntity.scale != [1, 1, 1] { playerEntity.scale = [1, 1, 1] }
     }
+    func punch(lunge: Bool) { punchStart = clock; punchLunge = lunge }
 
     // MARK: Preview and selection
 
