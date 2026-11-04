@@ -158,6 +158,7 @@ struct Glass3DPending {
     }
 
     private func modeChanged() {
+        glide = nil
         pending = nil; selection = []; trackPoints = []
         camera.tilt = mode == .edit ? SpatialCameraRules.editTilt : SpatialCameraRules.playTilt
         if mode == .play { camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() } }
@@ -201,6 +202,8 @@ struct Glass3DPending {
                 manualCameraUntil = world.clock + 1.5
             }
             follow(dt: dt)
+        } else {
+            stepGlide(dt: dt)
         }
         renderer.place(camera: camera, eye: SpatialCameraRules.position(camera) + effects.shakeOffset(dt: dt))
         updateCharacters()
@@ -479,28 +482,49 @@ struct Glass3DPending {
         camera.distance = min(80, max(SpatialCameraRules.minDistance, camera.distance.isFinite ? camera.distance : 8))
         camera.target = SpatialVector(min(255.5, max(0.5, camera.target.x)), min(255.5, max(0.5, camera.target.y)), camera.target.z)
     }
-    func zoom(by factor: Double) { camera.distance /= max(0.2, factor); preferredDistance = camera.distance; clampCamera() }
-    func turn(by degrees: Double) { camera.yaw = (camera.yaw + degrees).truncatingRemainder(dividingBy: 360); manualCameraUntil = world.clock + 1.5; clampCamera() }
-    func tilt(by degrees: Double) { camera.tilt += degrees; manualCameraUntil = world.clock + 1.5; clampCamera() }
+    func zoom(by factor: Double) { glide = nil; camera.distance /= max(0.2, factor); preferredDistance = camera.distance; clampCamera() }
+    func turn(by degrees: Double) { glide = nil; camera.yaw = (camera.yaw + degrees).truncatingRemainder(dividingBy: 360); manualCameraUntil = world.clock + 1.5; clampCamera() }
+    func tilt(by degrees: Double) { glide = nil; camera.tilt += degrees; manualCameraUntil = world.clock + 1.5; clampCamera() }
     /// Free camera (design): fly up and down, look at the selection, look
     /// straight down, come back to the character.
-    func fly(_ dz: Double) { camera.target = camera.target + SpatialVector(0, 0, dz); clampCamera() }
-    func focusSelection() {
+    func fly(_ dz: Double) { glide = nil; camera.target = camera.target + SpatialVector(0, 0, dz); clampCamera() }
+    func focusSelection() { glide = nil;
         let blocks = selectedBlocks
         guard !blocks.isEmpty else { return }
         let n = Double(blocks.count)
         camera.target = SpatialVector(blocks.map { Double($0.x) + 0.5 }.reduce(0, +) / n, blocks.map { Double($0.y) + 0.5 }.reduce(0, +) / n, blocks.map(\.elevation).reduce(0, +) / n)
         camera.distance = 10; clampCamera()
     }
-    func lookStraightDown() { camera.tilt = 0; clampCamera() }
-    func backToCharacter() { camera.target = world.player.position; clampCamera() }
-    func pan(screenDX: Double, screenDY: Double) {
+    func lookStraightDown() { glide = nil; camera.tilt = 0; clampCamera() }
+    /// Glides to an angled close-up behind the character and pulses it,
+    /// so the tap always shows a change even when it was already centred.
+    func backToCharacter() {
+        let p = world.player.position
+        glide = SpatialCameraState(target: SpatialVector(p.x, p.y, p.z), tilt: 40,
+                                   yaw: ThirdPersonCamera.yawBehind(facing: world.player.facing), distance: 9)
+        renderer.punch(lunge: false)
+        effects.burst(.magic, at: p + SpatialVector(0, 0, 0.4), seconds: 0.5, clock: world.clock, quality: quality)
+    }
+    /// Camera move in progress (design-mode buttons).
+    private var glide: SpatialCameraState?
+    private func stepGlide(dt: Double) {
+        guard let goal = glide else { return }
+        let k = min(1, dt * 7)
+        camera.target = SpatialVector.lerp(camera.target, goal.target, k)
+        camera.tilt += (goal.tilt - camera.tilt) * k
+        camera.distance += (goal.distance - camera.distance) * k
+        camera.yaw = ThirdPersonCamera.approach(camera.yaw, goal.yaw, rate: 360, dt: dt)
+        clampCamera()
+        let close = (camera.target - goal.target).flatLength < 0.02 && abs(camera.tilt - goal.tilt) < 0.2 && abs(camera.distance - goal.distance) < 0.05 && abs((camera.yaw - goal.yaw).remainder(dividingBy: 360)) < 0.5
+        if close { glide = nil }
+    }
+    func pan(screenDX: Double, screenDY: Double) { glide = nil;
         let scale = camera.distance / 400
         let direction = SpatialCameraRules.worldDirection(stickX: -screenDX, stickY: -screenDY, yaw: camera.yaw)
         camera.target = camera.target + SpatialVector(direction.dx * scale, direction.dy * scale, 0)
         clampCamera()
     }
-    func resetCamera() {
+    func resetCamera() { glide = nil;
         camera.yaw = 0; camera.tilt = mode == .edit ? SpatialCameraRules.editTilt : SpatialCameraRules.playTilt
         camera.distance = 14; if mode == .play { camera.target = world.player.position }
         clampCamera()
@@ -630,6 +654,13 @@ struct Glass3DPending {
     }
     /// On when the system has Liquid Glass, the setting is on and the
     /// quality level gives it a budget.
+    /// Short HUD text: face count when on, otherwise why it is off.
+    var nativeGlassStatus: String {
+        if !Self.nativeGlassAvailable { return L10n.t("原生玻璃需 iOS 26", "Native glass needs iOS 26") }
+        if !nativeGlassEnabled { return L10n.t("原生玻璃已关闭", "Native glass off") }
+        if SpatialFaces.budget(quality) == 0 { return L10n.t("性能优先：无原生玻璃", "Performance: no native glass") }
+        return L10n.t("原生玻璃面 \(nativeGlass.faces)", "\(nativeGlass.faces) native glass faces")
+    }
     var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && SpatialFaces.budget(quality) > 0 }
 
     private func updateNativeGlass(frames: [String: GroupFrame]) {

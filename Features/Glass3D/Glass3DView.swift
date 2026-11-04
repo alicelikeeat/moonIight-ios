@@ -95,8 +95,8 @@ struct Glass3DScreen: View {
             }
             .padding(2).background(Color.primary.opacity(0.08), in: Capsule())
             Spacer(minLength: 4)
-            Text(L10n.t("方块 \(controller.stats.blocks) · 原生玻璃面 \(controller.nativeGlass.faces) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS",
-                        "\(controller.stats.blocks) blocks · \(controller.nativeGlass.faces) native glass faces · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS"))
+            Text(L10n.t("方块 \(controller.stats.blocks) · \(controller.nativeGlassStatus) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS",
+                        "\(controller.stats.blocks) blocks · \(controller.nativeGlassStatus) · AI \(controller.stats.activeAI) · \(Int(controller.stats.fps)) FPS"))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1).accessibilityIdentifier("glass3d-stats")
             if controller.mode == .edit {
                 icon("arrow.uturn.backward", L10n.t("撤销", "Undo"), id: "glass3d-undo") { controller.undo() }.disabled(!controller.canUndo)
