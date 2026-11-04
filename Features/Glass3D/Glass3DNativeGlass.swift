@@ -56,12 +56,14 @@ import SwiftUI
             guard let blockDepth = projection.project(center)?.depth else { continue }
             let mediaFace: Int? = block.media.map { media in switch media.face { case .top: 0; case .front: 2; case .side: 3 } }
             for face in SpatialFaces.visibleFaces(corners, eye: eye) where face.index != mediaFace {
-                let points = face.points.compactMap { projection.project($0)?.point }
-                guard points.count == 4 else { continue }
+                let projected = face.points.compactMap { projection.project($0) }
+                guard projected.count == 4 else { continue }
+                let points = projected.map(\.point)
                 var facePath = Path()
                 facePath.addLines(SpatialFaces.oriented(points)); facePath.closeSubpath()
                 let bounds = facePath.boundingRect
-                guard bounds.intersects(CGRect(origin: .zero, size: projection.viewSize)) else { continue }
+                guard SpatialFaces.drawable(depths: projected.map(\.depth), bounds: bounds, viewSize: projection.viewSize),
+                      bounds.intersects(CGRect(origin: .zero, size: projection.viewSize)) else { continue }
                 for cut in cutouts where cut.depth < blockDepth - 0.3 && cut.rect.intersects(bounds) {
                     facePath = facePath.subtracting(Path(roundedRect: cut.rect, cornerRadius: min(cut.rect.width, cut.rect.height) / 3))
                 }

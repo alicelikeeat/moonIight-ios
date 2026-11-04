@@ -33,6 +33,20 @@ enum SpatialFaces {
         [3, 0, 4, 7], // west (−x)
     ]
 
+    /// Nearest depth (in front of the camera) a glass face may have. The 3D
+    /// view clips geometry right in front of the lens, but a projected
+    /// glass path would blow up to cover the screen (seen after revive, when
+    /// the camera came to rest next to a block).
+    static let nearestFaceDepth = 0.6
+
+    /// A projected face is drawn only when every corner is far enough in
+    /// front of the camera and it is not larger than the view itself.
+    static func drawable(depths: [Double], bounds: CGRect, viewSize: CGSize) -> Bool {
+        guard depths.count == 4, depths.allSatisfy({ $0.isFinite && $0 >= nearestFaceDepth }) else { return false }
+        guard bounds.width.isFinite, bounds.height.isFinite else { return false }
+        return bounds.width <= viewSize.width * 1.2 && bounds.height <= viewSize.height * 1.2
+    }
+
     /// The faces turned toward `eye` (at most three for a box).
     static func visibleFaces(_ corners: [SpatialVector], eye: SpatialVector) -> [(index: Int, points: [SpatialVector])] {
         guard corners.count == 8 else { return [] }

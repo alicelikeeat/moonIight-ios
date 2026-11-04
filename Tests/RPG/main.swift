@@ -2027,4 +2027,27 @@ do {
     print("RPG world characters: \(checks) total checks passed")
 }
 
+// P35: native glass never draws faces right in front of the lens (the white
+// screen-filling shape after revive).
+do {
+    let view = CGSize(width: 390, height: 844)
+    check(SpatialFaces.drawable(depths: [5, 5, 6, 6], bounds: CGRect(x: 100, y: 100, width: 80, height: 60), viewSize: view), "normal face drawn")
+    check(!SpatialFaces.drawable(depths: [0.2, 5, 6, 6], bounds: CGRect(x: 100, y: 100, width: 80, height: 60), viewSize: view), "corner at the lens: skipped")
+    check(!SpatialFaces.drawable(depths: [3, 3, 3, 3], bounds: CGRect(x: -2000, y: -900, width: 4500, height: 3000), viewSize: view), "face bigger than the screen: skipped")
+    check(!SpatialFaces.drawable(depths: [3, 3, .nan, 3], bounds: CGRect(x: 0, y: 0, width: 10, height: 10), viewSize: view), "broken projection skipped")
+    // A real case: camera half a cell from a block face.
+    let camera = SpatialProjection(eye: SpatialVector(10.5, 9.7, 1.5), target: SpatialVector(10.5, 14, 1.0), fieldOfView: 30, viewSize: view)
+    let block = SpatialBlock(id: "near", x: 10, y: 10, elevation: 0, thickness: 3)
+    var drawnHuge = 0
+    for face in SpatialFaces.visibleFaces(SpatialFaces.corners(block), eye: camera.eye) {
+        let projected = face.points.compactMap { camera.project($0) }
+        guard projected.count == 4 else { continue }
+        let xs = projected.map { $0.point.x }, ys = projected.map { $0.point.y }
+        let bounds = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+        if SpatialFaces.drawable(depths: projected.map(\.depth), bounds: bounds, viewSize: view) && bounds.width > view.width { drawnHuge += 1 }
+    }
+    check(drawnHuge == 0, "block next to the camera cannot cover the screen with glass")
+    print("RPG near glass: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
