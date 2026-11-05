@@ -44,7 +44,13 @@ struct Glass3DPending {
     let session: RPGSession
     let renderer = Glass3DRenderer()
     /// Size of the 3D view in points (for projection, picking, aspect).
-    var viewSize: CGSize = .zero
+    var viewSize: CGSize = .zero {
+        // v1.78: rotation or a new layout — the glass must not show the old
+        // projection; it fades back in once the new size has settled.
+        didSet { if viewSize != oldValue { glassFade.restart(); nativeGlass.reset() } }
+    }
+    /// v1.78: native glass shape updates per second (performance readout).
+    private(set) var glassMeter = GlassPerfMeter()
     /// Native iOS glass on blocks (iOS 26+), drawn by the SwiftUI layer.
     let nativeGlass = Glass3DNativeGlass()
     @Published var nativeGlassEnabled = UserDefaults.standard.object(forKey: "moonlight.glass3d.native") as? Bool ?? true {
@@ -227,6 +233,7 @@ struct Glass3DPending {
             link?.isPaused = true
         } else {
             lastTime = nil
+            glassFade.restart(); nativeGlass.reset()
             link?.isPaused = false
             // Everything edited while hidden (looks, tools) is shown again.
             rebuildAll(); renderer.showSelection(selectedBlocks)
@@ -267,6 +274,7 @@ struct Glass3DPending {
         nativeGlass.setOpacity(visibility)
         renderer.setBlockGlassOpacity(nativeGlassActive ? Float(1 - 0.55 * visibility) : 1)
         updateNativeGlass(frames: frames, drawFaces: visibility > 0)
+        glassMeter.frame(dt: dt, publishes: nativeGlass.publishes)
         renderTimer += dt
         if renderTimer > 0.25 { renderTimer = 0; refreshVisible() }
         renderer.media.update(visibleMedia: visibleMediaIDs, clock: world.clock, paused: pausedMedia(frames: frames))
@@ -786,10 +794,19 @@ struct Glass3DPending {
     var nativeGlassStatus: String {
         if !Self.nativeGlassAvailable { return L10n.t("原生玻璃需 iOS 26", "Native glass needs iOS 26") }
         if !nativeGlassEnabled { return L10n.t("原生玻璃已关闭", "Native glass off") }
+        if reduceTransparency { return L10n.t("降低透明度：无原生玻璃", "Reduce Transparency: no native glass") }
         if SpatialFaces.budget(quality) == 0 { return L10n.t("性能优先：无原生玻璃", "Performance: no native glass") }
-        return L10n.t("原生玻璃面 \(nativeGlass.faces)", "\(nativeGlass.faces) native glass faces")
+        // v1.78: plus how often the glass shape was re-published per second.
+        let rate = Int(glassMeter.publishesPerSecond.rounded())
+        return L10n.t("原生玻璃面 \(nativeGlass.faces) · 更新 \(rate)/s", "\(nativeGlass.faces) native glass faces · \(rate) updates/s")
     }
-    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && SpatialFaces.budget(quality) > 0 }
+    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && SpatialFaces.budget(quality) > 0 }
+    /// v1.78: the system's Reduce Transparency setting (set by the view).
+    /// Turns the block glass off for as long as it is on, without touching
+    /// the saved "native glass" switch.
+    var reduceTransparency = false {
+        didSet { guard reduceTransparency != oldValue else { return }; glassFade.restart(); nativeGlass.reset(); applyQuality() }
+    }
 
     private func updateNativeGlass(frames: [String: GroupFrame], drawFaces: Bool) {
         let projection = self.projection
@@ -980,6 +997,18 @@ struct Glass3DPending {
     func alignSelection() { let ids = Set(selection), h = buildHeight; edit(L10n.t("高度对齐", "Align Heights")) { w in SpatialBuilder.align(ids, elevation: h, world: &w) } }
     func gradientSelection(to top: Double) { let ids = Set(selection), h = buildHeight; edit(L10n.t("高度渐变", "Height Gradient")) { w in SpatialBuilder.gradient(ids, from: h, to: top, world: &w) } }
     func deleteSelection() { let ids = Set(selection); edit(L10n.t("删除 \(ids.count) 个方块", "Delete \(ids.count) blocks")) { w in w.blocks.removeAll { ids.contains($0.id) } }; selection = [] }
+
+    /// v1.78 selection tools: copy the selection beside itself (undoable).
+    func duplicateSelection() {
+        let ids = Set(selection); guard !ids.isEmpty else { return }
+        let prefix = "c:" + UUID().uuidString
+        var made: [String] = []
+        edit(L10n.t("复制 \(ids.count) 个方块", "Copy \(ids.count) blocks")) { w in made = SpatialBuilder.duplicate(ids, idPrefix: prefix, world: &w) }
+        // Only when the edit was committed (a refused edit leaves the world as it was).
+        let committed = Set(world.blocks.map(\.id))
+        let kept = made.filter { committed.contains($0) }
+        if !kept.isEmpty { selection = kept }
+    }
 
     var selectedGroup: BuildingGroup? { selectedBlocks.first?.groupID.flatMap { id in world.groups.first { $0.id == id } } }
 

@@ -29,7 +29,7 @@ import SwiftUI
 
     func update(projection: SpatialProjection, blocks: [SpatialBlock], frames: [String: GroupFrame], characters: [Character], budget: Int) {
         guard budget > 0, projection.viewSize.width > 0 else {
-            if faces != 0 { shape = Path(); faces = 0 }
+            if faces != 0 || !shape.isEmpty { shape = Path(); faces = 0 }
             chosenIDs = []
             return
         }
@@ -70,8 +70,20 @@ import SwiftUI
                 path.addPath(facePath); count += 1
             }
         }
-        shape = path
+        // v1.78: publish only a changed shape. A still camera gives the same
+        // path every frame; re-publishing it redrew the glass layer for nothing.
+        if path != shape { shape = path; publishes += 1 }
         if faces != count { faces = count }
+    }
+
+    /// Times the glass shape was actually re-published (performance readout).
+    private(set) var publishes = 0
+    /// Clears the shape at once (rotation, resume): the old projection must
+    /// not be shown for a frame at the wrong place.
+    func reset() {
+        if !shape.isEmpty { shape = Path() }
+        opacity = 0
+        chosenIDs = []
     }
 }
 

@@ -2735,4 +2735,53 @@ do {
     print("RPG v1.76 model files: \(checks) total checks passed")
 }
 
+// P43: v1.78 — Liquid Glass system: roles, non-touch bases, panels keep
+// their taps, one place for motion, selection tools and projection sync.
+do {
+    let base = RPGHUDGlassStyle.resolve(.base, RPGHUDConditions(editing: true))
+    check(!base.interactive && !base.regular && base.scrim == 0 && base.role == .clear, "a control base is clear, non-interactive glass without scrim")
+    check(RPGHUDGlassStyle.resolve(.base, RPGHUDConditions(reduceTransparency: true)).role == .solid, "bases go solid with Reduce Transparency")
+    check(RPGHUDGlassStyle.resolve(.panel, RPGHUDConditions()).role == .regular && RPGHUDGlassStyle.resolve(.light, RPGHUDConditions()).role == .clear,
+          "panels are regular glass, status surfaces clear glass")
+    check(RPGHUDGlassStyle.resolve(.interactive, RPGHUDConditions()).interactive && !RPGHUDGlassStyle.resolve(.light, RPGHUDConditions()).interactive
+          && !RPGHUDGlassStyle.resolve(.panel, RPGHUDConditions()).interactive, "only touchable controls get interactive glass")
+    check(RPGHUDGlassKind.panel.absorbsTouches && !RPGHUDGlassKind.light.absorbsTouches && !RPGHUDGlassKind.base.absorbsTouches && !RPGHUDGlassKind.interactive.absorbsTouches,
+          "panels keep taps on empty areas; status surfaces and bases let them through")
+    let morph = MoonGlassMotion.curve(.morph, reduceMotion: false), calm = MoonGlassMotion.curve(.morph, reduceMotion: true)
+    check(!morph.linear && morph.response > 0.2 && morph.response < 0.6 && morph.damping >= 0.75, "glass morph is a gentle spring without a big bounce")
+    check(calm.linear && calm.response > 0 && calm.response <= 0.25 && MoonGlassMotion.curve(.press, reduceMotion: true).response == 0,
+          "Reduce Motion: morphs become short fades, press scaling stops")
+    check(MoonGlassMotion.allows(lastAction: nil, now: 5) && !MoonGlassMotion.allows(lastAction: 5, now: 5.1) && MoonGlassMotion.allows(lastAction: 5, now: 5.4),
+          "a glass action runs once while its group morphs")
+    // Selection tools: copy beside the selection (loose blocks / a whole building).
+    var dw = SpatialWorld()
+    dw.blocks = [SpatialBlock(id: "a", x: 10, y: 10, elevation: 0, thickness: 1), SpatialBlock(id: "b", x: 12, y: 11, elevation: 2, thickness: 1),
+                 SpatialBlock(id: "c", x: 30, y: 30, elevation: 0, thickness: 1)]
+    let loose = SpatialBuilder.duplicate(["a", "b"], idPrefix: "copy", world: &dw)
+    let copiedA = dw.blocks.first { $0.id == loose.first }
+    check(loose.count == 2 && dw.blocks.count == 5 && copiedA?.x == 13 && copiedA?.y == 10 && copiedA?.elevation == 0 && copiedA?.groupID == nil,
+          "loose blocks copied one selection width east, same heights")
+    dw.groups = [BuildingGroup(id: "house", name: "House", motionID: nil, origin: .user, template: nil)]
+    for i in dw.blocks.indices where dw.blocks[i].id == "c" { dw.blocks[i].groupID = "house" }
+    let building = SpatialBuilder.duplicate(["c"], idPrefix: "copy2", world: &dw)
+    check(building.count == 1 && dw.groups.count == 2 && dw.blocks.first { $0.id == building[0] }?.groupID == dw.groups[1].id, "a whole building copies as a new building")
+    check(SpatialBuilder.duplicate([], idPrefix: "x", world: &dw).isEmpty && dw.blocks.count == 6, "nothing selected copies nothing")
+
+    // Projection sync: the glass hides at once on rotation / resume and settles again.
+    var settle = NativeGlassFade()
+    for _ in 0..<40 { _ = settle.step(camera: SpatialCameraState(), dt: 1.0 / 60) }
+    check(settle.visibility == 1, "still camera shows the glass")
+    settle.restart()
+    check(settle.visibility == 0 && settle.step(camera: SpatialCameraState(), dt: 1.0 / 60) == 0, "restart hides the glass until the view settles")
+    for _ in 0..<60 { _ = settle.step(camera: SpatialCameraState(), dt: 1.0 / 60) }
+    check(settle.visibility == 1, "glass returns after the restart settles")
+
+    // Performance readout: shape updates per second.
+    var meter = GlassPerfMeter()
+    var total = 0
+    for f in 0..<120 { if f % 4 == 0 { total += 1 }; meter.frame(dt: 1.0 / 60, publishes: total) }
+    check(abs(meter.framesPerSecond - 60) < 1 && abs(meter.publishesPerSecond - 15) < 1.5, "meter counts frames and glass updates per second (\(meter.publishesPerSecond))")
+    print("RPG v1.78 glass: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

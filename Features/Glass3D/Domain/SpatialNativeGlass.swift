@@ -118,6 +118,12 @@ struct NativeGlassFade: Equatable, Sendable {
             || (t.x * t.x + t.y * t.y + t.z * t.z) > 0.000004
     }
 
+    /// v1.78: hide at once and settle again (view size changed, world
+    /// resumed): the glass must not show an old projection.
+    mutating func restart() {
+        visibility = 0; still = 0; last = nil
+    }
+
     /// Advances one frame and returns the new visibility.
     mutating func step(camera: SpatialCameraState, dt: Double, shaking: Bool = false) -> Double {
         guard dt.isFinite, dt > 0 else { return visibility }
@@ -127,5 +133,30 @@ struct NativeGlassFade: Equatable, Sendable {
         if still >= Self.settle { visibility = min(1, visibility + dt / Self.fadeIn) }
         else if moving { visibility = max(0, visibility - dt / Self.fadeOut) }
         return visibility
+    }
+}
+
+/// v1.78: how often the native glass shape is re-published, per second of
+/// frames — the number to compare between v1.77 and v1.78 and between the
+/// block-glass on / off settings on a real phone.
+struct GlassPerfMeter: Equatable, Sendable {
+    private(set) var frames = 0
+    private(set) var seconds = 0.0
+    private(set) var publishes = 0
+    /// Last finished window.
+    private(set) var publishesPerSecond = 0.0
+    private(set) var framesPerSecond = 0.0
+    static let window = 1.0
+
+    /// Adds one frame; `publishes` is the running total of shape updates.
+    mutating func frame(dt: Double, publishes total: Int) {
+        guard dt.isFinite, dt > 0 else { return }
+        if frames == 0 && seconds == 0 { publishes = total }
+        frames += 1; seconds += dt
+        if seconds >= Self.window {
+            publishesPerSecond = Double(total - publishes) / seconds
+            framesPerSecond = Double(frames) / seconds
+            frames = 0; seconds = 0; publishes = total
+        }
     }
 }

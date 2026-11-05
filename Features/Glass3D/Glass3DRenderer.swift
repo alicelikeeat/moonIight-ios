@@ -42,6 +42,9 @@ import Metal
     init() {
         for entity in [ground, blocksRoot, movingBlocksRoot, plantsRoot, creaturesRoot, pickupsRoot, effects, previewRoot, selectionRoot, playerEntity] { root.addChild(entity) }
         camera.camera.fieldOfViewInDegrees = Float(SpatialCameraRules.fieldOfView)
+        // v1.78: the glass layer projects with a vertical field of view;
+        // say so explicitly so portrait and landscape both match.
+        camera.camera.fieldOfViewOrientation = .vertical
         camera.camera.near = 0.1; camera.camera.far = 600
         root.addChild(camera)
         let sun = DirectionalLight()
@@ -367,14 +370,33 @@ import Metal
         }
     }
 
+    /// v1.78: a light tint plus a crisp edge outline that turns with the
+    /// block (the tint alone, unturned, sat crooked on rotated blocks).
+    /// Edges are drawn for the first `outlinedLimit` blocks to bound cost.
+    static let outlinedLimit = 60
     func showSelection(_ blocks: [SpatialBlock]) {
         selectionRoot.children.removeAll()
-        for block in blocks.prefix(400) {
-            var yellow = UnlitMaterial(color: .systemYellow)
-            yellow.blending = .transparent(opacity: .init(floatLiteral: 0.3))
-            let box = ModelEntity(mesh: .generateBox(width: Float(block.size) + 0.08, height: Float(block.thickness) + 0.08, depth: Float(block.size) + 0.08), materials: [yellow])
-            box.position = Self.position(SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2))
-            selectionRoot.addChild(box)
+        var tint = UnlitMaterial(color: .systemYellow)
+        tint.blending = .transparent(opacity: .init(floatLiteral: 0.18))
+        let edge = UnlitMaterial(color: .systemYellow)
+        for (index, block) in blocks.prefix(400).enumerated() {
+            let w = Float(block.size) + 0.08, h = Float(block.thickness) + 0.08
+            let holder = Entity()
+            holder.position = Self.position(SpatialVector(Double(block.x) + 0.5, Double(block.y) + 0.5, block.elevation + block.thickness / 2))
+            holder.orientation = simd_quatf(angle: Float(block.yaw * .pi / 180), axis: [0, 1, 0])
+            holder.addChild(ModelEntity(mesh: mesh("sel-fill-\(w)-\(h)") { .generateBox(width: w, height: h, depth: w) }, materials: [tint]))
+            if index < Self.outlinedLimit {
+                let t: Float = 0.045
+                let along = mesh("sel-x-\(w)") { .generateBox(width: w + t, height: t, depth: t) }
+                let across = mesh("sel-z-\(w)") { .generateBox(width: t, height: t, depth: w + t) }
+                let up = mesh("sel-y-\(h)") { .generateBox(width: t, height: h + t, depth: t) }
+                for sy in [-h / 2, h / 2] {
+                    for sz in [-w / 2, w / 2] { let e = ModelEntity(mesh: along, materials: [edge]); e.position = [0, sy, sz]; holder.addChild(e) }
+                    for sx in [-w / 2, w / 2] { let e = ModelEntity(mesh: across, materials: [edge]); e.position = [sx, sy, 0]; holder.addChild(e) }
+                }
+                for sx in [-w / 2, w / 2] { for sz in [-w / 2, w / 2] { let e = ModelEntity(mesh: up, materials: [edge]); e.position = [sx, 0, sz]; holder.addChild(e) } }
+            }
+            selectionRoot.addChild(holder)
         }
     }
 

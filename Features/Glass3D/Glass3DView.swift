@@ -25,6 +25,8 @@ struct Glass3DScreen: View {
     @State private var generate3D = false
     @State private var confirmClear = false
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     /// The world stops while it cannot be seen (background, app switcher,
     /// AI 3D page in front) so the phone does not heat up.
     private var worldSuspended: Bool { scenePhase != .active || generate3D }
@@ -92,9 +94,10 @@ struct Glass3DScreen: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: controller.mode)
-            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: showsPanel)
-            .animation(.spring(response: 0.35, dampingFraction: 0.86), value: portrait)
+            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.mode)
+            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: showsPanel)
+            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: portrait)
+            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.selection.isEmpty)
         }
         .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.bossBar != nil, editing: controller.mode == .edit))
         .onAppear {
@@ -107,6 +110,7 @@ struct Glass3DScreen: View {
         }
         .onDisappear { controller.stop() }
         .onChange(of: worldSuspended) { _, hidden in controller.setSuspended(hidden) }
+        .onChange(of: reduceTransparency, initial: true) { _, on in controller.reduceTransparency = on }
         .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
         .confirmationDialog(L10n.t("清空整个世界？", "Clear the whole world?"), isPresented: $confirmClear, titleVisibility: .visible) {
@@ -383,6 +387,11 @@ struct Glass3DScreen: View {
     private func designBars(portrait: Bool) -> some View {
         VStack(spacing: 8) {
             if let pending = controller.pending { pendingCard(pending) }
+            // v1.78: tools for the selection, as one morphing glass group.
+            if !controller.selection.isEmpty {
+                HStack { Glass3DSelectionBar(controller: controller, panel: $panel); Spacer(minLength: 0) }
+                    .transition(.opacity)
+            }
             toolCard
             toolDock
         }
@@ -623,14 +632,15 @@ struct Glass3DCompactLabel: LabelStyle {
 struct Glass3DChipStyle: ButtonStyle {
     var tint: Color = .primary
     var prominent = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.caption.weight(.semibold)).lineLimit(1)
             .padding(.horizontal, 11).padding(.vertical, 7)
             .foregroundStyle(prominent ? Color.white : tint)
             .background(prominent ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(tint.opacity(0.12)), in: Capsule())
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
+            .animation(MoonGlassMotion.animation(.press, reduceMotion: reduceMotion), value: configuration.isPressed)
     }
 }
 
@@ -646,12 +656,15 @@ struct Glass3DStick: View {
 
     var body: some View {
         let reach = size / 2 - 24
-        ZStack {
-            Color.clear.frame(width: size, height: size).hudGlass(.interactive, in: Circle())
-            Color.clear.frame(width: 48, height: 48).hudGlass(.interactive, in: Circle())
-                .overlay(Circle().fill(Color.white.opacity(touching ? 0.28 : 0.12)))
-                .overlay { if let symbol { Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.secondary) } }
-                .offset(knob)
+        // v1.78: a non-touch base and an interactive knob in one glass container.
+        RPGGlassGroup(spacing: 0) {
+            ZStack {
+                Color.clear.frame(width: size, height: size).hudGlass(.base, in: Circle())
+                Color.clear.frame(width: 48, height: 48).hudGlass(.interactive, in: Circle())
+                    .overlay(Circle().fill(Color.white.opacity(touching ? 0.28 : 0.12)))
+                    .overlay { if let symbol { Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.secondary) } }
+                    .offset(knob)
+            }
         }
         .frame(width: size, height: size).contentShape(Circle())
         .gesture(DragGesture(minimumDistance: 0).updating($touching) { _, state, _ in state = true }.onChanged { value in
@@ -1108,7 +1121,10 @@ enum Glass3DEditorKind: String, Identifiable { case characters, skills, bosses; 
 struct Glass3DOverlay: View {
     @ObservedObject var glass: Glass3DNativeGlass
     let controller: Glass3DController
-    @State private var dragging: (axis: Int, steps: Int)?
+    /// v1.78: gesture state, so a drag the system cancels (call, app
+    /// switch) clears itself and moves nothing.
+    @GestureState private var dragging: HandleDrag?
+    struct HandleDrag: Equatable { var axis: Int; var steps: Int }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -1116,13 +1132,17 @@ struct Glass3DOverlay: View {
             if let point = glass.reticle {
                 Circle().strokeBorder(Color.red.opacity(0.9), lineWidth: 2.5).frame(width: 46, height: 46)
                     .overlay(Circle().fill(Color.red).frame(width: 6, height: 6))
-                    .hudGlass(.interactive, in: Circle())
+                    .hudGlass(.base, in: Circle())
                     .position(point).allowsHitTesting(false).accessibilityHidden(true)
             }
             if let gizmo = glass.gizmo {
                 ForEach(0..<3, id: \.self) { axis in handle(axis, gizmo: gizmo) }
             }
         }
+    }
+
+    static func steps(_ translation: CGSize, unit: CGPoint, length: CGFloat) -> Int {
+        Int(((translation.width * unit.x + translation.height * unit.y) / length).rounded())
     }
 
     private func handle(_ axis: Int, gizmo: Glass3DNativeGlass.Gizmo) -> some View {
@@ -1139,12 +1159,11 @@ struct Glass3DOverlay: View {
             .hudGlass(.interactive, in: Circle())
             .overlay(Circle().strokeBorder(colors[axis].opacity(0.8), lineWidth: 2))
             .position(tip)
-            .gesture(DragGesture().onChanged { value in
-                let along = value.translation.width * unit.x + value.translation.height * unit.y
-                dragging = (axis, Int((along / length).rounded()))
-            }.onEnded { _ in
-                if let drag = dragging { controller.moveSelection(axis: drag.axis, steps: drag.steps) }
-                dragging = nil
+            .gesture(DragGesture().updating($dragging) { value, state, _ in
+                state = HandleDrag(axis: axis, steps: Self.steps(value.translation, unit: unit, length: length))
+            }.onEnded { value in
+                let steps = Self.steps(value.translation, unit: unit, length: length)
+                if steps != 0 { controller.moveSelection(axis: axis, steps: steps) }
             })
             .accessibilityLabel(L10n.t("沿 \(labels[axis]) 轴移动", "Move along \(labels[axis])"))
     }
