@@ -128,6 +128,30 @@ enum SpatialBuilder {
         world.blocks.append(contentsOf: copies)
     }
 
+    /// v1.78 (selection tools): copies the selected blocks one selection
+    /// width further east. A whole building is copied as a new building
+    /// (as `copy(group:)`); loose or partly selected blocks become loose
+    /// copies. Returns the new ids.
+    @discardableResult
+    static func duplicate(_ ids: Set<String>, idPrefix: String, world: inout SpatialWorld) -> [String] {
+        let chosen = world.blocks.filter { ids.contains($0.id) }
+        guard let minX = chosen.map(\.x).min(), let maxX = chosen.map(\.x).max() else { return [] }
+        let dx = maxX - minX + 1
+        let groups = Set(chosen.compactMap(\.groupID))
+        if groups.count == 1, chosen.allSatisfy({ $0.groupID != nil }), let group = groups.first,
+           Set(blocks(of: group, in: world).map(\.id)) == ids {
+            let newGroup = idPrefix + "g"
+            copy(group: group, dx: dx, dy: 0, dz: 0, newGroup: newGroup, idPrefix: idPrefix, world: &world)
+            return blocks(of: newGroup, in: world).map(\.id)
+        }
+        let copies = chosen.enumerated().compactMap { index, block -> SpatialBlock? in
+            var copy = block; copy.id = "\(idPrefix):\(index)"; copy.x += dx; copy.groupID = nil; copy.origin = .user
+            return copy.valid ? copy : nil
+        }
+        world.blocks.append(contentsOf: copies)
+        return copies.map(\.id)
+    }
+
     /// Moves every block of a group, keeping their relative heights.
     static func move(group: String, dx: Int, dy: Int, dz: Double, world: inout SpatialWorld) {
         for i in world.blocks.indices where world.blocks[i].groupID == group {
