@@ -36,7 +36,7 @@ struct TreasureBackgroundSurface: View {
 struct TreasureAppearanceSettings: View {
     @Binding var options: TreasureAppearance
     var body: some View {
-        Form {
+        Form { Group {
             Picker("背景", selection: $options.background) {
                 ForEach(TreasureBackground.allCases) { Text($0.title).tag($0) }
             }
@@ -51,6 +51,7 @@ struct TreasureAppearanceSettings: View {
             }
             TreasureBackgroundSurface(options: options).frame(height: 80).clipShape(RoundedRectangle(cornerRadius: 16))
             Button("恢复系统背景") { options = TreasureAppearance() }
-        }.navigationTitle("月藏图背景")
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("月藏图背景")
     }
 }

@@ -281,7 +281,7 @@ struct AssistantChatView: View {
                             ForEach(messages) { message in
                                 HStack {
                                     if message.role == .assistant {
-                                        Text(message.text).padding(12).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                        Text(message.text).padding(12).moonGlassCard(radius: 18)
                                         Spacer(minLength: 42)
                                     } else {
                                         Spacer(minLength: 42)
@@ -303,14 +303,14 @@ struct AssistantChatView: View {
                 Menu {
                     Toggle("深入思考", isOn: $deepThinking)
                     Button("清除本次对话", role: .destructive) { messages.removeAll() }
-                } label: { Image(systemName: "plus").frame(width: 38, height: 38).background(.thinMaterial, in: Circle()) }
+                } label: { Image(systemName: "plus").frame(width: 38, height: 38).moonLiquidSurface(.circle) }
                 TextField("询问 \(provider.title)", text: $draft, axis: .vertical)
                     .lineLimit(1...5).submitLabel(.send).onSubmit { Task { await send() } }
                 Button { Task { await send() } } label: {
                     Image(systemName: "arrow.up").foregroundStyle(.white).frame(width: 38, height: 38).background(MoonStyle.accent, in: Circle())
                 }.disabled(sending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding(10).background(.regularMaterial, in: Capsule()).padding()
+            .padding(10).moonLiquidSurface(.capsule).padding()
         }
         .navigationTitle(provider.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -362,7 +362,7 @@ struct AssistantSettingsView: View {
     private var provider: AssistantProvider { AssistantProvider(rawValue: providerRaw) ?? .openAI }
 
     var body: some View {
-        Form {
+        Form { Group {
             Section("智能体") {
                 Toggle("启用 API 对话", isOn: $enabled)
                 Picker("当前服务", selection: $providerRaw) {
@@ -393,7 +393,8 @@ struct AssistantSettingsView: View {
                 Label("密钥只保存在此设备的钥匙串，不会写入 IPA 或 GitHub。", systemImage: "key.fill")
                 Text("API 按各服务的账户单独计费。“深入思考”是更仔细回答的提示，不会擅自切换模型。")
             }
-        }
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList()
         .navigationTitle("智能体与 API")
         .onAppear(perform: loadConfiguration)
         .onChange(of: providerRaw) { _ in loadConfiguration() }

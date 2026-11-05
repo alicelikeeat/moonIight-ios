@@ -226,7 +226,7 @@ struct LandlordGameView: View {
     }
     private var mediaSettings: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Picker("牌面样式", selection: $store.preferences.style) {
                     Text("经典牌面").tag(CardFaceStyle.classic); Text("媒体牌面").tag(CardFaceStyle.media)
                 }.pickerStyle(.segmented).accessibilityIdentifier("landlord-style")
@@ -262,12 +262,13 @@ struct LandlordGameView: View {
                         }.accessibilityIdentifier("landlord-media-\(entry.id)")
                     }
                 }
-            }.navigationTitle("斗地主牌面").toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { settings = false }.accessibilityIdentifier("landlord-settings-done") } }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList().navigationTitle("斗地主牌面").toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { settings = false }.accessibilityIdentifier("landlord-settings-done") } }
         }
     }
     private var historySheet: some View {
         NavigationStack {
-            List {
+            List { Group {
                 Section("本局 \(store.game.history.count) 手 · 静态记录") {
                     ForEach(store.game.history, id: \.id) { (group: LandlordPlay) in
                         historyRow(group)
@@ -276,7 +277,8 @@ struct LandlordGameView: View {
                 Section("最近三局虚拟积分") {
                     ForEach(Array(store.summaries.enumerated()), id: \.offset) { _, score in Text("我 \(score[0]) · 右家 \(score[1]) · 左家 \(score[2])") }
                 }
-            }.navigationTitle("对局记录").toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { history = false } } }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList().navigationTitle("对局记录").toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { history = false } } }
         }
     }
     private func historyRow(_ group: LandlordPlay) -> some View {

@@ -29,7 +29,7 @@ struct HomeView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 44, height: 44).moonGlassCircle()
                 }
-                .buttonStyle(.plain).accessibilityLabel("随便看看")
+                .buttonStyle(.moonJelly).accessibilityLabel("随便看看")
                 .accessibilityIdentifier("home-random-menu")
             }
             if model.mediaStore.items.isEmpty {

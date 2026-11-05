@@ -44,6 +44,7 @@ struct Generate3DScreen: View {
                 }
                 .padding(16)
             }
+            .moonLiquidPage()
             .navigationTitle(L10n.t("AI 生成 3D 模型", "AI 3D Models")).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(L10n.t("关闭", "Close")) { tasks.cancel(); tasks.reset(); dismiss() } }
@@ -92,7 +93,7 @@ struct Generate3DScreen: View {
             }
             if capabilities.thermal >= 2 { Label(L10n.t("设备温度较高，生成可能暂停", "The device is warm; generation may pause"), systemImage: "thermometer.sun").font(.caption).foregroundStyle(.orange) }
         }
-        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18)
     }
 
     private func capability(_ title: String, _ value: String, _ ok: Bool) -> some View {
@@ -161,9 +162,9 @@ struct Generate3DScreen: View {
                 Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
             }
             .frame(maxWidth: .infinity).padding(.vertical, 14)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .moonGlassCard(radius: 18)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
     }
 
     private var progressCard: some View {
@@ -174,14 +175,14 @@ struct Generate3DScreen: View {
             Button(role: .destructive) { tasks.cancel() } label: { Label(L10n.t("取消生成", "Cancel"), systemImage: "xmark.circle") }
                 .buttonStyle(Glass3DChipStyle(tint: .red)).accessibilityIdentifier("generate3d-cancel")
         }
-        .padding(14).background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18, tint: .accentColor)
     }
 
     @ViewBuilder private var statusCard: some View {
         switch tasks.phase {
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill").font(.subheadline).foregroundStyle(.orange)
-                .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+                .padding(12).frame(maxWidth: .infinity, alignment: .leading).moonGlassCard(radius: 14, tint: .orange)
         case .cancelled:
             Label(L10n.t("已取消，没有保存任何结果。", "Cancelled; nothing was saved."), systemImage: "xmark.circle").font(.subheadline).foregroundStyle(.secondary)
         default:
@@ -215,7 +216,7 @@ struct Generate3DScreen: View {
             }
             Button(L10n.t("放弃这个视频", "Discard Video")) { tasks.reset() }.buttonStyle(Glass3DChipStyle())
         }
-        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18)
     }
 
     private func stat(_ title: String, _ value: String) -> some View {
@@ -241,7 +242,7 @@ struct Generate3DScreen: View {
                             Text(manifest.name).font(.caption2).lineLimit(1)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.moonJelly)
                 }
             }
         }
@@ -474,6 +475,7 @@ struct Generated3DDetailView: View {
             }
             .padding(16)
         }
+        .moonLiquidPage()
         .navigationTitle(current.name).navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .photosPicker(isPresented: $choosingSkin, selection: $skinItem, matching: .images)
@@ -506,7 +508,7 @@ struct Generated3DDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             if counts == nil && loadError == nil { ProgressView() }
-            if let loadError { Label(loadError, systemImage: "exclamationmark.triangle").font(.subheadline).padding().background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12)) }
+            if let loadError { Label(loadError, systemImage: "exclamationmark.triangle").font(.subheadline).padding().moonGlassCard(radius: 12) }
         }
         .gesture(DragGesture(minimumDistance: 1).onChanged { value in
             let start = dragStart ?? (scene.yaw, scene.pitch)
@@ -548,7 +550,7 @@ struct Generated3DDetailView: View {
             row(L10n.t("可换装部件", "Outfit parts"), L10n.t("无法从单张图片分离衣服、头发；骨骼绑定后可按身体分区换色", "Clothes and hair cannot be separated from one picture; rigged models can colour body regions"))
             ForEach(current.notes, id: \.self) { Text("· " + $0).font(.caption).foregroundStyle(.secondary) }
         }
-        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18)
     }
 
     private func row(_ title: String, _ value: String) -> some View {
@@ -570,7 +572,7 @@ struct Generated3DDetailView: View {
             Button { workbench = true } label: {
                 Label(L10n.t("自动骨骼工作台（27 关节 · 动作测试）", "Auto Rig Workbench (27 joints · motion tests)"), systemImage: "figure.arms.open").frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent).accessibilityIdentifier("generate3d-rig-workbench")
+            .buttonStyle(.moonLiquidProminent).accessibilityIdentifier("generate3d-rig-workbench")
             Text(L10n.t("v1.73 新骨骼：从 3D 网格本身识别关节，每顶点最多 4 个权重，8 项动作自动测试，可手动修正。保存后放进世界会优先使用它。下面是 v1.72 的旧版 10 骨骼绑定。", "v1.73 rig: joints from the 3D mesh itself, up to 4 weights per vertex, 8 automatic motion tests, manual correction. Once saved, the world uses it first. Below is the older v1.72 10-bone rig."))
                 .font(.caption2).foregroundStyle(.secondary)
             if let rig = scene.rig {
@@ -600,7 +602,7 @@ struct Generated3DDetailView: View {
                                 Circle().fill(hex.map { Color(UIColor(rpgHex: $0)) } ?? Color.white).frame(width: 22, height: 22)
                                     .overlay(Circle().strokeBorder(scene.regionTints[region] == hex ? Color.accentColor : Color.primary.opacity(0.2), lineWidth: scene.regionTints[region] == hex ? 2.5 : 1))
                             }
-                            .buttonStyle(.plain).accessibilityLabel(Self.regionNames[region] + " " + (hex ?? L10n.t("原色", "Original")))
+                            .buttonStyle(.moonJelly).accessibilityLabel(Self.regionNames[region] + " " + (hex ?? L10n.t("原色", "Original")))
                         }
                     }
                 }
@@ -613,7 +615,7 @@ struct Generated3DDetailView: View {
                     .buttonStyle(Glass3DChipStyle(tint: .accentColor, prominent: true)).accessibilityIdentifier("generate3d-auto-rig")
             }
         }
-        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18)
     }
 
     // MARK: GIF / video export
@@ -661,7 +663,7 @@ struct Generated3DDetailView: View {
             Text(L10n.t("「八方向动图角色」会从 8 个方向渲染待机、行走、挥手动图，做成一个图片角色：在世界里不用实时计算骨骼，更省电。", "An 8-direction picture character renders idle, walk and wave from eight directions into GIFs: no live skinning in the world, so it uses less power."))
                 .font(.caption2).foregroundStyle(.secondary)
         }
-        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18)
     }
 
     private func contentChip(_ content: ModelAnimationExport.Content) -> some View {
@@ -787,7 +789,7 @@ struct Generated3DDetailView: View {
             }
             if let aiMessage { Text(aiMessage).font(.caption2).foregroundStyle(.secondary) }
         }
-        .padding(10).background(Color.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(10).moonGlassCard(radius: 14, tint: .purple)
         .confirmationDialog(L10n.t("发送给 Claude？", "Send to Claude?"), isPresented: $aiConfirm, titleVisibility: .visible) {
             Button(L10n.t("发送", "Send")) { designWithClaude(rig) }
             Button(L10n.t("取消", "Cancel"), role: .cancel) {}
@@ -853,7 +855,7 @@ struct Generated3DDetailView: View {
                             .frame(width: 28, height: 28)
                             .overlay(Circle().strokeBorder(tint == hex ? Color.accentColor : Color.primary.opacity(0.2), lineWidth: tint == hex ? 3 : 1))
                     }
-                    .buttonStyle(.plain).accessibilityLabel(hex ?? L10n.t("原色", "Original"))
+                    .buttonStyle(.moonJelly).accessibilityLabel(hex ?? L10n.t("原色", "Original"))
                 }
             }
             HStack(spacing: 8) {
@@ -879,7 +881,7 @@ struct Generated3DDetailView: View {
             }
             Text(L10n.t("单张图片无法分出独立的头发、衣服，换装以整体颜色和贴图实现。", "Hair and clothes cannot be separated from one picture; skins change the whole model's colour and texture.")).font(.caption2).foregroundStyle(.secondary)
         }
-        .padding(14).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18)
     }
 
     private var actions: some View {

@@ -198,6 +198,15 @@ struct Glass3DPending {
     private var renderTimer = 0.0
     private var dirtyRuntime = false
     private var loadedChunks: Set<Int> = []
+    /// v1.82: blocks, ground and plants are only re-checked when the world
+    /// changed or the camera reached other chunks — before, every quarter
+    /// second compared every block (a hitch in big worlds).
+    private var visibleDirty = true
+    private var pausedMediaCache = Set<String>()
+    /// v1.82: native glass is recomputed at most 20 times a second while
+    /// the camera stands still (only characters move then).
+    private var glassComputedAt = -1.0
+    private var glassCamera: SpatialCameraState?
     private var frameTimes: [Double] = []
     private var random = SpatialRandom(seed: 99)
     private var drawCells: [SurfacePoint] = []
@@ -304,6 +313,8 @@ struct Glass3DPending {
         previousGeometry = geometry
         renderer.place(frames: frames)
         renderer.placePlayer(world.player)
+        // v1.82: creatures follow every frame (they used to jump 4 times a second).
+        renderer.placeCreatures(world.creatures)
         if mode == .play {
             if abs(look.x) > 0.01 || abs(look.y) > 0.01 {
                 camera.yaw = (camera.yaw + look.x * 150 * dt).truncatingRemainder(dividingBy: 360)
@@ -328,7 +339,7 @@ struct Glass3DPending {
         glassMeter.frame(dt: dt, publishes: nativeGlass.publishes)
         renderTimer += dt
         if renderTimer > 0.25 { renderTimer = 0; refreshVisible() }
-        renderer.media.update(visibleMedia: visibleMediaIDs, clock: world.clock, paused: pausedMedia(frames: frames))
+        renderer.media.update(visibleMedia: visibleMediaIDs, clock: world.clock, paused: pausedMediaCache)
         saveTimer += dt
         if saveTimer > 4 { saveTimer = 0; persist(force: false) }
     }
@@ -729,19 +740,23 @@ struct Glass3DPending {
         let cx = Int(center.x) / 32, cy = Int(center.y) / 32
         var chunks = Set<Int>()
         for x in max(0, cx - radius)...min(7, cx + radius) { for y in max(0, cy - radius)...min(7, cy + radius) { chunks.insert(y * 8 + x) } }
-        loadedChunks = chunks
-        renderer.showGround(chunks: chunks, holes: Set(world.groundHoles ?? []))
-        let all = allBlocks
-        let visible = all.filter { chunks.contains(($0.y / 32) * 8 + $0.x / 32) }
-        renderer.showBlocks(visible, pivots: pivots)
-        visibleBlockCache = visible
-        renderer.showPlants(world.plants, chunks: chunks)
+        if visibleDirty || chunks != loadedChunks {
+            visibleDirty = false
+            loadedChunks = chunks
+            renderer.showGround(chunks: chunks, holes: Set(world.groundHoles ?? []))
+            let all = allBlocks
+            let visible = all.filter { chunks.contains(($0.y / 32) * 8 + $0.x / 32) }
+            renderer.showBlocks(visible, pivots: pivots)
+            visibleBlockCache = visible
+            renderer.showPlants(world.plants, chunks: chunks)
+            let bindings = Dictionary(session.world.mediaBindings.map { ($0.id, $0.mediaID) }, uniquingKeysWith: { first, _ in first })
+            visibleMediaIDs = Set(visible.compactMap { block in block.media.flatMap { bindings[$0.bindingID] } })
+            // Media characters play too.
+            for template in world.characters ?? [] { for clip in template.clips.values { for id in clip.bindingIDs { if let media = bindings[id] { visibleMediaIDs.insert(media) } } } }
+        }
         renderer.showCreatures(world.creatures, near: center, radius: reach + 8)
         renderer.showPickups(world.pickups, near: center, radius: reach + 8)
-        let bindings = Dictionary(session.world.mediaBindings.map { ($0.id, $0.mediaID) }, uniquingKeysWith: { first, _ in first })
-        visibleMediaIDs = Set(visible.compactMap { block in block.media.flatMap { bindings[$0.bindingID] } })
-        // Media characters play too.
-        for template in world.characters ?? [] { for clip in template.clips.values { for id in clip.bindingIDs { if let media = bindings[id] { visibleMediaIDs.insert(media) } } } }
+        pausedMediaCache = pausedMedia(frames: world.groupFrames(pivots: pivots, clock: world.clock))
         let average = frameTimes.isEmpty ? 0 : frameTimes.reduce(0, +) / Double(frameTimes.count)
         stats = (SpatialCameraRules.visibleCells(camera, aspect: aspect), renderer.blockNodeCount, renderer.creatureNodeCount, activeAI, renderer.media.decoderCount, average > 0 ? 1 / average : 0)
     }
@@ -750,6 +765,7 @@ struct Glass3DPending {
     /// motion stands still.
     private func pausedMedia(frames: [String: GroupFrame]) -> Set<String> {
         var paused = Set<String>()
+        guard world.groups.contains(where: { $0.motionID != nil }) else { return paused }
         for group in world.groups {
             guard let motionID = group.motionID, let motion = world.motions.first(where: { $0.id == motionID }), motion.mediaSync == .whileMoving else { continue }
             if SpatialMotionRules.pose(motion, clock: world.clock).moving { continue }
@@ -771,7 +787,7 @@ struct Glass3DPending {
         previousGeometry = nil
     }
 
-    private func rebuildAll() { renderer.showAtmosphere(world.atmosphere); geometryChanged(); refreshVisible() }
+    private func rebuildAll() { renderer.showAtmosphere(world.atmosphere); geometryChanged(); visibleDirty = true; refreshVisible() }
 
     // MARK: Saving
 
@@ -888,6 +904,9 @@ struct Glass3DPending {
         if gizmo != nativeGlass.gizmo { nativeGlass.gizmo = gizmo }
         guard nativeGlassActive else { nativeGlass.update(projection: projection, blocks: [], frames: [:], characters: [], budget: 0); return }
         guard drawFaces else { return }
+        // Still camera: only characters move, 20 updates a second are plenty.
+        if let last = glassCamera, !NativeGlassFade.moved(last, camera), !nativeGlass.needsRefresh, world.clock - glassComputedAt < 0.05, world.clock >= glassComputedAt { return }
+        glassCamera = camera; glassComputedAt = world.clock
         var characters = [Glass3DNativeGlass.Character(position: world.player.position, radius: 0.35, height: 1.5)]
         for creature in world.creatures where creature.alive && (creature.position - camera.target).flatLength < camera.distance * 3 + 10 {
             let big = creature.kind == .boss ? 1.1 : creature.kind == .miniBoss ? 0.7 : 0.4

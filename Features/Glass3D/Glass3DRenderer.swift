@@ -349,6 +349,16 @@ import Metal
         for (id, entity) in creatureEntities where !seen.contains(id) { entity.removeFromParent(); creatureEntities[id] = nil }
     }
 
+    /// v1.82: every frame, only creatures already shown (cheap lookups).
+    func placeCreatures(_ creatures: [CreatureEntity]) {
+        guard !creatureEntities.isEmpty else { return }
+        for creature in creatures {
+            guard let entity = creatureEntities[creature.id] else { continue }
+            let p = Self.position(creature.position)
+            if entity.position != p { entity.position = p }
+        }
+    }
+
     private func makeCreature(_ creature: CreatureEntity) -> Entity {
         let entity = Entity()
         let model: ModelEntity

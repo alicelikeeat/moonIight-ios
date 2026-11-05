@@ -154,9 +154,9 @@ struct LibraryView: View {
                         .font(.subheadline.weight(.medium))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                        .moonGlassCard(radius: 14)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.moonJelly)
                 .accessibilityIdentifier("library-filter-menu")
             }
             if selectionMode {
@@ -220,7 +220,7 @@ struct LibraryView: View {
                                 Text("继续 \(timeLabel(progress.position))")
                                     .font(.caption2.weight(.semibold))
                                     .padding(.horizontal, 7).padding(.vertical, 4)
-                                    .background(.ultraThinMaterial, in: Capsule())
+                                    .moonLiquidSurface(.capsule)
                                     .padding(7)
                             }
                         }
@@ -254,7 +254,7 @@ struct LibraryView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .moonGlassCard(radius: 18)
             } else {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                     ForEach(model.mediaStore.folders) { folder in
@@ -265,7 +265,7 @@ struct LibraryView: View {
                         } label: {
                             folderCard(folder)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.moonJelly)
                         .accessibilityIdentifier("library-folder-\(folder.id)")
                     }
                 }
@@ -297,10 +297,10 @@ struct LibraryView: View {
                             .frame(width: 142, height: 100, alignment: .leading)
                             .padding(12)
                             .foregroundStyle(.primary)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .moonGlassCard(radius: 20)
                             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(.white.opacity(0.32)))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.moonJelly)
                         .disabled(count == 0)
                         .opacity(count == 0 ? 0.58 : 1)
                         .accessibilityIdentifier("smart-playlist-\(playlist.id)")

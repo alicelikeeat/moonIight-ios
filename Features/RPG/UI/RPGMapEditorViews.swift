@@ -20,7 +20,7 @@ struct RPGEditorToolBar: View {
                         .background(session.editorTool == tool ? Color.accentColor.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 10))
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.moonJelly)
                     .accessibilityIdentifier("rpg-editor-tool-" + tool.rawValue)
                     .accessibilityValue(session.editorTool == tool ? L10n.t("已选", "Selected") : L10n.t("未选", "Not selected"))
                 }
@@ -153,7 +153,7 @@ struct RPGEditorOptionsBar: View {
                 Button(terrain.title) { session.terrainBrush = terrain }
                     .font(.caption).padding(.horizontal, 8).padding(.vertical, 4)
                     .background(session.terrainBrush == terrain ? Color.accentColor.opacity(0.28) : .clear, in: Capsule())
-                    .buttonStyle(.plain).accessibilityIdentifier("rpg-editor-terrain-" + String(terrain.rawValue))
+                    .buttonStyle(.moonJelly).accessibilityIdentifier("rpg-editor-terrain-" + String(terrain.rawValue))
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6).editorSurface(radius: 14)
@@ -238,7 +238,7 @@ struct RPGCellPanel: View {
                 Button { onClose() } label: { Image(systemName: "xmark.circle.fill").font(.title3).symbolRenderingMode(.hierarchical).frame(width: 32, height: 32) }
                     .accessibilityLabel(L10n.t("关闭面板", "Close Panel")).accessibilityIdentifier("rpg-panel-close")
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.moonJelly)
             .padding(.horizontal, 12).padding(.vertical, 8)
             if let group = session.gridGroup(at: point) { groupRow(group) }
             Divider()

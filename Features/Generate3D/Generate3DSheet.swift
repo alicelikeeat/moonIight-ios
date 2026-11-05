@@ -88,7 +88,7 @@ struct CharacterSheetCard: View {
                 Label(analysis == nil ? L10n.t("选择设定图", "Choose a Sheet") : L10n.t("换一张设定图", "Choose Another Sheet"), systemImage: "rectangle.split.3x1")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered).disabled(busy != nil)
+            .buttonStyle(.moonLiquid).disabled(busy != nil)
             .accessibilityIdentifier("generate3d-sheet-pick")
             if let analysis {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -98,7 +98,7 @@ struct CharacterSheetCard: View {
                 Button { build() } label: {
                     Label(L10n.t("用 \(views.count) 个视角建模", "Build from \(views.count) views"), systemImage: "cube.transparent").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent).disabled(busy != nil || !views.contains(.front) || views.count < 2)
+                .buttonStyle(.moonLiquidProminent).disabled(busy != nil || !views.contains(.front) || views.count < 2)
                 .accessibilityIdentifier("generate3d-sheet-build")
                 Text(L10n.t("点视角名可以改方向。3/4 斜侧视角不参与雕刻。头发、手指等细节和凹陷处还原不了，生成后可用「自动骨骼」绑定。",
                             "Tap a view's name to change it. 3/4 views are not used. Hair, fingers and hollows are not recovered; rig it afterwards with Auto Rig."))
@@ -107,7 +107,7 @@ struct CharacterSheetCard: View {
             if let busy { HStack { ProgressView(); Text(busy).font(.caption) } }
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
-        .padding(14).background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18, tint: .indigo)
         .onChange(of: item) { _, newItem in
             guard let newItem else { return }
             item = nil

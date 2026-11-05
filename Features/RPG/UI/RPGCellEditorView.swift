@@ -34,7 +34,7 @@ struct RPGCellEditorView: View {
     }
 
     var body: some View {
-        List {
+        List { Group {
             Section {
                 HStack {
                     Spacer()
@@ -62,7 +62,8 @@ struct RPGCellEditorView: View {
             case .number, .text: textSection
             }
             displaySection
-        }
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList()
         .navigationTitle(L10n.t("格子内容", "Cell Content")).navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button(L10n.t("取消", "Cancel")) { close() }.accessibilityIdentifier("rpg-cell-cancel") }
@@ -131,7 +132,7 @@ struct RPGCellEditorView: View {
                         Button { draft.style?.value = name } label: {
                             Image(systemName: name).font(.title3).frame(maxWidth: .infinity, minHeight: 44)
                                 .background(draft.style?.value == name ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(.plain).accessibilityIdentifier("rpg-cell-symbol-" + name)
+                        }.buttonStyle(.moonJelly).accessibilityIdentifier("rpg-cell-symbol-" + name)
                     }
                 }
                 TextField(L10n.t("SF Symbol 名称", "SF Symbol name"), text: styleText).textInputAutocapitalization(.never).autocorrectionDisabled()

@@ -23,8 +23,8 @@ struct DiscoverySourcePanel: View {
                 Spacer()
                 Button(action: onClose) {
                     Image(systemName: "xmark").font(.subheadline.weight(.semibold))
-                        .frame(width: 36, height: 36).background(.thinMaterial, in: Circle())
-                }.buttonStyle(.plain).accessibilityLabel("收起内容源")
+                        .frame(width: 36, height: 36).moonLiquidSurface(.circle)
+                }.buttonStyle(.moonJelly).accessibilityLabel("收起内容源")
             }.padding(18)
             Divider()
             ScrollView {
@@ -35,7 +35,7 @@ struct DiscoverySourcePanel: View {
                             .submitLabel(.search).onSubmit(search)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
-                    .padding(14).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+                    .padding(14).moonGlassCard(radius: 16)
                     VStack(spacing: 0) {
                         panelAction("搜索所选来源", symbol: "magnifyingglass", color: .blue, action: search)
                         Divider().padding(.leading, 54)
@@ -51,7 +51,7 @@ struct DiscoverySourcePanel: View {
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
                             }.padding(.vertical, 12)
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.moonJelly)
                         Divider().padding(.leading, 54)
                         panelAction("刷新", symbol: "arrow.clockwise", color: .gray) {
                             Task {
@@ -62,7 +62,7 @@ struct DiscoverySourcePanel: View {
                         }
                     }
                     .padding(.horizontal, 12)
-                    .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
+                    .moonGlassCard(radius: 22)
                     HStack {
                         Text("分类").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         Spacer()
@@ -87,7 +87,7 @@ struct DiscoverySourcePanel: View {
                                         }
                                         Spacer(minLength: 0)
                                     }.frame(maxWidth: .infinity, alignment: .leading)
-                                }.buttonStyle(.plain).accessibilityLabel("配置 \(source.name)")
+                                }.buttonStyle(.moonJelly).accessibilityLabel("配置 \(source.name)")
                                 Toggle(source.name, isOn: Binding(
                                     get: { model.mediaStore.enabledSources.first(where: { $0.id == source.id })?.enabled ?? false },
                                     set: { model.mediaStore.setSourceEnabled(source.id, enabled: $0) }
@@ -95,7 +95,7 @@ struct DiscoverySourcePanel: View {
                             }.padding(.vertical, 13).padding(.horizontal, 12)
                             if source.id != model.mediaStore.enabledSources.last?.id { Divider().padding(.leading, 56) }
                         }
-                    }.background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
+                    }.moonGlassCard(radius: 22)
                     Text("开关会保存。搜索只查询已启用的来源；需要密钥或地址的来源可点名称配置。")
                         .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 4)
                 }.padding(16)
@@ -125,7 +125,7 @@ struct DiscoverySourcePanel: View {
     }
 
     private func panelAction(_ title: String, symbol: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) { actionLabel(title, symbol: symbol, color: color) }.buttonStyle(.plain)
+        Button(action: action) { actionLabel(title, symbol: symbol, color: color) }.buttonStyle(.moonJelly)
     }
 
     private func actionLabel(_ title: String, symbol: String, color: Color) -> some View {
@@ -164,7 +164,7 @@ private struct SourceConfigurationView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Section("来源说明") { Text(explanation).font(.subheadline) }
                 if hasURL {
                     Section(source.kind == "youtube" ? "频道 / 播放列表（可选）" : "订阅或媒体地址") {
@@ -189,7 +189,8 @@ private struct SourceConfigurationView: View {
                 if source.id.hasPrefix("custom-") {
                     Button("删除此内容源", role: .destructive) { model.mediaStore.removeCustomSource(source.id); dismiss() }
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(source.name).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -238,12 +239,13 @@ private struct AddDiscoverySourceView: View {
     @State private var error: String?
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Picker("类型", selection: $kind) { Text("RSS / Atom").tag("rss"); Text("网页 / 媒体地址").tag("web") }
                 TextField("名称（可选）", text: $name)
                 TextField("https://…", text: $url).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                 if let error { Text(error).foregroundStyle(.red) }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle("添加内容源").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -264,14 +266,15 @@ private struct AddDiscoveryLinksView: View {
     @State private var working = false
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Section("每行一条链接") {
                     TextEditor(text: $text).frame(minHeight: 180).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Text("支持官方视频页面、图片及视频直链。导入后可在首页和库中查看。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if working { ProgressView("正在解析链接…") }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle("加入链接").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.disabled(working) }

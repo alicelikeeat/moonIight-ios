@@ -18,7 +18,7 @@ struct RPGDiagnosticsView:View {
     var onRunSample:(() -> Void)?=nil
     @State private var report=""
     var body:some View {
-        List {
+        List { Group {
             Section {
                 ForEach(RPGGlassMode.allCases,id:\.self){mode in
                     Button{session.glassMode=mode}label:{
@@ -52,7 +52,8 @@ struct RPGDiagnosticsView:View {
                 Text("工具面板会暂停世界。下列帧数据来自进入工具前的可见场景，不把暂停时间计入帧率。")
                 Text("模拟器数据不能证明 iPhone 性能。目标机型的 Instruments、长期内存、发热、低电量及 60 FPS 仍待真机验证。")
             }.font(.caption)
-        }.navigationTitle("运行诊断").buttonStyle(MoonGlassButtonStyle())
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("运行诊断").buttonStyle(MoonGlassButtonStyle())
             .navigationBarBackButtonHidden(true)
             .toolbar{ToolbarItem(placement:.navigationBarLeading){Button("返回工具"){dismiss()}.accessibilityIdentifier("rpg-diagnostics-back")}}
             .onAppear{report=session.diagnosticReport()}

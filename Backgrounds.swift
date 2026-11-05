@@ -443,7 +443,8 @@ struct PageBackground: View {
     let target: BackgroundTarget
     var body: some View {
         ZStack {
-            Color(uiColor: .systemGroupedBackground)
+            // v1.82: pools of colour behind the glass when no picture is set.
+            MoonLiquidBackdrop()
             if let config = store.resolved(target) { BackgroundMediaLayer(configuration: config) }
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
@@ -522,9 +523,9 @@ struct MediaGlassCircle: ViewModifier {
             else { decorated.glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale) }
         } else {
             if let configuration {
-                decorated.foregroundStyle(configuration.veil.foreground).background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)
+                decorated.foregroundStyle(configuration.veil.foreground).moonLiquidSurface(.circle).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)
             } else {
-                decorated.background(.ultraThinMaterial, in: Circle()).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)
+                decorated.moonLiquidSurface(.circle).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)
             }
         }
     }

@@ -207,7 +207,7 @@ private struct TreasureVideoSelector: View {
     @State private var query = ""
     private var matches: [MediaEntry] { videos.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.platform.localizedCaseInsensitiveContains(query) } }
     var body: some View {
-        List {
+        List { Group {
             Section {
                 Stepper("目标 \(coordinator.selection.target) 个", value: Binding(get: { coordinator.selection.target }, set: { coordinator.setTarget($0) }), in: 1...10)
                     .accessibilityIdentifier("wall-target-count")
@@ -238,7 +238,8 @@ private struct TreasureVideoSelector: View {
                     .accessibilityValue(index == nil ? "未选择" : "已选择")
                 }
             }
-        }.searchable(text: $query, prompt: "搜索视频标题或来源")
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().searchable(text: $query, prompt: "搜索视频标题或来源")
             .navigationTitle("选择视频")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.accessibilityIdentifier("wall-selection-done") } }
     }
@@ -261,12 +262,12 @@ private struct TreasureWallTile: View {
                     } else { Image(systemName: "video").font(.title) }
                     if state == "加载中" { ProgressView() }
                 }.frame(maxWidth: .infinity, minHeight: 44).clipped().contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityLabel("放大 " + entry.title).accessibilityIdentifier("wall-tile-" + entry.id)
+            }.buttonStyle(.moonJelly).accessibilityLabel("放大 " + entry.title).accessibilityIdentifier("wall-tile-" + entry.id)
             Text(entry.title).font(.caption).lineLimit(2)
             if player == nil || state != "就绪" { Text(state).font(.caption2).foregroundStyle(.secondary).lineLimit(3) }
             Button(action: sound) { Label(audible ? "当前音轨" : "选择音轨", systemImage: audible ? "speaker.wave.2.fill" : "speaker.slash")
                 .font(.caption2).frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle()) }
-                .buttonStyle(.plain).accessibilityIdentifier("wall-audio-" + entry.id)
+                .buttonStyle(.moonJelly).accessibilityIdentifier("wall-audio-" + entry.id)
         }.padding(6).moonSingleGlass(radius: 16)
     }
 }

@@ -50,7 +50,7 @@ struct WorldDirectorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 if controller.world.director != nil { currentWorld }
                 themeSection
                 Section(L10n.t("描述（可选）", "Description (optional)")) {
@@ -75,7 +75,8 @@ struct WorldDirectorSheet: View {
                     Button(L10n.t("改用经典随机生成器", "Use the classic random generator")) { dismiss(); onClassic() }
                         .font(.footnote)
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("世界导演", "World Director")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.t("关闭", "Close")) { flag.set(); dismiss() } } }
             .sheet(isPresented: $pickingLibrary) { libraryPicker }
@@ -168,7 +169,7 @@ struct WorldDirectorSheet: View {
 
     private var libraryPicker: some View {
         NavigationStack {
-            List {
+            List { Group {
                 Section(L10n.t("图片与视频", "Pictures & videos")) {
                     ForEach(glass3DMediaItems(store)) { item in
                         Button { toggle(&chosenMedia, item.id) } label: {
@@ -196,7 +197,8 @@ struct WorldDirectorSheet: View {
                         }
                     }
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("选择素材", "Choose assets")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { pickingLibrary = false } } }
         }
@@ -265,7 +267,7 @@ struct WorldDirectorSheet: View {
                 Button { generate() } label: {
                     Label(L10n.t("生成三个方案", "Make three candidates"), systemImage: "wand.and.stars").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent).accessibilityIdentifier("world-director-generate")
+                .buttonStyle(.moonLiquidProminent).accessibilityIdentifier("world-director-generate")
             }
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
             ForEach(notes, id: \.self) { Text($0).font(.caption2).foregroundStyle(.secondary) }
@@ -340,7 +342,7 @@ struct WorldDirectorSheet: View {
                         controller.applyDirector(c)
                         dismiss()
                     } label: { Label(L10n.t("用这个方案搭建世界", "Build this world"), systemImage: "checkmark.circle").frame(maxWidth: .infinity) }
-                        .buttonStyle(.bordered).disabled(!c.report.passed)
+                        .buttonStyle(.moonLiquid).disabled(!c.report.passed)
                         .accessibilityIdentifier("world-director-apply-\(index)")
                 }
                 .padding(.vertical, 4)

@@ -278,7 +278,7 @@ struct Glass3DScreen: View {
                 .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading).padding(.horizontal, 10)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
     }
 
     private func modeSwitch(compact: Bool) -> some View {
@@ -295,7 +295,7 @@ struct Glass3DScreen: View {
                     .background { if on { Capsule().fill(Color.accentColor.gradient).matchedGeometryEffect(id: "mode", in: modeNamespace) } }
                     .contentShape(Capsule())
                 }
-                .buttonStyle(.plain).accessibilityIdentifier("glass3d-mode-" + mode.rawValue)
+                .buttonStyle(.moonJelly).accessibilityIdentifier("glass3d-mode-" + mode.rawValue)
             }
         }
         .padding(3).background(Color.primary.opacity(0.08), in: Capsule())
@@ -537,7 +537,7 @@ struct Glass3DScreen: View {
                     .foregroundStyle(selected ? Color.accentColor : .primary)
             }
         }
-        .buttonStyle(.plain).accessibilityLabel(title).accessibilityAddTraits(selected ? .isSelected : []).accessibilityIdentifier(id)
+        .buttonStyle(.moonJelly).accessibilityLabel(title).accessibilityAddTraits(selected ? .isSelected : []).accessibilityIdentifier(id)
     }
 
     /// Glass tint swatches.
@@ -555,7 +555,7 @@ struct Glass3DScreen: View {
                 .frame(width: 22, height: 22)
                 .overlay(Circle().strokeBorder(on ? Color.accentColor : Color.white.opacity(0.5), lineWidth: on ? 2.5 : 0.5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .accessibilityLabel(hex ?? L10n.t("透明", "Clear"))
     }
 
@@ -604,8 +604,12 @@ struct Glass3DChipStyle: ButtonStyle {
             .padding(.horizontal, 11).padding(.vertical, 7)
             .foregroundStyle(prominent ? Color.white : tint)
             .background(prominent ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(tint.opacity(0.12)), in: Capsule())
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.94 : 1)
-            .animation(MoonGlassMotion.animation(.press, reduceMotion: reduceMotion), value: configuration.isPressed)
+            .overlay {
+                Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(prominent ? 0.55 : 0.3), .white.opacity(0.02)], startPoint: .top, endPoint: .bottom), lineWidth: 0.7)
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Capsule())
+            .modifier(MoonLiquidJellyEffect(pressed: configuration.isPressed))
     }
 }
 
@@ -875,7 +879,7 @@ struct Glass3DPanel: View {
                     Glass3DMediaThumbnail(url: current?.url, kind: current?.kind ?? .image, side: 64, corner: 14)
                         .overlay { if current == nil { Image(systemName: "plus").font(.system(size: 18, weight: .semibold)).foregroundStyle(Color.accentColor) } }
                 }
-                .buttonStyle(.plain).accessibilityLabel(L10n.t("选择媒体", "Choose Media"))
+                .buttonStyle(.moonJelly).accessibilityLabel(L10n.t("选择媒体", "Choose Media"))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(current?.title ?? L10n.t("还没有媒体", "No media yet")).font(.caption.weight(.semibold)).lineLimit(1)
                     Text(blocks.count > 1 ? L10n.t("会切成 \(blocks.count) 格铺满所选方块", "Splits over the \(blocks.count) blocks") : L10n.t("显示在方块的一个面上", "Shown on one face of the block"))
@@ -1002,7 +1006,7 @@ struct Glass3DGeneratorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Section(L10n.t("世界", "World")) {
                     Picker(L10n.t("风格", "Style"), selection: $configuration.style) { ForEach(WorldStyle.allCases, id: \.self) { Text($0.title).tag($0) } }
                     Picker(L10n.t("内容密度", "Density"), selection: $configuration.density) { ForEach(ContentDensity.allCases, id: \.self) { Text($0.title).tag($0) } }
@@ -1034,7 +1038,8 @@ struct Glass3DGeneratorSheet: View {
                         Button(L10n.t("预览生成结果", "Preview")) { preview() }.accessibilityIdentifier("glass3d-generate-preview")
                     }
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("一键随机生成世界", "Generate World")).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(L10n.t("取消", "Cancel")) { dismiss() } }

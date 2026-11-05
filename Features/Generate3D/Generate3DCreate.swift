@@ -168,7 +168,7 @@ struct AICharacterCard: View {
             TextField(L10n.t("描述你想要的角色，例如：一个拿剑的战士", "Describe a character, e.g. a warrior with a sword"), text: $prompt, axis: .vertical)
                 .lineLimit(1...3).textFieldStyle(.roundedBorder).accessibilityIdentifier("generate3d-ai-prompt")
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) { ForEach(Self.examples, id: \.self) { e in Button(e) { prompt = e }.buttonStyle(.bordered).font(.caption) } }
+                HStack(spacing: 6) { ForEach(Self.examples, id: \.self) { e in Button(e) { prompt = e }.buttonStyle(.moonLiquid).font(.caption) } }
             }
             Picker(L10n.t("方式", "Engine"), selection: $engine) { ForEach(Engine.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented)
             Text(engineNote).font(.caption2).foregroundStyle(.secondary)
@@ -178,7 +178,7 @@ struct AICharacterCard: View {
                     Button(L10n.t("保存", "Save")) {
                         let k = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines); guard !k.isEmpty else { return }
                         SecureSettings.write(k, account: ClaudeMotion.keyAccount); hasKey = true; keyDraft = ""
-                    }.buttonStyle(.bordered)
+                    }.buttonStyle(.moonLiquid)
                 }
             }
             if busy { HStack { ProgressView(); Text(L10n.t("正在生成…", "Generating…")).font(.caption) } }
@@ -186,13 +186,13 @@ struct AICharacterCard: View {
                 Button { if engine == .claude { confirm = true } else { generate() } } label: {
                     Label(L10n.t("生成 3D 角色", "Generate 3D Character"), systemImage: "wand.and.stars").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.moonLiquidProminent)
                 .disabled(prompt.trimmingCharacters(in: .whitespaces).isEmpty || tasks.running || (engine == .claude && !hasKey))
                 .accessibilityIdentifier("generate3d-ai-generate")
             }
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
-        .padding(14).background(Color.purple.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18, tint: .purple)
         .confirmationDialog(L10n.t("发送给 Claude？", "Send to Claude?"), isPresented: $confirm, titleVisibility: .visible) {
             Button(L10n.t("发送", "Send")) { generate() }
             Button(L10n.t("取消", "Cancel"), role: .cancel) {}
@@ -263,12 +263,12 @@ struct MultiViewCard: View {
             if busy { HStack { ProgressView(); Text(L10n.t("正在识别轮廓并建模…", "Finding outlines and building…")).font(.caption) } }
             else {
                 Button { build() } label: { Label(L10n.t("用 \(files.count) 张照片建模", "Build from \(files.count) photos"), systemImage: "cube.transparent").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent).disabled(files[.front] == nil || files.count < 2)
+                    .buttonStyle(.moonLiquidProminent).disabled(files[.front] == nil || files.count < 2)
                     .accessibilityIdentifier("generate3d-multiview-build")
             }
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
-        .padding(14).background(Color.teal.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18, tint: .teal)
     }
 
     /// v1.76: each slot has its own picker, so the photo always lands in
@@ -301,7 +301,7 @@ struct MultiViewCard: View {
                 Text(view.hint).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.center)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .contextMenu { if files[view] != nil { Button(L10n.t("移除", "Remove"), role: .destructive) { files[view] = nil; thumbs[view] = nil } } }
         .accessibilityIdentifier("generate3d-view-" + view.rawValue)
     }

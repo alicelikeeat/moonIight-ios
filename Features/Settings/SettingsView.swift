@@ -9,7 +9,7 @@ struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
     @AppStorage(L10n.key) private var language = AppLanguage.zh.rawValue
     var body: some View {
-            Form {
+            Form { Group {
                 Section {
                     Picker(selection: $language) {
                         ForEach(AppLanguage.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
@@ -102,6 +102,7 @@ struct SettingsView: View {
                     Label("下拉首页或发现：刷新内容源", systemImage: "arrow.down")
                     Label("播放方向：可在播放设置中开启横屏", systemImage: "rectangle.landscape")
                 }
+                }.listRowBackground(MoonLiquidRowBackground())
             }
             .scrollContentBackground(.hidden)
             .pageBackground(.settings)

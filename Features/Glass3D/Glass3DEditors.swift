@@ -18,7 +18,7 @@ struct Glass3DCharacterEditor: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 if let manifest = Glass3DStarterPack.manifest {
                     Section {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -37,7 +37,7 @@ struct Glass3DCharacterEditor: View {
                                             Text(Glass3DStarterPack.characterName(character.id)).font(.caption.weight(.semibold))
                                         }
                                     }
-                                    .buttonStyle(.plain).disabled(creating != nil)
+                                    .buttonStyle(.moonJelly).disabled(creating != nil)
                                     .accessibilityIdentifier("glass3d-starter-character-\(character.id)")
                                 }
                             }
@@ -65,7 +65,8 @@ struct Glass3DCharacterEditor: View {
                 NavigationLink {
                     Glass3DCharacterForm(controller: controller, store: store, draft: CharacterTemplate(id: "char:" + UUID().uuidString, name: L10n.t("新角色", "New Character")))
                 } label: { Label(L10n.t("新建角色", "New Character"), systemImage: "plus") }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("角色编辑器", "Character Editor")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { dismiss() } } }
         }
@@ -93,7 +94,7 @@ private struct Glass3DCharacterForm: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        Form {
+        Form { Group {
             Section(L10n.t("外观", "Look")) {
                 TextField(L10n.t("名称", "Name"), text: $draft.name)
                 Picker(L10n.t("显示方式", "Display"), selection: $draft.mode) { ForEach(CharacterDisplayMode.allCases.filter { $0 != .generated || draft.mode == .generated }, id: \.self) { Text($0.title).tag($0) } }
@@ -128,7 +129,8 @@ private struct Glass3DCharacterForm: View {
                     Button(L10n.t("保存并用于所有", "Save and Use for All ") + kind.title) { save(); controller.applyCharacter(draft.id, to: kind) }
                 }
             }
-        }
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList()
         .navigationTitle(draft.name).navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("保存", "Save")) { save(); dismiss() }.disabled(!draft.valid) } }
         .sheet(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } })) {
@@ -209,7 +211,7 @@ struct Glass3DSkillEditor: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 Section(L10n.t("技能栏", "Hotbar")) {
                     ForEach(0..<4, id: \.self) { slot in
                         Picker(L10n.t("第 \(slot + 1) 格", "Slot \(slot + 1)"), selection: Binding(get: { controller.hotbar.indices.contains(slot) ? controller.hotbar[slot] : "" }, set: { controller.setHotbar(slot, skill: $0) })) {
@@ -237,7 +239,8 @@ struct Glass3DSkillEditor: View {
                 NavigationLink {
                     Glass3DSkillForm(controller: controller, draft: SkillDefinition(id: "skill:" + UUID().uuidString, name: L10n.t("新技能", "New Skill"), events: [SkillEvent(time: 0, kind: .action(.skill))]))
                 } label: { Label(L10n.t("新建技能", "New Skill"), systemImage: "plus") }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("技能编辑器", "Skill Editor")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { dismiss() } } }
         }
@@ -256,7 +259,7 @@ private struct Glass3DSkillForm: View {
     private let symbols = ["sparkles", "flame", "snowflake", "bolt.fill", "bolt.horizontal", "wind", "tornado", "sparkle", "circle.hexagongrid", "cross.case", "shield", "burst"]
 
     var body: some View {
-        Form {
+        Form { Group {
             Section(L10n.t("技能", "Skill")) {
                 TextField(L10n.t("名称", "Name"), text: $draft.name)
                 Picker(L10n.t("图标", "Icon"), selection: $draft.symbol) { ForEach(symbols, id: \.self) { Image(systemName: $0).tag($0) } }
@@ -293,7 +296,8 @@ private struct Glass3DSkillForm: View {
                     Button(L10n.t("镜头震动", "Camera Shake")) { add(.shake(0.4)) }
                 } label: { Label(L10n.t("添加事件", "Add Event"), systemImage: "plus") }
             }
-        }
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList()
         .navigationTitle(draft.name).navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("保存", "Save")) { controller.saveSkill(draft); dismiss() }.disabled(!draft.valid) } }
     }
@@ -393,7 +397,7 @@ struct Glass3DBossEditor: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 Section {
                     ForEach(controller.world.bossScripts ?? []) { script in
                         NavigationLink { Glass3DBossForm(controller: controller, draft: script) } label: { Label(script.name + " · " + L10n.t("\(script.phases.count) 阶段", "\(script.phases.count) phases"), systemImage: "crown") }
@@ -401,7 +405,8 @@ struct Glass3DBossEditor: View {
                     .onDelete { offsets in for i in offsets { if let id = controller.world.bossScripts?[i].id { controller.deleteBossScript(id) } } }
                 } footer: { Text(L10n.t("没有指定阶段的大 Boss 使用内置的三阶段「玻璃巨像」。", "Bosses without a script use the built-in three-phase Glass Colossus.")) }
                 NavigationLink { Glass3DBossForm(controller: controller, draft: BossDirector.example(id: "boss:" + UUID().uuidString)) } label: { Label(L10n.t("新建（从示例开始）", "New (from the example)"), systemImage: "plus") }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("Boss 阶段编辑器", "Boss Phase Editor")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { dismiss() } } }
         }
@@ -415,7 +420,7 @@ private struct Glass3DBossForm: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        Form {
+        Form { Group {
             Section(L10n.t("Boss", "Boss")) {
                 TextField(L10n.t("名称", "Name"), text: $draft.name)
                 Stepper(L10n.t("击败奖励 \(draft.rewardShards) 月晶", "Reward \(draft.rewardShards) shards"), value: $draft.rewardShards, in: 0...500, step: 5)
@@ -462,7 +467,8 @@ private struct Glass3DBossForm: View {
                 Button(L10n.t("保存并用于所有大 Boss", "Save and Use for All Bosses")) { controller.saveBossScript(draft); controller.applyBossScript(draft.id, to: .boss) }
                 Button(L10n.t("保存并用于所有小 Boss", "Save and Use for All Mini Bosses")) { controller.saveBossScript(draft); controller.applyBossScript(draft.id, to: .miniBoss) }
             }
-        }
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList()
         .navigationTitle(draft.name).navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("保存", "Save")) { controller.saveBossScript(draft); dismiss() }.disabled(!draft.valid) } }
     }

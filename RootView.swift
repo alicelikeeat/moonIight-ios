@@ -36,6 +36,8 @@ struct RootView: View {
     @State private var navigationHideTask: Task<Void, Never>?
     @State private var blindExitVisible = false
     @AppStorage("moonlight.button.tint") private var buttonTint = "moon"
+    /// v1.82: the liquid selection blob that flows between tabs.
+    @Namespace private var liquidSelection
     @AppStorage("moonlight.button.tint.red") private var customTintRed = 0.55
     @AppStorage("moonlight.button.tint.green") private var customTintGreen = 0.50
     @AppStorage("moonlight.button.tint.blue") private var customTintBlue = 0.27
@@ -108,9 +110,9 @@ struct RootView: View {
                         }
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 13).padding(.vertical, 10)
-                        .background(.regularMaterial, in: Capsule())
+                        .moonLiquidSurface(.capsule)
                         .overlay(Capsule().strokeBorder(.white.opacity(0.35)))
-                        .buttonStyle(.plain)
+                        .buttonStyle(.moonJelly)
                         .accessibilityLabel("退出盲盒")
                         .accessibilityIdentifier("blind-mode-exit-button")
                     } else {
@@ -419,7 +421,7 @@ struct RootView: View {
                             Image(systemName: "arrow.up")
                                 .font(.system(size: 14, weight: .bold))
                                 .frame(width: 38, height: 38)
-                                .background(.regularMaterial, in: Circle())
+                                .moonLiquidSurface(.circle)
                                 .overlay(Circle().strokeBorder(.white.opacity(0.32)))
                                 .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
                         }
@@ -433,7 +435,7 @@ struct RootView: View {
                 .overlay(alignment: .bottom) {
                     if bottomRefreshing {
                         ProgressView().padding(10)
-                            .background(.regularMaterial, in: Circle())
+                            .moonLiquidSurface(.circle)
                             .padding(.bottom, 82)
                             .allowsHitTesting(false)
                     }
@@ -495,8 +497,19 @@ struct RootView: View {
                             .opacity(blindMode ? 0.01 : 1)
                             .animation(.spring(response: 0.28, dampingFraction: 0.62), value: model.selectedTab)
                             .frame(width: diameter, height: diameter)
+                            .background {
+                                // v1.82: a drop of tinted light under the chosen tab; it
+                                // flows to the next tab and wobbles into place.
+                                if model.selectedTab.barTab == tab && !blindMode {
+                                    Circle().fill(RadialGradient(colors: [activeButtonTint.opacity(0.55), activeButtonTint.opacity(0)], center: .center, startRadius: 4, endRadius: diameter * 0.75))
+                                        .frame(width: diameter * 1.45, height: diameter * 1.45)
+                                        .matchedGeometryEffect(id: "tab-blob", in: liquidSelection)
+                                        .allowsHitTesting(false)
+                                }
+                            }
                             .moonGlassCircle(.button(for: tab))
                             .overlay(Circle().strokeBorder(model.selectedTab.barTab == tab ? activeButtonTint.opacity(0.62) : .clear, lineWidth: 1).allowsHitTesting(false))
+                            .animation(MoonLiquidMotion.morph, value: model.selectedTab)
                         Text(tab.title).font(.system(size: 10, weight: model.selectedTab.barTab == tab ? .semibold : .medium))
                             .opacity(blindMode ? 0.01 : 1)
                     }
@@ -611,9 +624,16 @@ struct RootView: View {
         } label: {
             Text(title).font(.subheadline.weight(model.selectedTab == tab ? .semibold : .regular))
                 .frame(width: 72, height: 32)
-                .background(model.selectedTab == tab ? Color.accentColor.opacity(0.18) : .clear, in: Capsule())
+                .background {
+                    if model.selectedTab == tab {
+                        Capsule().fill(Color.accentColor.opacity(0.18))
+                            .overlay(Capsule().strokeBorder(.white.opacity(0.3), lineWidth: 0.7))
+                            .matchedGeometryEffect(id: "home-segment", in: liquidSelection)
+                    }
+                }
+                .animation(MoonLiquidMotion.morph, value: model.selectedTab)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .accessibilityIdentifier(identifier)
         .accessibilityAddTraits(model.selectedTab == tab ? .isSelected : [])
     }
@@ -734,7 +754,7 @@ struct RootView: View {
         case .profile: ProfileEditView()
         case .gestures: GestureHelpView()
         case .playMedia, .favoriteMedia, .saveMedia, .shareMedia:
-            List {
+            List { Group {
                 Section("选择要操作的媒体") {
                     ForEach(model.mediaStore.items) { entry in
                         Button(entry.title) {
@@ -747,7 +767,8 @@ struct RootView: View {
                     }
                     if model.mediaStore.items.isEmpty { Text("请先向库中导入媒体。") }
                 }
-            }.navigationTitle(action.title)
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList().navigationTitle(action.title)
         default: LibraryView(selectedImage: selectedImage, selection: $selectedMedia, onPlay: { activeSheet = nil; activePlayer = $0 })
         }
     }

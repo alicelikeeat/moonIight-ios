@@ -325,7 +325,7 @@ struct RPGShellView: View {
     private var editorNotice: some View {
         Text(session.notice).font(.caption).lineLimit(1).truncationMode(.tail)
             .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(.thinMaterial, in: Capsule())
+            .moonLiquidSurface(.capsule)
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
             .accessibilityIdentifier("rpg-status")
@@ -565,7 +565,7 @@ struct RPGShellView: View {
     }
     private var toolPanel: some View {
         NavigationStack(path:$toolPath) {
-            Form {
+            Form { Group {
                 Picker(L10n.t("模式", "Mode"), selection: Binding(get: { session.world.player.mode }, set: { session.setMode($0) })) {
                     Text(L10n.t("冒险", "Adventure")).tag(RPGGameMode.adventure); Text(L10n.t("创造", "Creative")).tag(RPGGameMode.creative)
                 }.pickerStyle(.segmented).accessibilityIdentifier("rpg-mode")
@@ -636,7 +636,8 @@ struct RPGShellView: View {
                     Text(L10n.t("官方锚点与通路受保护。创造模式免资源成本，但只有独立创作副本可修改保护区。", "Official anchors and paths are protected. Creative mode costs nothing, but only a creative copy can change protected areas."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            }.disabled(!session.ready || session.working).navigationTitle(L10n.t("沙盒工具", "Sandbox Tools"))
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList().disabled(!session.ready || session.working).navigationTitle(L10n.t("沙盒工具", "Sandbox Tools"))
                 .navigationDestination(for:RPGEntryPage.self){initialDestination($0)}
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { tools = false }.accessibilityIdentifier("rpg-tools-close") } }
         }.buttonStyle(MoonGlassButtonStyle())

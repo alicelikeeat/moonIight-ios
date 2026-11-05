@@ -64,7 +64,7 @@ struct MoonTreasureMapView: View {
                     Text("斗地主").frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                         .background(experience == .landlord ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
                 }.accessibilityIdentifier("treasure-landlord-mode").accessibilityAddTraits(experience == .landlord ? .isSelected : [])
-            }.buttonStyle(.plain).padding(4).moonSingleGlass().padding(.horizontal, 14).zIndex(10)
+            }.buttonStyle(.moonJelly).padding(4).moonSingleGlass().padding(.horizontal, 14).zIndex(10)
             ZStack {
                 // Keep the SKView mounted so switching experiences preserves
                 // positions, velocities, camera and independently chosen count.

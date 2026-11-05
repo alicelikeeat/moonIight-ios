@@ -190,6 +190,7 @@ struct Glass3DOnlineAssetsView: View {
             .onChange(of: query) { value in if source == .polyHaven { results = OnlineAssetParsing.filter(havenAll, query: value) } }
             .onChange(of: source) { _ in page = 1; results = []; failure = nil; search() }
             .onChange(of: cc0Only) { _ in page = 1; search() }
+            .moonLiquidPage()
             .navigationTitle(L10n.t("在线素材", "Online Assets")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button(L10n.t("完成", "Done")) { dismiss() } } }
             .task { search() }
@@ -227,7 +228,7 @@ struct Glass3DOnlineAssetsView: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .disabled(importing != nil)
         .contextMenu {
             Button { importAsset(asset) } label: { Label(L10n.t("导入到媒体库", "Import"), systemImage: "square.and.arrow.down") }
@@ -304,7 +305,7 @@ struct Glass3DCreditsView: View {
     var body: some View {
         let entries = attributions.current(in: store)
         NavigationStack {
-            List {
+            List { Group {
                 Section {
                     row("Kenney · Platformer Characters", detail: L10n.t("内置角色 · CC0 1.0（kenney.nl）", "Built-in characters · CC0 1.0 (kenney.nl)"), url: "https://opengameart.org/content/platformer-characters-1-5-characters")
                     row("Poly Haven", detail: L10n.t("内置贴图与在线贴图 · CC0 1.0 · Powered by Poly Haven", "Built-in and online textures · CC0 1.0 · Powered by Poly Haven"), url: "https://polyhaven.com")
@@ -334,7 +335,8 @@ struct Glass3DCreditsView: View {
                 } header: { Text(L10n.t("已导入的素材（\(entries.count)）", "Imported (\(entries.count))")) } footer: {
                     Text(L10n.t("橙色标签的作品需要署名：分享截图或作品时，请附上上面的署名文字。点一项可打开原始页面。", "Orange items need credit: include the credit line when you share. Tap an item to open its page."))
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("素材来源与授权", "Credits & Licences")).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { dismiss() } } }
         }

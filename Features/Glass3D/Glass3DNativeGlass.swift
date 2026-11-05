@@ -29,7 +29,10 @@ import SwiftUI
 
     struct Character { let position: SpatialVector; let radius: Double; let height: Double }
 
+    /// Set by `reset()`: the next update must run even if throttled.
+    private(set) var needsRefresh = true
     func update(projection: SpatialProjection, blocks: [SpatialBlock], frames: [String: GroupFrame], characters: [Character], budget: Int) {
+        needsRefresh = false
         guard budget > 0, projection.viewSize.width > 0 else {
             if faces != 0 || !shape.isEmpty { shape = Path(); faces = 0 }
             chosenIDs = []
@@ -86,6 +89,7 @@ import SwiftUI
         if !shape.isEmpty { shape = Path() }
         opacity = 0
         chosenIDs = []
+        needsRefresh = true
     }
 }
 

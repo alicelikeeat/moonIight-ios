@@ -156,7 +156,7 @@ struct GlassShapeEditorView: View {
                     if let message = model.message { banner(message, symbol: "info.circle.fill", tint: .accentColor).onTapGesture { model.message = nil } }
                     if model.generating { banner(L10n.t("正在生成…", "Generating…"), symbol: "sparkles", tint: .purple) }
                     Spacer()
-                    if !model.preview { Text(hint).font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 6).background(.thinMaterial, in: Capsule()) }
+                    if !model.preview { Text(hint).font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.vertical, 6).moonLiquidSurface(.capsule) }
                 }
                 .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
                 .allowsHitTesting(model.message != nil)
@@ -181,7 +181,7 @@ struct GlassShapeEditorView: View {
     private func banner(_ text: String, symbol: String, tint: Color) -> some View {
         Label(text, systemImage: symbol).font(.caption).foregroundStyle(tint)
             .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(.regularMaterial, in: Capsule())
+            .moonLiquidSurface(.capsule)
     }
 
     private func close() { model.store.flush(); if let onClose { onClose() } else { dismiss() } }
@@ -266,7 +266,7 @@ struct GlassShapeEditorView: View {
         .contentShape(Rectangle())
     }
     private func barButton(_ symbol: String, _ title: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) { barLabel(symbol, title) }.buttonStyle(.plain).accessibilityIdentifier(id)
+        Button(action: action) { barLabel(symbol, title) }.buttonStyle(.moonJelly).accessibilityIdentifier(id)
     }
 
     private var promptSheet: some View {
@@ -277,7 +277,7 @@ struct GlassShapeEditorView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack {
                         ForEach(examples, id: \.self) { example in
-                            Button(example) { prompt = example }.buttonStyle(.bordered).font(.caption)
+                            Button(example) { prompt = example }.buttonStyle(.moonLiquid).font(.caption)
                         }
                     }
                 }
@@ -519,7 +519,7 @@ private struct GlassShapeLibraryView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 ForEach(store.shapes) { shape in
                     Button { model.open(shape.id); dismiss() } label: {
                         HStack {
@@ -539,7 +539,8 @@ private struct GlassShapeLibraryView: View {
                             .tint(.orange)
                     }
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle(L10n.t("作品库", "Library")).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(L10n.t("完成", "Done")) { dismiss() } }

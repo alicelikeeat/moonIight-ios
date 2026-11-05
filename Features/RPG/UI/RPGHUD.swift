@@ -154,7 +154,7 @@ struct RPGCombatPad: View {
         RPGGlassGroup(spacing: 10) {
             if hud.dead {
                 Button { session.revive() } label: { label("heart.fill", L10n.t("安全复苏", "Revive"), size: 72) }
-                    .buttonStyle(.plain).hudGlass(.interactive, in: Circle()).accessibilityIdentifier("rpg-revive")
+                    .buttonStyle(.moonJelly).hudGlass(.interactive, in: Circle()).accessibilityIdentifier("rpg-revive")
             } else {
                 HStack(alignment: .bottom, spacing: 10) {
                     VStack(spacing: 10) {
@@ -192,13 +192,11 @@ struct RPGCombatPad: View {
     }
 }
 
-/// Press feedback for glass controls (scale only; the glass does the rest).
+/// Press feedback for glass controls. v1.82: liquid — squash, wobble
+/// back, a sweep of light and a soft tap (the glass itself is the HUD's).
 struct RPGPressStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.9 : 1)
-            .animation(MoonGlassMotion.animation(.press, reduceMotion: reduceMotion), value: configuration.isPressed)
+        configuration.label.modifier(MoonLiquidJellyEffect(pressed: configuration.isPressed, amount: 1.2))
     }
 }
 

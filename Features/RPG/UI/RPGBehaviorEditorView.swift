@@ -10,7 +10,7 @@ struct RPGBehaviorEditorView:View {
     @State private var event="blockDestroyed"
     @State private var requiresWood=false
     var body:some View {
-        Form {
+        Form { Group {
             Text("方块 "+target.id).font(.caption)
             Picker("触发器",selection:$trigger){ForEach(RPGBehaviorTrigger.allCases,id:\.self){Text($0.rawValue).tag($0)}}
             Picker("剧情与白名单动作",selection:$graphID){
@@ -28,6 +28,7 @@ struct RPGBehaviorEditorView:View {
             Button("清除此方块行为",role:.destructive){session.clearBehaviors(target.id)}
             Text("触发器启动受校验的剧情图，由同一白名单事务执行动作。每个绑定只触发一次，既有剧情回执不重置；不支持脚本。").font(.caption)
             Text(session.notice).font(.caption)
-        }.navigationTitle("方块行为").buttonStyle(MoonGlassButtonStyle())
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("方块行为").buttonStyle(MoonGlassButtonStyle())
     }
 }

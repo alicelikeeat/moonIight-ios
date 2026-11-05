@@ -24,7 +24,7 @@ struct RPGStoryEditorView:View {
     @State private var previewing=false
     @State private var document=RPGStoryDocument(data:Data())
     var body:some View {
-        List {
+        List { Group {
             Section("剧情") {
                 TextField("标题",text:$graph.title).focused($editingTitle).submitLabel(.done).onSubmit{editingTitle=false}.accessibilityIdentifier("rpg-story-title")
                 Picker("起始节点",selection:$graph.start){ForEach(graph.nodes){Text($0.id).tag($0.id)}}
@@ -62,7 +62,8 @@ struct RPGStoryEditorView:View {
                 }.accessibilityIdentifier("rpg-story-export")
                 Text("只导出节点和媒体引用，不打包视频。缺失媒体保留字幕；不执行脚本。").font(.caption)
             }
-        }.safeAreaInset(edge:.bottom){
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().safeAreaInset(edge:.bottom){
             Text(message).font(.caption).frame(maxWidth:.infinity,alignment:.leading).padding(12).background(.regularMaterial).accessibilityIdentifier("rpg-editor-status")
         }.navigationTitle("剧情编辑器").buttonStyle(MoonGlassButtonStyle())
             .navigationBarBackButtonHidden(true)
@@ -96,9 +97,10 @@ private struct RPGStoryNodeEditor:View {
     @State private var muted=true
     @State private var selectedMedia=""
     var body:some View {
-        Form {
+        Form { Group {
             properties; conditions; choices; actions; mediaSection
-        }.navigationTitle("节点表单").buttonStyle(MoonGlassButtonStyle())
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("节点表单").buttonStyle(MoonGlassButtonStyle())
             .toolbar{ToolbarItem(placement:.confirmationAction){Button("应用"){applyChanges()}.accessibilityIdentifier("rpg-node-apply")}}
             .onAppear{if let binding=bindings.first(where:{$0.id==node.mediaBindingID}){loop=node.mediaLoop ?? binding.loop;muted=node.mediaMuted ?? binding.muted}}
     }
@@ -189,7 +191,7 @@ private struct RPGStoryPreviewView:View {
     @State private var world:WorldState?
     @State private var message=""
     var body:some View {
-        List {
+        List { Group {
             Text("隔离创造副本预览，原世界和官方进度不会改变。").font(.caption)
             if let world,let progress=world.story.activeProgress,let node=world.story.activeGraph.nodes.first(where:{$0.id==progress.current}) {
                 Text(node.text).accessibilityIdentifier("rpg-preview-text")
@@ -212,7 +214,8 @@ private struct RPGStoryPreviewView:View {
                 }
             }
             Text(message).font(.caption)
-        }.navigationTitle("隔离预览").buttonStyle(MoonGlassButtonStyle())
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("隔离预览").buttonStyle(MoonGlassButtonStyle())
             .toolbar{ToolbarItem(placement:.confirmationAction){Button("结束预览"){dismiss()}.accessibilityIdentifier("rpg-preview-close")}}
             .onAppear{do{world=try RPGStoryAuthoring.preview(graph,bindings:bindings,source:source)}catch{message=error.localizedDescription}}
     }

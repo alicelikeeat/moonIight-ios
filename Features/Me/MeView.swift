@@ -24,7 +24,7 @@ struct MeView: View {
                         NavigationLink(value: AppCommand.settings) {
                             Image(systemName: "gearshape").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.moonJelly)
                         .accessibilityIdentifier("settings-entry")
                     }
                     if !coverPath.isEmpty {
@@ -42,7 +42,7 @@ struct MeView: View {
                             Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                         }.padding(18).moonSingleGlass(radius: 24)
                             .contentShape(RoundedRectangle(cornerRadius: 24))
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(.moonJelly)
                     HStack(spacing: 10) {
                         StatCard(value: "\(model.moments.count)", label: "动态")
                         StatCard(value: "\(VirtualFriendRoster.names.count)", label: "好友")
@@ -63,7 +63,7 @@ struct MeView: View {
                         Divider().padding(.leading, 56)
                         NavigationLink(value: AppCommand.messages) { MenuRow(symbol: "bubble.left.and.bubble.right.fill", title: "消息", color: .purple) }
                     }
-                    .buttonStyle(.plain).padding(.horizontal, 14)
+                    .buttonStyle(.moonJelly).padding(.horizontal, 14)
                     .moonSingleGlass(radius: 24)
                 }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 96)
             }
@@ -96,7 +96,7 @@ struct VirtualFriendsView: View {
     @EnvironmentObject private var model: AppModel
     let onSelect: (MediaEntry) -> Void
     var body: some View {
-        List {
+        List { Group {
             Section("虚拟好友 · 本机") {
                 ForEach(Array(VirtualFriendRoster.names.enumerated()), id: \.offset) { item in
                     let index = item.offset
@@ -108,11 +108,11 @@ struct VirtualFriendsView: View {
                                     VStack(alignment: .leading, spacing: 10) {
                                         Text(post.text).font(.body).frame(maxWidth: .infinity, alignment: .leading)
                                         if let entry = post.attachment {
-                                            Button { onSelect(entry) } label: { MomentAttachmentPreview(entry: entry) }.buttonStyle(.plain)
+                                            Button { onSelect(entry) } label: { MomentAttachmentPreview(entry: entry) }.buttonStyle(.moonJelly)
                                         }
                                         Label("\(post.likes) 赞 · \(post.comments.count) 评论 · \(post.reposts) 转发", systemImage: "heart")
                                             .font(.caption).foregroundStyle(.secondary)
-                                    }.padding(14).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+                                    }.padding(14).moonGlassCard(radius: 18)
                                 }
                                 if model.moments.allSatisfy({ $0.authorName != name }) {
                                     EmptyPanel(title: "还没有动态", detail: "开启虚拟好友自动动态后，这里会显示其分享。", symbol: "person.crop.circle")
@@ -132,6 +132,7 @@ struct VirtualFriendsView: View {
                     }
                 }
             }
+            }.listRowBackground(MoonLiquidRowBackground())
         }.navigationTitle("朋友").navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden).pageBackground(.friends)
     }
@@ -141,7 +142,7 @@ struct VirtualMessagesView: View {
     @EnvironmentObject private var model: AppModel
     private var recentInteractions: [MomentPost] { model.moments.filter { $0.isVirtual && !$0.comments.isEmpty } }
     var body: some View {
-        List {
+        List { Group {
             if recentInteractions.isEmpty {
                 EmptyPanel(title: "还没有新消息", detail: "虚拟好友发布动态或评论后，互动摘要会显示在这里。", symbol: "bubble.left.and.bubble.right")
             } else {
@@ -153,6 +154,7 @@ struct VirtualMessagesView: View {
                     }.padding(.vertical, 5)
                 }
             }
+            }.listRowBackground(MoonLiquidRowBackground())
         }.navigationTitle("消息").navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden).pageBackground(.messages)
     }
@@ -167,7 +169,7 @@ struct ProfileEditView: View {
     @AppStorage("moonlight.profile.bio") private var profileBio = "分享生活里的灵感"
 
     var body: some View {
-        Form {
+        Form { Group {
             Section("个人资料") {
                 TextField("昵称", text: $displayName).textInputAutocapitalization(.never)
                 TextField("签名", text: $profileBio, axis: .vertical).lineLimit(1...3)
@@ -186,6 +188,7 @@ struct ProfileEditView: View {
                 }
                 NavigationLink("调整顶部横幅画面与背景") { BackgroundEditorView(target: .cover) }
             }
+            }.listRowBackground(MoonLiquidRowBackground())
         }.navigationTitle("编辑资料").scrollContentBackground(.hidden).pageBackground(.profile)
             .task(id: avatar) { await save(avatar, key: "avatar") }
             .task(id: cover) { await save(cover, key: "cover") }

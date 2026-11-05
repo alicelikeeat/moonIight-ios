@@ -63,6 +63,7 @@ struct AutoRigView: View {
                     .padding(.horizontal, 16).padding(.bottom, 24)
                 }
             }
+            .moonLiquidPage()
             .navigationTitle(L10n.t("自动骨骼", "Auto Rig")).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(L10n.t("完成", "Done")) { rig.cancel(); dismiss() } }
@@ -151,12 +152,12 @@ struct AutoRigView: View {
                 ProgressView()
                 Text(rig.stage?.title ?? L10n.t("处理中", "Working")).font(.subheadline.weight(.semibold))
                 Spacer()
-                Button(L10n.t("取消", "Cancel")) { rig.cancel() }.buttonStyle(.bordered).accessibilityIdentifier("autorig-cancel")
+                Button(L10n.t("取消", "Cancel")) { rig.cancel() }.buttonStyle(.moonLiquid).accessibilityIdentifier("autorig-cancel")
             }
             if let job = rig.cloudJob { Text(L10n.t("云端任务 \(job.id)：\(job.status.rawValue)", "Cloud job \(job.id): \(job.status.rawValue)")).font(.caption2).foregroundStyle(.secondary) }
             ProgressView(value: stageFraction).progressViewStyle(.linear)
         }
-        .padding(14).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous)).padding(16)
+        .padding(14).moonGlassCard(radius: 18).padding(16)
     }
     private var stageFraction: Double {
         guard let stage = rig.stage, let i = RiggingStage.allCases.firstIndex(of: stage) else { return 0 }
@@ -170,7 +171,7 @@ struct AutoRigView: View {
             Label(rig.hasRig ? L10n.t("重新自动绑定", "Auto Rig Again") : L10n.t("自动绑定", "Auto Rig"), systemImage: "figure.arms.open")
                 .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
         }
-        .buttonStyle(.borderedProminent).disabled(rig.running || rig.mesh == nil).accessibilityIdentifier("autorig-run")
+        .buttonStyle(.moonLiquidProminent).disabled(rig.running || rig.mesh == nil).accessibilityIdentifier("autorig-run")
         Text(L10n.t("在本机识别身体结构、生成 27 个关节、计算蒙皮权重，并用 8 个动作实际变形检查。断网也能完成。", "Finds the body on this iPhone, builds 27 joints, computes skin weights and really deforms the model through 8 test motions. Works offline."))
             .font(.caption).foregroundStyle(.secondary)
         if let analysis = rig.analysis { analysisCard(analysis) }
@@ -224,12 +225,12 @@ struct AutoRigView: View {
                 Button(L10n.t("云端绑定…", "Cloud Rig…")) { confirmCloud = true }
                     .disabled(CloudRigConfig.parse(cloudURL, token: cloudToken) == nil || rig.running)
                 if rig.cloudJob != nil { Button(L10n.t("删除云端文件", "Delete Cloud Files"), role: .destructive) { rig.deleteCloudJob() } }
-            }.font(.caption).buttonStyle(.bordered)
+            }.font(.caption).buttonStyle(.moonLiquid)
             Divider()
             HStack {
                 Button(L10n.t("恢复上次保存", "Restore Previous Save")) { rig.rollback() }
                 Button(L10n.t("删除骨骼", "Delete Rig"), role: .destructive) { confirmDelete = true }.disabled(!rig.savedOnce)
-            }.font(.caption).buttonStyle(.bordered)
+            }.font(.caption).buttonStyle(.moonLiquid)
         }
         .padding(.top, 6)
     }
@@ -254,7 +255,7 @@ struct AutoRigView: View {
                 Button { rig.assist() } label: {
                     Label(L10n.t("AI 协助：保留我放好的关节，重新推算其余关节", "AI assist: keep my joints, re-fit the others"), systemImage: "sparkles").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered).font(.caption).disabled(rig.running)
+                .buttonStyle(.moonLiquid).font(.caption).disabled(rig.running)
                 if !rig.editedJoints.isEmpty {
                     Text(L10n.t("已手动放置：", "Placed by hand: ") + rig.editedJoints.map(\.title).sorted().joined(separator: "、")).font(.caption2).foregroundStyle(.secondary)
                 }
@@ -263,7 +264,7 @@ struct AutoRigView: View {
             if let j = rig.selectedJoint, skeleton.joints.indices.contains(j) { jointEditor(skeleton, j) }
             if rig.needsReskin {
                 Button { rig.reskin() } label: { Label(L10n.t("关节已改动：重算权重", "Joints changed: Recompute Weights"), systemImage: "arrow.triangle.2.circlepath") }
-                    .buttonStyle(.borderedProminent).disabled(rig.running)
+                    .buttonStyle(.moonLiquidProminent).disabled(rig.running)
             }
         } else {
             emptyRig
@@ -294,7 +295,7 @@ struct AutoRigView: View {
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .background(selected ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06), in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .contextMenu {
             Button { rig.selectedJoint = i; page = .skeleton } label: { Label(L10n.t("移动 / 旋转", "Move / Rotate"), systemImage: "move.3d") }
             Button { rig.selectedJoint = i; page = .skin } label: { Label(L10n.t("查看权重", "Show Weights"), systemImage: "paintbrush") }
@@ -322,12 +323,12 @@ struct AutoRigView: View {
             angleSlider("X", 0, joint.jointLimit, j)
             angleSlider("Y", 1, joint.jointLimit, j)
             angleSlider("Z", 2, joint.jointLimit, j)
-            Button(L10n.t("恢复绑定姿态", "Back to Bind Pose")) { scene.restPose(); rotation = .zero }.font(.caption).buttonStyle(.bordered)
+            Button(L10n.t("恢复绑定姿态", "Back to Bind Pose")) { scene.restPose(); rotation = .zero }.font(.caption).buttonStyle(.moonLiquid)
         }
     }
 
     private func nudge(_ title: String, _ delta: SIMD3<Float>, _ j: Int) -> some View {
-        Button(title) { rig.nudge(j, by: delta) }.buttonStyle(.bordered).font(.caption).disabled(rig.running)
+        Button(title) { rig.nudge(j, by: delta) }.buttonStyle(.moonLiquid).font(.caption).disabled(rig.running)
     }
 
     private func angleSlider(_ axis: String, _ k: Int, _ limit: JointLimit, _ j: Int) -> some View {
@@ -356,7 +357,7 @@ struct AutoRigView: View {
                     Button(L10n.t("扩大影响", "Wider")) { rig.scaleInfluence(j, by: 1.25) }
                     Button(L10n.t("缩小影响", "Narrower")) { rig.scaleInfluence(j, by: 0.8) }
                     Button(L10n.t("局部平滑", "Smooth Here")) { rig.smooth(around: j) }
-                }.buttonStyle(.bordered).font(.caption).disabled(rig.running)
+                }.buttonStyle(.moonLiquid).font(.caption).disabled(rig.running)
             } else {
                 Text(L10n.t("先在「骨骼生成」里选一个关节，这里会显示它的权重热力图。", "Select a joint on the Skeleton page to see its weight heatmap here.")).font(.caption).foregroundStyle(.secondary)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -366,7 +367,7 @@ struct AutoRigView: View {
             HStack(spacing: 8) {
                 Button(L10n.t("全部重算", "Recompute All")) { rig.reskin() }
                 Button(L10n.t("撤销（\(rig.undoDepth)）", "Undo (\(rig.undoDepth))")) { rig.undo() }.disabled(rig.undoDepth == 0)
-            }.buttonStyle(.bordered).font(.caption).disabled(rig.running)
+            }.buttonStyle(.moonLiquid).font(.caption).disabled(rig.running)
             Text(L10n.t("每个顶点最多受 4 个关节影响，权重非负且总和为 1。修改会在保存前保留撤销记录。", "Each vertex follows at most 4 joints; weights are non-negative and sum to 1. Changes can be undone until you save."))
                 .font(.caption2).foregroundStyle(.secondary)
         } else {
@@ -411,7 +412,7 @@ struct AutoRigView: View {
                             Image(systemName: playing ? "stop.fill" : "play.fill").font(.caption)
                         }
                     }
-                    .buttonStyle(.plain).accessibilityIdentifier("autorig-file-clip-" + clip.id)
+                    .buttonStyle(.moonJelly).accessibilityIdentifier("autorig-file-clip-" + clip.id)
                 }
                 Text(L10n.t("放进 3D 世界后，名字含 idle / walk / run / jump / attack 的动作会对应角色的待机、行走、奔跑、跳跃、攻击；其余动作用第一个。",
                             "In the 3D world, clips named idle / walk / run / jump / attack drive those actions; other actions use the first clip."))
@@ -428,7 +429,7 @@ struct AutoRigView: View {
             HStack(spacing: 8) {
                 Button(L10n.t("停止播放", "Stop")) { scene.play(nil) }
                 Button(L10n.t("重新测试", "Test Again")) { rig.retest() }.disabled(rig.running)
-            }.buttonStyle(.bordered).font(.caption)
+            }.buttonStyle(.moonLiquid).font(.caption)
             if !rig.sockets.isEmpty {
                 card {
                     Text(L10n.t("挂点（供技能编辑器使用）", "Sockets (for the skill editor)")).font(.caption.weight(.semibold))
@@ -438,7 +439,7 @@ struct AutoRigView: View {
             Button { rig.save(store: store) } label: {
                 Label(rig.dirty ? L10n.t("保存角色", "Save Character") : L10n.t("已保存", "Saved"), systemImage: "tray.and.arrow.down").frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent).disabled(!rig.dirty || rig.running || rig.needsReskin)
+            .buttonStyle(.moonLiquidProminent).disabled(!rig.dirty || rig.running || rig.needsReskin)
         } else {
             emptyRig
         }
@@ -464,7 +465,7 @@ struct AutoRigView: View {
             }
             .padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
         }
-        .buttonStyle(.plain).accessibilityIdentifier("autorig-test-" + result.id)
+        .buttonStyle(.moonJelly).accessibilityIdentifier("autorig-test-" + result.id)
     }
 
     // MARK: Helpers
@@ -475,7 +476,7 @@ struct AutoRigView: View {
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 6) { content() }
             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .moonGlassCard(radius: 14)
     }
     private func row(_ title: String, _ value: String) -> some View {
         HStack { Text(title).font(.caption).foregroundStyle(.secondary); Spacer(); Text(value).font(.caption) }

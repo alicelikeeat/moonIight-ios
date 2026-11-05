@@ -43,7 +43,7 @@ struct ContextMenuSettingsView: View {
     @AppStorage("moonlight.button.tint.green") private var customTintGreen = 0.50
     @AppStorage("moonlight.button.tint.blue") private var customTintBlue = 0.27
     var body: some View {
-        List {
+        List { Group {
             Section("底部导航") {
                 Picker("布局", selection: $preferences.navigationMode) {
                     ForEach(BottomNavigationMode.allCases) { Text($0.title).tag($0) }
@@ -93,7 +93,8 @@ struct ContextMenuSettingsView: View {
                 Text("应用自有操作按键使用 Liquid Glass（iOS 26）或系统毛玻璃（较早系统）。媒体图片和视频本身保留清晰预览；相机、键盘、系统照片选择器、分享面板、第三方网页播放器的内部控件由系统或平台管理，应用无法统一替换。")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-        }.navigationTitle("长按与底栏").pageBackground(.settings)
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.scrollContentBackground(.hidden).navigationTitle("长按与底栏").pageBackground(.settings)
     }
 
     private var customTintBinding: Binding<Color> {
@@ -117,7 +118,7 @@ private struct ContextTargetListView: View {
         BackgroundTarget.allCases.filter { $0.rawValue.hasPrefix(section) && $0 != common }
     }
     var body: some View {
-        List {
+        List { Group {
             Section {
                 NavigationLink("通用菜单") {
                     ContextActionEditor(context: common.rawValue, title: "通用菜单")
@@ -132,7 +133,8 @@ private struct ContextTargetListView: View {
                     }
                 }
             }
-        }
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.scrollContentBackground(.hidden)
         .navigationTitle(section == "page." ? "页面长按菜单" : "按键长按菜单")
         .pageBackground(.settings)
     }
@@ -143,7 +145,7 @@ private struct ContextActionEditor: View {
     let title: String
     @ObservedObject private var preferences = InteractionPreferences.shared
     var body: some View {
-        List {
+        List { Group {
             Section("已选操作 · 拖动排序") {
                 ForEach(Array(preferences.actions(context).enumerated()), id: \.element) { index, action in
                     Label(action.title + (index < 4 ? " · 圆环" : " · 更多"), systemImage: action.symbol)
@@ -168,7 +170,7 @@ private struct ContextActionEditor: View {
                                 .foregroundStyle(enabled ? Color.accentColor : .secondary)
                         }.contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.moonJelly)
                     .accessibilityIdentifier("menu-action-\(action.rawValue)")
                     .accessibilityValue(enabled ? "1" : "0")
                 }
@@ -176,13 +178,14 @@ private struct ContextActionEditor: View {
             Button(context.hasSuffix(".all") ? "恢复默认通用菜单" : "清除单独设置并使用通用菜单") {
                 preferences.reset(context)
             }
-        }.navigationTitle(title).toolbar { EditButton() }.pageBackground(.settings)
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.scrollContentBackground(.hidden).navigationTitle(title).toolbar { EditButton() }.pageBackground(.settings)
     }
 }
 
 struct GestureHelpView: View {
     var body: some View {
-        List {
+        List { Group {
             Label("移动先交给滚动；静止按住才打开圆环", systemImage: "arrow.up.and.down")
             Label("长按旋转展开并提供触感反馈；默认松手后再点选", systemImage: "hand.point.up.left")
             Label("底部按钮的菜单向上避让，不与导航键重叠", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -190,7 +193,8 @@ struct GestureHelpView: View {
             Label("抖音模式上下滑换条目，点按本地或直链视频暂停 / 播放，双击收藏", systemImage: "hand.tap")
             Label("拍摄点按打开系统相机，长按可拍照、录像、导入", systemImage: "camera")
             Label("系统输入、照片选择和相机保留系统交互", systemImage: "keyboard")
-        }.navigationTitle("手势说明").pageBackground(.settings)
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.scrollContentBackground(.hidden).navigationTitle("手势说明").pageBackground(.settings)
     }
 }
 

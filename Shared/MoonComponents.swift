@@ -21,18 +21,15 @@ extension Array {
 /// One root-level interaction style keeps button feedback consistent without
 /// adding another material layer. In full blind mode only the rendered label
 /// disappears; layout and hit testing stay intact.
+/// v1.82: every button is liquid glass — it squashes under the finger,
+/// wobbles back, a light sweeps across and the phone taps softly. Inside a
+/// glass container the button gets the motion without a second glass.
 struct MoonInteractiveButtonStyle: ButtonStyle {
     let blind: Bool
     @Environment(\.moonGlassContainer) private var inGlass
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, inGlass ? 0 : 8)
-            .frame(minHeight: 44).contentShape(Rectangle())
-            .background { if !inGlass { MoonGlassBackdrop(radius: 22) } }
-            .opacity(blind ? 0.01 : 1)
-            .scaleEffect(configuration.isPressed ? 0.94 : 1)
-            .brightness(configuration.isPressed ? 0.08 : 0)
-            .animation(.spring(response: 0.22, dampingFraction: 0.68), value: configuration.isPressed)
+        MoonLiquidPress(configuration: configuration, outline: .rounded(22), glass: !inGlass,
+                        hPadding: inGlass ? 0 : 8, vPadding: 0, minHeight: 44, blind: blind)
     }
 }
 
@@ -72,6 +69,7 @@ struct PageHeader<Trailing: View>: View {
     }
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
+            MoonLiquidIcon(symbol: symbol, color: MoonStyle.accent, size: 44)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.largeTitle.bold()).tracking(-0.5).accessibilityIdentifier("page-title-\(title)")
                 Text(subtitle).font(.subheadline).foregroundStyle(.secondary)
@@ -80,6 +78,7 @@ struct PageHeader<Trailing: View>: View {
             trailing
         }
         .padding(.vertical, 4)
+        .moonEmerge()
     }
 }
 
@@ -90,12 +89,12 @@ struct EmptyPanel: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: symbol).font(.system(size: 30, weight: .light)).foregroundStyle(MoonStyle.accent)
-                .frame(width: 66, height: 66).background(MoonStyle.accent.opacity(0.1), in: Circle())
+                .frame(width: 66, height: 66).moonLiquidSurface(.circle)
             Text(title).font(.headline)
             Text(detail).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity).padding(.vertical, 34).padding(.horizontal, 18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+        .frame(maxWidth: .infinity).padding(.vertical, 20).padding(.horizontal, 4)
+        .moonCard(radius: 24)
     }
 }
 
@@ -107,7 +106,9 @@ struct StatCard: View {
             Text(value).font(.title2.bold())
             Text(label).font(.caption).foregroundStyle(.secondary)
         }.frame(maxWidth: .infinity).padding(.vertical, 14)
-            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+            .background { MoonGlassBackdrop(radius: 18) }
+            .overlay { RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.03)], startPoint: .top, endPoint: .bottom), lineWidth: 0.8).allowsHitTesting(false) }
+            .moonEmerge()
     }
 }
 
@@ -117,8 +118,7 @@ struct MenuRow: View {
     let color: Color
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
-                .frame(width: 34, height: 34).background(color.gradient, in: Circle())
+            MoonLiquidIcon(symbol: symbol, color: color, size: 34)
             Text(title).font(.body.weight(.medium))
             Spacer()
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)

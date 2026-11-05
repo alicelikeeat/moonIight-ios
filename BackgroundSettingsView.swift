@@ -18,7 +18,7 @@ struct BackgroundSettingsView: View {
     @AppStorage("moonlight.button.tint.green") private var customTintGreen = 0.50
     @AppStorage("moonlight.button.tint.blue") private var customTintBlue = 0.27
     var body: some View {
-        List {
+        List { Group {
             Section {
                 Label("图片和视频都可用于页面、玻璃按键与个人资料。", systemImage: "photo.on.rectangle.angled")
                     .font(.subheadline)
@@ -161,6 +161,7 @@ struct BackgroundSettingsView: View {
                 Text("替换或恢复默认时，原媒体仍保留在背景库里，可再次使用。清理只移除当前没有任何位置使用的背景。")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            }.listRowBackground(MoonLiquidRowBackground())
         }
         .navigationTitle("背景与按键").navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("background-settings")
@@ -245,7 +246,7 @@ struct BackgroundEditorView: View {
     @State private var applying = false
 
     var body: some View {
-        Form {
+        Form { Group {
             Section {
                 ZStack {
                     Color(uiColor: .tertiarySystemGroupedBackground)
@@ -312,7 +313,7 @@ struct BackgroundEditorView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 14))
                                         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(draft?.assetID == asset.id ? Color.accentColor : .clear, lineWidth: 3))
                                 }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.moonJelly)
                     .contentShape(RoundedRectangle(cornerRadius: 14))
                     .frame(minWidth: 76, minHeight: 76)
                     .accessibilityLabel(asset.isVideo ? "使用这个视频背景" : "使用这个图片背景")
@@ -323,6 +324,7 @@ struct BackgroundEditorView: View {
                 }
             }
         }
+            }.listRowBackground(MoonLiquidRowBackground())
         }
         // Floating navigation must never cover the final reusable asset row.
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -411,7 +413,7 @@ private struct BackgroundTargetPicker: View {
     init(configuration: BackgroundConfiguration, initial: BackgroundTarget) { self.configuration = configuration; _selected = State(initialValue: [initial]) }
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 ForEach(BackgroundTarget.sections, id: \.self) { section in
                     Section(section) {
                         ForEach(BackgroundTarget.allCases.filter { $0.section == section }) { target in
@@ -421,7 +423,8 @@ private struct BackgroundTargetPicker: View {
                         }
                     }
                 }
-            }
+                }.listRowBackground(MoonLiquidRowBackground())
+            }.moonLiquidList()
             .navigationTitle("应用到 \(selected.count) 个位置").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button(selected.count == BackgroundTarget.allCases.count ? "取消全选" : "全选") {

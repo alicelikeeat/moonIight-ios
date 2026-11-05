@@ -32,11 +32,11 @@ struct MediaEntryCard: View {
                     Text(model.mediaStore.enabledSources.first(where: { $0.id == entry.source })?.name ?? MediaSource.defaults.first(where: { $0.kind == entry.platform })?.name ?? entry.platform)
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 9).padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: Capsule())
+                        .moonLiquidSurface(.capsule)
                         .padding(10)
                     Image(systemName: "play.fill")
                         .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                        .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
+                        .frame(width: 42, height: 42).moonLiquidSurface(.circle)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .padding(10)
                 }
@@ -118,7 +118,7 @@ struct LocalVideoPoster: View {
                 LinearGradient(colors: [MoonStyle.accent.opacity(0.65), .indigo.opacity(0.36)], startPoint: .topLeading, endPoint: .bottomTrailing)
             }
             Image(systemName: "play.fill").font(.system(size: 18, weight: .bold)).foregroundStyle(.white)
-                .frame(width: 44, height: 44).background(.ultraThinMaterial, in: Circle())
+                .frame(width: 44, height: 44).moonLiquidSurface(.circle)
         }
         .task(id: url) {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))

@@ -44,7 +44,7 @@ struct MomentsView: View {
                         }
                         .overlay(Color.clear.contentShape(Rectangle()))
                     }
-                    .contentShape(Rectangle()).buttonStyle(.plain).accessibilityLabel("更换朋友圈横幅")
+                    .contentShape(Rectangle()).buttonStyle(.moonJelly).accessibilityLabel("更换朋友圈横幅")
                     .photosPicker(isPresented: $coverPickerPresented, selection: $coverSelection, matching: .any(of: [.images, .videos]))
                     HStack(spacing: 12) {
                         Button { avatarPickerPresented = true } label: {
@@ -52,7 +52,7 @@ struct MomentsView: View {
                             .frame(width: 60, height: 60).clipShape(Circle())
                             .overlay(Circle().strokeBorder(.white, lineWidth: 2))
                             .overlay(Color.clear.contentShape(Circle()))
-                        }.contentShape(Circle()).buttonStyle(.plain).accessibilityLabel("更换朋友圈头像")
+                        }.contentShape(Circle()).buttonStyle(.moonJelly).accessibilityLabel("更换朋友圈头像")
                         .photosPicker(isPresented: $avatarPickerPresented, selection: $avatarSelection, matching: .any(of: [.images, .videos]))
                         VStack(alignment: .leading, spacing: 3) {
                             Text(displayName).font(.headline).foregroundStyle(.white)
@@ -61,7 +61,7 @@ struct MomentsView: View {
                         Spacer()
                         Button(action: onCompose) {
                             Image(systemName: "square.and.pencil").font(.title3).frame(width: 42, height: 42).moonGlassCircle()
-                        }.buttonStyle(.plain).accessibilityLabel("发布动态")
+                        }.buttonStyle(.moonJelly).accessibilityLabel("发布动态")
                     }.padding(14)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -114,7 +114,7 @@ struct MomentsView: View {
                                 Button { onSelect(attachment) } label: {
                                     MomentAttachmentPreview(entry: attachment, isPlaying: activeVideoID == moment.id && scenePhase == .active)
                                 }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.moonJelly)
                                     .background {
                                         if attachment.kind == .video, attachment.remoteURL != nil {
                                             GeometryReader { geometry in
@@ -158,7 +158,7 @@ struct MomentsView: View {
                             }
                         }
                         .padding(16)
-                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22))
+                        .moonGlassCard(radius: 22)
                         .contentShape(RoundedRectangle(cornerRadius: 22))
                         .accessibilityElement(children: .contain)
                         // This is deliberately simultaneous: a vertical drag
@@ -270,7 +270,7 @@ struct MomentAttachmentPreview: View {
             if entry.kind == .image || !isPlaying {
                 Image(systemName: entry.kind == .image ? "photo" : "play.fill")
                     .font(.title3.weight(.bold)).foregroundStyle(.white)
-                    .frame(width: 42, height: 42).background(.ultraThinMaterial, in: Circle())
+                    .frame(width: 42, height: 42).moonLiquidSurface(.circle)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                     .transition(.opacity)
             }
@@ -348,7 +348,7 @@ struct MomentComposerView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            Form { Group {
                 Section("此刻") { TextField("分享此刻…", text: $text, axis: .vertical).lineLimit(3...7) }
                 Section("照片或视频") {
                     if let attachment {
@@ -362,6 +362,7 @@ struct MomentComposerView: View {
                 if initialAttachment != nil {
                     Section { Text("来自内容流的条目会以可打开的链接预览显示在动态中。").font(.footnote).foregroundStyle(.secondary) }
                 }
+                }.listRowBackground(MoonLiquidRowBackground())
             }
             .navigationTitle("发布动态")
             .scrollContentBackground(.hidden).pageBackground(.composer)

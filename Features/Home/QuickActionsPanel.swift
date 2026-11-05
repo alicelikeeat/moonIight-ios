@@ -14,7 +14,7 @@ struct QuickActionsPanel: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            List { Group {
                 Section("内容信息") {
                     LabeledContent("来源", value: entry.platform)
                     if !entry.author.isEmpty { LabeledContent("作者", value: entry.author) }
@@ -73,6 +73,7 @@ struct QuickActionsPanel: View {
                         Label("删除", systemImage: "trash")
                     }
                 }
+                }.listRowBackground(MoonLiquidRowBackground())
             }
             .scrollContentBackground(.hidden)
             .pageBackground(.actionsPanel)

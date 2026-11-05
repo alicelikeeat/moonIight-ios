@@ -152,7 +152,7 @@ struct Glass3DMediaPicker: View {
                             Text(L10n.t("正在导入 \(progress.done)/\(progress.total)…", "Importing \(progress.done)/\(progress.total)…")).font(.subheadline)
                         }
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .moonGlassCard(radius: 14, tint: .accentColor)
                     } else if let message {
                         Label(message, systemImage: "checkmark.circle.fill").font(.subheadline).foregroundStyle(.secondary)
                     }
@@ -166,7 +166,7 @@ struct Glass3DMediaPicker: View {
                                             Glass3DMediaThumbnail(url: item.url, kind: item.kind, side: 72, corner: 14)
                                                 .overlay(alignment: .topTrailing) { if item.id == current { check } }
                                         }
-                                        .buttonStyle(.plain)
+                                        .buttonStyle(.moonJelly)
                                         .contextMenu { menu(item) }
                                         .accessibilityLabel(L10n.t("复用 ", "Reuse ") + item.title)
                                     }
@@ -195,6 +195,7 @@ struct Glass3DMediaPicker: View {
                 }
                 .padding(16)
             }
+            .moonLiquidPage()
             .navigationTitle(selecting ? L10n.t("已选 \(selected.count) 项", "\(selected.count) Selected") : title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -255,15 +256,15 @@ struct Glass3DMediaPicker: View {
             Button { choosingPhotos = true } label: {
                 importTile(L10n.t("相册", "Photos"), L10n.t("图片 · GIF · 视频", "Photos & videos"), "photo.on.rectangle.angled", [.orange, .pink])
             }
-            .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-photos")
+            .buttonStyle(.moonJelly).accessibilityIdentifier("glass3d-media-photos")
             Button { importingFiles = true } label: {
                 importTile(L10n.t("文件", "Files"), L10n.t("「文件」App", "Files app"), "folder.fill", [.blue, .cyan])
             }
-            .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-files")
+            .buttonStyle(.moonJelly).accessibilityIdentifier("glass3d-media-files")
             Button { browsingOnline = true } label: {
                 importTile(L10n.t("在线素材", "Online"), L10n.t("开源 · 可商用", "Open licences"), "globe", [.green, .teal])
             }
-            .buttonStyle(.plain).accessibilityIdentifier("glass3d-media-online")
+            .buttonStyle(.moonJelly).accessibilityIdentifier("glass3d-media-online")
         }
         .disabled(progress != nil)
     }
@@ -277,7 +278,7 @@ struct Glass3DMediaPicker: View {
             Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.vertical, 12).padding(.horizontal, 6).frame(maxWidth: .infinity)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .moonGlassCard(radius: 18)
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
@@ -301,7 +302,7 @@ struct Glass3DMediaPicker: View {
                             Glass3DMediaThumbnail(url: Glass3DStarterPack.url(asset), kind: Glass3DStarterPack.kind(asset), side: 64, corner: 12)
                                 .overlay { if loadingStarter == asset.id { RoundedRectangle(cornerRadius: 12).fill(.black.opacity(0.35)); ProgressView().tint(.white) } }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.moonJelly)
                         .disabled(loadingStarter != nil)
                         .accessibilityLabel(Glass3DStarterPack.title(asset))
                     }
@@ -357,7 +358,7 @@ struct Glass3DMediaPicker: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .contextMenu { if !selecting { menu(item) } }
         .animation(.easeOut(duration: 0.15), value: isSelected)
         .accessibilityLabel(item.kind.title + " " + item.title)

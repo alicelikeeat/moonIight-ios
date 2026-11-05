@@ -230,12 +230,12 @@ struct LocalAIModelCard: View {
                 }
             } else {
                 PhotosPicker(selection: $item, matching: .images) { Label(L10n.t("选图片并生成", "Pick a Picture and Generate"), systemImage: "photo.badge.plus").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent).disabled(mode == .computer ? LocalServerConfig.parse(address, token: token) == nil : !(installed && TripoSROnDevice.deviceSupported))
+                    .buttonStyle(.moonLiquidProminent).disabled(mode == .computer ? LocalServerConfig.parse(address, token: token) == nil : !(installed && TripoSROnDevice.deviceSupported))
                     .accessibilityIdentifier("generate3d-local-generate")
             }
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
-        .padding(14).background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(14).moonGlassCard(radius: 18, tint: .indigo)
         .onChange(of: item) { _, newItem in if let newItem { item = nil; start(newItem) } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.folder]) { result in
             guard case .success(let url) = result else { return }
@@ -255,7 +255,7 @@ struct LocalAIModelCard: View {
             .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
         SecureField(L10n.t("令牌（如果启动时设了 --token）", "Token (if started with --token)"), text: $token).textFieldStyle(.roundedBorder).font(.caption)
         HStack {
-            Button(L10n.t("测试连接", "Test Connection")) { test() }.buttonStyle(.bordered).font(.caption)
+            Button(L10n.t("测试连接", "Test Connection")) { test() }.buttonStyle(.moonLiquid).font(.caption)
             if let health { Text(health).font(.caption2).foregroundStyle(.green) }
         }
     }
@@ -268,8 +268,8 @@ struct LocalAIModelCard: View {
              : L10n.t("需要先在 Mac 上用 tools/triposr-coreml/convert.py 转换模型（约 0.8 GB），把输出文件夹放进「文件」，再在这里导入。", "First convert the model on a Mac with tools/triposr-coreml/convert.py (about 0.8 GB), put the output folder in Files, then import it here."))
             .font(.caption2).foregroundStyle(.secondary)
         HStack {
-            Button(installed ? L10n.t("重新导入模型", "Re-import Model") : L10n.t("导入模型文件夹", "Import Model Folder")) { importing = true }.buttonStyle(.bordered).font(.caption)
-            if installed { Button(L10n.t("删除模型", "Delete Model"), role: .destructive) { TripoSROnDevice.remove(); installed = false }.buttonStyle(.bordered).font(.caption) }
+            Button(installed ? L10n.t("重新导入模型", "Re-import Model") : L10n.t("导入模型文件夹", "Import Model Folder")) { importing = true }.buttonStyle(.moonLiquid).font(.caption)
+            if installed { Button(L10n.t("删除模型", "Delete Model"), role: .destructive) { TripoSROnDevice.remove(); installed = false }.buttonStyle(.moonLiquid).font(.caption) }
         }
         Picker(L10n.t("精细度", "Detail"), selection: $resolution) {
             Text(L10n.t("快 96", "Fast 96")).tag(96); Text(L10n.t("标准 128", "Standard 128")).tag(128); Text(L10n.t("精细 160", "Fine 160")).tag(160)

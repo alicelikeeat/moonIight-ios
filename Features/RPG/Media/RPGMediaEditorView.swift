@@ -27,7 +27,7 @@ struct RPGMediaEditorView:View {
     @State private var importing=false
     @State private var importNotice=""
     var body:some View {
-        List {
+        List { Group {
             Section {
                 PhotosPicker(selection:$picked,matching:.any(of:[.images,.videos])) { Label("导入图片或视频",systemImage:"square.and.arrow.down") }
                     .accessibilityIdentifier("rpg-import-media").disabled(importing)
@@ -59,7 +59,8 @@ struct RPGMediaEditorView:View {
                     }.disabled(session.working).accessibilityIdentifier("rpg-pick-"+entry.id).accessibilityValue(session.mediaBinding(for:owner)?.mediaID==entry.id ? "已选" : "未选")
                 }
             }
-        }.navigationTitle("媒体外观").buttonStyle(MoonGlassButtonStyle())
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("媒体外观").buttonStyle(MoonGlassButtonStyle())
             .safeAreaInset(edge:.bottom) {
                 Text("当前："+(store.items.first{$0.id==session.mediaBinding(for:owner)?.mediaID}?.title ?? "默认外观"))
                     .font(.caption).padding(10).moonSingleGlass(radius:12).accessibilityIdentifier("rpg-current-media")

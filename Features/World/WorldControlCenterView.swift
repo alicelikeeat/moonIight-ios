@@ -72,7 +72,7 @@ struct WorldControlCenterView: View {
             Button { onClose() } label: { Image(systemName: "xmark").frame(width: 40, height: 40) }
                 .accessibilityLabel(L10n.t("关闭", "Close")).accessibilityIdentifier("world-control-close").worldGlass(radius: 20)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.moonJelly)
         .opacity(shown ? 1 : 0)
     }
 
@@ -148,7 +148,7 @@ struct WorldControlCenterView: View {
     private func row(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: symbol).frame(maxWidth: .infinity, minHeight: 36, alignment: .leading).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(session.working)
+        }.buttonStyle(.moonJelly).disabled(session.working)
     }
 }
 

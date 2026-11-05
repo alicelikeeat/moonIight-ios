@@ -26,11 +26,11 @@ struct DiscoverView: View {
                 Button(action: onSources) {
                     Image(systemName: "line.3.horizontal.decrease").font(.headline)
                         .frame(width: 42, height: 42).moonGlassCircle(.discoverSources)
-                }.buttonStyle(.plain).accessibilityLabel("内容源").accessibilityIdentifier("discover-sources")
+                }.buttonStyle(.moonJelly).accessibilityLabel("内容源").accessibilityIdentifier("discover-sources")
                 Button { columns = columns == 1 ? 2 : 1 } label: {
                     Image(systemName: columns == 1 ? "rectangle.grid.2x2" : "rectangle.grid.1x2")
                         .font(.headline).frame(width: 42, height: 42).moonGlassCircle(.discoverLayout)
-                }.buttonStyle(.plain).accessibilityLabel("切换单双列").accessibilityIdentifier("discover-layout")
+                }.buttonStyle(.moonJelly).accessibilityLabel("切换单双列").accessibilityIdentifier("discover-layout")
             }
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -112,7 +112,7 @@ struct DiscoverTile: View {
                 LinearGradient(colors: gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
                 Image(systemName: "play.fill")
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(.white)
-                    .frame(width: 38, height: 38).background(.ultraThinMaterial, in: Circle()).padding(12)
+                    .frame(width: 38, height: 38).moonLiquidSurface(.circle).padding(12)
             }
             .frame(height: compact ? 155 : 220)
             VStack(alignment: .leading, spacing: 5) {

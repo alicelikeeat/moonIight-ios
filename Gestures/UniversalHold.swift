@@ -156,7 +156,7 @@ struct UniversalHoldScope: ViewModifier {
                         case .menus: ContextMenuSettingsView()
                         case .backgroundLibrary: BackgroundSettingsView()
                         case .more:
-                            List {
+                            List { Group {
                                 Section((heldTarget ?? target).title) {
                                     ForEach(interactions.actions((heldTarget ?? target).rawValue)) { action in
                                         Button { destination = nil; perform(.command(action)) } label: { Label(action.title, systemImage: action.symbol) }
@@ -170,7 +170,8 @@ struct UniversalHoldScope: ViewModifier {
                                     Button("配置长按菜单") { destination = .menus }
                                     Button("手势说明") { destination = .guide }
                                 }
-                            }.navigationTitle("更多操作")
+                                }.listRowBackground(MoonLiquidRowBackground())
+                            }.moonLiquidList().navigationTitle("更多操作")
                         }
                     }
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { destination = nil } } }
@@ -199,7 +200,7 @@ struct UniversalHoldScope: ViewModifier {
     }
 
     private var holdGuide: some View {
-        List {
+        List { Group {
             Label("先移动手指：优先滚动，不触发点按或长按", systemImage: "arrow.up.and.down")
             Label("静止按住：触感反馈，圆环旋转打开", systemImage: "hand.point.up.left")
             Label("松手后圆环保持打开，再点按执行", systemImage: "hand.tap")
@@ -207,7 +208,8 @@ struct UniversalHoldScope: ViewModifier {
             Label("页面空白和按键显示背景、刷新等常用操作", systemImage: "square.grid.2x2")
             Label("中心 … 打开更多操作；点空白处或下滑收起", systemImage: "ellipsis.circle")
             Label("输入框与系统照片选择器保留系统手势", systemImage: "keyboard")
-        }.navigationTitle("手势说明")
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("手势说明")
     }
 }
 

@@ -10,7 +10,7 @@ struct RPGStoryView: View {
     private var progress: RPGStoryProgress? { session.world.story.activeProgress }
     private var node: RPGStoryNode? { graph.nodes.first{$0.id == (progress?.current ?? graph.start)} }
     var body: some View {
-        List {
+        List { Group {
             Section(graph.title) {
                 if let node {
                     Text(node.text.isEmpty ? node.kind.rawValue : node.text).accessibilityIdentifier("rpg-story-text")
@@ -52,7 +52,8 @@ struct RPGStoryView: View {
                     Button(graph.title) { session.beginStory(graph.id) }
                 }
             }
-        }.navigationTitle("剧情与任务").buttonStyle(MoonGlassButtonStyle())
+            }.listRowBackground(MoonLiquidRowBackground())
+        }.moonLiquidList().navigationTitle("剧情与任务").buttonStyle(MoonGlassButtonStyle())
             .navigationBarBackButtonHidden(true)
             .toolbar { ToolbarItem(placement:.navigationBarLeading) { Button(backTitle) { dismiss() }.accessibilityIdentifier("rpg-story-back") } }
             .onAppear { session.prepareStory() }
