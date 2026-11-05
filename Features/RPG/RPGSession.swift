@@ -322,8 +322,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
     }
     private func bindScenes() {
         // Native glass replaces the yellow outline where it is available.
-        scene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
-        sideScene.selectionOutlineVisible = !RPGSelectionGlass.usesNativeGlass
+        scene.selectionOutlineVisible = !RPGSelectionGlass.nativeGlassAvailable
+        sideScene.selectionOutlineVisible = !RPGSelectionGlass.nativeGlassAvailable
         scene.onSelectCell = { [weak self] point in
             guard let self else { return }
             self.selected = point; self.scene.select(point); self.syncSelectedMedia()

@@ -82,6 +82,24 @@ enum RPGHUDGlassKind: String, Sendable {
     case interactive
     /// Tool bars, property panel, menus.
     case panel
+    /// v1.78: a non-touch base under or around a control (stick ring,
+    /// lock-on reticle): clear glass, never interactive, no scrim.
+    case base
+
+    /// Whether touches on the surface's empty areas stay on the surface.
+    /// Panels keep them (a tap between two toolbar buttons must not reach
+    /// the world underneath); status surfaces and bases let them through.
+    var absorbsTouches: Bool { self == .panel }
+}
+
+/// v1.78: the three visual roles every Moonlight glass surface maps to.
+enum MoonGlassRole: String, Sendable {
+    /// Tool bars, menus, regular panels.
+    case regular
+    /// Controls over media or the 3D world where the content must show through.
+    case clear
+    /// Reduce Transparency or no native glass wanted: an opaque surface.
+    case solid
 }
 
 /// Inputs for the HUD's look. First version: system settings and game
@@ -107,16 +125,53 @@ struct RPGHUDGlassStyle: Equatable, Sendable {
     /// Combat warning tint on interactive controls.
     var combatTint: Bool
 
+    var role: MoonGlassRole { solid ? .solid : regular ? .regular : .clear }
+
     static func resolve(_ kind: RPGHUDGlassKind, _ conditions: RPGHUDConditions) -> RPGHUDGlassStyle {
         let solid = conditions.reduceTransparency
         // Panels and anything over a busy map read better on regular glass;
         // light surfaces stay clear unless contrast or combat asks for more.
-        let regular = kind == .panel || conditions.increasedContrast || conditions.editing || (kind == .light && conditions.inCombat)
+        let regular = kind == .panel || conditions.increasedContrast || (conditions.editing && kind != .base) || (kind == .light && conditions.inCombat)
         var scrim = kind == .light ? 0.12 : kind == .panel ? 0.06 : 0
-        if conditions.increasedContrast { scrim += 0.18 }
+        if conditions.increasedContrast && kind != .base { scrim += 0.18 }
         if conditions.inCombat && kind == .light { scrim += 0.08 }
         return RPGHUDGlassStyle(regular: regular, interactive: kind == .interactive && !conditions.lowPower, scrim: min(0.4, scrim),
                                 solid: solid, combatTint: kind == .interactive && conditions.inCombat)
+    }
+}
+
+// MARK: Glass motion
+
+/// v1.78: every glass animation in one place. Reduce Motion turns springs
+/// into short fades (no movement or morph), never into nothing at all, so
+/// state changes stay visible.
+enum MoonGlassMotion {
+    enum Kind: Sendable { case morph, panel, press, fade }
+
+    /// Spring response / damping, or a plain duration under Reduce Motion.
+    struct Curve: Equatable, Sendable {
+        var response: Double
+        var damping: Double
+        /// true: ease in/out over `response` seconds (no spring, no overshoot).
+        var linear: Bool
+    }
+
+    static func curve(_ kind: Kind, reduceMotion: Bool) -> Curve {
+        if reduceMotion { return Curve(response: kind == .press ? 0 : 0.2, damping: 1, linear: true) }
+        switch kind {
+        case .morph: return Curve(response: 0.38, damping: 0.82, linear: false)
+        case .panel: return Curve(response: 0.35, damping: 0.86, linear: false)
+        case .press: return Curve(response: 0.1, damping: 1, linear: true)
+        case .fade: return Curve(response: 0.2, damping: 1, linear: true)
+        }
+    }
+
+    /// While a glass group morphs, a second tap on the same control is
+    /// ignored: the action runs once per `cooldown` seconds.
+    static let repeatGuard = 0.3
+    static func allows(lastAction: Double?, now: Double) -> Bool {
+        guard let lastAction else { return true }
+        return now - lastAction >= repeatGuard || now < lastAction
     }
 }
 

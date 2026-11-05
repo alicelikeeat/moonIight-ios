@@ -29,6 +29,13 @@ struct RPGHUDGlassModifier<S: Shape>: ViewModifier {
     @Environment(\.rpgHUDState) private var state
 
     func body(content: Content) -> some View {
+        // v1.78: a panel keeps taps on its empty areas (a tap between two
+        // toolbar buttons must not select a block underneath); status
+        // surfaces and bases keep their content's own hit area.
+        if kind.absorbsTouches { surface(content).contentShape(shape) } else { surface(content) }
+    }
+
+    @ViewBuilder private func surface(_ content: Content) -> some View {
         let style = RPGHUDGlassStyle.resolve(kind, RPGHUDConditions(
             dark: scheme == .dark, increasedContrast: contrast == .increased, reduceTransparency: reduceTransparency,
             inCombat: state.inCombat, editing: state.editing, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled))
@@ -91,15 +98,19 @@ struct RPGJoystick: View {
 
     var body: some View {
         let reach = size / 2 - 24
-        ZStack {
-            Color.clear.frame(width: size, height: size).hudGlass(.interactive, in: Circle())
-            ForEach(0..<8, id: \.self) { index in
-                Capsule().fill(Color.primary.opacity(0.25)).frame(width: 2, height: 7)
-                    .offset(y: -(size / 2 - 9)).rotationEffect(.degrees(Double(index) * 45))
+        // v1.78: one glass system per stick — a non-touch base and an
+        // interactive knob in the same container (no stacked glass layers).
+        RPGGlassGroup(spacing: 0) {
+            ZStack {
+                Color.clear.frame(width: size, height: size).hudGlass(.base, in: Circle())
+                ForEach(0..<8, id: \.self) { index in
+                    Capsule().fill(Color.primary.opacity(0.25)).frame(width: 2, height: 7)
+                        .offset(y: -(size / 2 - 9)).rotationEffect(.degrees(Double(index) * 45))
+                }
+                Color.clear.frame(width: 50, height: 50).hudGlass(.interactive, in: Circle())
+                    .overlay(Circle().fill(Color.white.opacity(touching ? 0.28 : 0.12)))
+                    .offset(knob)
             }
-            Color.clear.frame(width: 50, height: 50).hudGlass(.interactive, in: Circle())
-                .overlay(Circle().fill(Color.white.opacity(touching ? 0.28 : 0.12)))
-                .offset(knob)
         }
         .frame(width: size, height: size)
         .contentShape(Circle())
@@ -187,7 +198,7 @@ struct RPGPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.9 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.1), value: configuration.isPressed)
+            .animation(MoonGlassMotion.animation(.press, reduceMotion: reduceMotion), value: configuration.isPressed)
     }
 }
 

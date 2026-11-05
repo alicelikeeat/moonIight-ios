@@ -8,7 +8,18 @@ extension EnvironmentValues {
     }
 }
 
-/// One native material per surface. Decorations never receive touches.
+extension MoonGlassMotion {
+    /// SwiftUI animation for a glass change (nil: change without animation).
+    static func animation(_ kind: Kind, reduceMotion: Bool) -> Animation? {
+        let c = curve(kind, reduceMotion: reduceMotion)
+        if c.response <= 0 { return nil }
+        return c.linear ? .easeInOut(duration: c.response) : .spring(response: c.response, dampingFraction: c.damping)
+    }
+}
+
+/// One native material per surface. Decorations never receive touches, so
+/// the glass is never interactive (v1.78: interactive glass on a surface
+/// that cannot be touched only costs work).
 struct MoonGlassBackdrop: View {
     var radius: CGFloat = 22
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -19,7 +30,7 @@ struct MoonGlassBackdrop: View {
                 RoundedRectangle(cornerRadius: radius).fill(Color(uiColor: .secondarySystemBackground))
             } else if #available(iOS 26.0, *) {
                 RoundedRectangle(cornerRadius: radius).fill(.clear)
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: radius))
+                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius))
             } else {
                 RoundedRectangle(cornerRadius: radius).fill(.regularMaterial)
             }
@@ -65,13 +76,14 @@ struct MoonSearchBubble: ViewModifier {
                 guard pulse else { scale = 1; highlight = false; return }
                 guard !reduceMotion else {
                     scale = 1
-                    withAnimation(.easeOut(duration: 0.2)) { highlight = focused }
+                    withAnimation(MoonGlassMotion.animation(.fade, reduceMotion: true)) { highlight = focused }
                     return
                 }
-                withAnimation(.easeOut(duration: 0.1)) { scale = 1.025; highlight = true }
-                try? await Task.sleep(nanoseconds: 100_000_000)
+                let press = MoonGlassMotion.curve(.press, reduceMotion: false)
+                withAnimation(MoonGlassMotion.animation(.press, reduceMotion: false)) { scale = 1.025; highlight = true }
+                try? await Task.sleep(nanoseconds: UInt64(press.response * 1_000_000_000))
                 guard !Task.isCancelled else { return }
-                withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) { scale = 1; highlight = focused }
+                withAnimation(MoonGlassMotion.animation(.morph, reduceMotion: false)) { scale = 1; highlight = focused }
             }
     }
 }
