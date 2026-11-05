@@ -248,8 +248,7 @@ struct MultiViewCard: View {
     let onCreated: (Generated3DManifest) -> Void
     @State private var files: [PhotoView: URL] = [:]
     @State private var thumbs: [PhotoView: UIImage] = [:]
-    @State private var picking: PhotoView?
-    @State private var item: PhotosPickerItem?
+    @State private var loading: Set<PhotoView> = []
     @State private var busy = false
     @State private var message: String?
 
@@ -270,27 +269,31 @@ struct MultiViewCard: View {
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
         .padding(14).background(Color.teal.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .photosPicker(isPresented: Binding(get: { picking != nil }, set: { if !$0 { picking = nil } }), selection: $item, matching: .images)
-        .onChange(of: item) { _, newItem in
-            guard let newItem, let view = picking else { return }
-            item = nil
-            Task {
-                guard let data = try? await newItem.loadTransferable(type: Data.self) else { message = L10n.t("照片无法读取", "The photo could not be read"); return }
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("view-\(view.rawValue)-" + UUID().uuidString + ".img")
-                try? data.write(to: url)
-                files[view] = url
-                thumbs[view] = UIImage(data: data).flatMap { $0.preparingThumbnail(of: CGSize(width: 160, height: 160)) }
-                picking = nil
-            }
+    }
+
+    /// v1.76: each slot has its own picker, so the photo always lands in
+    /// the slot that was tapped (the shared picker lost it on dismissal).
+    private func load(_ newItem: PhotosPickerItem, into view: PhotoView) {
+        loading.insert(view)
+        Task {
+            defer { loading.remove(view) }
+            guard let data = try? await newItem.loadTransferable(type: Data.self) else { message = L10n.t("照片无法读取", "The photo could not be read"); return }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("view-\(view.rawValue)-" + UUID().uuidString + ".img")
+            do { try data.write(to: url) } catch { message = L10n.t("照片无法保存：", "The photo could not be saved: ") + error.localizedDescription; return }
+            if let old = files[view] { try? FileManager.default.removeItem(at: old) }
+            files[view] = url
+            thumbs[view] = UIImage(data: data).flatMap { $0.preparingThumbnail(of: CGSize(width: 160, height: 160)) }
+            message = nil
         }
     }
 
     private func slot(_ view: PhotoView) -> some View {
-        Button { picking = view } label: {
+        PhotosPicker(selection: Binding<PhotosPickerItem?>(get: { nil }, set: { if let item = $0 { load(item, into: view) } }), matching: .images) {
             VStack(spacing: 4) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.06))
                     if let image = thumbs[view] { Image(uiImage: image).resizable().scaledToFill() }
+                    else if loading.contains(view) { ProgressView() }
                     else { Image(systemName: view == .front ? "person.fill" : "plus").foregroundStyle(.secondary) }
                 }
                 .frame(height: 80).clipShape(RoundedRectangle(cornerRadius: 12))

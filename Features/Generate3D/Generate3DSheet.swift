@@ -73,7 +73,6 @@ struct CharacterSheetCard: View {
     @ObservedObject var store: Generated3DStore
     let onCreated: (Generated3DManifest) -> Void
     @State private var item: PhotosPickerItem?
-    @State private var picking = false
     @State private var analysis: SheetPipeline.Analysis?
     @State private var thumbs: [Int: UIImage] = [:]
     @State private var busy: String?
@@ -85,7 +84,7 @@ struct CharacterSheetCard: View {
             Text(L10n.t("一张图里并排画着正面、背面、侧面的角色设定图（三视图 / 转面图）。会自动切出每个视角、识别 FRONT / BACK / LEFT 等标签，再按轮廓雕刻成 360° 模型。背景要干净。",
                         "A character sheet with front, back and side views side by side in one picture. Each view is cut out, labels such as FRONT / BACK / LEFT are read, and the outlines are carved into a 360° model. Needs a plain background."))
                 .font(.caption).foregroundStyle(.secondary)
-            Button { picking = true } label: {
+            PhotosPicker(selection: $item, matching: .images) {
                 Label(analysis == nil ? L10n.t("选择设定图", "Choose a Sheet") : L10n.t("换一张设定图", "Choose Another Sheet"), systemImage: "rectangle.split.3x1")
                     .frame(maxWidth: .infinity)
             }
@@ -109,7 +108,6 @@ struct CharacterSheetCard: View {
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
         .padding(14).background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .photosPicker(isPresented: $picking, selection: $item, matching: .images)
         .onChange(of: item) { _, newItem in
             guard let newItem else { return }
             item = nil

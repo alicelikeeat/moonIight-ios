@@ -206,7 +206,6 @@ struct LocalAIModelCard: View {
     @State private var address = UserDefaults.standard.string(forKey: LocalServerClient.urlKey) ?? ""
     @State private var token = ""
     @State private var health: String?
-    @State private var choosing = false
     @State private var item: PhotosPickerItem?
     @State private var importing = false
     @State private var installed = TripoSROnDevice.installed
@@ -230,14 +229,13 @@ struct LocalAIModelCard: View {
                     ProgressView(value: fraction)
                 }
             } else {
-                Button { choosing = true } label: { Label(L10n.t("选图片并生成", "Pick a Picture and Generate"), systemImage: "photo.badge.plus").frame(maxWidth: .infinity) }
+                PhotosPicker(selection: $item, matching: .images) { Label(L10n.t("选图片并生成", "Pick a Picture and Generate"), systemImage: "photo.badge.plus").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent).disabled(mode == .computer ? LocalServerConfig.parse(address, token: token) == nil : !(installed && TripoSROnDevice.deviceSupported))
                     .accessibilityIdentifier("generate3d-local-generate")
             }
             if let message { Text(message).font(.caption).foregroundStyle(.orange) }
         }
         .padding(14).background(Color.indigo.opacity(0.07), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .photosPicker(isPresented: $choosing, selection: $item, matching: .images)
         .onChange(of: item) { _, newItem in if let newItem { item = nil; start(newItem) } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.folder]) { result in
             guard case .success(let url) = result else { return }
