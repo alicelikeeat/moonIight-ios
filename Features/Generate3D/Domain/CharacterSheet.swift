@@ -191,6 +191,14 @@ enum CharacterSheet {
             for k in 0..<4 { crop.rgba[d + k] = img.rgba[o + k] }
             fg[y * w + x] = differs(img, sx, sy, from: bg, threshold: threshold)
         } }
+        // Near the feet: floor shadows and label boxes (darker, colourless)
+        // are not part of the figure.
+        let bgLuma = (bg.x + bg.y + bg.z) / 3
+        for y in (h * 85 / 100)..<h { for x in 0..<w where fg[y * w + x] {
+            let o = (y * w + x) * 4
+            let r = Float(crop.rgba[o]), g = Float(crop.rgba[o + 1]), b = Float(crop.rgba[o + 2])
+            if (r + g + b) / 3 < bgLuma - threshold * 0.5 && max(r, g, b) - min(r, g, b) < 24 { fg[y * w + x] = false }
+        } }
         // Close small bites (grey shading on a glossy surface reads like the
         // background) before deciding what is outside.
         fg = close(fg, w, h, radius: max(1, h / 120))

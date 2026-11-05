@@ -2564,4 +2564,175 @@ do {
     print("RPG v1.75 local 3D: \(checks) total checks passed")
 }
 
+// P42: v1.76 — model files (glTF / FBX / OBJ / STL / 3MF) with their own
+// skeletons and animations, and character sheets → views.
+do {
+    // Inflate (zlib from Python's zlib.compress).
+    let z: [UInt8] = [120, 218, 203, 205, 207, 207, 203, 201, 76, 207, 40, 81, 200, 197, 100, 41, 2, 0, 187, 153, 11, 213]
+    let inflated = try Inflate.zlib(z)
+    check(String(decoding: inflated, as: UTF8.self) == "moonlight moonlight moonlight!", "zlib stream inflated")
+
+    func bytes<T>(_ v: [T]) -> [UInt8] { v.withUnsafeBufferPointer { Array(UnsafeRawBufferPointer($0)) } }
+    func deform(_ m: GeneratedMesh, _ s: SkeletonDefinition, _ skin: SkinInfluences, _ locals: [RigXform]?) -> [SIMD3<Float>] {
+        let world = locals.map { s.worldTransforms(local: $0) } ?? s.worldRest
+        let mats = zip(world, s.joints).map { $0 * (RigXform(matrix: $1.inverseBindMatrix) ?? .identity) }
+        return (0..<m.vertexCount).map { v in
+            let p = SIMD3(m.positions[v * 3], m.positions[v * 3 + 1], m.positions[v * 3 + 2])
+            var o = SIMD3<Float>(repeating: 0)
+            for (j, w) in skin.influences(v) { o += mats[j].point(p) * w }
+            return o
+        }
+    }
+    func far(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float { let d = a - b; return (d * d).sum().squareRoot() }
+
+    // glTF: a z-up armature node (turned upright), two joints, one animation.
+    let pos: [Float] = [-0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 2, -0.5, 0, 2]
+    let jts: [UInt8] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+    let wts: [Float] = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+    let idx: [UInt16] = [0, 1, 2, 0, 2, 3]
+    let ibm: [Float] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,  1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1, 1]
+    let times: [Float] = [0, 1]
+    let rot: [Float] = [0, 0, 0, 1, 0.7071068, 0, 0, 0.7071068]
+    var bin: [UInt8] = []
+    var views: [[String: Any]] = []
+    for part in [bytes(pos), jts, bytes(wts), bytes(idx) + [0, 0], bytes(ibm), bytes(times), bytes(rot)] {
+        views.append(["buffer": 0, "byteOffset": bin.count, "byteLength": part.count]); bin += part
+    }
+    let gltf: [String: Any] = [
+        "asset": ["version": "2.0"], "scene": 0, "scenes": [["nodes": [0, 3]]],
+        "nodes": [["name": "Armature", "rotation": [-0.7071068, 0, 0, 0.7071068], "children": [1]], ["name": "Hips", "children": [2]],
+                  ["name": "Spine", "translation": [0, 0, 1]], ["name": "Body", "mesh": 0, "skin": 0]],
+        "skins": [["joints": [1, 2], "inverseBindMatrices": 4]],
+        "meshes": [["primitives": [["attributes": ["POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2], "indices": 3]]]],
+        "buffers": [["byteLength": bin.count, "uri": "data:application/octet-stream;base64," + Data(bin).base64EncodedString()]],
+        "bufferViews": views,
+        "accessors": [["bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3"], ["bufferView": 1, "componentType": 5121, "count": 4, "type": "VEC4"],
+                      ["bufferView": 2, "componentType": 5126, "count": 4, "type": "VEC4"], ["bufferView": 3, "componentType": 5123, "count": 6, "type": "SCALAR"],
+                      ["bufferView": 4, "componentType": 5126, "count": 2, "type": "MAT4"], ["bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR"],
+                      ["bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC4"]],
+        "animations": [["name": "Armature|Walk", "samplers": [["input": 5, "output": 6]], "channels": [["sampler": 0, "target": ["node": 2, "path": "rotation"]]]]],
+    ]
+    let model = try ModelImport.read(try JSONSerialization.data(withJSONObject: gltf), fileName: "hero.gltf")
+    let b = model.mesh.bounds
+    check(b.max[1] - b.min[1] > 0.99 && b.max[2] - b.min[2] < 0.01, "glTF armature rotation stands the model up (normalised to 1 tall)")
+    guard let rig = model.rig else { throw ImportError.empty }
+    check(rig.skeleton.joints.count == 3 && rig.skin.valid(jointCount: 3, vertexCount: 4) && rig.clips.count == 1 && rig.clips[0].name == "Armature|Walk", "glTF skin, joints and animation kept")
+    check((try? rig.skeleton.validate(humanoid: false)) != nil, "imported skeleton passes the checks")
+    let rest = model.mesh.positions
+    let atRest = deform(model.mesh, rig.skeleton, rig.skin, nil)
+    let atStart = deform(model.mesh, rig.skeleton, rig.skin, rig.clips[0].locals(rig.skeleton, at: 0))
+    check((0..<4).allSatisfy { far(atRest[$0], SIMD3(rest[$0 * 3], rest[$0 * 3 + 1], rest[$0 * 3 + 2])) < 1e-4 && far(atStart[$0], atRest[$0]) < 1e-4 },
+          "rest pose and the clip's first frame match the stored mesh")
+    let mid = deform(model.mesh, rig.skeleton, rig.skin, rig.clips[0].locals(rig.skeleton, at: 0.999))
+    check(far(mid[0], atRest[0]) < 1e-4 && far(mid[2], atRest[2]) > 0.3, "animation turns the spine joint only")
+    let clips = MotionClip.fromFile(rig.clips + [KeyframeClip(id: "x", name: "Attack 01", duration: 1, tracks: [], base: rig.clips[0].base)])
+    check(clips.map(\.id) == ["walk", "swordSwing"] && clips[0].keyframes != nil, "file clips named after the motions they match")
+    check(MotionClip.resolve("run", in: clips)?.id == "walk" && MotionClip.resolve("swordSwing", in: clips)?.id == "swordSwing"
+          && MotionClip.resolve("walk", in: MotionClip.library)?.keyframes == nil, "world actions find file clips first")
+    let pose = clips[0].pose(rig.skeleton, at: 0.5)
+    check(pose.locals?.count == 3 && pose.skinning(rig.skeleton).count == 3, "file clips pose through full local transforms")
+    let saved = try JSONEncoder().encode(clips[0]), old = try JSONEncoder().encode(MotionClip.library[1])
+    let savedBack = try JSONDecoder().decode(MotionClip.self, from: saved), oldBack = try JSONDecoder().decode(MotionClip.self, from: old)
+    check(savedBack == clips[0] && oldBack.keyframes == nil,
+          "clips with and without keyframes round-trip (older saves still read)")
+    // Missing companion buffer.
+    var external = gltf; external["buffers"] = [["byteLength": bin.count, "uri": "hero.bin"]]
+    let externalData = try JSONSerialization.data(withJSONObject: external)
+    check((try? ModelImport.read(externalData, fileName: "hero.gltf")) == nil && (try? ModelImport.read(externalData, fileName: "hero.gltf", companions: ["Hero.BIN": Data(bin)])) != nil,
+          "glTF .bin taken from the picked companion files")
+
+    // ASCII FBX.
+    let fbx = """
+    ; FBX 7.4.0 project file
+    FBXHeaderExtension:  {
+    \tFBXVersion: 7400
+    }
+    Objects:  {
+    \tGeometry: 10, "Geometry::Quad", "Mesh" {
+    \t\tVertices: *12 {
+    \t\t\ta: 0,0,0,1,0,0,1,1,0,0,1,0
+    \t\t}
+    \t\tPolygonVertexIndex: *4 {
+    \t\t\ta: 0,1,2,-4
+    \t\t}
+    \t}
+    \tModel: 20, "Model::Quad", "Mesh" {
+    \t\tProperties70:  {
+    \t\t\tP: "Lcl Translation", "Lcl Translation", "", "A",5,0,0
+    \t\t}
+    \t}
+    }
+    Connections:  {
+    \tC: "OO",10,20
+    \tC: "OO",20,0
+    }
+    """
+    let quad = try ModelImport.read(Data(fbx.utf8), fileName: "quad.fbx")
+    check(quad.mesh.triangleCount == 2 && quad.rig == nil, "ASCII FBX mesh read")
+
+    // OBJ with a material library and texture.
+    let obj = "mtllib quad.mtl\nv 0 0 0 1 0 0\nv 1 0 0 0 1 0\nv 1 1 0 0 0 1\nv 0 1 0 1 1 1\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nusemtl skin\nf 1/1 2/2 3/3 4/4\n"
+    let png: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 1, 2, 3]
+    let objModel = try ModelImport.read(Data(obj.utf8), fileName: "quad.obj", companions: ["quad.mtl": Data("newmtl skin\nmap_Kd .\\Tex.PNG\n".utf8), "tex.png": Data(png)])
+    check(objModel.mesh.triangleCount == 2 && objModel.texture == Data(png) && objModel.colors?.count == 12, "OBJ: polygon, vertex colours and map_Kd texture")
+
+    // STL round trip (z-up on disk).
+    let stl = try ModelImport.read(STLWriter.binary(objModel.mesh), fileName: "quad.stl")
+    let sb = stl.mesh.bounds
+    check(stl.mesh.triangleCount == 2 && stl.mesh.vertexCount == 4 && abs(sb.max[1] - sb.min[1] - 1) < 1e-3 && sb.max[2] - sb.min[2] < 1e-3,
+          "STL written and read back in the same orientation")
+
+    // 3MF (stored zip) with a base material colour; z-up → y-up.
+    let xml = """
+    <?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>
+    <basematerials id="1"><base name="red" displaycolor="#FF0000"/></basematerials>
+    <object id="2" type="model" pid="1" pindex="0"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="0" z="20"/></vertices>
+    <triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="2"/></build></model>
+    """
+    func storedZip(_ files: [(String, [UInt8])]) -> Data {
+        var out: [UInt8] = [], central: [UInt8] = []
+        func u16(_ v: Int) -> [UInt8] { [UInt8(v & 255), UInt8(v >> 8 & 255)] }
+        func u32(_ v: Int) -> [UInt8] { u16(v & 0xFFFF) + u16(v >> 16) }
+        for (name, body) in files {
+            let n = Array(name.utf8), offset = out.count
+            out += u32(0x04034B50) + u16(20) + u16(0) + u16(0) + u16(0) + u16(0) + u32(0) + u32(body.count) + u32(body.count) + u16(n.count) + u16(0) + n + body
+            central += u32(0x02014B50) + u16(20) + u16(20) + u16(0) + u16(0) + u16(0) + u16(0) + u32(0) + u32(body.count) + u32(body.count) + u16(n.count) + u16(0) + u16(0) + u16(0) + u16(0) + u32(0) + u32(offset) + n
+        }
+        let start = out.count
+        out += central + u32(0x06054B50) + u16(0) + u16(0) + u16(files.count) + u16(files.count) + u32(central.count) + u32(start) + u16(0)
+        return Data(out)
+    }
+    let printed = try ModelImport.read(storedZip([("[Content_Types].xml", Array("<Types/>".utf8)), ("3D/3dmodel.model", Array(xml.utf8))]), fileName: "part.3mf")
+    let pb = printed.mesh.bounds
+    check(printed.mesh.triangleCount == 1 && pb.max[1] - pb.min[1] > 0.99 && printed.colors?.prefix(3).map { $0 } == [1, 0, 0], "3MF read from its zip, colour kept, stood up")
+
+    // Character sheet: four figures on grey with a floor shadow each.
+    var sheet = RasterImage(width: 400, height: 200, fill: [200, 200, 205, 255])
+    func paint(_ x0: Int, _ x1: Int, _ y0: Int, _ y1: Int, _ c: [UInt8]) {
+        for y in y0..<y1 { for x in x0..<x1 { let o = (y * 400 + x) * 4; for k in 0..<3 { sheet.rgba[o + k] = c[k] } } }
+    }
+    for c in [50, 150, 250, 350] {
+        paint(c - 14, c + 14, 168, 174, [150, 150, 155])                 // floor shadow
+        paint(c - 6, c + 6, 18, 38, [235, 220, 200])                     // head
+        paint(c - 10, c + 10, 40, 110, [240, 240, 240])                  // body
+        paint(c - 8, c + 8, 70, 72, [196, 196, 201])                      // grey shading close to the background
+        paint(c - 10, c - 3, 110, 170, [240, 240, 240]); paint(c + 3, c + 10, 110, 170, [240, 240, 240])   // legs
+    }
+    let found = CharacterSheet.panels(sheet)
+    check(found.count == 4 && found.allSatisfy { $0.h >= 140 && $0.w < 50 }, "four standing figures found in the row")
+    let labelled = CharacterSheet.assign(found, labels: ["FRONT", "BACK", "LEFT SIDE", "3/4 FRONT"].enumerated().map { i, t in
+        SheetLabel(text: t, x0: Float(50 + i * 100 - 15) / 400, x1: Float(50 + i * 100 + 15) / 400, y0: 0.9, y1: 0.95) }, imageWidth: 400, imageHeight: 200)
+    check(labelled.map(\.view) == [.front, .back, .left, nil] && labelled[3].diagonal, "labels name the views; 3/4 is left out")
+    check(CharacterSheet.assign(found, labels: [], imageWidth: 400, imageHeight: 200).map(\.view) == [.front, .back, .left, .right], "unlabelled sheets use the usual order")
+    let view = CharacterSheet.photo(sheet, panel: labelled[0])
+    func maskAt(_ x: Int, _ y: Int) -> Float { view.mask[(y - labelled[0].y0) * view.width + (x - labelled[0].x0)] }
+    check(maskAt(50, 80) == 1 && maskAt(50, 71) == 1 && maskAt(44, 140) == 1, "figure outline kept, grey shading inside it filled")
+    check(maskAt(50, 150) == 0 && maskAt(50, 171) == 0, "gap between the legs and the floor shadow are background")
+    var photos: [PhotoView: ViewPhoto] = [:]
+    for p in labelled { if let v = p.view { photos[v] = CharacterSheet.photo(sheet, panel: p) } }
+    let carved = try MultiViewCarver.build(photos)
+    check(carved.mesh.valid && carved.mesh.triangleCount > 100, "sheet views carve into a model")
+    print("RPG v1.76 model files: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
