@@ -285,6 +285,9 @@ struct WorldGenerationRequest: Codable, Equatable, Sendable {
 struct WorldDirectorRecord: Codable, Equatable, Sendable {
     var blueprint: WorldBlueprint
     var intentSummary: String
+    /// The assets the world was made with (so regenerating media keeps
+    /// them). Optional: records without it decode unchanged.
+    var assets: [AssetDescriptor]? = nil
 }
 
 /// Sky and light for the 3D world (optional field; nil keeps the

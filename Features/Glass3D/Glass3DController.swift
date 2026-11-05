@@ -184,6 +184,10 @@ struct Glass3DPending {
     private var navigator: SpatialNavigator?
     private var pivots: [String: SpatialVector] = [:]
     private var brains: [String: CreatureBrain] = [:]
+    /// v1.81: the world before the last World Director run (restore).
+    var directorBackup: SpatialWorld?
+    /// v1.81: forget creature AI state after a whole new world arrives.
+    func resetCreatureBrains() { brains = [:] }
     private var farTimer = 0.0
     private var saveTimer = 0.0
     private var renderTimer = 0.0
@@ -762,7 +766,7 @@ struct Glass3DPending {
         previousGeometry = nil
     }
 
-    private func rebuildAll() { geometryChanged(); refreshVisible() }
+    private func rebuildAll() { renderer.showAtmosphere(world.atmosphere); geometryChanged(); refreshVisible() }
 
     // MARK: Saving
 

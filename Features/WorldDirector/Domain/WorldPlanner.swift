@@ -74,13 +74,20 @@ enum WorldIntentParser {
 
 /// Theme rules: palette, lighting and building language.
 enum WorldThemeStyle {
-    static func palette(_ theme: WorldTheme, intent: WorldIntent) -> MaterialPalette {
+    static func palette(_ theme: WorldTheme, intent: WorldIntent, assets: [AssetDescriptor] = []) -> MaterialPalette {
         var p: MaterialPalette = switch theme {
         case .skyCity: MaterialPalette(primary: "F4F7FB", secondary: "C9CFD8", accent: "8FD3FF", opaqueShare: 0.35, glassDensity: 0.35, glow: 0.4)
         case .memory: MaterialPalette(primary: "FFE9F2", secondary: "D9CFE8", accent: "B9A6FF", opaqueShare: 0.3, glassDensity: 0.3, glow: 0.6)
         case .nature: MaterialPalette(primary: "BFE8D0", secondary: "8C8676", accent: "8FB8FF", opaqueShare: 0.55, glassDensity: 0.4, glow: 0.3)
         case .futureCity: MaterialPalette(primary: "9FD3FF", secondary: "5A6478", accent: "FF8FB1", opaqueShare: 0.4, glassDensity: 0.45, glow: 0.9)
         case .bossAdventure: MaterialPalette(primary: "C9C2B8", secondary: "4A4A55", accent: "FF7A5A", opaqueShare: 0.55, glassDensity: 0.5, glow: 0.5)
+        }
+        // Memory worlds take their accent from the chosen photos' colours
+        // (most common dominant colour), unless the words name colours.
+        if theme == .memory, intent.colors.isEmpty {
+            var counts: [String: Int] = [:]
+            for asset in assets { if let c = asset.dominantColors.first { counts[c, default: 0] += 1 } }
+            if let top = counts.max(by: { $0.value == $1.value ? $0.key > $1.key : $0.value < $1.value })?.key { p.accent = top }
         }
         if let first = intent.colors.first { p.primary = first }
         if intent.colors.count > 1 { p.accent = intent.colors[1] }
@@ -140,7 +147,7 @@ enum WorldPlanner {
         if !intent.summary.isEmpty { metadata.notes.insert(intent.summary, at: 0) }
         return WorldBlueprint(
             blueprintID: "bp-\(seed % 1_000_000_000)-\(variant)", seed: seed, theme: theme,
-            palette: WorldThemeStyle.palette(theme, intent: intent),
+            palette: WorldThemeStyle.palette(theme, intent: intent, assets: usable),
             terrainPlan: TerrainPlan(features: context.features), biomeRegions: context.regions,
             roadNetwork: RoadNetwork(segments: context.roads), landmarkPlan: context.landmark,
             buildingZones: context.zones, decorationPlan: context.decoration(),

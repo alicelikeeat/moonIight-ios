@@ -2933,6 +2933,10 @@ do {
     check(night.atmosphere?.timeOfDay == .night && night.atmosphere?.valid == true && night.blocks == sky.output.world.blocks, "time of day changes only the sky")
     var badPlan = a; badPlan.palette.primary = "XYZ"
     check(!badPlan.validate().isEmpty && (try? SpatialWorldBuilder.build(badPlan, assets: [], onto: SpatialWorld())) == nil, "invalid blueprints are refused")
+    var memoryRequest = WorldGenerationRequest(theme: .memory)
+    var warm = asset("warm", .image); warm.dominantColors = ["E07A3C"]
+    memoryRequest.assets = [warm, warm]
+    check(WorldPlanner.plan(memoryRequest).palette.accent == "E07A3C", "memory worlds take their accent colour from the chosen photos")
     print("RPG v1.81 world director: \(checks) total checks passed")
 }
 

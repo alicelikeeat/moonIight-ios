@@ -31,6 +31,11 @@ import Metal
     private var meshCache: [String: MeshResource] = [:]
     private var materialCache: [String: RealityKit.Material] = [:]
     private(set) var quality = RPGGlassQuality.standard
+    private let sun = DirectionalLight()
+    private let dome = ModelEntity(mesh: .generateSphere(radius: 500))
+    private var shownAtmosphere: SpatialAtmosphere?
+    /// v1.81: world glow strength (night worlds glow more).
+    private var glowBoost: Float = 1
     /// Native glass draws the block glass; SceneKit-era glass materials
     /// then thin out to edges so the system glass carries the look.
     private(set) var nativeGlass = false
@@ -47,16 +52,11 @@ import Metal
         camera.camera.fieldOfViewOrientation = .vertical
         camera.camera.near = 0.1; camera.camera.far = 600
         root.addChild(camera)
-        let sun = DirectionalLight()
         sun.light.intensity = 2600
         sun.orientation = simd_quatf(angle: -.pi / 3, axis: [1, 0, 0]) * simd_quatf(angle: .pi / 5, axis: [0, 1, 0])
         root.addChild(sun)
         // Sky dome seen from inside.
-        var sky = UnlitMaterial()
-        if let texture = try? TextureResource(image: Self.skyImage.cgImage!, options: .init(semantic: .color)) { sky.color = .init(tint: .white, texture: .init(texture)) }
-        else { sky.color = .init(tint: UIColor(red: 0.25, green: 0.35, blue: 0.6, alpha: 1)) }
-        sky.faceCulling = .front
-        let dome = ModelEntity(mesh: .generateSphere(radius: 500), materials: [sky])
+        dome.model?.materials = [Self.skyMaterial(Self.skyImage)]
         dome.position = [128, 0, -128]
         root.addChild(dome)
         // Player: a glowing capsule-like body and a nose for facing.
@@ -65,6 +65,46 @@ import Metal
         let nose = ModelEntity(mesh: .generateSphere(radius: 0.12), materials: [Self.solid(.white, glow: true)])
         nose.position = [0.32, 1.1, 0]
         playerEntity.addChild(body); playerEntity.addChild(nose)
+    }
+
+    // MARK: Atmosphere (v1.81)
+
+    /// Sky gradient and sun for the world (nil: the built-in sky).
+    func showAtmosphere(_ atmosphere: SpatialAtmosphere?) {
+        guard atmosphere != shownAtmosphere else { return }
+        shownAtmosphere = atmosphere
+        if let a = atmosphere {
+            dome.model?.materials = [Self.skyMaterial(Self.skyImage(top: UIColor(rpgHex: a.skyTop), horizon: UIColor(rpgHex: a.skyHorizon)))]
+            sun.light.intensity = Float(400 + a.sunIntensity * 2200)
+            let elevation = Float(max(5, a.sunElevation)) * .pi / 180
+            sun.orientation = simd_quatf(angle: -elevation, axis: [1, 0, 0]) * simd_quatf(angle: .pi / 5, axis: [0, 1, 0])
+            glowBoost = Float(0.6 + a.glow)
+        } else {
+            dome.model?.materials = [Self.skyMaterial(Self.skyImage)]
+            sun.light.intensity = 2600
+            sun.orientation = simd_quatf(angle: -.pi / 3, axis: [1, 0, 0]) * simd_quatf(angle: .pi / 5, axis: [0, 1, 0])
+            glowBoost = 1
+        }
+        // Glow strength is part of the block materials.
+        materialCache.removeAll()
+    }
+
+    static func skyMaterial(_ image: UIImage) -> RealityKit.Material {
+        var sky = UnlitMaterial()
+        if let cg = image.cgImage, let texture = try? TextureResource(image: cg, options: .init(semantic: .color)) { sky.color = .init(tint: .white, texture: .init(texture)) }
+        else { sky.color = .init(tint: UIColor(red: 0.25, green: 0.35, blue: 0.6, alpha: 1)) }
+        sky.faceCulling = .front
+        return sky
+    }
+
+    static func skyImage(top: UIColor, horizon: UIColor) -> UIImage {
+        let size = CGSize(width: 8, height: 256)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            let colors = [top.cgColor, horizon.cgColor] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                context.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: size.height), options: [])
+            }
+        }
     }
 
     // MARK: Quality
@@ -207,9 +247,25 @@ import Metal
     }
 
     func glassMaterial(_ glass: SpatialGlass, collision: SpatialCollision) -> RealityKit.Material {
-        let key = "glass|\(glass.tintHex ?? "-")|\(glass.density)|\(glass.frosted)|\(glass.glow)|\(collision == .trigger)"
+        let key = "glass|\(glass.tintHex ?? "-")|\(glass.density)|\(glass.frosted)|\(glass.glow)|\(collision == .trigger)|\(glass.surface?.rawValue ?? "g")"
         if let cached = materialCache[key] { return cached }
         let tint = glass.tintHex.map { UIColor(rpgHex: $0) } ?? UIColor(white: 0.94, alpha: 1)
+        // v1.81: stone and metal are opaque structure; crystal is bright glass.
+        if let surface = glass.surface, surface == .stone || surface == .metal {
+            let solid: RealityKit.Material
+            if quality == .performance {
+                solid = UnlitMaterial(color: tint)
+            } else {
+                var material = PhysicallyBasedMaterial()
+                material.baseColor = .init(tint: tint)
+                material.roughness = .init(floatLiteral: surface == .stone ? 0.85 : 0.3)
+                material.metallic = .init(floatLiteral: surface == .metal ? 0.85 : 0)
+                if glass.glow { material.emissiveColor = .init(color: tint); material.emissiveIntensity = 0.6 * glowBoost }
+                solid = material
+            }
+            materialCache[key] = solid
+            return solid
+        }
         // With native glass shown, `setBlockGlassOpacity` thins these out
         // (edges and a faint body); while the camera moves they carry the
         // full look on their own.
@@ -228,7 +284,7 @@ import Metal
             material.metallic = .init(floatLiteral: quality == .high ? 0.15 : 0.02)
             material.clearcoat = .init(floatLiteral: quality == .high ? 1 : 0.4)
             material.blending = .transparent(opacity: .init(floatLiteral: opacity))
-            if glass.glow { material.emissiveColor = .init(color: tint); material.emissiveIntensity = 0.8 }
+            if glass.glow || glass.surface == .crystal { material.emissiveColor = .init(color: tint); material.emissiveIntensity = (glass.glow ? 0.8 : 0.35) * glowBoost }
             result = material
         }
         materialCache[key] = result

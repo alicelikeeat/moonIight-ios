@@ -19,6 +19,7 @@ struct Glass3DScreen: View {
     @EnvironmentObject private var model: AppModel
     let onClose: () -> Void
     @State private var generator = false
+    @State private var classicGenerator = false
     @State private var panel = true
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
@@ -139,7 +140,9 @@ struct Glass3DScreen: View {
             }
         }
         .onChange(of: reduceTransparency, initial: true) { _, on in controller.reduceTransparency = on }
-        .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
+        // v1.81: World Director first; the classic generator stays one tap away.
+        .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
+        .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
         .confirmationDialog(L10n.t("清空整个世界？", "Clear the whole world?"), isPresented: $confirmClear, titleVisibility: .visible) {
             Button(L10n.t("清空世界", "Clear World"), role: .destructive) { controller.clearWorld() }

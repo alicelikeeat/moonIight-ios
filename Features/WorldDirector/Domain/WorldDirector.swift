@@ -179,8 +179,9 @@ enum WorldDirectorEngine {
     /// Regenerates some layers (optionally only around a point) of the
     /// world's saved blueprint with a new seed. User objects stay.
     static func regenerate(_ world: SpatialWorld, layers: Set<WorldLayer>, area: (center: WorldPoint, radius: Int)?, seedOffset: UInt64,
-                           assets: [AssetDescriptor] = [], difficulty: GameDifficulty = .normal) throws -> WorldBuildOutput {
+                           assets explicit: [AssetDescriptor]? = nil, difficulty: GameDifficulty = .normal) throws -> WorldBuildOutput {
         guard var blueprint = world.director?.blueprint else { throw WorldDirectorError.nothingBuilt }
+        let assets = explicit ?? world.director?.assets ?? []
         // A new arrangement for the chosen layers: same plan, new seed.
         blueprint.seed = blueprint.seed &+ seedOffset &* 0x9E37_79B9_7F4A_7C15
         var output = try SpatialWorldBuilder.build(blueprint, assets: assets, onto: world, layers: layers, area: area, difficulty: difficulty, updateAtmosphere: false)
@@ -252,5 +253,45 @@ enum WorldIntentResolver {
         intent.buildingScale = wire.buildingScale ?? 1
         intent.summary = wire.summary ?? ""
         return intent.clamped()
+    }
+}
+
+// MARK: Preview
+
+/// A small top-down picture of a candidate (no 3D needed): terrain and
+/// buildings in their colours, brighter when higher; plants green; the
+/// spawn and the landmark marked.
+enum WorldPreview {
+    static func raster(_ world: SpatialWorld, blueprint: WorldBlueprint, size: Int = 128) -> RasterImage {
+        let scale = max(1, WorldGeometry.width / size)
+        var image = RasterImage(width: size, height: size, fill: [22, 26, 38, 255])
+        var top = [Double](repeating: -1, count: size * size)
+        func put(_ x: Int, _ y: Int, _ rgb: (Double, Double, Double), height: Double) {
+            let px = x / scale, py = (WorldGeometry.width - 1 - y) / scale
+            guard (0..<size).contains(px), (0..<size).contains(py) else { return }
+            let i = py * size + px
+            guard height >= top[i] else { return }
+            top[i] = height
+            let light = min(1.25, 0.55 + height / 24)
+            let o = i * 4
+            image.rgba[o] = UInt8(min(255, rgb.0 * 255 * light)); image.rgba[o + 1] = UInt8(min(255, rgb.1 * 255 * light)); image.rgba[o + 2] = UInt8(min(255, rgb.2 * 255 * light))
+        }
+        for b in world.blocks {
+            let rgb = AssetAnalyzer.rgb(b.glass.tintHex ?? "E6EEF8") ?? (0.9, 0.93, 0.97)
+            put(b.x, b.y, rgb, height: b.top)
+        }
+        for p in world.plants { put(p.x, p.y, p.kind == .glow ? (1, 0.9, 0.5) : (0.35, 0.8, 0.4), height: p.z + 0.5) }
+        func mark(_ p: WorldPoint, _ rgb: (UInt8, UInt8, UInt8), radius: Int) {
+            let cx = p.x / scale, cy = (WorldGeometry.width - 1 - p.y) / scale
+            for dy in -radius...radius { for dx in -radius...radius where abs(dx) + abs(dy) <= radius {
+                let x = cx + dx, y = cy + dy
+                guard (0..<size).contains(x), (0..<size).contains(y) else { continue }
+                let o = (y * size + x) * 4
+                image.rgba[o] = rgb.0; image.rgba[o + 1] = rgb.1; image.rgba[o + 2] = rgb.2
+            } }
+        }
+        mark(blueprint.landmarkPlan.position, (255, 120, 200), radius: 2)
+        mark(blueprint.spawnPlan.position, (255, 220, 60), radius: 2)
+        return image
     }
 }

@@ -685,7 +685,9 @@ struct WorldBuildState {
             world.player.facing = bp.spawnPlan.facing
         }
         if updateAtmosphere { world.atmosphere = SpatialAtmosphere(bp.lightingProfile) }
-        world.director = WorldDirectorRecord(blueprint: bp, intentSummary: bp.generationMetadata.notes.first ?? bp.theme.title)
+        let kept = Array(assets.values).sorted { $0.assetID < $1.assetID }
+        world.director = WorldDirectorRecord(blueprint: bp, intentSummary: bp.generationMetadata.notes.first ?? bp.theme.title,
+                                             assets: kept.isEmpty ? (world.director?.assets) : Array(kept.prefix(60)))
         // Drop groups that ended up empty (budget, area).
         let used = Set(world.blocks.compactMap(\.groupID))
         world.groups.removeAll { $0.origin == .generated && !used.contains($0.id) }
