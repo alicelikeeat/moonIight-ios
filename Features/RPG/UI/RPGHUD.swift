@@ -10,6 +10,8 @@ import UIKit
 struct RPGHUDState: Equatable {
     var inCombat = false
     var editing = false
+    /// v1.84: flat controls instead of live glass (3D power saver).
+    var powerSave = false
 }
 
 private struct RPGHUDStateKey: EnvironmentKey { static let defaultValue = RPGHUDState() }
@@ -40,12 +42,18 @@ struct RPGHUDGlassModifier<S: Shape>: ViewModifier {
     @ViewBuilder private func surface(_ content: Content) -> some View {
         let style = RPGHUDGlassStyle.resolve(kind, RPGHUDConditions(
             dark: scheme == .dark, increasedContrast: contrast == .increased, reduceTransparency: reduceTransparency,
-            inCombat: state.inCombat, editing: state.editing, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled))
+            inCombat: state.inCombat, editing: state.editing, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, powerSave: state.powerSave))
         let tuning = look.tuning
         // A light scrim behind text: dark under light text, light under dark
         // text; v1.82: thicker when the user chose frosted glass.
         let scrim = (scheme == .dark ? Color.black : Color.white).opacity(min(0.5, style.scrim + tuning.veil))
-        if style.solid {
+        if style.flat {
+            // No backdrop sampling at all: a plain see-through fill.
+            content
+                .background((scheme == .dark ? Color.black : Color.white).opacity(kind == .base ? 0.3 : 0.72), in: shape)
+                .background(style.combatTint ? Color.red.opacity(0.12) : (tuning.tintColor ?? .clear).opacity(tuning.tintOpacity), in: shape)
+                .overlay(shape.stroke(Color.white.opacity(0.35), lineWidth: 0.6))
+        } else if style.solid {
             content
                 .background(Color(uiColor: .secondarySystemBackground), in: shape)
                 .overlay(shape.stroke(Color.primary.opacity(0.18), lineWidth: 0.5))

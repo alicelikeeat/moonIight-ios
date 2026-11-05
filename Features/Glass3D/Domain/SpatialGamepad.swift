@@ -14,7 +14,7 @@ struct SpatialPadState: Equatable, Sendable {
 }
 
 /// Xbox names (A bottom, B right, X left, Y top).
-enum SpatialPadButton: String, CaseIterable, Sendable {
+enum SpatialPadButton: String, CaseIterable, Codable, Sendable {
     case a, b, x, y
     case leftShoulder, rightShoulder
     case leftTrigger, rightTrigger
@@ -49,11 +49,13 @@ enum SpatialGamepad {
 
     /// Stick vectors in on-screen joystick convention (y down), which is
     /// what `setStick` / `setLook` expect.
-    static func move(_ pad: SpatialPadState) -> (x: Double, y: Double) {
-        let v = shaped(pad.leftX, pad.leftY); return (v.x, -v.y)
+    /// v1.84: the mapping can swap the sticks and invert looking up/down.
+    static func move(_ pad: SpatialPadState, mapping: SpatialPadMapping = .standard) -> (x: Double, y: Double) {
+        let v = mapping.swapSticks ? shaped(pad.rightX, pad.rightY) : shaped(pad.leftX, pad.leftY); return (v.x, -v.y)
     }
-    static func look(_ pad: SpatialPadState) -> (x: Double, y: Double) {
-        let v = shaped(pad.rightX, pad.rightY); return (v.x, -v.y)
+    static func look(_ pad: SpatialPadState, mapping: SpatialPadMapping = .standard) -> (x: Double, y: Double) {
+        let v = mapping.swapSticks ? shaped(pad.leftX, pad.leftY) : shaped(pad.rightX, pad.rightY)
+        return (v.x, mapping.invertLookY ? v.y : -v.y)
     }
 
     /// Buttons that went down since the previous frame (triggers included).
@@ -71,6 +73,11 @@ enum SpatialGamepad {
     /// skill slots 1–4, right stick click lock-on, left stick click camera
     /// behind. Design: A back to character, Y straight down, LB/RB fly
     /// down/up. Menu switches play/design in both.
+    static func action(for button: SpatialPadButton, playing: Bool, mapping: SpatialPadMapping) -> SpatialPadAction? {
+        mapping.action(for: button, playing: playing)
+    }
+
+    /// The standard layout (also what `SpatialPadMapping.standard` holds).
     static func action(for button: SpatialPadButton, playing: Bool) -> SpatialPadAction? {
         if button == .menu { return .switchMode }
         if playing {
@@ -98,9 +105,9 @@ enum SpatialGamepad {
     }
 
     /// Actions for this frame, in a stable order.
-    static func actions(_ pad: SpatialPadState, previous: SpatialPadState, playing: Bool) -> [SpatialPadAction] {
+    static func actions(_ pad: SpatialPadState, previous: SpatialPadState, playing: Bool, mapping: SpatialPadMapping = .standard) -> [SpatialPadAction] {
         let down = pressed(pad, previous: previous)
-        return SpatialPadButton.allCases.filter(down.contains).compactMap { action(for: $0, playing: playing) }
+        return SpatialPadButton.allCases.filter(down.contains).compactMap { mapping.action(for: $0, playing: playing) }
     }
 
     /// Design mode zoom from the triggers: >1 zooms in, <1 out, 1 none.
@@ -109,4 +116,108 @@ enum SpatialGamepad {
         guard abs(amount) > 0.05, dt > 0, dt.isFinite else { return 1 }
         return exp(amount * 1.5 * dt)
     }
+}
+
+// MARK: v1.84 button mapping
+
+extension SpatialPadAction {
+    /// Stable name for saving.
+    var key: String {
+        switch self {
+        case .jump: return "jump"
+        case .attack: return "attack"
+        case .skill: return "skill"
+        case .dodge: return "dodge"
+        case .lock: return "lock"
+        case .cameraBehind: return "cameraBehind"
+        case .hotbar(let i): return "hotbar\(i)"
+        case .switchMode: return "switchMode"
+        case .flyUp: return "flyUp"
+        case .flyDown: return "flyDown"
+        case .backToCharacter: return "backToCharacter"
+        case .straightDown: return "straightDown"
+        }
+    }
+    init?(key: String) {
+        guard let action = (Self.playActions + Self.designActions).first(where: { $0.key == key }) else { return nil }
+        self = action
+    }
+    /// Actions that can be put on a button while playing / designing.
+    static let playActions: [SpatialPadAction] = [.jump, .attack, .skill, .dodge, .lock, .cameraBehind, .hotbar(0), .hotbar(1), .hotbar(2), .hotbar(3), .switchMode]
+    static let designActions: [SpatialPadAction] = [.backToCharacter, .straightDown, .flyUp, .flyDown, .switchMode]
+}
+
+/// Which button does what, per mode, plus stick options. One button does
+/// one thing per mode; assigning a taken button swaps the two actions.
+/// Saved as JSON; anything unknown or duplicated is dropped on load.
+struct SpatialPadMapping: Codable, Equatable, Sendable {
+    /// Action key → button.
+    var play: [String: SpatialPadButton]
+    var design: [String: SpatialPadButton]
+    /// Left stick looks, right stick moves.
+    var swapSticks = false
+    /// Pushing the look stick up looks down.
+    var invertLookY = false
+
+    static let standard: SpatialPadMapping = {
+        func table(_ actions: [SpatialPadAction], playing: Bool) -> [String: SpatialPadButton] {
+            var result: [String: SpatialPadButton] = [:]
+            for button in SpatialPadButton.allCases {
+                if let action = SpatialGamepad.action(for: button, playing: playing), actions.contains(action) { result[action.key] = button }
+            }
+            return result
+        }
+        return SpatialPadMapping(play: table(SpatialPadAction.playActions, playing: true), design: table(SpatialPadAction.designActions, playing: false))
+    }()
+
+    /// Buttons kept for design-mode zoom (the triggers) — not assignable there.
+    static let designReserved: Set<SpatialPadButton> = [.leftTrigger, .rightTrigger]
+
+    func button(for action: SpatialPadAction, playing: Bool) -> SpatialPadButton? {
+        (playing ? play : design)[action.key]
+    }
+    func action(for button: SpatialPadButton, playing: Bool) -> SpatialPadAction? {
+        guard let key = (playing ? play : design).first(where: { $0.value == button })?.key else { return nil }
+        return SpatialPadAction(key: key)
+    }
+
+    /// Puts `action` on `button`; whatever had that button moves to the
+    /// action's old button (or is left unassigned when it had none).
+    /// Returns false for a button reserved in that mode.
+    @discardableResult
+    mutating func assign(_ button: SpatialPadButton, to action: SpatialPadAction, playing: Bool) -> Bool {
+        if !playing && Self.designReserved.contains(button) { return false }
+        var table = playing ? play : design
+        let old = table[action.key]
+        if let other = table.first(where: { $0.value == button && $0.key != action.key })?.key { table[other] = old }
+        table[action.key] = button
+        if playing { play = table } else { design = table }
+        return true
+    }
+    mutating func clear(_ action: SpatialPadAction, playing: Bool) {
+        if playing { play[action.key] = nil } else { design[action.key] = nil }
+    }
+
+    /// Drops unknown actions, reserved buttons and duplicate buttons.
+    func normalized() -> SpatialPadMapping {
+        func clean(_ table: [String: SpatialPadButton], allowed: [SpatialPadAction], reserved: Set<SpatialPadButton>) -> [String: SpatialPadButton] {
+            var used = Set<SpatialPadButton>(), result: [String: SpatialPadButton] = [:]
+            for action in allowed {
+                guard let button = table[action.key], !reserved.contains(button), !used.contains(button) else { continue }
+                used.insert(button); result[action.key] = button
+            }
+            return result
+        }
+        var copy = self
+        copy.play = clean(play, allowed: SpatialPadAction.playActions, reserved: [])
+        copy.design = clean(design, allowed: SpatialPadAction.designActions, reserved: Self.designReserved)
+        return copy
+    }
+
+    static let storageKey = "moonlight.gamepad.mapping"
+    static func decode(_ data: Data?) -> SpatialPadMapping {
+        guard let data, let value = try? JSONDecoder().decode(SpatialPadMapping.self, from: data) else { return .standard }
+        return value.normalized()
+    }
+    func encoded() -> Data? { try? JSONEncoder().encode(normalized()) }
 }

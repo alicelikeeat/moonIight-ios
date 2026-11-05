@@ -3002,6 +3002,40 @@ do {
     let groups = Dictionary(grouping: sky.blocks.filter { SpatialBatch.batchable($0, pivots: sky.motionPivots()) }, by: SpatialBatch.key)
     check(groups.count * 10 < sky.blocks.count, "a generated world draws as \(groups.count) batches instead of \(sky.blocks.count) objects")
     print("RPG v1.83 merged blocks: \(checks) total checks passed")
+    // v1.84 power saver: flat controls, no live glass.
+    let saving = RPGHUDConditions(powerSave: true)
+    let flatPanel = RPGHUDGlassStyle.resolve(.panel, saving), flatButton = RPGHUDGlassStyle.resolve(.interactive, saving)
+    check(flatPanel.flat && flatButton.flat && !flatButton.interactive && !RPGHUDGlassStyle.resolve(.panel, RPGHUDConditions()).flat, "power saver turns HUD glass flat and non-interactive")
+    check(!RPGHUDGlassStyle.resolve(.panel, RPGHUDConditions(reduceTransparency: true, powerSave: true)).flat, "Reduce Transparency keeps its solid surface")
+}
+
+do {
+    // v1.84 controller button mapping.
+    let std = SpatialPadMapping.standard
+    check(SpatialPadButton.allCases.allSatisfy { b in std.action(for: b, playing: true) == SpatialGamepad.action(for: b, playing: true) && std.action(for: b, playing: false) == SpatialGamepad.action(for: b, playing: false) },
+          "the standard mapping is the old fixed layout")
+    var m = std
+    m.assign(.b, to: .jump, playing: true)
+    check(m.action(for: .b, playing: true) == .jump && m.action(for: .a, playing: true) == .dodge, "assigning a taken button swaps the two actions")
+    check(!m.assign(.rightTrigger, to: .flyUp, playing: false) && m.button(for: .flyUp, playing: false) == .rightShoulder, "triggers stay reserved for design-mode zoom")
+    m.assign(.up, to: .flyUp, playing: false)
+    check(m.action(for: .up, playing: false) == .flyUp && m.action(for: .rightShoulder, playing: false) == nil && m.action(for: .up, playing: true) == nil, "modes keep separate tables")
+    m.clear(.attack, playing: true)
+    let x = SpatialPadState(buttons: [.x])
+    check(SpatialGamepad.actions(x, previous: SpatialPadState(), playing: true, mapping: m).isEmpty, "a cleared action does nothing")
+    m.swapSticks = true; m.invertLookY = true
+    let round = SpatialPadMapping.decode(m.encoded())
+    check(round == m.normalized() && round.swapSticks && round.invertLookY, "the mapping saves and loads")
+    var sticks = SpatialPadState(); sticks.leftX = 1; sticks.rightY = 1
+    let mv = SpatialGamepad.move(sticks, mapping: m), lk = SpatialGamepad.look(sticks, mapping: m)
+    check(abs(mv.y + 1) < 1e-9 && mv.x == 0 && abs(lk.x - 1) < 1e-9 && lk.y == 0, "swapped sticks: right stick moves, left stick looks")
+    var up = SpatialPadState(); up.rightY = 1
+    check(SpatialGamepad.look(up, mapping: SpatialPadMapping(play: [:], design: [:], invertLookY: true)).y > 0 && SpatialGamepad.look(up).y < 0, "invert look flips up and down")
+    let bad = SpatialPadMapping(play: ["jump": .a, "attack": .a, "nonsense": .b], design: ["flyUp": .leftTrigger])
+    check(bad.normalized().play == ["jump": .a] && bad.normalized().design.isEmpty, "duplicates, unknown actions and reserved buttons are dropped")
+    check(SpatialPadMapping.decode(Data("garbage".utf8)) == .standard && SpatialPadMapping.decode(nil) == .standard, "a broken save falls back to the standard layout")
+    check((SpatialPadAction.playActions + SpatialPadAction.designActions).allSatisfy { SpatialPadAction(key: $0.key) == $0 }, "every action round-trips through its key")
+    print("RPG v1.84 controller mapping: \(checks) total checks passed")
 }
 
 print("RPG complete: \(checks) total checks passed")

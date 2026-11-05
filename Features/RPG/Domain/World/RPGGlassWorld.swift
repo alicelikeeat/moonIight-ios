@@ -111,6 +111,8 @@ struct RPGHUDConditions: Equatable, Sendable {
     var inCombat = false
     var editing = false
     var lowPower = false
+    /// v1.84: 3D power saver (setting, a hot phone or Low Power Mode).
+    var powerSave = false
 }
 
 /// How a HUD surface is drawn: clear or regular system glass, with an
@@ -124,6 +126,9 @@ struct RPGHUDGlassStyle: Equatable, Sendable {
     var solid: Bool
     /// Combat warning tint on interactive controls.
     var combatTint: Bool
+    /// v1.84 power saver: a flat see-through fill instead of live glass, so
+    /// the controls do not blur and refract the moving 3D view every frame.
+    var flat = false
 
     var role: MoonGlassRole { solid ? .solid : regular ? .regular : .clear }
 
@@ -135,8 +140,8 @@ struct RPGHUDGlassStyle: Equatable, Sendable {
         var scrim = kind == .light ? 0.12 : kind == .panel ? 0.06 : 0
         if conditions.increasedContrast && kind != .base { scrim += 0.18 }
         if conditions.inCombat && kind == .light { scrim += 0.08 }
-        return RPGHUDGlassStyle(regular: regular, interactive: kind == .interactive && !conditions.lowPower, scrim: min(0.4, scrim),
-                                solid: solid, combatTint: kind == .interactive && conditions.inCombat)
+        return RPGHUDGlassStyle(regular: regular, interactive: kind == .interactive && !conditions.lowPower && !conditions.powerSave, scrim: min(0.4, scrim),
+                                solid: solid, combatTint: kind == .interactive && conditions.inCombat, flat: conditions.powerSave && !solid)
     }
 }
 

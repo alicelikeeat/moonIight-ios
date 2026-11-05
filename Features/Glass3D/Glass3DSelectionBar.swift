@@ -114,9 +114,10 @@ private struct GlassPiece: ViewModifier {
     let reduceMotion: Bool
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.rpgHUDState) private var hudState
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *), !reduceTransparency {
+        if #available(iOS 26.0, *), !reduceTransparency, !hudState.powerSave {
             content
                 .glassEffect(.regular.interactive(), in: Capsule())
                 .glassEffectID(id, in: space)

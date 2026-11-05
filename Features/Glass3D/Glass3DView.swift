@@ -24,6 +24,7 @@ struct Glass3DScreen: View {
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
     @State private var glassLook = false
+    @State private var padMapping = false
     @State private var generate3D = false
     @State private var confirmClear = false
     /// v1.79: the ⋯ panel (our own, not the system menu).
@@ -114,7 +115,7 @@ struct Glass3DScreen: View {
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.selection.isEmpty)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.picked)
         }
-        .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit))
+        .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit, powerSave: controller.powerSaving))
         .onAppear {
             MoonlightOrientationDelegate.setSandboxLandscape(true)
             controller.renderer.media.resolve = { [weak store = model.mediaStore] id in
@@ -145,6 +146,12 @@ struct Glass3DScreen: View {
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .sheet(isPresented: $padMapping) {
+            NavigationStack {
+                GamepadMappingView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { padMapping = false }.accessibilityIdentifier("gamepad-mapping-done") } }
+            }
+        }
         .sheet(isPresented: $glassLook) {
             NavigationStack {
                 MoonGlassSettingsView()
@@ -258,6 +265,10 @@ struct Glass3DScreen: View {
                 moreRow("trash", L10n.t("一键清空世界", "Clear World"), destructive: true) { confirmClear = true }
                 moreHeader(L10n.t("显示", "Display"))
                 moreRow("drop.halffull", L10n.t("玻璃外观（透明度与颜色）", "Glass Look (Clarity & Colour)")) { glassLook = true }
+                moreRow("gamecontroller", L10n.t("手柄按键映射（Xbox）", "Controller Mapping (Xbox)")) { padMapping = true }
+                Toggle(L10n.t("3D 省电模式（更凉）", "3D Power Saver (cooler)"), isOn: $controller.powerSaver)
+                    .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
+                    .accessibilityIdentifier("glass3d-power-saver")
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
                     .pickerStyle(.segmented).padding(.horizontal, 8).padding(.vertical, 4)
                     .accessibilityIdentifier("glass3d-quality")
@@ -512,7 +523,7 @@ struct Glass3DScreen: View {
                     }
                     ForEach((controller.world.characters ?? []).filter { $0.mode != .generated }) { template in
                         lookCard(title: template.name, selected: selected == template.id, id: "glass3d-look-character-\(template.id)") {
-                            Image(systemName: template.mode == .model ? "cube.fill" : "person.crop.rectangle.fill").font(.system(size: 22)).foregroundStyle(Color.accentColor)
+                            Glass3DCharacterPreview(controller: controller, store: self.model.mediaStore, template: template, side: 54, corner: 10)
                         } action: { pick(template.id) }
                     }
                     lookCard(title: L10n.t("生成新模型", "New Model"), selected: false, id: "glass3d-look-generate") {

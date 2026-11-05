@@ -53,8 +53,9 @@ struct Glass3DCharacterEditor: View {
                         NavigationLink {
                             Glass3DCharacterForm(controller: controller, store: store, draft: template)
                         } label: {
-                            HStack {
-                                Label(template.name, systemImage: template.mode == .model || template.mode == .generated ? "cube" : "person.crop.rectangle")
+                            HStack(spacing: 12) {
+                                Glass3DCharacterPreview(controller: controller, store: store, template: template, side: 44, corner: 10)
+                                Text(template.name)
                                 Spacer()
                                 if controller.world.playerCharacterID == template.id { Text(L10n.t("主角", "Player")).font(.caption).foregroundStyle(.tint) }
                             }
@@ -471,5 +472,37 @@ private struct Glass3DBossForm: View {
         }.moonLiquidList()
         .navigationTitle(draft.name).navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("保存", "Save")) { controller.saveBossScript(draft); dismiss() }.disabled(!draft.valid) } }
+    }
+}
+
+/// v1.84: a character's own picture in lists and look cards — the first
+/// picture, GIF or video frame of its idle (or walk, or any) action; a
+/// generated 3D model shows its render. Falls back to an icon.
+@available(iOS 18.0, *)
+struct Glass3DCharacterPreview: View {
+    @ObservedObject var controller: Glass3DController
+    let store: MediaStore
+    let template: CharacterTemplate
+    var side: CGFloat = 54
+    var corner: CGFloat = 10
+
+    var body: some View {
+        if let model = template.generatedModelID.flatMap({ id in Generated3DStore.shared.models.first { $0.id == id } }) {
+            Glass3DMediaThumbnail(url: Generated3DStore.shared.thumbnailURL(model), kind: .image, side: side, corner: corner)
+        } else if let item = Self.media(template, controller: controller, store: store) {
+            Glass3DMediaThumbnail(url: item.url, kind: item.kind, side: side, corner: corner)
+        } else {
+            Image(systemName: template.mode == .model || template.mode == .generated ? "cube.fill" : "person.crop.rectangle.fill")
+                .font(.system(size: side * 0.4)).foregroundStyle(Color.accentColor)
+                .frame(width: side, height: side)
+        }
+    }
+
+    @MainActor static func media(_ template: CharacterTemplate, controller: Glass3DController, store: MediaStore) -> Glass3DMediaItem? {
+        let order = [CharacterAction.idle, .walk, .run] + CharacterAction.allCases
+        let binding = order.lazy.compactMap { template.clips[$0.rawValue]?.bindingIDs.first }.first
+            ?? template.clips.values.lazy.compactMap(\.bindingIDs.first).first
+        guard let binding, let mediaID = controller.mediaID(forBinding: binding) else { return nil }
+        return glass3DMediaItems(store).first { $0.id == mediaID }
     }
 }

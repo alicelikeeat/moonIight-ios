@@ -650,7 +650,9 @@ struct Glass3DPending {
     // MARK: Game controller
 
     private func pollGamepad(dt: Double) {
-        guard let pad = gamepad.sample() else {
+        // v1.84: the mapping page is open — buttons are being mapped, not played.
+        let mapping = SpatialPadMappingStore.shared
+        guard !mapping.editing, let pad = gamepad.sample() else {
             if padMoving { setStick(0, 0); padMoving = false }
             if padLooking { setLook(0, 0); padLooking = false }
             return
@@ -658,8 +660,9 @@ struct Glass3DPending {
         let previous = gamepad.previous
         gamepad.remember(pad)
         let playing = mode == .play
-        for action in SpatialGamepad.actions(pad, previous: previous, playing: playing) { perform(action) }
-        let move = SpatialGamepad.move(pad), look = SpatialGamepad.look(pad)
+        let layout = mapping.mapping
+        for action in SpatialGamepad.actions(pad, previous: previous, playing: playing, mapping: layout) { perform(action) }
+        let move = SpatialGamepad.move(pad, mapping: layout), look = SpatialGamepad.look(pad, mapping: layout)
         let moving = move.x != 0 || move.y != 0, looking = look.x != 0 || look.y != 0
         if playing {
             // Only write while the pad is in use, so touch sticks keep working.
@@ -864,9 +867,23 @@ struct Glass3DPending {
     /// v1.83: the phone reports it is hot (serious or critical): the world
     /// switches to the light glass and drops the native glass layer until
     /// it has cooled down. The saved settings are not touched.
-    private(set) var thermalLimited = false
-    private var effectiveQuality: RPGGlassQuality { thermalLimited ? .performance : quality }
+    @Published private(set) var thermalLimited = false
+    /// v1.84: the 3D power saver setting. With it (or a hot phone, or Low
+    /// Power Mode) the world uses light glass, no native glass layer and
+    /// flat controls instead of live glass.
+    @Published var powerSaver = UserDefaults.standard.bool(forKey: "moonlight.glass3d.powerSaver") {
+        didSet {
+            guard powerSaver != oldValue else { return }
+            UserDefaults.standard.set(powerSaver, forKey: "moonlight.glass3d.powerSaver")
+            glassFade.restart(); nativeGlass.reset(); applyQuality(); rebuildAll()
+        }
+    }
+    @Published private(set) var lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+    var powerSaving: Bool { powerSaver || thermalLimited || lowPowerMode }
+    private var effectiveQuality: RPGGlassQuality { powerSaving ? .performance : quality }
     private func checkThermal() {
+        let lpm = ProcessInfo.processInfo.isLowPowerModeEnabled
+        if lpm != lowPowerMode { lowPowerMode = lpm; glassFade.restart(); nativeGlass.reset(); applyQuality(); rebuildAll() }
         let state = ProcessInfo.processInfo.thermalState
         let hot = state == .serious || state == .critical
         // Back to full look only once the phone is nominal again (no flapping at "fair").
@@ -889,7 +906,7 @@ struct Glass3DPending {
         let rate = Int(glassMeter.publishesPerSecond.rounded())
         return L10n.t("原生玻璃面 \(nativeGlass.faces) · 更新 \(rate)/s", "\(nativeGlass.faces) native glass faces · \(rate) updates/s")
     }
-    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && !thermalLimited && SpatialFaces.budget(quality) > 0 }
+    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && !powerSaving && SpatialFaces.budget(quality) > 0 }
     /// v1.78: the system's Reduce Transparency setting (set by the view).
     /// Turns the block glass off for as long as it is on, without touching
     /// the saved "native glass" switch.
