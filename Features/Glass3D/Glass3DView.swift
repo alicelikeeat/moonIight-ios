@@ -32,6 +32,14 @@ struct Glass3DScreen: View {
     /// The world stops while it cannot be seen (background, app switcher,
     /// AI 3D page in front) so the phone does not heat up.
     private var worldSuspended: Bool { scenePhase != .active || generate3D }
+    /// v1.80: the scene is taken out of the 3D view only once a full-screen
+    /// page fully covers it, and put back as soon as the page starts to
+    /// close — the world is never shown black. Switching apps only pauses
+    /// (iOS stops drawing in the background by itself), so the last frame
+    /// stays on screen and in the app switcher.
+    @State private var worldDetached = false
+    /// Rebuild the scene on return only after a page that can change it.
+    @State private var refreshOnReturn = false
     @ObservedObject private var generatedStore = Generated3DStore.shared
     @AppStorage(Glass3DLaunch.key) private var openAtLaunch = true
     @Namespace private var modeNamespace
@@ -56,12 +64,8 @@ struct Glass3DScreen: View {
                 // The 3D view stays mounted; while hidden its scene is
                 // detached (nothing to draw) and a black cover sits on top.
                 // Re-creating the view on return could leave it empty (black).
-                Glass3DWorldView(controller: controller, hidden: worldSuspended).ignoresSafeArea()
-                if worldSuspended {
-                    Color.black.ignoresSafeArea()
-                } else {
-                    Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
-                }
+                Glass3DWorldView(controller: controller, hidden: worldDetached).ignoresSafeArea()
+                Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
                 Glass3DOverlay(glass: controller.nativeGlass, controller: controller).ignoresSafeArea()
                 if showMore {
@@ -117,7 +121,22 @@ struct Glass3DScreen: View {
             controller.start()
         }
         .onDisappear { controller.stop() }
-        .onChange(of: worldSuspended) { _, hidden in controller.setSuspended(hidden) }
+        .onChange(of: worldSuspended) { _, hidden in
+            controller.setSuspended(hidden, refresh: refreshOnReturn)
+            if !hidden { refreshOnReturn = false }
+        }
+        .onChange(of: generate3D) { _, covered in
+            if covered {
+                refreshOnReturn = true
+                // Detach after the page has slid in (it is opaque by then).
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    if generate3D { worldDetached = true }
+                }
+            } else {
+                worldDetached = false
+            }
+        }
         .onChange(of: reduceTransparency, initial: true) { _, on in controller.reduceTransparency = on }
         .sheet(isPresented: $generator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }

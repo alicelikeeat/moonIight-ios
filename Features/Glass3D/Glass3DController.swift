@@ -245,21 +245,28 @@ struct Glass3DPending {
     /// page over the world): no simulation, no rendering work, videos paused —
     /// keeps the phone cool. Saved on the way out.
     private(set) var suspended = false
-    func setSuspended(_ value: Bool) {
+    /// v1.80: `refresh` rebuilds the scene on return — only after a page
+    /// that can change the world (AI 3D models). Switching apps changes
+    /// nothing, so returning is instant: no rebuild, no glass reset.
+    /// RealityKit's frame events stay subscribed (frames are skipped while
+    /// suspended); cancelling them left the world on the display-link
+    /// fallback after every app switch, out of step with rendering.
+    func setSuspended(_ value: Bool, refresh: Bool = true) {
         guard value != suspended else { return }
         suspended = value
         if value {
             renderer.media.pauseAll()
             persist(force: true)
-            updates?.cancel(); updates = nil; driven = false
             stick = (0, 0); look = (0, 0)
             link?.isPaused = true
         } else {
             lastTime = nil
-            glassFade.restart(); nativeGlass.reset()
             link?.isPaused = false
-            // Everything edited while hidden (looks, tools) is shown again.
-            rebuildAll(); renderer.showSelection(selectedBlocks)
+            if refresh {
+                glassFade.restart(); nativeGlass.reset()
+                // Everything edited while hidden (looks, tools) is shown again.
+                rebuildAll(); renderer.showSelection(selectedBlocks)
+            }
         }
     }
 
