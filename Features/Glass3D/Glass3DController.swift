@@ -188,6 +188,11 @@ struct Glass3DPending {
     var directorBackup: SpatialWorld?
     /// v1.81: forget creature AI state after a whole new world arrives.
     func resetCreatureBrains() { brains = [:] }
+    /// v1.81: the player (and the camera) back at the world's spawn.
+    func moveToSpawn() {
+        world.player.position = world.spawn; world.player.lastSafe = world.spawn
+        camera.target = world.spawn
+    }
     private var farTimer = 0.0
     private var saveTimer = 0.0
     private var renderTimer = 0.0

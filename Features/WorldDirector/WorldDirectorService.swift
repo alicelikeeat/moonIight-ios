@@ -164,8 +164,7 @@ extension Glass3DController {
             w.characters = characters
             w.creatures.append(contentsOf: statues)
         }
-        world.player.position = world.spawn; world.player.lastSafe = world.spawn
-        camera.target = world.spawn
+        moveToSpawn()
         resetCreatureBrains()
         persist(force: true)
     }
@@ -206,8 +205,7 @@ extension Glass3DController {
             w = backup; w.history = history; w.clock = clock
         }
         directorBackup = nil
-        world.player.position = world.spawn
-        camera.target = world.spawn
+        moveToSpawn()
         persist(force: true)
     }
 }
