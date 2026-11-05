@@ -26,6 +26,9 @@ struct SpatialGlass: Codable, Equatable, Hashable, Sendable {
     var density = 0.35
     var frosted = false
     var glow = false
+    /// v1.81: stone / metal / crystal for structure (nil: glass). Optional
+    /// so earlier saves decode unchanged.
+    var surface: SpatialSurface? = nil
     var valid: Bool { (tintHex.map { $0.count == 6 && $0.allSatisfy(\.isHexDigit) } ?? true) && density.isFinite && (0.1...0.9).contains(density) }
     static let clear = SpatialGlass()
     static func tinted(_ hex: String, density: Double = 0.45) -> SpatialGlass { SpatialGlass(tintHex: hex, density: density) }
@@ -225,6 +228,10 @@ struct SpatialWorld: Codable, Equatable, Sendable {
     /// Cells dug out of the glass ground (index y × 256 + x): the way into
     /// underground space below height 0.
     var groundHoles: [Int]?
+    /// v1.81 World Director: sky and light, and the blueprint the world
+    /// was generated from (both optional; earlier saves open unchanged).
+    var atmosphere: SpatialAtmosphere?
+    var director: WorldDirectorRecord?
 
     static func blank() -> SpatialWorld { SpatialWorld() }
 
@@ -269,6 +276,8 @@ struct SpatialWorld: Codable, Equatable, Sendable {
         guard playerCharacterID.map(characterIDs.contains) ?? true,
               creatures.allSatisfy({ ($0.characterID.map(characterIDs.contains) ?? true) && ($0.bossScriptID.map(scriptIDs.contains) ?? true) && ($0.statuses ?? []).count <= 6 }) else { throw RPGWorldError.missingReference }
         for clip in characterList.flatMap({ $0.clips.values }) { for id in clip.bindingIDs where !bindings.contains(id) { throw RPGWorldError.missingReference } }
+        if let atmosphere, !atmosphere.valid { throw RPGWorldError.invalidState }
+        if let director, !director.blueprint.validate().isEmpty || director.intentSummary.count > 2000 { throw RPGWorldError.invalidState }
         try history.validate()
     }
 }
@@ -312,9 +321,15 @@ struct SpatialDiff: Codable, Equatable, Sendable {
     var templates: [SpatialChange<BuildingTemplate>] = []
     var generationBefore: SpatialGenerationRecord?
     var generationAfter: SpatialGenerationRecord?
+    // v1.81 (optional; older saved histories decode unchanged): undoing a
+    // World Director generation also brings back the sky and the plan.
+    var atmosphereBefore: SpatialAtmosphere?
+    var atmosphereAfter: SpatialAtmosphere?
+    var directorBefore: WorldDirectorRecord?
+    var directorAfter: WorldDirectorRecord?
 
     var size: Int { blocks.count + groups.count + motions.count + plants.count + creatures.count + pickups.count + templates.count }
-    var isEmpty: Bool { size == 0 && generationBefore == generationAfter }
+    var isEmpty: Bool { size == 0 && generationBefore == generationAfter && atmosphereBefore == atmosphereAfter && directorBefore == directorAfter }
 
     static func between(_ old: SpatialWorld, _ new: SpatialWorld, title: String) -> SpatialDiff {
         func changes<V>(_ a: [V], _ b: [V]) -> [SpatialChange<V>] where V: Codable & Equatable & Sendable & Identifiable, V.ID == String {
@@ -329,7 +344,9 @@ struct SpatialDiff: Codable, Equatable, Sendable {
                            motions: changes(old.motions, new.motions), plants: changes(old.plants, new.plants),
                            creatures: changes(old.creatures, new.creatures), pickups: changes(old.pickups, new.pickups),
                            templates: changes(old.templates, new.templates),
-                           generationBefore: old.generation, generationAfter: new.generation)
+                           generationBefore: old.generation, generationAfter: new.generation,
+                           atmosphereBefore: old.atmosphere, atmosphereAfter: new.atmosphere,
+                           directorBefore: old.director, directorAfter: new.director)
     }
 
     /// Applies (or reverts) this diff to `world`.
@@ -350,6 +367,8 @@ struct SpatialDiff: Codable, Equatable, Sendable {
         patch(&world.blocks, blocks); patch(&world.groups, groups); patch(&world.motions, motions)
         patch(&world.plants, plants); patch(&world.creatures, creatures); patch(&world.pickups, pickups); patch(&world.templates, templates)
         world.generation = inverse ? generationBefore : generationAfter
+        if atmosphereBefore != atmosphereAfter { world.atmosphere = inverse ? atmosphereBefore : atmosphereAfter }
+        if directorBefore != directorAfter { world.director = inverse ? directorBefore : directorAfter }
     }
 }
 

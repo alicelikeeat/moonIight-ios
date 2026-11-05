@@ -18,7 +18,10 @@ extension WorldState {
 
 var checks = 0
 func check(_ condition: @autoclosure () -> Bool, _ name: String) {
-    precondition(condition(), name); checks += 1
+    // Name the failing check even in optimised builds (which drop the message).
+    let ok = condition()
+    if !ok { print("FAILED CHECK: \(name)"); fflush(stdout) }
+    precondition(ok, name); checks += 1
 }
 func rejected(_ state: WorldState, _ name: String) {
     do { _ = try RPGWorldCodec.encode(state); preconditionFailure(name) } catch { checks += 1 }
@@ -2790,6 +2793,147 @@ do {
     check(SpatialBuilder.removeObject(kind: "creature", id: "c1", world: &ow) && ow.creatures.isEmpty && SpatialBuilder.removeObject(kind: "pickup", id: "p1", world: &ow) && ow.pickups.isEmpty
           && !SpatialBuilder.removeObject(kind: "pickup", id: "p1", world: &ow), "delete key removes exactly the picked object")
     print("RPG v1.78 glass: \(checks) total checks passed")
+}
+
+// P44: v1.81 World Director — blueprint, five themes, assets, quality,
+// candidates, partial regeneration, undo, saves, AI fallback.
+do {
+    func image(_ w: Int, _ h: Int, _ c: [UInt8]) -> RasterImage { RasterImage(width: w, height: h, fill: c + [255]) }
+    func asset(_ id: String, _ type: AssetMediaType, source: AssetSourceType = .photos, width: Int = 800, height: Int = 600, license: String? = nil) -> AssetDescriptor {
+        AssetAnalyzer.describe(image: image(16, 12, [240, 240, 250]), id: id, source: source, type: type, libraryID: "lib-" + id, hash: "h-" + id,
+                               title: id, width: width, height: height, license: license)
+    }
+    let photos = [asset("p1", .image), asset("p2", .image), asset("p3", .image), asset("v1", .video)]
+    var request = WorldGenerationRequest(theme: .skyCity, prompt: "创建一个纯白玻璃王国，漂浮在云海上，有水晶宫殿、空中花园、桥梁和动态影像墙")
+    request.assets = photos
+
+    // Words → intent (offline).
+    let intent = WorldIntentParser.parse(request.prompt, theme: .skyCity)
+    check(intent.landmark == .crystalPalace && intent.gardens && intent.bridges && intent.videoWall && intent.colors.first == "F4F7FB" && intent.islands == 4,
+          "prompt understood offline: palace, gardens, bridges, video wall, white")
+
+    // 1. Same seed → same plan and world; 2. other seed → a different one.
+    let a = WorldPlanner.plan(request), b = WorldPlanner.plan(request)
+    var other = request; other.seed = 7
+    let c = WorldPlanner.plan(other)
+    check(a == b && a.validate().isEmpty, "same request and seed give the same blueprint")
+    check(c.landmarkPlan.position != a.landmarkPlan.position || c.terrainPlan != a.terrainPlan, "a different seed gives a different layout")
+    let worldA = try SpatialWorldBuilder.build(a, assets: photos, onto: SpatialWorld()).world
+    let worldB = try SpatialWorldBuilder.build(b, assets: photos, onto: SpatialWorld()).world
+    check(worldA.blocks == worldB.blocks && worldA.plants == worldB.plants, "same blueprint builds the same world")
+
+    // 3–5. Every theme, offline: three candidates, no overlaps, reachable, valid.
+    for theme in WorldTheme.allCases {
+        var r = WorldGenerationRequest(theme: theme)
+        r.assets = photos
+        let candidates = try WorldDirectorEngine.candidates(r, intent: nil, base: SpatialWorld())
+        check(candidates.count == 3 && Set(candidates.map(\.id)).count == 3, "\(theme.rawValue): three different candidates")
+        let best = candidates[0]
+        check(best.report.passed, "\(theme.rawValue): best candidate passes every hard constraint \(best.report.violations)")
+        check(!best.report.violations.contains("overlapping blocks") && best.report.reachableShare >= 0.75, "\(theme.rawValue): no overlaps, main areas reachable")
+        check(best.report.blocks <= best.blueprint.performanceBudget.maxBlocks && best.report.plants <= best.blueprint.performanceBudget.maxPlants,
+              "\(theme.rawValue): within the device budget")
+        check(best.output.world.atmosphere != nil && best.output.world.director?.blueprint == best.blueprint, "\(theme.rawValue): sky and plan saved with the world")
+        let ids = best.output.world.blocks.map(\.id)
+        check(Set(ids).count == ids.count, "\(theme.rawValue): unique ids")
+        check((try? best.output.world.validate(bindings: Set(best.output.bindings.map(\.id)))) != nil, "\(theme.rawValue): world passes save validation")
+        check(best.output.world.blocks.contains { $0.glass.surface == .stone || $0.glass.surface == .metal }, "\(theme.rawValue): opaque supports, not all glass")
+    }
+
+    // Composition: landmark ahead of the spawn, in the middle distance.
+    let sky = try WorldDirectorEngine.candidates(request, intent: nil, base: SpatialWorld())[0]
+    let d = sky.blueprint.spawnPlan.position.distance(sky.blueprint.landmarkPlan.position)
+    check(d >= 25 && d <= 80 && sky.report.composition >= 60, "landmark in the middle distance ahead of the spawn (\(Int(d)))")
+    check(sky.blueprint.terrainPlan.features.filter { $0.kind == .island }.count >= 3 && sky.blueprint.roadNetwork.segments.contains { $0.kind == "bridge" },
+          "sky city: islands joined by bridges")
+
+    // Assets: photos and the video land on walls; 8. videos within budget.
+    let bound = Set(sky.output.bindings.map(\.mediaID))
+    check(bound.contains("lib-v1") && bound.contains("lib-p1"), "chosen photos and video are placed in the world")
+    var many = request
+    many.assets = (0..<10).map { asset("vid\($0)", .video) }
+    let crowded = try WorldDirectorEngine.candidates(many, intent: nil, base: SpatialWorld(), count: 1)[0]
+    check(crowded.output.bindings.filter { $0.kind == .video }.count <= crowded.blueprint.performanceBudget.maxVideos, "video walls stay within the video budget")
+
+    // 7. Damaged or unlicensed assets are skipped; 9. a huge model does not crash.
+    var broken = asset("bad", .image); broken.pixelWidth = 0
+    let online = asset("web", .image, source: .internet, license: "CC BY-NC 4.0")
+    let openWeb = asset("web2", .image, source: .internet, license: "CC0 1.0")
+    var huge = asset("m1", .model, source: .generatedModel); huge.polygonCount = 2_000_000
+    let parts = AssetRules.partition([broken, online, openWeb, huge, photos[0]])
+    check(parts.usable.map(\.assetID) == ["web2", "p1"] && parts.notes.count == 3, "damaged, non-commercial-licence and oversized assets are skipped with a note")
+    var withBad = request
+    withBad.assets = [broken, huge, photos[0]]
+    check((try? WorldDirectorEngine.candidates(withBad, intent: nil, base: SpatialWorld(), count: 1)) != nil, "generation survives bad assets")
+    check(AssetAnalyzer.dominantColors(image(8, 8, [250, 20, 20])).first?.hasPrefix("F") == true && AssetAnalyzer.styleTags(colors: ["FA1414"], width: 1600, height: 900).contains("landscape"),
+          "asset colours and tags read from pixels")
+
+    // 6. AI timeout / bad answer → local plan.
+    struct Timeout: Error {}
+    let fallback = WorldIntentResolver.resolve(ai: .failure(Timeout()), request: request)
+    check(fallback.planner == "local" && fallback.note != nil && fallback.intent.landmark == .crystalPalace, "AI failure falls back to local rules with a note")
+    let aiJSON = Data(##"{"colors":["#ffffff","8FD3FF","zzz"],"landmark":"spire","islands":9,"gardens":true,"buildingScale":7,"summary":"白色王国"}"##.utf8)
+    let decoded = WorldIntentResolver.decode(aiJSON, theme: .skyCity)
+    check(decoded?.colors == ["FFFFFF", "8FD3FF"] && decoded?.landmark == .spire && decoded?.islands == 4 && decoded?.buildingScale == 1.5, "AI intent decoded and clamped")
+    check(WorldIntentResolver.decode(Data("not json".utf8), theme: .skyCity) == nil && WorldIntentResolver.resolve(ai: .success(decoded!), request: request).planner == "claude",
+          "invalid AI output rejected, valid one used")
+
+    // 10–11. Save and reload; older saves still open.
+    let saved = try JSONEncoder().encode(sky.output.world)
+    let reloaded = try JSONDecoder().decode(SpatialWorld.self, from: saved)
+    check(reloaded == sky.output.world && reloaded.blocks.compactMap(\.media).count == sky.output.world.blocks.compactMap(\.media).count, "world, plan and media links survive save and reload")
+    let oldGlass = try JSONDecoder().decode(SpatialGlass.self, from: Data(#"{"tintHex":"FFFFFF","density":0.5,"frosted":false,"glow":false}"#.utf8))
+    let oldWorld = try JSONDecoder().decode(SpatialWorld.self, from: try JSONEncoder().encode(SpatialWorld()))
+    check(oldGlass.surface == nil && oldWorld.atmosphere == nil && oldWorld.director == nil, "saves without the new fields open unchanged")
+
+    // 12. Local regeneration keeps what the user touched.
+    var edited = sky.output.world
+    let keepIndex = edited.blocks.firstIndex { SpatialWorldBuilder.layer(of: $0.id) == .buildings }!
+    edited.blocks[keepIndex].origin = .user
+    let kept = edited.blocks[keepIndex]
+    let userBefore = edited.blocks.filter { $0.origin == .user }.count
+    let regen = try WorldDirectorEngine.regenerate(edited, layers: [.buildings], area: nil, seedOffset: 1)
+    check(regen.world.blocks.contains(kept) && regen.world.blocks.filter { $0.origin == .user }.count == userBefore, "regeneration keeps user-edited objects")
+    let terrainBefore = edited.blocks.filter { SpatialWorldBuilder.layer(of: $0.id) == .terrain }.map(\.id)
+    check(regen.world.blocks.filter { SpatialWorldBuilder.layer(of: $0.id) == .terrain }.map(\.id) == terrainBefore, "regenerating buildings leaves the terrain alone")
+    let regenReport = WorldQualityEvaluator.evaluate(regen, blueprint: sky.blueprint, assets: photos)
+    check(regenReport.reachableShare >= 0.75 && !regenReport.violations.contains("landmark unreachable"), "regeneration keeps the paths")
+    let lm = sky.blueprint.landmarkPlan.position
+    let local = try WorldDirectorEngine.regenerate(sky.output.world, layers: [.plants], area: (lm, 10), seedOffset: 2)
+    let far = { (w: SpatialWorld) in w.plants.filter { hypot(Double($0.x - lm.x), Double($0.y - lm.y)) > 10 }.map(\.id) }
+    check(far(local.world) == far(sky.output.world), "area regeneration touches only that area")
+
+    // 13. Undo brings the previous world back (objects, sky and plan).
+    var history = SpatialWorld()
+    history.blocks = [SpatialBlock(id: "mine", x: 40, y: 40, elevation: 0)]
+    let before = history
+    let generated = try SpatialWorldBuilder.build(a, assets: photos, onto: history).world
+    history.edit("World Director") { w in let h = w.history, clock = w.clock; w = generated; w.history = h; w.clock = clock }
+    check(history.blocks.count > 100 && history.atmosphere != nil, "generation committed as one edit")
+    history.undoLast()
+    check(history.blocks == before.blocks && history.atmosphere == nil && history.director == nil, "undo restores the previous world, sky and plan")
+
+    // 14. Cancelling leaves nothing half-built.
+    var calls = 0
+    do {
+        _ = try WorldDirectorEngine.candidates(request, intent: nil, base: before, cancelled: { calls += 1; return calls > 3 })
+        check(false, "cancel should stop the run")
+    } catch let error as WorldDirectorError {
+        check(error == .cancelled && before.blocks.count == 1, "cancelled run throws and leaves the world unchanged")
+    }
+
+    // 15. Repeated generation replaces, never piles up.
+    let once = try SpatialWorldBuilder.build(a, assets: photos, onto: before)
+    let twice = try SpatialWorldBuilder.build(a, assets: photos, onto: once.world)
+    let gen1 = once.world.blocks.filter { $0.origin == .generated }.count, gen2 = twice.world.blocks.filter { $0.origin == .generated }.count
+    check(gen1 == gen2 && twice.world.groups.count == once.world.groups.count && twice.world.blocks.contains { $0.id == "mine" }, "generating again replaces the generated world (\(gen1) → \(gen2))")
+
+    // Sky and light.
+    let night = WorldDirectorEngine.relight(sky.output.world, time: .night)
+    check(night.atmosphere?.timeOfDay == .night && night.atmosphere?.valid == true && night.blocks == sky.output.world.blocks, "time of day changes only the sky")
+    var badPlan = a; badPlan.palette.primary = "XYZ"
+    check(!badPlan.validate().isEmpty && (try? SpatialWorldBuilder.build(badPlan, assets: [], onto: SpatialWorld())) == nil, "invalid blueprints are refused")
+    print("RPG v1.81 world director: \(checks) total checks passed")
 }
 
 print("RPG complete: \(checks) total checks passed")
