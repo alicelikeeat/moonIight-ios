@@ -24,6 +24,8 @@ struct Glass3DScreen: View {
     @State private var credits = false
     @State private var generate3D = false
     @State private var confirmClear = false
+    /// v1.79: the ⋯ panel (our own, not the system menu).
+    @State private var showMore = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -62,6 +64,12 @@ struct Glass3DScreen: View {
                 }
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
                 Glass3DOverlay(glass: controller.nativeGlass, controller: controller).ignoresSafeArea()
+                if showMore {
+                    // Tapping anywhere else closes the ⋯ panel (and does not reach the world).
+                    Color.black.opacity(0.001).ignoresSafeArea()
+                        .onTapGesture { withAnimation(MoonGlassMotion.animation(.morph, reduceMotion: reduceMotion)) { showMore = false } }
+                        .accessibilityHidden(true)
+                }
                 if controller.mode == .edit {
                     cameraRail
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: portrait ? .topTrailing : .leading)
@@ -73,7 +81,7 @@ struct Glass3DScreen: View {
                     notices
                     Spacer(minLength: 0)
                     if controller.mode == .play {
-                        Group { if portrait { playHUDPortrait } else { playHUD } }.transition(.opacity)
+                        Glass3DPlayHUD(controller: controller, portrait: portrait).transition(.opacity)
                     } else {
                         if portrait, showsPanel {
                             Glass3DPanel(controller: controller, store: model.mediaStore, onClose: { controller.selection = [] })
@@ -99,7 +107,7 @@ struct Glass3DScreen: View {
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: portrait)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.selection.isEmpty)
         }
-        .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.bossBar != nil, editing: controller.mode == .edit))
+        .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit))
         .onAppear {
             MoonlightOrientationDelegate.setSandboxLandscape(true)
             controller.renderer.media.resolve = { [weak store = model.mediaStore] id in
@@ -137,36 +145,117 @@ struct Glass3DScreen: View {
 
     // MARK: Top bar
 
+    /// v1.79: two glass capsules in one container — back + mode on the
+    /// left, edit / generate / more on the right — and the status line as
+    /// plain text under them. The ⋯ panel is our own glass panel growing
+    /// from the button (the system menu pulled the whole bar into itself,
+    /// so the bar vanished while it was open).
     private func topBar(portrait: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                icon("chevron.backward", L10n.t("返回沙盒", "Back to Sandbox"), id: "glass3d-close") { controller.stop(); onClose() }
-                modeSwitch(compact: portrait)
-                Spacer(minLength: 4)
-                if !portrait { stats.padding(.horizontal, 6) }
-                Glass3DGamepadBadge(gamepad: controller.gamepad, compact: portrait)
-                if controller.mode == .edit {
-                    icon("arrow.uturn.backward", L10n.t("撤销", "Undo"), id: "glass3d-undo") { controller.undo() }.disabled(!controller.canUndo)
-                    icon("arrow.uturn.forward", L10n.t("重做", "Redo"), id: "glass3d-redo") { controller.redo() }.disabled(!controller.canRedo)
-                }
-                // Available in both modes: preview first, one undo step.
-                Button { generator = true } label: {
-                    Group {
-                        if portrait { Image(systemName: "wand.and.stars").frame(width: 34) }
-                        else { Label(L10n.t("一键生成", "Generate"), systemImage: "wand.and.stars").padding(.horizontal, 10) }
+            RPGGlassGroup(spacing: 8) {
+                HStack(spacing: 8) {
+                    HStack(spacing: 2) {
+                        icon("chevron.backward", L10n.t("返回沙盒", "Back to Sandbox"), id: "glass3d-close") { controller.stop(); onClose() }
+                        modeSwitch(compact: portrait)
                     }
-                    .font(.caption.weight(.semibold)).frame(height: 32)
-                    .foregroundStyle(.white).background(Color.accentColor.gradient, in: Capsule())
-                    .contentShape(Capsule())
+                    .padding(3).hudGlass(.panel, in: Capsule())
+                    Spacer(minLength: 4)
+                    Glass3DGamepadBadge(gamepad: controller.gamepad, compact: portrait)
+                    HStack(spacing: 2) {
+                        if controller.mode == .edit {
+                            icon("arrow.uturn.backward", L10n.t("撤销", "Undo"), id: "glass3d-undo") { controller.undo() }.disabled(!controller.canUndo)
+                            icon("arrow.uturn.forward", L10n.t("重做", "Redo"), id: "glass3d-redo") { controller.redo() }.disabled(!controller.canRedo)
+                        }
+                        // Available in both modes: preview first, one undo step.
+                        Button { showMore = false; generator = true } label: {
+                            Group {
+                                if portrait { Image(systemName: "wand.and.stars").frame(width: 34) }
+                                else { Label(L10n.t("一键生成", "Generate"), systemImage: "wand.and.stars").padding(.horizontal, 10) }
+                            }
+                            .font(.caption.weight(.semibold)).frame(height: 32)
+                            .foregroundStyle(.white).background(Color.accentColor.gradient, in: Capsule())
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(RPGPressStyle()).accessibilityLabel(L10n.t("一键生成", "Generate")).accessibilityIdentifier("glass3d-generate")
+                        moreButton
+                    }
+                    .padding(3).hudGlass(.panel, in: Capsule())
                 }
-                .buttonStyle(RPGPressStyle()).accessibilityLabel(L10n.t("一键生成", "Generate")).accessibilityIdentifier("glass3d-generate")
-                moreMenu
             }
-            .padding(.horizontal, 6).padding(.vertical, 5)
-            .hudGlass(.panel, radius: 24)
-            if portrait { stats.padding(.horizontal, 10).padding(.vertical, 5).hudGlass(.light, radius: 12) }
+            Glass3DStatsLine(live: controller.live)
         }
         .buttonStyle(.borderless)
+        .overlay(alignment: .topTrailing) {
+            if showMore {
+                morePanel
+                    .frame(width: 280)
+                    .padding(.top, 50)
+                    .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var moreButton: some View {
+        Button {
+            withAnimation(MoonGlassMotion.animation(.morph, reduceMotion: reduceMotion)) { showMore.toggle() }
+        } label: {
+            Image(systemName: showMore ? "xmark.circle.fill" : "ellipsis.circle").font(.system(size: 17, weight: .semibold))
+                .frame(width: 34, height: 34).contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(L10n.t("设置", "Settings")).accessibilityIdentifier("glass3d-settings")
+    }
+
+    private func closeMore(then action: @escaping () -> Void) {
+        withAnimation(MoonGlassMotion.animation(.morph, reduceMotion: reduceMotion)) { showMore = false }
+        action()
+    }
+
+    /// The ⋯ panel: one regular glass surface, rows as plain buttons.
+    private var morePanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                moreRow("scope", L10n.t("恢复默认视角", "Reset View")) { controller.resetCamera() }
+                moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
+                moreHeader(L10n.t("编辑器", "Editors"))
+                moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
+                moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
+                moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
+                moreHeader(L10n.t("更多", "More"))
+                moreRow("cube.transparent", L10n.t("AI 生成 3D 模型", "AI 3D Models")) { generate3D = true }
+                moreRow("checkmark.seal", L10n.t("素材来源与授权", "Credits & Licences")) { credits = true }
+                moreRow("trash", L10n.t("一键清空世界", "Clear World"), destructive: true) { confirmClear = true }
+                moreHeader(L10n.t("显示", "Display"))
+                Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
+                    .pickerStyle(.segmented).padding(.horizontal, 8).padding(.vertical, 4)
+                    .accessibilityIdentifier("glass3d-quality")
+                Group {
+                    Toggle(L10n.t("第三人称镜头", "Third-Person Camera"), isOn: $controller.thirdPerson)
+                    if Glass3DController.nativeGlassAvailable {
+                        Toggle(L10n.t("方块使用 iOS 原生玻璃", "Native iOS Glass on Blocks"), isOn: $controller.nativeGlassEnabled)
+                    }
+                    Toggle(L10n.t("启动时进入 3D 设计模式", "Open in 3D Design at Launch"), isOn: $openAtLaunch)
+                }
+                .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
+            }
+            .padding(8)
+        }
+        .frame(maxHeight: 460)
+        .fixedSize(horizontal: false, vertical: true)
+        .hudGlass(.panel, radius: 22)
+        .accessibilityIdentifier("glass3d-more-panel")
+    }
+    private func moreHeader(_ title: String) -> some View {
+        Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
+    }
+    private func moreRow(_ symbol: String, _ title: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button { closeMore(then: action) } label: {
+            Label(title, systemImage: symbol).font(.subheadline)
+                .foregroundStyle(destructive ? Color.red : Color.primary)
+                .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading).padding(.horizontal, 10)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func modeSwitch(compact: Bool) -> some View {
@@ -189,50 +278,6 @@ struct Glass3DScreen: View {
         .padding(3).background(Color.primary.opacity(0.08), in: Capsule())
     }
 
-    /// Blocks, native glass state, active AI and frame rate.
-    private var stats: some View {
-        let fps = Int(controller.stats.fps)
-        return HStack(spacing: 10) {
-            Label("\(controller.stats.blocks)", systemImage: "cube")
-            Label(controller.nativeGlassStatus, systemImage: "sparkles")
-            Label("\(controller.stats.activeAI)", systemImage: "brain")
-            HStack(spacing: 3) {
-                Circle().fill(fps >= 50 ? Color.green : fps >= 30 ? Color.orange : Color.red).frame(width: 6, height: 6)
-                Text("\(fps) FPS")
-            }
-        }
-        .labelStyle(Glass3DCompactLabel())
-        .font(.caption2.monospacedDigit()).foregroundStyle(.secondary).lineLimit(1)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.t("方块 \(controller.stats.blocks) · \(controller.nativeGlassStatus) · AI \(controller.stats.activeAI) · \(fps) FPS",
-                                   "\(controller.stats.blocks) blocks · \(controller.nativeGlassStatus) · AI \(controller.stats.activeAI) · \(fps) FPS"))
-        .accessibilityIdentifier("glass3d-stats")
-    }
-
-    private var moreMenu: some View {
-        Menu {
-            Button { controller.resetCamera() } label: { Label(L10n.t("恢复默认视角", "Reset View"), systemImage: "scope") }
-            Button { controller.persist(force: true) } label: { Label(L10n.t("保存世界", "Save World"), systemImage: "square.and.arrow.down") }
-            Section(L10n.t("编辑器", "Editors")) {
-                Button { editor = .characters } label: { Label(L10n.t("角色编辑器", "Character Editor"), systemImage: "person.crop.square") }
-                Button { editor = .skills } label: { Label(L10n.t("技能编辑器", "Skill Editor"), systemImage: "wand.and.rays") }
-                Button { editor = .bosses } label: { Label(L10n.t("Boss 阶段编辑器", "Boss Phase Editor"), systemImage: "crown") }
-            }
-            Button { generate3D = true } label: { Label(L10n.t("AI 生成 3D 模型", "AI 3D Models"), systemImage: "cube.transparent") }
-            Button { credits = true } label: { Label(L10n.t("素材来源与授权", "Credits & Licences"), systemImage: "checkmark.seal") }
-            Button(role: .destructive) { confirmClear = true } label: { Label(L10n.t("一键清空世界", "Clear World"), systemImage: "trash") }
-            Section(L10n.t("显示", "Display")) {
-                Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
-                Toggle(L10n.t("第三人称镜头", "Third-Person Camera"), isOn: $controller.thirdPerson)
-                if Glass3DController.nativeGlassAvailable {
-                    Toggle(L10n.t("方块使用 iOS 原生玻璃", "Native iOS Glass on Blocks"), isOn: $controller.nativeGlassEnabled)
-                }
-                Toggle(L10n.t("启动时进入 3D 设计模式", "Open in 3D Design at Launch"), isOn: $openAtLaunch)
-            }
-        } label: { Image(systemName: "ellipsis.circle").font(.system(size: 17, weight: .semibold)).frame(width: 34, height: 34).contentShape(Rectangle()) }
-            .accessibilityLabel(L10n.t("设置", "Settings")).accessibilityIdentifier("glass3d-settings")
-    }
-
     private func icon(_ symbol: String, _ label: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34).contentShape(Rectangle()) }
             .buttonStyle(.borderless).accessibilityLabel(label).accessibilityIdentifier(id)
@@ -245,7 +290,7 @@ struct Glass3DScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false).accessibilityIdentifier("glass3d-notice")
                 .transition(.opacity)
         }
-        if let boss = controller.bossBar { bossBar(boss) }
+        Glass3DBossBar(live: controller.live)
         if controller.world.blocks.isEmpty && controller.world.creatures.isEmpty {
             Button { generator = true } label: {
                 Label(L10n.t("这是一片空白玻璃世界 · 点这里一键生成", "A blank glass world · tap to generate one"), systemImage: "wand.and.stars")
@@ -255,118 +300,6 @@ struct Glass3DScreen: View {
         }
     }
 
-    private func bossBar(_ boss: (name: String, health: Int, maxHealth: Int, phase: Int)) -> some View {
-        VStack(spacing: 3) {
-            Text(boss.name + (boss.phase > 1 ? L10n.t(" · 第 \(boss.phase) 阶段", " · Phase \(boss.phase)") : "")).font(.caption.weight(.semibold))
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.15))
-                Capsule().fill(Color.red.gradient).frame(width: 240 * CGFloat(boss.health) / CGFloat(max(1, boss.maxHealth)))
-            }.frame(width: 240, height: 8)
-        }
-        .padding(.horizontal, 14).padding(.vertical, 6).hudGlass(.light, radius: 12)
-        .accessibilityElement(children: .ignore).accessibilityLabel(boss.name + " \(boss.health)/\(boss.maxHealth)").accessibilityIdentifier("glass3d-boss-bar")
-    }
-
-    // MARK: Play HUD
-
-    /// Landscape: move stick left; hotbar, actions and look stick right.
-    private var playHUD: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                vitals
-                Glass3DStick { x, y in controller.setStick(x, y) }
-            }
-            Spacer()
-            HStack(alignment: .bottom, spacing: 10) {
-                if controller.health == 0 { reviveButton } else {
-                    RPGGlassGroup(spacing: 10) {
-                        HStack(alignment: .bottom, spacing: 10) {
-                            VStack(spacing: 8) { lockButton; ForEach(controller.hotbarSlots) { slot in hotbarButton(slot) } }
-                            actionCluster
-                        }
-                    }
-                }
-                lookStick(size: 112)
-            }
-        }
-    }
-
-    /// Portrait: vitals and hotbar row above; move stick, actions and look
-    /// stick along the bottom within thumb reach.
-    private var playHUDPortrait: some View {
-        VStack(spacing: 10) {
-            HStack(alignment: .bottom, spacing: 8) {
-                vitals
-                Spacer(minLength: 4)
-                if controller.health > 0 {
-                    RPGGlassGroup(spacing: 6) { HStack(spacing: 6) { lockButton; ForEach(controller.hotbarSlots) { slot in hotbarButton(slot) } } }
-                }
-            }
-            HStack(alignment: .bottom, spacing: 8) {
-                Glass3DStick(onVector: { x, y in controller.setStick(x, y) }, size: 112)
-                Spacer(minLength: 0)
-                if controller.health == 0 { reviveButton } else { RPGGlassGroup(spacing: 8) { actionCluster } }
-                lookStick(size: 92)
-            }
-        }
-    }
-
-    private var actionCluster: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            VStack(spacing: 8) {
-                round("sparkles", L10n.t("技能", "Skill"), 50, cooldown: controller.cooldowns[1], id: "glass3d-skill") { controller.attack(.skill) }
-                round("arrow.triangle.2.circlepath", L10n.t("闪避", "Dodge"), 46, cooldown: controller.cooldowns[2], id: "glass3d-roll") { controller.roll() }
-            }
-            VStack(spacing: 8) {
-                round("arrow.up.circle", L10n.t("跳跃", "Jump"), 50, cooldown: 0, id: "glass3d-jump") { controller.jump() }
-                round("bolt.fill", L10n.t("攻击", "Attack"), 68, cooldown: controller.cooldowns[0], id: "glass3d-attack") { controller.attack(.strike) }
-            }
-        }
-    }
-    private var lockButton: some View {
-        round(controller.lockedTarget == nil ? "scope" : "xmark.circle", controller.lockedTarget == nil ? L10n.t("锁定", "Lock") : L10n.t("解除锁定", "Unlock"), 42, cooldown: 0, id: "glass3d-lock") { controller.toggleLock() }
-    }
-    private func hotbarButton(_ slot: Glass3DHotbarSlot) -> some View {
-        round(slot.symbol, slot.name, 42, cooldown: slot.cooldown, id: "glass3d-hotbar-\(slot.index)") { controller.castHotbar(slot.index) }
-    }
-    private func lookStick(size: CGFloat) -> some View {
-        Glass3DStick(onVector: { x, y in controller.setLook(x, y) }, size: size, symbol: "eye", label: L10n.t("视角摇杆", "Look Stick"), identifier: "glass3d-look-stick")
-    }
-    private var reviveButton: some View {
-        Button { controller.revive() } label: {
-            Label(L10n.t("复苏", "Revive"), systemImage: "heart.fill").font(.headline).foregroundStyle(.white)
-                .padding(.horizontal, 22).padding(.vertical, 14).background(Color.pink.gradient, in: Capsule())
-        }
-        .buttonStyle(RPGPressStyle()).accessibilityIdentifier("glass3d-revive")
-    }
-
-    private var vitals: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            bar(controller.health, .red, "heart.fill")
-            bar(controller.stamina, .green, "bolt.fill")
-        }
-        .padding(.horizontal, 10).padding(.vertical, 8).hudGlass(.light, radius: 14)
-        .accessibilityElement(children: .ignore).accessibilityLabel(L10n.t("生命 \(controller.health)，耐力 \(controller.stamina)", "Health \(controller.health), stamina \(controller.stamina)"))
-        .accessibilityIdentifier("glass3d-vitals")
-    }
-    private func bar(_ value: Int, _ tint: Color, _ symbol: String) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: symbol).font(.system(size: 9, weight: .bold)).foregroundStyle(tint)
-            ZStack(alignment: .leading) { Capsule().fill(Color.primary.opacity(0.15)); Capsule().fill(tint.gradient).frame(width: CGFloat(max(0, min(100, value))) * 0.96) }.frame(width: 96, height: 6)
-        }
-    }
-
-    private func round(_ symbol: String, _ title: String, _ size: CGFloat, cooldown: Double, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 1) {
-                Image(systemName: symbol).font(.system(size: size * 0.32, weight: .bold))
-                if size >= 60 { Text(title).font(.system(size: 10, weight: .semibold)) }
-            }.frame(width: size, height: size).contentShape(Circle())
-        }
-        .buttonStyle(RPGPressStyle()).hudGlass(.interactive, in: Circle())
-        .overlay(Circle().trim(from: 0, to: cooldown).stroke(Color.white.opacity(0.85), style: StrokeStyle(lineWidth: 3, lineCap: .round)).rotationEffect(.degrees(-90)).padding(2).allowsHitTesting(false))
-        .accessibilityLabel(title).accessibilityIdentifier(id)
-    }
 
     // MARK: Design
 
@@ -392,8 +325,14 @@ struct Glass3DScreen: View {
                 HStack { Glass3DSelectionBar(controller: controller, panel: $panel); Spacer(minLength: 0) }
                     .transition(.opacity)
             }
-            toolCard
-            toolDock
+            // v1.79: tool hint, options and dock in one glass panel (was two).
+            VStack(spacing: 6) {
+                toolCard
+                Divider().padding(.horizontal, 10)
+                toolDock
+            }
+            .padding(.vertical, 4)
+            .hudGlass(.panel, radius: 22)
         }
         .frame(maxWidth: portrait ? .infinity : 760)
         .buttonStyle(.borderless)
@@ -426,9 +365,8 @@ struct Glass3DScreen: View {
             }
             toolOptions
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(.horizontal, 12).padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .hudGlass(.panel, radius: 18)
     }
 
     static func hint(_ tool: Glass3DTool) -> String {
@@ -602,9 +540,8 @@ struct Glass3DScreen: View {
                 Divider().frame(height: 34).padding(.horizontal, 2)
                 dockButton("slider.horizontal.3", L10n.t("属性", "Properties"), on: panel, id: "glass3d-panel-toggle") { panel.toggle() }
             }
-            .padding(.horizontal, 8).padding(.vertical, 6)
+            .padding(.horizontal, 8).padding(.vertical, 2)
         }
-        .hudGlass(.panel, radius: 22)
     }
     private func dockButton(_ symbol: String, _ title: String, on: Bool, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {

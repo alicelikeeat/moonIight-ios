@@ -72,11 +72,31 @@ struct Glass3DPending {
     @Published var selection: [String] = [] { didSet { renderer.showSelection(selectedBlocks) } }
     @Published var notice = ""
     @Published var pickChoices: [Glass3DChoice] = []
-    @Published private(set) var health = 100
-    @Published private(set) var stamina = 100
-    @Published private(set) var cooldowns: [Double] = [0, 0, 0]
-    @Published private(set) var bossBar: (name: String, health: Int, maxHealth: Int, phase: Int)?
-    @Published private(set) var stats = (visibleCells: 0, blocks: 0, creatures: 0, activeAI: 0, videos: 0, fps: 0.0)
+    /// v1.79: fast-changing HUD values live in `live`; the screen only
+    /// redraws on the slow ones below (dead / in combat).
+    let live = Glass3DLive()
+    @Published private(set) var dead = false
+    @Published private(set) var inCombat = false
+    private(set) var health: Int {
+        get { live.health }
+        set { if live.health != newValue { live.health = newValue }; if dead != (newValue == 0) { dead = newValue == 0 } }
+    }
+    private(set) var stamina: Int {
+        get { live.stamina }
+        set { if live.stamina != newValue { live.stamina = newValue } }
+    }
+    private(set) var cooldowns: [Double] {
+        get { live.cooldowns }
+        set { if live.cooldowns != newValue { live.cooldowns = newValue } }
+    }
+    private(set) var bossBar: (name: String, health: Int, maxHealth: Int, phase: Int)? {
+        get { live.bossBar }
+        set { live.bossBar = newValue; if inCombat != (newValue != nil) { inCombat = newValue != nil } }
+    }
+    private(set) var stats: (visibleCells: Int, blocks: Int, creatures: Int, activeAI: Int, videos: Int, fps: Double) {
+        get { live.stats }
+        set { live.stats = newValue; let text = nativeGlassStatus; if live.glassStatus != text { live.glassStatus = text } }
+    }
     @Published var quality: RPGGlassQuality { didSet { applyQuality(); rebuildAll() } }
     // Builder settings.
     @Published var buildHeight = 0.0
@@ -133,7 +153,10 @@ struct Glass3DPending {
     private var creatureSpeed: [String: Double] = [:]
     @Published var lockedTarget: String?
     @Published var thirdPerson = true
-    @Published private(set) var hotbarSlots: [Glass3DHotbarSlot] = []
+    private(set) var hotbarSlots: [Glass3DHotbarSlot] {
+        get { live.hotbarSlots }
+        set { live.hotbarSlots = newValue }
+    }
     @Published var buildLayers = 1
     private var manualCameraUntil = 0.0
     private var preferredDistance = ThirdPersonCamera.distance
