@@ -23,6 +23,7 @@ struct Glass3DScreen: View {
     @State private var panel = true
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
+    @State private var glassLook = false
     @State private var generate3D = false
     @State private var confirmClear = false
     /// v1.79: the ⋯ panel (our own, not the system menu).
@@ -144,6 +145,13 @@ struct Glass3DScreen: View {
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .sheet(isPresented: $glassLook) {
+            NavigationStack {
+                MoonGlassSettingsView()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { glassLook = false }.accessibilityIdentifier("glass-look-done") } }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .confirmationDialog(L10n.t("清空整个世界？", "Clear the whole world?"), isPresented: $confirmClear, titleVisibility: .visible) {
             Button(L10n.t("清空世界", "Clear World"), role: .destructive) { controller.clearWorld() }
             Button(L10n.t("取消", "Cancel"), role: .cancel) {}
@@ -249,6 +257,7 @@ struct Glass3DScreen: View {
                 moreRow("checkmark.seal", L10n.t("素材来源与授权", "Credits & Licences")) { credits = true }
                 moreRow("trash", L10n.t("一键清空世界", "Clear World"), destructive: true) { confirmClear = true }
                 moreHeader(L10n.t("显示", "Display"))
+                moreRow("drop.halffull", L10n.t("玻璃外观（透明度与颜色）", "Glass Look (Clarity & Colour)")) { glassLook = true }
                 Picker(L10n.t("玻璃画质", "Glass Quality"), selection: $controller.quality) { ForEach(RPGGlassQuality.allCases, id: \.self) { Text($0.title).tag($0) } }
                     .pickerStyle(.segmented).padding(.horizontal, 8).padding(.vertical, 4)
                     .accessibilityIdentifier("glass3d-quality")

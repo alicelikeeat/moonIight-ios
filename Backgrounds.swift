@@ -511,6 +511,7 @@ struct MediaGlassCircle: ViewModifier {
     @State private var shuffled: [String] = []
     @AppStorage("moonlight.glass.buttonSize") private var sizeRaw = GlassSurfaceSize.balanced.rawValue
     private var size: GlassSurfaceSize { GlassSurfaceSize(rawValue: sizeRaw) ?? .balanced }
+    private let look = MoonGlassLookSetting()
     func body(content: Content) -> some View {
         let playlist = store.playlist(for: target)
         let configuration = resolvedConfiguration(playlist)
@@ -520,7 +521,7 @@ struct MediaGlassCircle: ViewModifier {
         }
         if #available(iOS 26.0, *) {
             if let configuration { decorated.foregroundStyle(configuration.veil.foreground).glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale) }
-            else { decorated.glassEffect(.regular.interactive(), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale) }
+            else { decorated.glassEffect(look.tuning.glass(interactive: true), in: Circle()).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale) }
         } else {
             if let configuration {
                 decorated.foregroundStyle(configuration.veil.foreground).moonLiquidSurface(.circle).overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 1)).modifier(BackgroundClock(list: playlist, phase: scenePhase, reduceMotion: reduceMotion, advance: advance)).scaleEffect(size.circleScale)

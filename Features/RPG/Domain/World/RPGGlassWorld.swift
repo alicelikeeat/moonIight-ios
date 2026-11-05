@@ -315,3 +315,41 @@ struct RPGMediaGridSpec: Equatable, Sendable {
         return best
     }
 }
+
+// MARK: v1.82 user glass look
+
+/// The user's glass look (Settings → Glass Look): how clear the glass is and
+/// an optional colour. Pure numbers here; the views turn them into system
+/// glass (iOS 26) or materials (earlier). Default = the look before v1.82.
+struct MoonGlassTuning: Equatable, Sendable {
+    static let clarityKey = "moonlight.glass.clarity"
+    static let tintKey = "moonlight.glass.tintHex"
+    static let strengthKey = "moonlight.glass.tintStrength"
+    static let defaultClarity = 0.5, defaultStrength = 0.35
+
+    /// 0 frosted … 1 clear.
+    let clarity: Double
+    /// "RRGGBB", or empty for no colour.
+    let tintHex: String
+    /// How strongly the colour shows, 0…1.
+    let strength: Double
+
+    init(clarity: Double = defaultClarity, tintHex: String = "", strength: Double = defaultStrength) {
+        self.clarity = clarity.isFinite ? min(1, max(0, clarity)) : Self.defaultClarity
+        let hex = tintHex.trimmingCharacters(in: .whitespaces).uppercased()
+        self.tintHex = hex.count == 6 && UInt32(hex, radix: 16) != nil ? hex : ""
+        self.strength = strength.isFinite ? min(1, max(0, strength)) : Self.defaultStrength
+    }
+
+    enum Thickness: Int, Sendable { case ultraThin, thin, regular, thick }
+    /// Material before iOS 26 (default clarity gives the regular material).
+    var thickness: Thickness { clarity >= 0.8 ? .ultraThin : clarity >= 0.6 ? .thin : clarity >= 0.35 ? .regular : .thick }
+    /// iOS 26: clear system glass from this clarity on, regular below.
+    var usesClearGlass: Bool { clarity >= 0.7 }
+    /// Frost laid over the glass when it is set less clear than default (0…0.3).
+    var veil: Double { clarity >= 0.45 ? 0 : (0.45 - clarity) / 0.45 * 0.3 }
+    var hasTint: Bool { !tintHex.isEmpty }
+    /// Opacity of the colour wash (0 without a colour).
+    var tintOpacity: Double { hasTint ? 0.06 + strength * 0.5 : 0 }
+    var isDefault: Bool { self == MoonGlassTuning() }
+}

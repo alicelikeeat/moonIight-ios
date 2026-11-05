@@ -24,15 +24,19 @@ struct MoonGlassBackdrop: View {
     var radius: CGFloat = 22
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    /// v1.82: the user's clarity and colour.
+    private let look = MoonGlassLookSetting()
     var body: some View {
+        let tuning = look.tuning
         Group {
             if reduceTransparency {
                 RoundedRectangle(cornerRadius: radius).fill(Color(uiColor: .secondarySystemBackground))
             } else if #available(iOS 26.0, *) {
-                RoundedRectangle(cornerRadius: radius).fill(.clear)
-                    .glassEffect(.regular, in: RoundedRectangle(cornerRadius: radius))
+                MoonGlassWash(shape: RoundedRectangle(cornerRadius: radius), tuning: tuning, includeTint: false)
+                    .glassEffect(tuning.glass(interactive: false), in: RoundedRectangle(cornerRadius: radius))
             } else {
-                RoundedRectangle(cornerRadius: radius).fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: radius).fill(tuning.material)
+                    .overlay(MoonGlassWash(shape: RoundedRectangle(cornerRadius: radius), tuning: tuning))
             }
         }
         .overlay {

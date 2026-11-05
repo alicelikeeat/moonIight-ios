@@ -2940,4 +2940,18 @@ do {
     print("RPG v1.81 world director: \(checks) total checks passed")
 }
 
+do {
+    // v1.82 user glass look.
+    let base = MoonGlassTuning()
+    check(base.isDefault && base.thickness == .regular && !base.usesClearGlass && base.veil == 0 && base.tintOpacity == 0, "default glass look matches the old look")
+    let clear = MoonGlassTuning(clarity: 0.9), frosted = MoonGlassTuning(clarity: 0)
+    check(clear.usesClearGlass && clear.thickness == .ultraThin && clear.veil == 0, "clear end uses clear glass")
+    check(!frosted.usesClearGlass && frosted.thickness == .thick && abs(frosted.veil - 0.3) < 1e-9, "frosted end adds a frost veil")
+    let tinted = MoonGlassTuning(tintHex: "7fd3ff", strength: 1)
+    check(tinted.tintHex == "7FD3FF" && tinted.hasTint && abs(tinted.tintOpacity - 0.56) < 1e-9, "a colour is normalised and washes in")
+    check(!MoonGlassTuning(tintHex: "zzzzzz").hasTint && !MoonGlassTuning(tintHex: "12345").hasTint, "bad colours are ignored")
+    check(MoonGlassTuning(clarity: 7, strength: -2).clarity == 1 && MoonGlassTuning(clarity: .nan).clarity == 0.5 && MoonGlassTuning(strength: -2).strength == 0, "values are clamped")
+    print("RPG v1.82 glass look: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

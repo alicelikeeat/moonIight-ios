@@ -27,6 +27,8 @@ struct RPGHUDGlassModifier<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorScheme) private var scheme
     @Environment(\.rpgHUDState) private var state
+    /// v1.82: the user's clarity and colour.
+    private let look = MoonGlassLookSetting()
 
     func body(content: Content) -> some View {
         // v1.78: a panel keeps taps on its empty areas (a tap between two
@@ -39,8 +41,10 @@ struct RPGHUDGlassModifier<S: Shape>: ViewModifier {
         let style = RPGHUDGlassStyle.resolve(kind, RPGHUDConditions(
             dark: scheme == .dark, increasedContrast: contrast == .increased, reduceTransparency: reduceTransparency,
             inCombat: state.inCombat, editing: state.editing, lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled))
-        // A light scrim behind text: dark under light text, light under dark text.
-        let scrim = (scheme == .dark ? Color.black : Color.white).opacity(style.scrim)
+        let tuning = look.tuning
+        // A light scrim behind text: dark under light text, light under dark
+        // text; v1.82: thicker when the user chose frosted glass.
+        let scrim = (scheme == .dark ? Color.black : Color.white).opacity(min(0.5, style.scrim + tuning.veil))
         if style.solid {
             content
                 .background(Color(uiColor: .secondarySystemBackground), in: shape)
@@ -48,20 +52,22 @@ struct RPGHUDGlassModifier<S: Shape>: ViewModifier {
         } else if #available(iOS 26.0, *) {
             content
                 .background(scrim, in: shape)
-                .glassEffect(glass(style), in: shape)
+                .glassEffect(glass(style, tuning), in: shape)
         } else {
             content
                 .background(scrim, in: shape)
-                .background(style.regular ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(.ultraThinMaterial), in: shape)
+                .background(style.combatTint || tuning.tintColor == nil ? AnyShapeStyle(Color.clear) : AnyShapeStyle(tuning.tintColor!.opacity(tuning.tintOpacity)), in: shape)
+                .background(style.regular ? AnyShapeStyle(tuning.material) : AnyShapeStyle(.ultraThinMaterial), in: shape)
                 .overlay(shape.stroke(Color.white.opacity(style.combatTint ? 0.5 : 0.28), lineWidth: 0.6))
                 .overlay(style.combatTint ? shape.fill(Color.red.opacity(0.08)).allowsHitTesting(false) : nil)
         }
     }
 
     @available(iOS 26.0, *)
-    private func glass(_ style: RPGHUDGlassStyle) -> Glass {
-        var glass: Glass = style.regular ? .regular : .clear
+    private func glass(_ style: RPGHUDGlassStyle, _ tuning: MoonGlassTuning) -> Glass {
+        var glass: Glass = style.regular && !tuning.usesClearGlass ? .regular : .clear
         if style.combatTint { glass = glass.tint(.red.opacity(0.18)) }
+        else if let tint = tuning.tintColor { glass = glass.tint(tint.opacity(tuning.tintOpacity)) }
         if style.interactive { glass = glass.interactive() }
         return glass
     }

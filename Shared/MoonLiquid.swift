@@ -150,20 +150,24 @@ struct MoonLiquidSurface: ViewModifier {
     var interactive = true
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    /// v1.82: the user's clarity and colour (a control's own tint wins).
+    private let look = MoonGlassLookSetting()
 
     func body(content: Content) -> some View {
+        let tuning = look.tuning
         Group {
             if !glass {
                 content.background { if let tint { shape.fill(tint.gradient) } }
             } else if reduceTransparency {
                 content.background { shape.fill(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(Color(uiColor: .secondarySystemBackground))) }
             } else if #available(iOS 26.0, *) {
-                content.glassEffect(Self.systemGlass(tint: tint, interactive: interactive), in: shape)
+                content.background { if tint == nil { MoonGlassWash(shape: shape, tuning: tuning, includeTint: false) } }
+                    .glassEffect(tuning.glass(interactive: interactive, override: tint), in: shape)
             } else {
                 content.background {
                     ZStack {
-                        shape.fill(.ultraThinMaterial)
-                        if let tint { shape.fill(tint.opacity(0.78)) }
+                        shape.fill(tuning.material)
+                        if let tint { shape.fill(tint.opacity(0.78)) } else { MoonGlassWash(shape: shape, tuning: tuning) }
                     }
                 }
             }
@@ -177,15 +181,6 @@ struct MoonLiquidSurface: ViewModifier {
             .allowsHitTesting(false)
             }
         }
-    }
-}
-
-extension MoonLiquidSurface {
-    @available(iOS 26.0, *)
-    static func systemGlass(tint: Color?, interactive: Bool) -> Glass {
-        var g: Glass = .regular
-        if let tint { g = g.tint(tint.opacity(0.85)) }
-        return interactive ? g.interactive() : g
     }
 }
 
@@ -335,10 +330,16 @@ extension View {
 /// Row background for lists and forms: frosted glass with a top highlight.
 struct MoonLiquidRowBackground: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    private let look = MoonGlassLookSetting()
     var body: some View {
+        let tuning = look.tuning
         ZStack(alignment: .top) {
             if reduceTransparency { Color(uiColor: .secondarySystemGroupedBackground) }
-            else { Rectangle().fill(.ultraThinMaterial) }
+            else {
+                // Rows sit one step clearer than cards.
+                Rectangle().fill(MoonGlassTuning(clarity: min(1, tuning.clarity + 0.3), tintHex: tuning.tintHex, strength: tuning.strength).material)
+                MoonGlassWash(shape: Rectangle(), tuning: tuning)
+            }
             LinearGradient(colors: [.white.opacity(0.16), .clear], startPoint: .top, endPoint: .center)
         }
         .accessibilityHidden(true)
