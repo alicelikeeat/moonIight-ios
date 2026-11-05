@@ -114,6 +114,7 @@ import Metal
         quality = value; self.nativeGlass = nativeGlass
         materialCache.removeAll()
         blockEntities.values.forEach { $0.removeFromParent() }; blockEntities.removeAll(); blockVersions.removeAll()
+        batchEntities.values.forEach { $0.removeFromParent() }; batchEntities.removeAll(); batchSignatures.removeAll()
         chunkEntities.values.forEach { $0.removeFromParent() }; chunkEntities.removeAll()
     }
 
@@ -189,7 +190,29 @@ import Metal
 
     // MARK: Blocks
 
-    func showBlocks(_ blocks: [SpatialBlock], pivots: [String: SpatialVector]) {
+    /// v1.83: merged meshes of still blocks, one per chunk and material.
+    private var batchEntities: [String: ModelEntity] = [:]
+    private var batchSignatures: [String: Int] = [:]
+    private var batchedBlocks = 0
+
+    func showBlocks(_ all: [SpatialBlock], pivots: [String: SpatialVector]) {
+        // Still blocks without media are merged (see SpatialBatch); moving
+        // platforms and media blocks stay objects of their own.
+        var blocks: [SpatialBlock] = [], batches: [String: [SpatialBlock]] = [:]
+        for block in all {
+            if SpatialBatch.batchable(block, pivots: pivots) { batches[SpatialBatch.key(block), default: []].append(block) } else { blocks.append(block) }
+        }
+        for (key, entity) in batchEntities where batches[key] == nil { entity.removeFromParent(); batchEntities[key] = nil; batchSignatures[key] = nil }
+        for (key, list) in batches {
+            let signature = SpatialBatch.signature(list)
+            if batchSignatures[key] == signature, batchEntities[key]?.parent != nil { continue }
+            batchEntities[key]?.removeFromParent(); batchEntities[key] = nil
+            guard let mesh = Self.mergedMesh(list) else { continue }
+            let entity = ModelEntity(mesh: mesh, materials: [glassMaterial(list[0].glass, collision: list[0].collision)])
+            blocksRoot.addChild(entity)
+            batchEntities[key] = entity; batchSignatures[key] = signature
+        }
+        batchedBlocks = batches.values.reduce(0) { $0 + $1.count }
         let wanted = Set(blocks.map(\.id))
         for (id, entity) in blockEntities where !wanted.contains(id) { entity.removeFromParent(); blockEntities[id] = nil; blockVersions[id] = nil }
         for block in blocks {
@@ -210,6 +233,24 @@ import Metal
             blockEntities[block.id] = entity; blockVersions[block.id] = block
         }
         for (group, entity) in groupEntities where entity.children.isEmpty { entity.removeFromParent(); groupEntities[group] = nil }
+    }
+
+    static func mergedMesh(_ blocks: [SpatialBlock]) -> MeshResource? {
+        let data = SpatialBatch.mesh(blocks)
+        guard data.vertexCount > 0 else { return nil }
+        var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = []
+        positions.reserveCapacity(data.vertexCount); normals.reserveCapacity(data.vertexCount); uvs.reserveCapacity(data.vertexCount)
+        for i in 0..<data.vertexCount {
+            positions.append(SIMD3(data.positions[i * 3], data.positions[i * 3 + 1], data.positions[i * 3 + 2]))
+            normals.append(SIMD3(data.normals[i * 3], data.normals[i * 3 + 1], data.normals[i * 3 + 2]))
+            uvs.append(SIMD2(data.uvs[i * 2], data.uvs[i * 2 + 1]))
+        }
+        var descriptor = MeshDescriptor(name: "batch")
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(normals)
+        descriptor.textureCoordinates = MeshBuffers.TextureCoordinates(uvs)
+        descriptor.primitives = .triangles(data.indices)
+        return try? MeshResource.generate(from: [descriptor])
     }
 
     private func groupEntity(_ id: String) -> Entity {
@@ -247,7 +288,7 @@ import Metal
     }
 
     func glassMaterial(_ glass: SpatialGlass, collision: SpatialCollision) -> RealityKit.Material {
-        let key = "glass|\(glass.tintHex ?? "-")|\(glass.density)|\(glass.frosted)|\(glass.glow)|\(collision == .trigger)|\(glass.surface?.rawValue ?? "g")"
+        let key = SpatialBatch.materialKey(glass, collision: collision)
         if let cached = materialCache[key] { return cached }
         let tint = glass.tintHex.map { UIColor(rpgHex: $0) } ?? UIColor(white: 0.94, alpha: 1)
         // v1.81: stone and metal are opaque structure; crystal is bright glass.
@@ -466,7 +507,10 @@ import Metal
         }
     }
 
-    var blockNodeCount: Int { blockEntities.count }
+    /// Blocks on screen (merged ones counted one by one).
+    var blockNodeCount: Int { blockEntities.count + batchedBlocks }
+    /// Objects actually drawn for blocks (merged meshes plus single blocks).
+    var blockDrawCount: Int { blockEntities.count + batchEntities.count }
 
     /// The default player body hides while a media character is shown.
     var playerBodyVisible = true {

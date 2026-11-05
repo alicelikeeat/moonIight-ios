@@ -202,6 +202,7 @@ struct Glass3DPending {
     /// changed or the camera reached other chunks — before, every quarter
     /// second compared every block (a hitch in big worlds).
     private var visibleDirty = true
+    private var thermalTimer = 0.0
     private var pausedMediaCache = Set<String>()
     /// v1.82: native glass is recomputed at most 20 times a second while
     /// the camera stands still (only characters move then).
@@ -339,9 +340,14 @@ struct Glass3DPending {
         glassMeter.frame(dt: dt, publishes: nativeGlass.publishes)
         renderTimer += dt
         if renderTimer > 0.25 { renderTimer = 0; refreshVisible() }
+        thermalTimer += dt
+        if thermalTimer > 5 { thermalTimer = 0; checkThermal() }
         renderer.media.update(visibleMedia: visibleMediaIDs, clock: world.clock, paused: pausedMediaCache)
         saveTimer += dt
-        if saveTimer > 4 { saveTimer = 0; persist(force: false) }
+        // v1.83: positions and creature state every 30 s (was 4 s: a full
+        // world save — encode, two safety reads, two writes — every 4 s kept
+        // the CPU and storage busy). Edits still save at once; leaving saves.
+        if saveTimer > 30 { saveTimer = 0; persist(force: false) }
     }
 
     private func simulate(dt: Double, geometry: SpatialGeometry, frames: [String: GroupFrame]) {
@@ -853,7 +859,23 @@ struct Glass3DPending {
     // MARK: Native glass
 
     private func applyQuality() {
-        renderer.setQuality(quality, nativeGlass: nativeGlassActive)
+        renderer.setQuality(effectiveQuality, nativeGlass: nativeGlassActive)
+    }
+    /// v1.83: the phone reports it is hot (serious or critical): the world
+    /// switches to the light glass and drops the native glass layer until
+    /// it has cooled down. The saved settings are not touched.
+    private(set) var thermalLimited = false
+    private var effectiveQuality: RPGGlassQuality { thermalLimited ? .performance : quality }
+    private func checkThermal() {
+        let state = ProcessInfo.processInfo.thermalState
+        let hot = state == .serious || state == .critical
+        // Back to full look only once the phone is nominal again (no flapping at "fair").
+        let next = hot ? true : state == .nominal ? false : thermalLimited
+        guard next != thermalLimited else { return }
+        thermalLimited = next
+        notice = next ? L10n.t("手机较热，已暂时降低 3D 画质", "The phone is hot: 3D quality lowered for now")
+                      : L10n.t("手机已降温，3D 画质已恢复", "The phone has cooled down: 3D quality restored")
+        glassFade.restart(); nativeGlass.reset(); applyQuality(); rebuildAll()
     }
     /// On when the system has Liquid Glass, the setting is on and the
     /// quality level gives it a budget.
@@ -867,7 +889,7 @@ struct Glass3DPending {
         let rate = Int(glassMeter.publishesPerSecond.rounded())
         return L10n.t("原生玻璃面 \(nativeGlass.faces) · 更新 \(rate)/s", "\(nativeGlass.faces) native glass faces · \(rate) updates/s")
     }
-    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && SpatialFaces.budget(quality) > 0 }
+    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && !thermalLimited && SpatialFaces.budget(quality) > 0 }
     /// v1.78: the system's Reduce Transparency setting (set by the view).
     /// Turns the block glass off for as long as it is on, without touching
     /// the saved "native glass" switch.

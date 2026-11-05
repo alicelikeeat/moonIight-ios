@@ -2954,4 +2954,54 @@ do {
     print("RPG v1.82 glass look: \(checks) total checks passed")
 }
 
+do {
+    // v1.83 merged still blocks.
+    var b = SpatialBlock(id: "a", x: 3, y: 5, elevation: 2)
+    b.thickness = 2; b.size = 1
+    let one = SpatialBatch.mesh([b])
+    check(one.vertexCount == 24 && one.indices.count == 36 && one.uvs.count == 48 && one.normals.count == 72, "a box is 24 vertices and 12 triangles")
+    let xs = stride(from: 0, to: one.positions.count, by: 3).map { one.positions[$0] }
+    let ys = stride(from: 1, to: one.positions.count, by: 3).map { one.positions[$0] }
+    let zs = stride(from: 2, to: one.positions.count, by: 3).map { one.positions[$0] }
+    let xOK: Bool = abs(xs.min()! - 3.01) < 1e-4 && abs(xs.max()! - 3.99) < 1e-4
+    let yOK: Bool = abs(ys.min()! - 2) < 1e-5 && abs(ys.max()! - 4) < 1e-5
+    let zOK: Bool = abs(zs.max()! + 5.01) < 1e-4 && abs(zs.min()! + 5.99) < 1e-4
+    check(xOK && yOK && zOK, "box sits on its cell, from its elevation to its top")
+    func outward(_ m: SpatialBatch.Mesh) -> Bool {
+        stride(from: 0, to: m.indices.count, by: 3).allSatisfy { t in
+            let i = m.indices[t...t + 2].map { Int($0) * 3 }
+            let p = i.map { (m.positions[$0], m.positions[$0 + 1], m.positions[$0 + 2]) }
+            let u: (Float, Float, Float) = (p[1].0 - p[0].0, p[1].1 - p[0].1, p[1].2 - p[0].2)
+            let v: (Float, Float, Float) = (p[2].0 - p[0].0, p[2].1 - p[0].1, p[2].2 - p[0].2)
+            let cx: Float = u.1 * v.2 - u.2 * v.1, cy: Float = u.2 * v.0 - u.0 * v.2, cz: Float = u.0 * v.1 - u.1 * v.0
+            let dot: Float = cx * m.normals[i[0]] + cy * m.normals[i[0] + 1] + cz * m.normals[i[0] + 2]
+            return dot > 0
+        }
+    }
+    var turned = b; turned.yaw = 30; turned.size = 0.6
+    check(outward(one) && outward(SpatialBatch.mesh([turned])), "triangles face outward (also when turned)")
+    let tn = SpatialBatch.mesh([turned]).normals
+    let unit = stride(from: 0, to: tn.count, by: 3).allSatisfy { k -> Bool in
+        let len: Float = tn[k] * tn[k] + tn[k + 1] * tn[k + 1] + tn[k + 2] * tn[k + 2]
+        return abs(len - 1) < 1e-4
+    }
+    check(unit, "normals stay unit length when turned")
+    let two = SpatialBatch.mesh([b, turned])
+    check(two.vertexCount == 48 && two.indices.max() == 47 && Array(two.indices[36...]) == one.indices.map { $0 + 24 }, "boxes append with offset indices")
+    var moving = b; moving.groupID = "g"
+    var media = b; media.media = SpatialMedia(bindingID: "m", face: .front)
+    check(SpatialBatch.batchable(b, pivots: [:]) && !SpatialBatch.batchable(moving, pivots: ["g": SpatialVector(0, 0, 0)]) && SpatialBatch.batchable(moving, pivots: [:]) && !SpatialBatch.batchable(media, pivots: [:]),
+          "moving and media blocks stay separate")
+    var far = b; far.x = 40; far.id = "far"
+    var red = b; red.glass = .tinted("FF0000"); red.id = "red"
+    check(SpatialBatch.key(b) != SpatialBatch.key(far) && SpatialBatch.key(b) != SpatialBatch.key(red) && SpatialBatch.key(b) == SpatialBatch.key(turned), "batches split by chunk and material only")
+    var taller = b; taller.thickness = 3
+    check(SpatialBatch.signature([b]) != SpatialBatch.signature([taller]) && SpatialBatch.signature([b]) == SpatialBatch.signature([b]), "the signature follows the shape")
+    var req = WorldGenerationRequest(theme: .skyCity); req.seed = 7
+    let sky = try! WorldDirectorEngine.candidates(req, intent: nil, base: SpatialWorld(), cancelled: { false })[0].output.world
+    let groups = Dictionary(grouping: sky.blocks.filter { SpatialBatch.batchable($0, pivots: sky.motionPivots()) }, by: SpatialBatch.key)
+    check(groups.count * 10 < sky.blocks.count, "a generated world draws as \(groups.count) batches instead of \(sky.blocks.count) objects")
+    print("RPG v1.83 merged blocks: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")
