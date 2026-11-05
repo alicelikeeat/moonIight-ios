@@ -152,6 +152,39 @@ enum SpatialBuilder {
         return copies.map(\.id)
     }
 
+    /// v1.80 (delete key): what a tapped creature or chest is called, for
+    /// the bar above the delete button; nil when it no longer exists.
+    static func objectTitle(kind: String, id: String, world: SpatialWorld) -> String? {
+        switch kind {
+        case "creature":
+            guard let creature = world.creatures.first(where: { $0.id == id }) else { return nil }
+            let look = creature.characterID.flatMap { cid in (world.characters ?? []).first { $0.id == cid }?.name }
+            return look.map { "\($0) · \(creature.kind.title)" } ?? creature.kind.title
+        case "pickup":
+            guard let pickup = world.pickups.first(where: { $0.id == id }) else { return nil }
+            return L10n.t("宝箱 · \(pickup.shards) 碎片", "Chest · \(pickup.shards) shards")
+        default:
+            return nil
+        }
+    }
+
+    /// Removes one creature or chest. Returns whether anything was removed.
+    @discardableResult
+    static func removeObject(kind: String, id: String, world: inout SpatialWorld) -> Bool {
+        switch kind {
+        case "creature":
+            let before = world.creatures.count
+            world.creatures.removeAll { $0.id == id }
+            return world.creatures.count != before
+        case "pickup":
+            let before = world.pickups.count
+            world.pickups.removeAll { $0.id == id }
+            return world.pickups.count != before
+        default:
+            return false
+        }
+    }
+
     /// Moves every block of a group, keeping their relative heights.
     static func move(group: String, dx: Int, dy: Int, dz: Double, world: inout SpatialWorld) {
         for i in world.blocks.indices where world.blocks[i].groupID == group {

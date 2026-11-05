@@ -81,10 +81,20 @@ struct Glass3DSelectionBar: View {
             lastAction = now
             action.run()
         } label: {
-            Image(systemName: action.symbol)
-                .font(.system(size: 15, weight: .semibold))
-                .frame(minWidth: 44, minHeight: 44)
-            .foregroundStyle(action.role == .destructive ? Color.red : Color.primary)
+            Group {
+                if action.role == .destructive {
+                    // v1.80: the delete key is labelled and red, easy to find.
+                    Label(action.title, systemImage: "trash.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
+                        .background(Color.red.gradient, in: Capsule())
+                } else {
+                    Image(systemName: action.symbol)
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .foregroundStyle(Color.primary)
+                }
+            }
             .contentShape(Capsule())
         }
         .buttonStyle(RPGPressStyle())
@@ -115,5 +125,46 @@ private struct GlassPiece: ViewModifier {
         } else {
             content.hudGlass(.interactive, in: Capsule())
         }
+    }
+}
+
+/// v1.80: the delete key for a tapped creature or chest — what it is, a
+/// clear red Delete, and Deselect. Deleting is one undo step.
+@available(iOS 18.0, *)
+struct Glass3DObjectBar: View {
+    @ObservedObject var controller: Glass3DController
+    let title: String
+    @State private var lastAction: Double?
+
+    var body: some View {
+        RPGGlassGroup(spacing: 10) {
+            HStack(spacing: 8) {
+                Label(title, systemImage: controller.picked?.kind == "pickup" ? "shippingbox.fill" : "pawprint.fill")
+                    .font(.caption.weight(.semibold)).lineLimit(1)
+                    .padding(.horizontal, 12).frame(minHeight: 44)
+                    .hudGlass(.panel, in: Capsule())
+                    .accessibilityIdentifier("glass3d-picked-title")
+                Button(role: .destructive) {
+                    let now = CACurrentMediaTime()
+                    guard MoonGlassMotion.allows(lastAction: lastAction, now: now) else { return }
+                    lastAction = now
+                    controller.deletePicked()
+                } label: {
+                    Label(L10n.t("删除", "Delete"), systemImage: "trash.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 16).frame(minHeight: 44)
+                        .background(Color.red.gradient, in: Capsule())
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(RPGPressStyle())
+                .accessibilityIdentifier("glass3d-picked-delete")
+                Button { controller.picked = nil } label: {
+                    Image(systemName: "xmark").font(.system(size: 15, weight: .semibold)).frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
+                }
+                .buttonStyle(RPGPressStyle()).hudGlass(.interactive, in: Capsule())
+                .accessibilityLabel(L10n.t("取消选中", "Deselect")).accessibilityIdentifier("glass3d-picked-deselect")
+            }
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     }
 }

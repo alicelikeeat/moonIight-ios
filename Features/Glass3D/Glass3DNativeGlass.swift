@@ -20,6 +20,8 @@ import SwiftUI
     private var chosenIDs: Set<String> = []
     /// Lock-on reticle over the locked target (screen point).
     @Published var reticle: CGPoint?
+    /// v1.80: ring around the picked creature / chest (screen point).
+    @Published var pickMarker: CGPoint?
     /// Move handles for the selection: centre and the screen direction and
     /// length of one step along x, map-y and height.
     @Published var gizmo: Gizmo?

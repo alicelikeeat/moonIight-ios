@@ -2781,6 +2781,14 @@ do {
     var total = 0
     for f in 0..<120 { if f % 4 == 0 { total += 1 }; meter.frame(dt: 1.0 / 60, publishes: total) }
     check(abs(meter.framesPerSecond - 60) < 1 && abs(meter.publishesPerSecond - 15) < 1.5, "meter counts frames and glass updates per second (\(meter.publishesPerSecond))")
+    // v1.80 delete key: creatures and chests can be named and removed.
+    var ow = SpatialWorld()
+    ow.creatures = [CreatureEntity(id: "c1", kind: .enemy, position: SpatialVector(1, 1, 0), home: SpatialVector(1, 1, 0), health: 30, maxHealth: 30, damage: 6)]
+    ow.pickups = [PickupEntity(id: "p1", position: SpatialVector(2, 2, 0), shards: 5)]
+    check(SpatialBuilder.objectTitle(kind: "creature", id: "c1", world: ow) == CreatureKind.enemy.title && SpatialBuilder.objectTitle(kind: "pickup", id: "p1", world: ow) != nil
+          && SpatialBuilder.objectTitle(kind: "creature", id: "nope", world: ow) == nil, "tapped creatures and chests are named")
+    check(SpatialBuilder.removeObject(kind: "creature", id: "c1", world: &ow) && ow.creatures.isEmpty && SpatialBuilder.removeObject(kind: "pickup", id: "p1", world: &ow) && ow.pickups.isEmpty
+          && !SpatialBuilder.removeObject(kind: "pickup", id: "p1", world: &ow), "delete key removes exactly the picked object")
     print("RPG v1.78 glass: \(checks) total checks passed")
 }
 

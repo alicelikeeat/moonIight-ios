@@ -110,6 +110,7 @@ struct Glass3DScreen: View {
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: showsPanel)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: portrait)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.selection.isEmpty)
+            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.picked)
         }
         .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit))
         .onAppear {
@@ -342,6 +343,11 @@ struct Glass3DScreen: View {
             // v1.78: tools for the selection, as one morphing glass group.
             if !controller.selection.isEmpty {
                 HStack { Glass3DSelectionBar(controller: controller, panel: $panel); Spacer(minLength: 0) }
+                    .transition(.opacity)
+            }
+            // v1.80: a tapped creature or chest, with a delete key.
+            if let title = controller.pickedTitle {
+                HStack { Glass3DObjectBar(controller: controller, title: title); Spacer(minLength: 0) }
                     .transition(.opacity)
             }
             // v1.79: tool hint, options and dock in one glass panel (was two).
@@ -1089,6 +1095,13 @@ struct Glass3DOverlay: View {
                 Circle().strokeBorder(Color.red.opacity(0.9), lineWidth: 2.5).frame(width: 46, height: 46)
                     .overlay(Circle().fill(Color.red).frame(width: 6, height: 6))
                     .hudGlass(.base, in: Circle())
+                    .position(point).allowsHitTesting(false).accessibilityHidden(true)
+            }
+            if let point = glass.pickMarker {
+                // v1.80: what the delete key will remove.
+                Circle().strokeBorder(Color.yellow, style: StrokeStyle(lineWidth: 3, dash: [7, 5]))
+                    .frame(width: 64, height: 64)
+                    .shadow(color: .black.opacity(0.5), radius: 2)
                     .position(point).allowsHitTesting(false).accessibilityHidden(true)
             }
             if let gizmo = glass.gizmo {

@@ -65,11 +65,23 @@ struct Glass3DPending {
     private(set) var world: SpatialWorld
     @Published private(set) var revision = 0
     @Published var mode = Glass3DMode.play { didSet { modeChanged() } }
-    @Published var tool = Glass3DTool.select { didSet { pending = nil; trackPoints = [] } }
+    @Published var tool = Glass3DTool.select { didSet { pending = nil; trackPoints = []; if tool != .select { picked = nil } } }
     /// Moves every frame while following the player, so not published.
     var camera = SpatialCameraState()
     @Published var pending: Glass3DPending? { didSet { renderer.showPreview(pending?.preview ?? [], conflicts: pending?.conflicts ?? []) } }
-    @Published var selection: [String] = [] { didSet { renderer.showSelection(selectedBlocks) } }
+    @Published var selection: [String] = [] {
+        didSet { renderer.showSelection(selectedBlocks); if !selection.isEmpty && picked != nil { picked = nil } }
+    }
+    /// v1.80: a tapped creature or chest (select tool), ready to delete.
+    struct Picked: Equatable { var kind: String; var id: String }
+    @Published var picked: Picked?
+    var pickedTitle: String? { picked.flatMap { SpatialBuilder.objectTitle(kind: $0.kind, id: $0.id, world: world) } }
+    func deletePicked() {
+        guard let p = picked else { return }
+        let title = p.kind == "creature" ? L10n.t("删除生物", "Remove Creature") : L10n.t("删除宝箱", "Remove Chest")
+        edit(title) { w in SpatialBuilder.removeObject(kind: p.kind, id: p.id, world: &w) }
+        picked = nil
+    }
     @Published var notice = ""
     @Published var pickChoices: [Glass3DChoice] = []
     /// v1.79: fast-changing HUD values live in `live`; the screen only
@@ -216,7 +228,7 @@ struct Glass3DPending {
 
     private func modeChanged() {
         glide = nil; stick = (0, 0); look = (0, 0); padMoving = false; padLooking = false
-        pending = nil; selection = []; trackPoints = []
+        pending = nil; selection = []; trackPoints = []; picked = nil
         if mode == .edit { designOverview(); return }
         camera.tilt = SpatialCameraRules.playTilt
         camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() }
@@ -843,6 +855,14 @@ struct Glass3DPending {
         // Reticle and gizmo (also without native block glass).
         let reticle = lockedTarget.flatMap { id in world.creatures.first { $0.id == id } }.flatMap { projection.project($0.position + SpatialVector(0, 0, 1))?.point }
         if reticle != nativeGlass.reticle { nativeGlass.reticle = reticle }
+        // v1.80: ring around the picked creature / chest.
+        var marker: CGPoint?
+        if mode == .edit, let p = picked {
+            let spot = p.kind == "creature" ? world.creatures.first { $0.id == p.id }.map { $0.position + SpatialVector(0, 0, 0.8) }
+                                            : world.pickups.first { $0.id == p.id }.map { $0.position + SpatialVector(0, 0, 0.4) }
+            marker = spot.flatMap { projection.project($0)?.point }
+        }
+        if marker != nativeGlass.pickMarker { nativeGlass.pickMarker = marker }
         var gizmo: Glass3DNativeGlass.Gizmo?
         let blocks = selectedBlocks
         if mode == .edit, !blocks.isEmpty {
@@ -880,7 +900,9 @@ struct Glass3DPending {
         }
         switch tool {
         case .select:
-            if first.kind == "block", !first.id.hasPrefix("legacy:") { selection = [first.id] } else { selection = [] }
+            if first.kind == "block", !first.id.hasPrefix("legacy:") { selection = [first.id]; picked = nil }
+            else if first.kind == "creature" || first.kind == "pickup" { selection = []; picked = Picked(kind: first.kind, id: first.id) }
+            else { selection = []; picked = nil }
         case .place:
             placeBlock(at: first.cell, onTopOf: first.kind == "block" ? first.height : nil)
         case .erase:
