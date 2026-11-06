@@ -14,7 +14,7 @@ struct LandlordCard: Codable, Hashable, Identifiable, Sendable {
     static func ordered(_ cards: [Self]) -> [Self] { cards.sorted { ($0.rank, $0.suit) < ($1.rank, $1.suit) } }
 }
 
-enum LandlordHandKind: String, Codable, Sendable {
+enum LandlordHandKind: String, Codable, Hashable, Sendable {
     case single, pair, triple, tripleSingle, triplePair, straight, pairs, plane, planeSingles, planePairs, fourSingles, fourPairs, bomb, rocket
     var title: String {
         switch self {
@@ -24,15 +24,18 @@ enum LandlordHandKind: String, Codable, Sendable {
         }
     }
 }
-struct LandlordPattern: Codable, Equatable, Sendable {
+struct LandlordPattern: Codable, Hashable, Sendable {
     let kind: LandlordHandKind
     let high: Int
     let count: Int
     let run: Int
+    var bombTier: LandlordBombTier? = nil
+    var tier: Int { kind == .rocket ? 4 : kind == .bomb ? (bombTier ?? .hard).rawValue : 0 }
     func beats(_ other: Self) -> Bool {
         if kind == .rocket { return other.kind != .rocket }
         if other.kind == .rocket { return false }
         if kind == .bomb && other.kind != .bomb { return true }
+        if kind == .bomb && other.kind == .bomb && tier != other.tier { return tier > other.tier }
         return kind == other.kind && count == other.count && run == other.run && high > other.high
     }
 }
@@ -141,6 +144,7 @@ struct LandlordPlay: Codable, Equatable, Identifiable, Sendable {
     let trick: Int
     let cards: [LandlordCard]
     let pattern: LandlordPattern
+    var interpretation: LandlordInterpretation? = nil
 }
 enum LandlordPhase: String, Codable, Sendable { case bidding, playing, finished, redeal }
 struct LandlordGame: Codable, Equatable, Sendable {
@@ -162,11 +166,13 @@ struct LandlordGame: Codable, Equatable, Sendable {
     private(set) var winner: Int?
     private(set) var scores = [0, 0, 0]
     private(set) var spring = false
-    init(deck: [LandlordCard] = LandlordCard.deck.shuffled(), startingSeat: Int = 0) {
+    private(set) var wildcardRank: Int?
+    init(deck: [LandlordCard] = LandlordCard.deck.shuffled(), startingSeat: Int = 0, wildcardRank: Int? = nil) {
         let valid = deck.count == 54 && Set(deck.map(\.id)) == Set(0..<54) ? deck : LandlordCard.deck
         id = UUID(); turn = min(2, max(0, startingSeat))
         hands = (0..<3).map { seat in LandlordCard.ordered(Array(valid[(seat * 17)..<(seat * 17 + 17)])) }
         bottom = Array(valid.suffix(3))
+        self.wildcardRank = wildcardRank.flatMap { (3...15).contains($0) ? $0 : nil }
     }
     var target: LandlordPattern? { lastPlay?.pattern }
     var targetPlayer: Int? { lastPlay?.player }
@@ -185,12 +191,20 @@ struct LandlordGame: Codable, Equatable, Sendable {
         } else { turn = (turn + 1) % 3 }
         return true
     }
-    @discardableResult mutating func play(_ ids: [Int], player: Int) -> Bool {
+    @discardableResult mutating func play(_ ids: [Int], player: Int, declared: LandlordInterpretation? = nil) -> Bool {
         guard phase == .playing, turn == player, !ids.isEmpty, Set(ids).count == ids.count else { return false }
         let lookup = Dictionary(uniqueKeysWithValues: hands[player].map { ($0.id, $0) })
         let cards = ids.compactMap { lookup[$0] }
-        guard cards.count == ids.count, let pattern = LandlordRules.pattern(cards, beating: target) else { return false }
-        let record = LandlordPlay(id: history.count, player: player, trick: trick, cards: cards, pattern: pattern)
+        guard cards.count == ids.count else { return false }
+        let choice: LandlordInterpretation?
+        if let declared {
+            choice = LandlordRules.interpret(cards, wildcardRank: wildcardRank, substitutions: declared.substitutions)
+                .first { $0 == declared && (target.map { declared.pattern.beats($0) } ?? true) }
+        } else { choice = choices(for: ids).first }
+        guard let choice else { return false }
+        let pattern = choice.pattern
+        let record = LandlordPlay(id: history.count, player: player, trick: trick, cards: cards, pattern: pattern,
+                                  interpretation: wildcardRank == nil ? nil : choice)
         hands[player].removeAll { ids.contains($0.id) }
         history.append(record); lastPlay = record; leader = player; passes = 0; playedHands[player] += 1
         if pattern.kind == .bomb || pattern.kind == .rocket { multiplier *= 2 }
@@ -207,7 +221,17 @@ struct LandlordGame: Codable, Equatable, Sendable {
     }
     func suggestion(for player: Int) -> [Int] {
         guard phase == .playing, player == turn else { return [] }
-        return LandlordRules.moves(hands[player], beating: target).first?.map(\.id) ?? []
+        return suggestedMove(for: player)?.cards.map(\.id) ?? []
+    }
+    func choices(for ids: [Int]) -> [LandlordInterpretation] {
+        guard phase == .playing, Set(ids).count == ids.count else { return [] }
+        let cards = hands[turn].filter { ids.contains($0.id) }
+        guard cards.count == ids.count else { return [] }
+        return LandlordRules.choices(cards, wildcardRank: wildcardRank, beating: target)
+    }
+    func suggestedMove(for player: Int) -> LandlordMove? {
+        guard phase == .playing, player == turn else { return nil }
+        return LandlordRules.availableMoves(hands[player], wildcardRank: wildcardRank, beating: target).first
     }
     @discardableResult mutating func autoAct() -> Bool {
         let player = turn
@@ -218,8 +242,7 @@ struct LandlordGame: Codable, Equatable, Sendable {
         }
         guard phase == .playing else { return false }
         if let targetPlayer, player != landlord && targetPlayer != landlord { return pass(player: player) }
-        let move = suggestion(for: player)
-        if !move.isEmpty { return play(move, player: player) }
+        if let move = suggestedMove(for: player) { return play(move.cards.map(\.id), player: player, declared: move.interpretation) }
         return pass(player: player)
     }
     private mutating func settle(_ player: Int) {
@@ -242,7 +265,7 @@ extension LandlordGame {
               bottom.allSatisfy({ (0..<54).contains($0.id) }),
               scores.count == 3, playedHands.count == 3, history.count <= 54,
               (0...3).contains(highestBid), (0...3).contains(bidCount), (0...1).contains(passes),
-              multiplier > 0, multiplier <= 131072, conserved else { return false }
+              multiplier > 0, multiplier <= 131072, wildcardRank.map({ (3...15).contains($0) }) ?? true, conserved else { return false }
         if phase == .playing || phase == .finished { guard landlord != nil, highestBid > 0 else { return false } }
         guard playedHands == (0..<3).map({ seat in history.filter { $0.player == seat }.count }),
               lastPlay.map({ $0 == history.last && $0.player == leader }) ?? true else { return false }
@@ -251,7 +274,180 @@ extension LandlordGame {
             guard let winner, winner == history.last?.player, hands[winner].isEmpty, scores.reduce(0, +) == 0 else { return false }
         } else if scores != [0, 0, 0] { return false }
         return history.enumerated().allSatisfy { index, play in
-            play.id == index && (0..<3).contains(play.player) && LandlordRules.patterns(play.cards).contains(play.pattern)
+            guard play.id == index, (0..<3).contains(play.player) else { return false }
+            if let declaration = play.interpretation {
+                return declaration.pattern == play.pattern && LandlordRules.interpret(play.cards, wildcardRank: wildcardRank,
+                    substitutions: declaration.substitutions).contains(declaration)
+            }
+            return wildcardRank == nil && LandlordRules.patterns(play.cards).contains(play.pattern)
+        }
+    }
+}
+
+enum LandlordBombTier: Int, Codable, Hashable, Sendable { case soft = 1, hard = 2, pureWild = 3 }
+
+struct LandlordInterpretation: Codable, Hashable, Identifiable, Sendable {
+    let pattern: LandlordPattern
+    var substitutions: [Int: Int] = [:]
+    var id: String {
+        "\(pattern.kind.rawValue):\(pattern.high):\(pattern.count):\(pattern.run):\(pattern.tier):" +
+        substitutions.sorted(by: { $0.key < $1.key }).map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+    }
+    var title: String {
+        let tier = pattern.kind == .bomb ? (pattern.tier == 3 ? "纯癞子炸弹" : pattern.tier == 1 ? "软炸弹" : "硬炸弹") : pattern.kind.title
+        return tier + " · " + LandlordCard.rankLabel(pattern.high)
+    }
+}
+
+struct LandlordMove: Sendable {
+    let cards: [LandlordCard]
+    let interpretation: LandlordInterpretation
+}
+
+extension LandlordCard {
+    static func rankLabel(_ rank: Int) -> String {
+        (3...17).contains(rank) ? LandlordCard(id: rank >= 16 ? rank + 36 : (rank - 3) * 4).rankText : "?"
+    }
+}
+
+extension LandlordRules {
+    /// Validate one explicit declaration without enumerating other assignments.
+    /// Virtual cards exist only inside the classifier; physical card IDs never change.
+    static func interpret(_ cards: [LandlordCard], wildcardRank: Int?, substitutions: [Int: Int]) -> [LandlordInterpretation] {
+        guard !cards.isEmpty, cards.count <= 20, Set(cards.map(\.id)).count == cards.count,
+              cards.allSatisfy({ (0..<54).contains($0.id) }) else { return [] }
+        guard let wildcardRank else {
+            return substitutions.isEmpty ? patterns(cards).map { LandlordInterpretation(pattern: $0) } : []
+        }
+        guard (3...15).contains(wildcardRank), substitutions.allSatisfy({ id, rank in
+            (3...15).contains(rank) && cards.contains { $0.id == id && $0.rank == wildcardRank }
+        }), cards.count != 1 || substitutions.isEmpty else { return [] }
+        var counts: [Int: Int] = [:]
+        for card in cards { counts[substitutions[card.id] ?? card.rank, default: 0] += 1 }
+        guard counts.allSatisfy({ rank, count in count <= (rank >= 16 ? 1 : 4) }) else { return [] }
+        let virtual = counts.sorted(by: { $0.key < $1.key }).flatMap { rank, count in
+            (0..<count).map { LandlordCard(id: rank >= 16 ? rank + 36 : (rank - 3) * 4 + $0) }
+        }
+        let changed = substitutions.filter { $0.value != wildcardRank }
+        return patterns(virtual).map { pattern in
+            var classified = pattern
+            if pattern.kind == .bomb {
+                if cards.allSatisfy({ $0.rank == wildcardRank }) {
+                    classified = LandlordPattern(kind: .bomb, high: wildcardRank, count: 4, run: 1, bombTier: .pureWild)
+                    return LandlordInterpretation(pattern: classified)
+                }
+                else if !changed.isEmpty { classified.bombTier = .soft }
+            }
+            return LandlordInterpretation(pattern: classified, substitutions: changed)
+        }
+    }
+
+    /// At most C(16,4)=1820 rank multisets, instead of 13^4 permutations.
+    /// Only called for the human's selected cards; bots construct bounded templates.
+    static func choices(_ cards: [LandlordCard], wildcardRank: Int?, beating target: LandlordPattern?) -> [LandlordInterpretation] {
+        guard let rank = wildcardRank, cards.count > 1 else {
+            return interpret(cards, wildcardRank: wildcardRank, substitutions: [:]).filter { target.map($0.pattern.beats) ?? true }
+        }
+        let wild = cards.filter { $0.rank == rank }.sorted { $0.id < $1.id }
+        guard wild.count <= 4 else { return [] }
+        var best: [LandlordPattern: LandlordInterpretation] = [:]
+        var assignment: [Int: Int] = [:]
+        func visit(_ index: Int, minimum: Int) {
+            if index == wild.count {
+                for choice in interpret(cards, wildcardRank: rank, substitutions: assignment) where target.map(choice.pattern.beats) ?? true {
+                    if best[choice.pattern].map({ $0.substitutions.count <= choice.substitutions.count }) != true { best[choice.pattern] = choice }
+                }
+                return
+            }
+            for value in minimum...15 { assignment[wild[index].id] = value; visit(index + 1, minimum: value) }
+        }
+        visit(0, minimum: 3)
+        return best.values.sorted { a, b in
+            if a.pattern.tier != b.pattern.tier { return a.pattern.tier < b.pattern.tier }
+            if a.pattern.high != b.pattern.high { return a.pattern.high < b.pattern.high }
+            return a.id < b.id
+        }
+    }
+
+    static func availableMoves(_ hand: [LandlordCard], wildcardRank: Int?, beating target: LandlordPattern?) -> [LandlordMove] {
+        guard let wildcardRank else {
+            return moves(hand, beating: target).compactMap { cards in
+                pattern(cards, beating: target).map { LandlordMove(cards: cards, interpretation: .init(pattern: $0)) }
+            }
+        }
+        var output: [LandlordMove] = [], seen = Set<String>()
+        func append(_ cards: [LandlordCard], _ substitutions: [Int: Int]) {
+            for choice in interpret(cards, wildcardRank: wildcardRank, substitutions: substitutions) where target.map(choice.pattern.beats) ?? true {
+                let key = cards.map(\.id).sorted().map(String.init).joined(separator: ",") + choice.id
+                if seen.insert(key).inserted { output.append(.init(cards: cards, interpretation: choice)) }
+            }
+        }
+        for cards in moves(hand, beating: nil) { append(cards, [:]) }
+        let ordered = LandlordCard.ordered(hand)
+        func construct(_ ranks: [Int]) -> ([LandlordCard], [Int: Int])? {
+            guard ranks.count <= hand.count else { return nil }
+            var available = ordered, cards: [LandlordCard] = [], substitutions: [Int: Int] = [:]
+            for rank in ranks {
+                let natural = available.firstIndex { $0.rank == rank }
+                let index = natural ?? (rank < 16 ? available.firstIndex { $0.rank == wildcardRank } : nil)
+                guard let index else { return nil }
+                let card = available.remove(at: index); cards.append(card)
+                if card.rank != rank { substitutions[card.id] = rank }
+            }
+            return (cards, substitutions)
+        }
+        func make(_ body: [Int], singleWings: Int = 0, pairWings: Int = 0) {
+            guard let (initial, _) = construct(body) else { return }
+            let excluded = Set(body)
+            var rest = ordered.filter { card in !initial.contains(where: { $0.id == card.id }) }
+            var wings: [Int] = []
+            if singleWings > 0 {
+                let candidates = rest.filter { !excluded.contains($0.rank) }
+                guard candidates.count >= singleWings else { return }
+                wings = candidates.prefix(singleWings).map(\.rank)
+            }
+            for _ in 0..<pairWings {
+                let ranks = (3...15).filter { !excluded.contains($0) && !wings.contains($0) }
+                let value = ranks.first { rank in rest.filter { $0.rank == rank }.count >= 2 }
+                    ?? ranks.first { rank in rest.filter { $0.rank == rank || $0.rank == wildcardRank }.count >= 2 }
+                guard let value else { return }
+                for _ in 0..<2 {
+                    guard let i = rest.firstIndex(where: { $0.rank == value }) ?? rest.firstIndex(where: { $0.rank == wildcardRank }) else { return }
+                    rest.remove(at: i)
+                }
+                wings += [value, value]
+            }
+            if let (cards, subs) = construct(body + wings) { append(cards, subs) }
+        }
+        for rank in 3...15 {
+            for n in 2...4 { make(Array(repeating: rank, count: n)) }
+            for wing in 3...17 where wing != rank {
+                make([rank, rank, rank, wing])
+                if wing < 16 { make([rank, rank, rank, wing, wing]) }
+            }
+            make(Array(repeating: rank, count: 4), singleWings: 2)
+            make(Array(repeating: rank, count: 4), pairWings: 2)
+        }
+        for multiplicity in 1...3 {
+            let minimum = multiplicity == 1 ? 5 : multiplicity == 2 ? 3 : 2
+            for low in 3...14 {
+                guard low + minimum - 1 <= 14 else { continue }
+                for high in (low + minimum - 1)...14 {
+                    let body = (low...high).flatMap { Array(repeating: $0, count: multiplicity) }
+                    guard body.count <= hand.count else { break }
+                    make(body)
+                    if multiplicity == 3 {
+                        make(body, singleWings: high - low + 1)
+                        make(body, pairWings: high - low + 1)
+                    }
+                }
+            }
+        }
+        return output.sorted { a, b in
+            if a.interpretation.pattern.tier != b.interpretation.pattern.tier { return a.interpretation.pattern.tier < b.interpretation.pattern.tier }
+            if target == nil && a.cards.count != b.cards.count { return a.cards.count > b.cards.count }
+            if a.interpretation.pattern.high != b.interpretation.pattern.high { return a.interpretation.pattern.high < b.interpretation.pattern.high }
+            return a.interpretation.id + a.cards.map(\.id).description < b.interpretation.id + b.cards.map(\.id).description
         }
     }
 }

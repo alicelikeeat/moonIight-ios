@@ -22,14 +22,31 @@ final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
     /// Set while the sandbox / 3D world is on screen: it then turns freely
     /// between portrait and landscape (v1.63; it used to lock landscape).
     static var sandboxLandscape = false
+    private static var landlordRequests: Set<UUID> = []
 
     static var supported: UIInterfaceOrientationMask {
-        if sandboxLandscape || playerAllowsLandscape { return [.portrait, .landscapeLeft, .landscapeRight] }
+        if sandboxLandscape || playerAllowsLandscape || !landlordRequests.isEmpty { return [.portrait, .landscapeLeft, .landscapeRight] }
         return .portrait
     }
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         Self.supported
+    }
+
+    static func beginLandlord(_ id: UUID) {
+        landlordRequests.insert(id)
+        refreshGameOrientation()
+    }
+    static func endLandlord(_ id: UUID) {
+        landlordRequests.remove(id)
+        refreshGameOrientation()
+    }
+    private static func refreshGameOrientation() {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: supported)) { error in
+            print("Game orientation request declined: \(error.localizedDescription)")
+        }
     }
 
     /// Entering the sandbox allows both orientations (the screen follows the

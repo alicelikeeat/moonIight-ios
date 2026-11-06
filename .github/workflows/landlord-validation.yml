@@ -1,0 +1,46 @@
+name: Liquid landlord validation
+on:
+  push:
+    branches: [codex/landlord-liquid-2d]
+    paths: ['Landlord*.swift', 'Features/Landlord/**', 'MoonlightApp.swift', 'Moonlight-iOS.xcodeproj/**', 'MoonlightUITests/**', 'tests/landlord/**', 'scripts/fetch_depth_model.sh', '.github/workflows/landlord-validation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: landlord-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test classic and wild rules
+        run: |
+          mkdir -p build/landlord
+          swiftc -O -swift-version 6 LandlordRules.swift Features/Landlord/Domain/LandlordTableState.swift tests/landlord/main.swift -o build/landlord/rules-tests
+          build/landlord/rules-tests | tee build/landlord/rules.log
+          swiftc LandlordRules.swift CardMediaPolicy.swift TreasureRules.swift TreasureVideoSelectionModel.swift AppSearchIntent.swift tests/main.swift -o build/landlord/legacy-tests
+          build/landlord/legacy-tests | tee build/landlord/legacy.log
+          python3 scripts/audit_controls.py
+          git diff --exit-code -- docs/CONTROL_INVENTORY.md
+      - name: Fetch existing bundled depth-model dependency for app compilation
+        run: bash scripts/fetch_depth_model.sh
+      - name: Compile simulator application
+        run: |
+          set -o pipefail
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build/landlord/compile.log
+      - name: Test table orientation, visibility and complete games
+        timeout-minutes: 18
+        run: |
+          set -o pipefail
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(x["udid"] for group in json.load(sys.stdin)["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          xcrun simctl boot "$SIMULATOR_ID" || true
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO -only-testing:MoonlightUITests/LandlordLiquidTests CODE_SIGNING_ALLOWED=NO -resultBundlePath build/landlord/UI.xcresult test 2>&1 | tee build/landlord/ui.log
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Liquid-Landlord-validation
+          path: build/landlord
