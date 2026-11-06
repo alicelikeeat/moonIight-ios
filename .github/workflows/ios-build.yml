@@ -126,103 +126,6 @@ jobs:
           mkdir -p build
           python3 scripts/check_sources.py
           cat build/source-check.md >> "$GITHUB_STEP_SUMMARY"
-      - name: Boot iOS simulator
-        id: simulator
-        # ui_suite=none: compile and pure checks only, no simulator or UI tests.
-        if: steps.version.outputs.release != 'true' && inputs.ui_suite != 'none'
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
-          echo "id=$SIMULATOR_ID" >> "$GITHUB_OUTPUT"
-          # xcodebuild's first launch can sit for many minutes when the
-          # simulator service hub is not ready yet. Boot it here so that
-          # wait is not charged against the gesture-suite deadline.
-          xcrun simctl boot "$SIMULATOR_ID" || true
-          xcrun simctl bootstatus "$SIMULATOR_ID" -b
-      - name: Run RPG stage validation
-        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'rpg')
-        timeout-minutes: 35
-        run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSearchOpensStoryEditorAndDiagnosticsDirectly -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSideCombatAndDiagnostics -only-testing:MoonlightUITests/ScrollGestureTests/testRPGAuthoredCutsceneProducesFramesAndResumesMuted -only-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryEditorCanPreviewAndPublishBranch -only-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryChoicePersistsAndWaitsForRealWorldEvent -only-testing:MoonlightUITests/ScrollGestureTests/testRPGCombatRewardsPersistWithoutDuplicateDrop -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules -only-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement -only-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSharedEntityAndSafeDualProjection -only-testing:MoonlightUITests/ScrollGestureTests/testRPGMediaFramesBudgetLoopAndBackground -only-testing:MoonlightUITests/ScrollGestureTests/testRPGCellContentEditorGlassAndReopen -only-testing:MoonlightUITests/ScrollGestureTests/testSandboxLaunchControlCenterAndPortraitPages -only-testing:MoonlightUITests/ScrollGestureTests/testSandboxLoadFailureOffersNewWorld -only-testing:MoonlightUITests/ScrollGestureTests/testRPGGlassLabModesAndSample -resultBundlePath build/RPGTests.xcresult test
-      - name: Run V2.4.1 landlord tests
-        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'landlord')
-        timeout-minutes: 15
-        run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordClassicWholeGameAndNewRound -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordMediaBudgetFocusBackgroundAndModeCleanup -resultBundlePath build/V241Tests.xcresult test
-      - name: Run V2.3 wall playback and search tests
-        if: steps.version.outputs.release != 'true' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'directed')
-        timeout-minutes: 15
-        run: |
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testVideoWallSelectionLimitModesFocusAndCleanup -only-testing:MoonlightUITests/ScrollGestureTests/testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI -resultBundlePath build/V23Tests.xcresult test
-      - name: Run treasure browsing regression
-        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'treasure' || inputs.ui_suite == 'preview') }}
-        timeout-minutes: 15
-        shell: bash
-        env:
-          UI_SUITE: ${{ inputs.ui_suite }}
-        run: |
-          TESTS=(testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference)
-          if [[ "$UI_SUITE" == preview ]]; then TESTS=(testTreasureVideoPreviewCanPlayFreezeAndRememberPreference); fi
-          ONLY=()
-          for TEST_NAME in "${TESTS[@]}"; do ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/$TEST_NAME"); done
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination 'platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}' -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${ONLY[@]}" -resultBundlePath build/TreasureTests.xcresult test
-      - name: Run configuration UI regression
-        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'settings') }}
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
-          COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
-          ONLY=()
-          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
-            ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
-          done
-          # Keep configuration cases separate so scrolling still runs after a
-          # failure. Every suite remains blocking for the final job result.
-          xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test
-      - name: Run card scrolling UI tests
-        if: ${{ !cancelled() && steps.version.outputs.release != 'true' && steps.simulator.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'scroll') }}
-        timeout-minutes: 35
-        shell: bash
-        run: |
-          SIMULATOR_ID="${{ steps.simulator.outputs.id }}"
-          COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
-          SKIP=("-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSearchOpensStoryEditorAndDiagnosticsDirectly" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSideCombatAndDiagnostics" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGAuthoredCutsceneProducesFramesAndResumesMuted" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryEditorCanPreviewAndPublishBranch" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryChoicePersistsAndWaitsForRealWorldEvent" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGCombatRewardsPersistWithoutDuplicateDrop" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGMediaFramesBudgetLoopAndBackground" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSharedEntityAndSafeDualProjection" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement")
-          for TEST_NAME in testLandlordClassicWholeGameAndNewRound testLandlordMediaBudgetFocusBackgroundAndModeCleanup testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference testVideoWallSelectionLimitModesFocusAndCleanup testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI; do
-            SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
-          done
-          xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test
-      - name: Export UI review screenshots
-        if: always() && steps.version.outputs.release != 'true'
-        shell: bash
-        run: |
-          for RESULT in build/RPGTests.xcresult build/V241Tests.xcresult build/V23Tests.xcresult build/TreasureTests.xcresult build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
-            if [[ -f "$RESULT/Info.plist" ]]; then
-              xcrun xcresulttool export attachments --path "$RESULT" --output-path "build/ui-attachments/$(basename "$RESULT" .xcresult)"
-            fi
-          done
-          python3 scripts/export_review_images.py
-      - name: Upload UI review screenshots
-        if: always() && steps.version.outputs.release != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: UI-Review-v${{ steps.version.outputs.marketing }}
-          path: build/ui-review
-          if-no-files-found: ignore
-      - name: Upload gesture test results
-        if: always() && steps.version.outputs.release != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: ScrollGestureTests-v${{ steps.version.outputs.marketing }}
-          path: |
-            build/RPGTests.xcresult
-            build/V241Tests.xcresult
-            build/V23Tests.xcresult
-            build/TreasureTests.xcresult
-            build/SettingsTests*.xcresult
-            build/ScrollGestureTests.xcresult
-          if-no-files-found: ignore
       - name: Import Ad Hoc signing
         id: signing
         if: steps.version.outputs.device == 'true'
@@ -401,6 +304,143 @@ jobs:
       - name: Delete temporary keychain
         if: always() && steps.signing.outputs.keychain_path != ''
         run: security delete-keychain "${{ steps.signing.outputs.keychain_path }}"
+  # UI regression in three parallel shards. Each compiles once for testing
+  # and runs only its own tests, so the slow suites no longer queue on one
+  # simulator. Version tags (the IPA release) skip UI tests, as before.
+  ui-tests:
+    name: ui-tests (${{ matrix.shard }})
+    if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.ui_suite != 'none' && !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'docs-release-notes:')) }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [rpg, scroll, other]
+    steps:
+      - name: Decide whether this shard has tests to run
+        id: plan
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+          SUITE: ${{ inputs.ui_suite }}
+        run: |
+          case "$SHARD:$SUITE" in
+            *: | *:all | rpg:rpg | scroll:scroll | other:landlord | other:directed | other:treasure | other:preview | other:settings)
+              echo "shard=$SHARD" >> "$GITHUB_OUTPUT" ;;
+            *) echo "shard=none" >> "$GITHUB_OUTPUT"; echo "ui_suite=$SUITE has nothing for the $SHARD shard." ;;
+          esac
+      - uses: actions/checkout@v4
+        if: steps.plan.outputs.shard != 'none'
+      - name: Fetch on-device depth model weights
+        if: steps.plan.outputs.shard != 'none'
+        run: |
+          # Depth Anything V2 Small, Apple's Core ML conversion (Apache-2.0), pinned revision + SHA-256.
+          set -euo pipefail
+          DIR="Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights"
+          mkdir -p "$DIR"
+          URL="https://huggingface.co/apple/coreml-depth-anything-v2-small/resolve/cfef6f6f2a70783dedc0bfae40cecbc2052285d3/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights/weight.bin"
+          for attempt in 1 2 3; do curl -fsSL --retry 3 -o "$DIR/weight.bin" "$URL" && break || sleep 5; done
+          echo "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed  $DIR/weight.bin" | shasum -a 256 -c -
+          echo "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042  Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/model.mlmodel" | shasum -a 256 -c -
+      - name: Boot iOS simulator
+        id: simulator
+        if: steps.plan.outputs.shard != 'none'
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          echo "SIMULATOR_ID=$SIMULATOR_ID" >> "$GITHUB_ENV"
+          # Boot now so the simulator settles while the app compiles.
+          xcrun simctl boot "$SIMULATOR_ID" || true
+      - name: Compile for testing
+        id: compile
+        if: steps.simulator.outcome == 'success'
+        shell: bash
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO build-for-testing
+          # xcodebuild's first launch can sit for minutes if the simulator
+          # service is not ready, so wait here, outside the suite deadlines.
+          xcrun simctl bootstatus "$SIMULATOR_ID" -b
+      - name: Run RPG stage validation
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'rpg' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'rpg') }}
+        timeout-minutes: 35
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSearchOpensStoryEditorAndDiagnosticsDirectly -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSideCombatAndDiagnostics -only-testing:MoonlightUITests/ScrollGestureTests/testRPGAuthoredCutsceneProducesFramesAndResumesMuted -only-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryEditorCanPreviewAndPublishBranch -only-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryChoicePersistsAndWaitsForRealWorldEvent -only-testing:MoonlightUITests/ScrollGestureTests/testRPGCombatRewardsPersistWithoutDuplicateDrop -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules -only-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement -only-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen -only-testing:MoonlightUITests/ScrollGestureTests/testRPGSharedEntityAndSafeDualProjection -only-testing:MoonlightUITests/ScrollGestureTests/testRPGMediaFramesBudgetLoopAndBackground -only-testing:MoonlightUITests/ScrollGestureTests/testRPGCellContentEditorGlassAndReopen -only-testing:MoonlightUITests/ScrollGestureTests/testSandboxLaunchControlCenterAndPortraitPages -only-testing:MoonlightUITests/ScrollGestureTests/testSandboxLoadFailureOffersNewWorld -only-testing:MoonlightUITests/ScrollGestureTests/testRPGGlassLabModesAndSample -resultBundlePath build/RPGTests.xcresult test-without-building
+      - name: Run V2.4.1 landlord tests
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'other' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'landlord') }}
+        timeout-minutes: 15
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordClassicWholeGameAndNewRound -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordMediaBudgetFocusBackgroundAndModeCleanup -resultBundlePath build/V241Tests.xcresult test-without-building
+      - name: Run V2.3 wall playback and search tests
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'other' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'directed') }}
+        timeout-minutes: 15
+        run: |
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO -only-testing:MoonlightUITests/ScrollGestureTests/testVideoWallSelectionLimitModesFocusAndCleanup -only-testing:MoonlightUITests/ScrollGestureTests/testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI -resultBundlePath build/V23Tests.xcresult test-without-building
+      - name: Run treasure browsing regression
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'other' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'treasure' || inputs.ui_suite == 'preview') }}
+        timeout-minutes: 15
+        shell: bash
+        env:
+          UI_SUITE: ${{ inputs.ui_suite }}
+        run: |
+          TESTS=(testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference)
+          if [[ "$UI_SUITE" == preview ]]; then TESTS=(testTreasureVideoPreviewCanPlayFreezeAndRememberPreference); fi
+          ONLY=()
+          for TEST_NAME in "${TESTS[@]}"; do ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/$TEST_NAME"); done
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${ONLY[@]}" -resultBundlePath build/TreasureTests.xcresult test-without-building
+      - name: Run configuration UI regression
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'other' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'settings') }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
+          ONLY=()
+          for TEST_NAME in testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn; do
+            ONLY+=("-only-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
+          done
+          # Keep configuration cases separate so scrolling still runs after a
+          # failure. Every suite remains blocking for the final job result.
+          xcodebuild "${COMMON[@]}" -resultBundlePath build/SettingsTests.xcresult "${ONLY[@]}" test-without-building
+      - name: Run card scrolling UI tests
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'scroll' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'scroll') }}
+        timeout-minutes: 35
+        shell: bash
+        run: |
+          COMMON=(-project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO)
+          SKIP=("-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSearchOpensStoryEditorAndDiagnosticsDirectly" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSideCombatAndDiagnostics" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGAuthoredCutsceneProducesFramesAndResumesMuted" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryEditorCanPreviewAndPublishBranch" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGStoryChoicePersistsAndWaitsForRealWorldEvent" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGCombatRewardsPersistWithoutDuplicateDrop" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGMediaFramesBudgetLoopAndBackground" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSharedEntityAndSafeDualProjection" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGBuildUndoSaveAndReopen" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGSkeletonCanValidateExitAndPreserveOtherModules" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGWorldSeedChunksAndMovement" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGCellContentEditorGlassAndReopen" "-skip-testing:MoonlightUITests/ScrollGestureTests/testSandboxLaunchControlCenterAndPortraitPages" "-skip-testing:MoonlightUITests/ScrollGestureTests/testSandboxLoadFailureOffersNewWorld" "-skip-testing:MoonlightUITests/ScrollGestureTests/testRPGGlassLabModesAndSample")
+          for TEST_NAME in testLandlordClassicWholeGameAndNewRound testLandlordMediaBudgetFocusBackgroundAndModeCleanup testBackgroundImagesVideosAndEditorKeepCardScrolling testButtonBackgroundPlaylistPersists testConfiguredMenuPersistsAndShowsExtraActionInMore testContextLibraryNavigationCanPlayAndReturn testTreasureGridCanOpenHoldAndSwitchTwentyTimes testTreasureDragKeepsTouchAndPhysicsOwnership testTreasureVideoPreviewCanPlayFreezeAndRememberPreference testVideoWallSelectionLimitModesFocusAndCleanup testAssistantSearchRoutesTreasureAndTypedMediaWithoutAI; do
+            SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
+          done
+          xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test-without-building
+      - name: Export UI review screenshots
+        if: always() && steps.plan.outputs.shard != 'none'
+        shell: bash
+        run: |
+          for RESULT in build/RPGTests.xcresult build/V241Tests.xcresult build/V23Tests.xcresult build/TreasureTests.xcresult build/SettingsTests*.xcresult build/ScrollGestureTests.xcresult; do
+            if [[ -f "$RESULT/Info.plist" ]]; then
+              xcrun xcresulttool export attachments --path "$RESULT" --output-path "build/ui-attachments/$(basename "$RESULT" .xcresult)"
+            fi
+          done
+          python3 scripts/export_review_images.py
+      - name: Upload UI review screenshots
+        if: always() && steps.plan.outputs.shard != 'none'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UI-Review-${{ matrix.shard }}-run${{ github.run_number }}
+          path: build/ui-review
+          if-no-files-found: ignore
+      - name: Upload UI test results
+        if: always() && steps.plan.outputs.shard != 'none'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UITestResults-${{ matrix.shard }}-run${{ github.run_number }}
+          path: |
+            build/RPGTests.xcresult
+            build/V241Tests.xcresult
+            build/V23Tests.xcresult
+            build/TreasureTests.xcresult
+            build/SettingsTests*.xcresult
+            build/ScrollGestureTests.xcresult
+          if-no-files-found: ignore
   update-release-notes:
     if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'docs-release-notes:')
     runs-on: ubuntu-latest
