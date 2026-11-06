@@ -196,6 +196,7 @@ struct Glass3DCapBadge: View {
             .offset(x: 2, y: 2)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+    }
 }
 
 @available(iOS 18.0, *)
