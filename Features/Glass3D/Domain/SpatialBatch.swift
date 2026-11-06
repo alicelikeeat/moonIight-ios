@@ -8,7 +8,9 @@ import Foundation
 enum SpatialBatch {
     /// Blocks that can be merged: still (no moving group) and without media.
     static func batchable(_ block: SpatialBlock, pivots: [String: SpatialVector]) -> Bool {
-        block.media == nil && block.groupID.flatMap { pivots[$0] } == nil
+        // Roofs and walls toggle per building. A merged mesh cannot hide one of them.
+        if block.hybridPart == .roof || block.hybridPart == .wall { return false }
+        return block.media == nil && block.groupID.flatMap { pivots[$0] } == nil
     }
 
     /// 32×32 chunk index (8×8 chunks), the same as the ground and culling.

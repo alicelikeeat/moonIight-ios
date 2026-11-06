@@ -15,6 +15,8 @@ struct SpatialProjection: Equatable, Sendable {
     var viewSize: CGSize
     /// Camera turn (degrees): decides screen "up" when looking straight down.
     var yaw: Double = 0
+    /// Set for the pixel RPG camera. Nil keeps the perspective projection.
+    var orthographicSpan: Double? = nil
 
     private var basis: (forward: SpatialVector, right: SpatialVector, up: SpatialVector) {
         let forward = Self.normalize(target - eye)
@@ -36,18 +38,31 @@ struct SpatialProjection: Equatable, Sendable {
         let d = point - eye
         let z = Self.dot(d, forward)
         guard z > 0.05 else { return nil }
-        let f = 1 / tan(fieldOfView * .pi / 360)
         let aspect = Double(viewSize.width / viewSize.height)
-        let x = Self.dot(d, right) / z * f / aspect, y = Self.dot(d, up) / z * f
+        let x: Double
+        let y: Double
+        if let span = orthographicSpan, span > 0.5 {
+            let halfV = span / 2, halfH = halfV * max(aspect, 0.001)
+            x = Self.dot(d, right) / halfH
+            y = Self.dot(d, up) / halfV
+        } else {
+            let f = 1 / tan(fieldOfView * .pi / 360)
+            x = Self.dot(d, right) / z * f / max(aspect, 0.001)
+            y = Self.dot(d, up) / z * f
+        }
         return (CGPoint(x: (x + 1) / 2 * Double(viewSize.width), y: (1 - y) / 2 * Double(viewSize.height)), z)
     }
 
-    /// The ray from the eye through a screen point.
+    /// The ray from the eye through a screen point. Orthographic rays stay parallel.
     func ray(through point: CGPoint) -> (origin: SpatialVector, direction: SpatialVector) {
         let (forward, right, up) = basis
-        let f = 1 / tan(fieldOfView * .pi / 360)
         let aspect = Double(viewSize.width / max(1, viewSize.height))
         let nx = Double(point.x / max(1, viewSize.width)) * 2 - 1, ny = 1 - Double(point.y / max(1, viewSize.height)) * 2
+        if let span = orthographicSpan, span > 0.5 {
+            let halfV = span / 2, halfH = halfV * aspect
+            return (eye + right * (nx * halfH) + up * (ny * halfV), forward)
+        }
+        let f = 1 / tan(fieldOfView * .pi / 360)
         let direction = Self.normalize(forward + right * (nx * aspect / f) + up * (ny / f))
         return (eye, direction)
     }

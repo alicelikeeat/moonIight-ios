@@ -3,8 +3,10 @@ import Foundation
 // V2.8 2.5D glass world. The same WorldState as the 2D sandbox gains a
 // `spatial` part (schema 11): free-height glass blocks, building groups,
 // motion, plants, creatures, bosses, pickups and the generator record.
-// Coordinates: x, y are map cells (0..<256, y == the 2D map's z); z is
-// height in cell units. Everything here is pure and unit tested.
+// Coordinates: x, y are map cells inside one 256×256 region (y == the 2D
+// map's z); z is height in cell units. Continent addresses live beside
+// this, in HybridWorld — a block is never stored at x = 4096.
+// Everything here is pure and unit tested.
 
 struct SpatialVector: Codable, Equatable, Hashable, Sendable {
     var x: Double, y: Double, z: Double
@@ -29,7 +31,14 @@ struct SpatialGlass: Codable, Equatable, Hashable, Sendable {
     /// v1.81: stone / metal / crystal for structure (nil: glass). Optional
     /// so earlier saves decode unchanged.
     var surface: SpatialSurface? = nil
-    var valid: Bool { (tintHex.map { $0.count == 6 && $0.allSatisfy(\.isHexDigit) } ?? true) && density.isFinite && (0.1...0.9).contains(density) }
+    /// Hybrid world: semantic id (`GlassSemantic`) and `GlassRenderRole`.
+    /// Nil on older saves; the legacy glass path stays in use until a preset is chosen.
+    var semantic: String? = nil
+    var role: String? = nil
+    var valid: Bool {
+        (tintHex.map { $0.count == 6 && $0.allSatisfy(\.isHexDigit) } ?? true) && density.isFinite && (0.1...0.9).contains(density) &&
+            (semantic?.count ?? 0) <= 64 && (role?.count ?? 0) <= 32
+    }
     static let clear = SpatialGlass()
     static func tinted(_ hex: String, density: Double = 0.45) -> SpatialGlass { SpatialGlass(tintHex: hex, density: density) }
 }
@@ -95,6 +104,8 @@ struct SpatialBlock: Codable, Equatable, Identifiable, Sendable {
     var origin = SpatialOrigin.user
     /// A button block toggles its target group's motion when touched.
     var buttonTarget: String?
+    /// Hybrid town: roof and wall blocks stay out of merged meshes so a view can hide them.
+    var hybridPart: HybridVisualPart? = nil
 
     var top: Double { elevation + thickness }
     static let maximumHeight = 64.0
@@ -232,6 +243,8 @@ struct SpatialWorld: Codable, Equatable, Sendable {
     /// was generated from (both optional; earlier saves open unchanged).
     var atmosphere: SpatialAtmosphere?
     var director: WorldDirectorRecord?
+    /// Hybrid view mode, focused region and roof groups. Nil in older saves.
+    var hybrid: HybridWorldSave?
 
     static func blank() -> SpatialWorld { SpatialWorld() }
 
@@ -278,6 +291,7 @@ struct SpatialWorld: Codable, Equatable, Sendable {
         for clip in characterList.flatMap({ $0.clips.values }) { for id in clip.bindingIDs where !bindings.contains(id) { throw RPGWorldError.missingReference } }
         if let atmosphere, !atmosphere.valid { throw RPGWorldError.invalidState }
         if let director, !director.blueprint.validate().isEmpty || director.intentSummary.count > 2000 { throw RPGWorldError.invalidState }
+        if let hybrid, !hybrid.valid { throw RPGWorldError.invalidState }
         try history.validate()
     }
 }
@@ -327,9 +341,12 @@ struct SpatialDiff: Codable, Equatable, Sendable {
     var atmosphereAfter: SpatialAtmosphere?
     var directorBefore: WorldDirectorRecord?
     var directorAfter: WorldDirectorRecord?
+    /// Hybrid view and occluders travel with an edit so undoing the town removes them too.
+    var hybridBefore: HybridWorldSave?
+    var hybridAfter: HybridWorldSave?
 
     var size: Int { blocks.count + groups.count + motions.count + plants.count + creatures.count + pickups.count + templates.count }
-    var isEmpty: Bool { size == 0 && generationBefore == generationAfter && atmosphereBefore == atmosphereAfter && directorBefore == directorAfter }
+    var isEmpty: Bool { size == 0 && generationBefore == generationAfter && atmosphereBefore == atmosphereAfter && directorBefore == directorAfter && hybridBefore == hybridAfter }
 
     static func between(_ old: SpatialWorld, _ new: SpatialWorld, title: String) -> SpatialDiff {
         func changes<V>(_ a: [V], _ b: [V]) -> [SpatialChange<V>] where V: Codable & Equatable & Sendable & Identifiable, V.ID == String {
@@ -346,7 +363,8 @@ struct SpatialDiff: Codable, Equatable, Sendable {
                            templates: changes(old.templates, new.templates),
                            generationBefore: old.generation, generationAfter: new.generation,
                            atmosphereBefore: old.atmosphere, atmosphereAfter: new.atmosphere,
-                           directorBefore: old.director, directorAfter: new.director)
+                           directorBefore: old.director, directorAfter: new.director,
+                           hybridBefore: old.hybrid, hybridAfter: new.hybrid)
     }
 
     /// Applies (or reverts) this diff to `world`.
@@ -369,6 +387,7 @@ struct SpatialDiff: Codable, Equatable, Sendable {
         world.generation = inverse ? generationBefore : generationAfter
         if atmosphereBefore != atmosphereAfter { world.atmosphere = inverse ? atmosphereBefore : atmosphereAfter }
         if directorBefore != directorAfter { world.director = inverse ? directorBefore : directorAfter }
+        if hybridBefore != hybridAfter { world.hybrid = inverse ? hybridBefore : hybridAfter }
     }
 }
 

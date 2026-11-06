@@ -68,6 +68,9 @@ struct Glass3DPending {
     @Published var tool = Glass3DTool.select { didSet { pending = nil; trackPoints = []; if tool != .select { picked = nil } } }
     /// Moves every frame while following the player, so not published.
     var camera = SpatialCameraState()
+    /// Pixel overhead vs third-person. The world coordinates do not change with it.
+    @Published var viewMode = WorldViewMode.spatial3D
+    var pixelProfile = PixelRPGProfile()
     @Published var pending: Glass3DPending? { didSet { renderer.showPreview(pending?.preview ?? [], conflicts: pending?.conflicts ?? []) } }
     @Published var selection: [String] = [] {
         didSet { renderer.showSelection(selectedBlocks); if !selection.isEmpty && picked != nil { picked = nil } }
@@ -198,6 +201,9 @@ struct Glass3DPending {
     private var renderTimer = 0.0
     private var dirtyRuntime = false
     private var loadedChunks: Set<Int> = []
+    /// Continent index for the open 256×256 world. Neighbours are recorded, not built.
+    private var regionManager = WorldRegionManager(graph: WorldGraph.continentIndex())
+    private var streamedRegion: RegionAddress?
     /// v1.82: blocks, ground and plants are only re-checked when the world
     /// changed or the camera reached other chunks — before, every quarter
     /// second compared every block (a hitch in big worlds).
@@ -226,6 +232,10 @@ struct Glass3DPending {
         camera.target = world.player.position
         health = session.playerHealth; stamina = session.playerStamina
         geometryChanged()
+        if let saved = world.hybrid {
+            viewMode = saved.viewMode
+            renderer.setGlassPreset(saved.viewMode == .pixelRPG ? .pixel : .spatial)
+        }
     }
 
     // MARK: Lifecycle
@@ -317,7 +327,15 @@ struct Glass3DPending {
         // v1.82: creatures follow every frame (they used to jump 4 times a second).
         renderer.placeCreatures(world.creatures)
         if mode == .play {
-            if abs(look.x) > 0.01 || abs(look.y) > 0.01 {
+            if viewMode == .pixelRPG {
+                if abs(look.x) > 0.01 {
+                    pixelProfile.yaw = (pixelProfile.yaw + look.x * 90 * dt).truncatingRemainder(dividingBy: 360)
+                    manualCameraUntil = world.clock + 1.5
+                }
+                if abs(look.y) > 0.01 {
+                    pixelProfile.verticalSpan = min(PixelRPGProfile.maximumSpan, max(PixelRPGProfile.minimumSpan, pixelProfile.verticalSpan * (1 + look.y * 0.85 * dt)))
+                }
+            } else if abs(look.x) > 0.01 || abs(look.y) > 0.01 {
                 camera.yaw = (camera.yaw + look.x * 150 * dt).truncatingRemainder(dividingBy: 360)
                 camera.tilt = SpatialCameraRules.clampTilt(camera.tilt - look.y * 70 * dt)
                 manualCameraUntil = world.clock + 1.5
@@ -326,7 +344,19 @@ struct Glass3DPending {
         } else {
             stepGlide(dt: dt)
         }
-        renderer.place(camera: camera, eye: SpatialCameraRules.position(camera) + effects.shakeOffset(dt: dt))
+        let shake = effects.shakeOffset(dt: dt)
+        let eye: SpatialVector
+        if viewMode == .pixelRPG {
+            var presented = camera
+            presented.yaw = pixelProfile.yaw
+            eye = DualPerspectiveCamera.pixelEye(target: camera.target, profile: pixelProfile) + shake
+            renderer.place(camera: presented, eye: eye, orthographicSpan: pixelProfile.clampedSpan)
+        } else {
+            eye = SpatialCameraRules.position(camera) + shake
+            renderer.place(camera: camera, eye: eye, orthographicSpan: nil)
+        }
+        let occlusion = OcclusionManager.resolve(player: world.player.position, cameraEye: eye, mode: viewMode, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
+        renderer.applyOcclusion(hidden: occlusion.hidden, faded: occlusion.faded)
         updateCharacters()
         characters.generated.tick(Float(dt))
         renderer.animate(clock: world.clock)
@@ -430,6 +460,14 @@ struct Glass3DPending {
         let target = world.player.position
         let k = min(1, dt * 6)
         camera.target = SpatialVector.lerp(camera.target, SpatialVector(target.x, target.y, target.z), k)
+        if viewMode == .pixelRPG {
+            guard thirdPerson else { return }
+            let manual = world.clock < manualCameraUntil
+            if !manual, let id = lockedTarget, let foe = world.creatures.first(where: { $0.id == id }) {
+                pixelProfile.yaw = ThirdPersonCamera.approach(pixelProfile.yaw, ThirdPersonCamera.combatYaw(player: target, target: foe.position), rate: 140, dt: dt)
+            }
+            return
+        }
         guard thirdPerson else { return }
         let manual = world.clock < manualCameraUntil
         // Combat: keep the player and the locked target in view.
@@ -633,9 +671,25 @@ struct Glass3DPending {
         camera.distance = min(80, max(SpatialCameraRules.minDistance, camera.distance.isFinite ? camera.distance : 8))
         camera.target = SpatialVector(min(255.5, max(0.5, camera.target.x)), min(255.5, max(0.5, camera.target.y)), camera.target.z)
     }
-    func zoom(by factor: Double) { glide = nil; camera.distance /= max(0.2, factor); preferredDistance = camera.distance; clampCamera() }
-    func turn(by degrees: Double) { glide = nil; camera.yaw = (camera.yaw + degrees).truncatingRemainder(dividingBy: 360); manualCameraUntil = world.clock + 1.5; clampCamera() }
-    func tilt(by degrees: Double) { glide = nil; camera.tilt += degrees; manualCameraUntil = world.clock + 1.5; clampCamera() }
+    func zoom(by factor: Double) {
+        glide = nil
+        if viewMode == .pixelRPG {
+            pixelProfile.verticalSpan = min(PixelRPGProfile.maximumSpan, max(PixelRPGProfile.minimumSpan, pixelProfile.verticalSpan / max(0.2, factor)))
+            return
+        }
+        camera.distance /= max(0.2, factor); preferredDistance = camera.distance; clampCamera()
+    }
+    func turn(by degrees: Double) {
+        glide = nil
+        if viewMode == .pixelRPG { pixelProfile.yaw = (pixelProfile.yaw + degrees).truncatingRemainder(dividingBy: 360) }
+        else { camera.yaw = (camera.yaw + degrees).truncatingRemainder(dividingBy: 360) }
+        manualCameraUntil = world.clock + 1.5
+        clampCamera()
+    }
+    func tilt(by degrees: Double) {
+        guard viewMode != .pixelRPG else { return }
+        glide = nil; camera.tilt += degrees; manualCameraUntil = world.clock + 1.5; clampCamera()
+    }
     /// Free camera (design): fly up and down, look at the selection, look
     /// straight down, come back to the character.
     func fly(_ dz: Double) { glide = nil; camera.target = camera.target + SpatialVector(0, 0, dz); clampCamera() }
@@ -742,6 +796,7 @@ struct Glass3DPending {
     private var visibleMediaIDs: Set<String> = []
 
     private func refreshVisible() {
+        streamRegion()
         clampCamera()
         let reach = camera.distance * (1 + sin(camera.tilt * .pi / 180) * 2) + 12
         let center = camera.target
@@ -798,6 +853,20 @@ struct Glass3DPending {
 
     private func rebuildAll() { renderer.showAtmosphere(world.atmosphere); geometryChanged(); visibleDirty = true; refreshVisible() }
 
+    /// Keeps the 4096-region window pointed at whichever 256×256 map is open.
+    /// Loading a neighbour does not generate it; that waits on a later terrain pass.
+    private func streamRegion() {
+        let column = world.hybrid?.regionColumn ?? CentralTown.address.column
+        let row = world.hybrid?.regionRow ?? CentralTown.address.row
+        let address = RegionAddress(column: column, row: row)
+        guard address != streamedRegion else { return }
+        let localX = min(WorldGeometry.width - 1, max(0, Int(world.player.position.x.rounded(.down)) ?? 0))
+        let localY = min(WorldGeometry.width - 1, max(0, Int(world.player.position.y.rounded(.down)) ?? 0))
+        guard let global = WorldRegionManager.compose(address: address, localX: localX, localY: localY) else { return }
+        streamedRegion = address
+        _ = regionManager.updateStreaming(around: global)
+    }
+
     // MARK: Saving
 
     /// Runtime state (positions, creature health, clock) is saved every few
@@ -843,7 +912,50 @@ struct Glass3DPending {
 
     /// The camera as maths (shared by RealityKit, picking and native glass).
     var projection: SpatialProjection {
-        SpatialProjection(eye: SpatialCameraRules.position(camera), target: camera.target, fieldOfView: SpatialCameraRules.fieldOfView, viewSize: viewSize, yaw: camera.yaw)
+        var model = DualPerspectiveCamera(mode: viewMode, target: camera.target, spatialTilt: camera.tilt, spatialYaw: camera.yaw, spatialDistance: camera.distance, pixel: pixelProfile)
+        model.pixel.verticalSpan = pixelProfile.clampedSpan
+        return model.projection(viewSize: viewSize)
+    }
+
+    /// One tap: pixel overhead or third-person. Position, collision and clock stay.
+    func togglePerspective() {
+        var model = DualPerspectiveCamera(mode: viewMode, target: camera.target, spatialTilt: camera.tilt, spatialYaw: camera.yaw, spatialDistance: camera.distance, pixel: pixelProfile)
+        var next = world
+        let before = PerspectiveContinuity.capture(next)
+        model.applyToggle(to: &next)
+        let after = PerspectiveContinuity.capture(next)
+        guard before == after else { return }
+        guard session.commitSpatial(next) else { notice = session.notice; return }
+        world = next
+        viewMode = model.mode
+        pixelProfile = model.pixel
+        camera.yaw = model.spatialYaw
+        renderer.setGlassPreset(model.mode == .pixelRPG ? .pixel : .spatial)
+        glassFade.restart(); nativeGlass.reset()
+        rebuildAll()
+        notice = model.mode == .pixelRPG
+            ? L10n.t("像素俯视 · 还在原地 · 捏合缩放", "Pixel view · same spot · pinch to zoom")
+            : L10n.t("第三人称 3D · 还在原地", "Third-person 3D · same spot")
+    }
+
+    /// Drops the central town into the current region without covering player-edited solids.
+    func placeCentralTown() {
+        if world.blocks.contains(where: { $0.id.hasPrefix(CentralTown.idPrefix) }) {
+            notice = L10n.t("月光中央城已经在这里", "Central Town is already placed")
+            camera.target = SpatialVector(128.5, 128.5, camera.target.z)
+            return
+        }
+        let previous = renderer.glassPreset
+        renderer.setGlassPreset(viewMode == .pixelRPG ? .pixel : .spatial)
+        let revisionBefore = revision
+        edit(L10n.t("月光中央城", "Central Town")) { world in CentralTown.stamp(onto: &world) }
+        guard revision != revisionBefore else {
+            renderer.setGlassPreset(previous)
+            rebuildAll()
+            return
+        }
+        camera.target = world.player.position
+        visibleDirty = true
     }
 
     /// What is under a screen point, nearest first (ray through the world).
@@ -898,6 +1010,7 @@ struct Glass3DPending {
     /// quality level gives it a budget.
     /// Short HUD text: face count when on, otherwise why it is off.
     var nativeGlassStatus: String {
+        if viewMode == .pixelRPG { return L10n.t("像素视角用地图材质", "Pixel view uses world materials") }
         if !Self.nativeGlassAvailable { return L10n.t("原生玻璃需 iOS 26", "Native glass needs iOS 26") }
         if !nativeGlassEnabled { return L10n.t("原生玻璃已关闭", "Native glass off") }
         if reduceTransparency { return L10n.t("降低透明度：无原生玻璃", "Reduce Transparency: no native glass") }
@@ -906,7 +1019,7 @@ struct Glass3DPending {
         let rate = Int(glassMeter.publishesPerSecond.rounded())
         return L10n.t("原生玻璃面 \(nativeGlass.faces) · 更新 \(rate)/s", "\(nativeGlass.faces) native glass faces · \(rate) updates/s")
     }
-    var nativeGlassActive: Bool { Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && !powerSaving && SpatialFaces.budget(quality) > 0 }
+    var nativeGlassActive: Bool { viewMode != .pixelRPG && Self.nativeGlassAvailable && nativeGlassEnabled && !reduceTransparency && !powerSaving && SpatialFaces.budget(quality) > 0 }
     /// v1.78: the system's Reduce Transparency setting (set by the view).
     /// Turns the block glass off for as long as it is on, without touching
     /// the saved "native glass" switch.
