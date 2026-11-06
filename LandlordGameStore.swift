@@ -16,15 +16,17 @@ import SwiftUI
     private var visible = false
     private var recorded: UUID?
     private let defaults: UserDefaults
+    private let legacyMode: Bool
     private let writer: VersionedJSONWriter<LandlordGame>
     private var saveSequence = 0
     var mapping: CardMediaMapping {
         CardMediaMapping(cards: Array(0..<54), media: preferences.mediaIDs, game: game.id, cycle: preferences.cycle)
     }
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, legacy: Bool = false) {
         self.defaults = defaults
+        legacyMode = legacy
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Games/Landlord")
-        let file = VersionedJSONFile<LandlordGame>(directory: directory, name: "session", schemaVersion: 1, maximumBytes: 256 << 10)
+        let file = VersionedJSONFile<LandlordGame>(directory: directory, name: legacy ? "legacy-session" : "session", schemaVersion: 1, maximumBytes: 256 << 10)
         var revision = 0, blocked = false
         var restored: LandlordGame?
         var loadingMessage = ""
@@ -44,7 +46,8 @@ import SwiftUI
         preferences = defaults.data(forKey: "landlord-media-v241").flatMap { try? JSONDecoder().decode(CardMediaPreferences.self, from: $0) } ?? CardMediaPreferences()
         table = defaults.data(forKey: "landlord-table-v1").flatMap { try? JSONDecoder().decode(LandlordTablePreferences.self, from: $0) } ?? LandlordTablePreferences()
         table.normalize(); table.begin(game.id)
-        if resetTesting { table = LandlordTablePreferences(); table.begin(game.id) }
+        if resetTesting { table = LandlordTablePreferences(); table.begin(game.id); preferences = CardMediaPreferences() }
+        if legacy { table.nextGameWild = false }
         summaries = Array((defaults.array(forKey: "landlord-scores-v241") as? [[Int]] ?? []).filter { $0.count == 3 }.suffix(3))
         recorded = defaults.string(forKey: "landlord-recorded-round").flatMap(UUID.init(uuidString:))
         message = loadingMessage
@@ -104,7 +107,7 @@ import SwiftUI
             guard !Task.isCancelled, let self else { return }
             thinking = false
             guard game == snapshot, selection == selected else { return }
-            if choices.count > 1 { interpretations = choices; paused = true; schedule() }
+            if choices.count > 1 && !legacyMode { interpretations = choices; paused = true; schedule() }
             else if let choice = choices.first { commit(choice) }
             else { message = "当前选牌不符合牌型或不能压过上一手。" }
         }
@@ -120,7 +123,7 @@ import SwiftUI
     func pass() { changed(game.pass(player: 0)) }
     func newGame() {
         task?.cancel(); dismissChoices()
-        game = Self.freshGame(wild: table.nextGameWild); table.begin(game.id)
+        game = Self.freshGame(wild: !legacyMode && table.nextGameWild); table.begin(game.id)
         selection = []; automatic = false; message = "新一局，请叫分。"; refresh()
     }
     private func changed(_ success: Bool) {

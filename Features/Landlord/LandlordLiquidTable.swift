@@ -38,6 +38,7 @@ struct LandlordLiquidTable: View {
     @StateObject private var media = CardMediaCoordinator()
     @State private var panel: LandlordPanel?
     @State private var newGameConfirmation = false
+    @State private var newGameAfterPanel = false
     @State private var inspectionFocus: Int?
     @State private var initialInspection: Int?
     @State private var placements: [LandlordMediaPlacement] = []
@@ -48,6 +49,11 @@ struct LandlordLiquidTable: View {
     @State private var orientationID = UUID()
     @State private var selectionOrigin: [Int]?
     @State private var visited: Set<Int> = []
+    @State private var handWidth: CGFloat = 320
+    @State private var diagnostic = ""
+    @State private var mediaFixtureReady = false
+    @State private var tableViewport = CGRect.zero
+    @State private var suppressTapUntil: TimeInterval = 0
     @GestureState private var handDragging = false
     @Namespace private var movement
     private var assets: [MediaEntry] { app.mediaStore.items.filter { $0.kind != .embed && $0.remoteURL?.isFileURL == true } }
@@ -59,7 +65,7 @@ struct LandlordLiquidTable: View {
             ZStack {
                 Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
                 LinearGradient(colors: [.teal.opacity(0.12), .clear, .indigo.opacity(0.10)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
-                if !landscape && geometry.size.height < 590 {
+                if !landscape && geometry.size.height < 650 {
                     ScrollView { portrait.frame(height: 640) }
                 } else if landscape { horizontal }
                 else { portrait }
@@ -75,6 +81,27 @@ struct LandlordLiquidTable: View {
             .accessibilityIdentifier("landlord-liquid-layout")
         }
         .onPreferenceChange(LandlordMediaPlacementKey.self) { placements = $0; refreshMedia() }
+        .task {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--landlord-media-ui-tests") {
+                var imported: [String] = []
+                for name in ["kn_adventurer_walk", "kn_female_walk", "kn_player_walk"] {
+                    if let url = Bundle.main.url(forResource: name, withExtension: "gif", subdirectory: "Glass3DStarter"),
+                       let entry = await app.mediaStore.importLocalFile(url, title: name, kind: .image) { imported.append(entry.id) }
+                }
+                if imported.count == 3 {
+                    store.preferences.mediaIDs = imported; store.preferences.style = .media
+                    for i in 0..<3 { store.table.profiles[i].avatarMediaID = imported[i] }
+                    mediaFixtureReady = true; configureMedia(); refreshMedia()
+                }
+            }
+            guard ProcessInfo.processInfo.arguments.contains("--landlord-liquid-ui-tests") else { return }
+            while !Task.isCancelled {
+                diagnostic = "phase=\(store.game.phase.rawValue);valid=\(store.game.validated ? 1 : 0);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);wild=\(store.game.wildcardRank ?? 0);players=\(media.decoderCount);frames=\(media.renderedFrames);fixture=\(mediaFixtureReady ? 1 : 0)"
+                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+            }
+            #endif
+        }
         .onAppear {
             visible = true
             MoonlightOrientationDelegate.beginLandlord(orientationID)
@@ -90,6 +117,7 @@ struct LandlordLiquidTable: View {
             if value != .active { media.stop(); effect = nil } else { configureMedia(); refreshMedia() }
         }
         .onChange(of: panel) { _ in store.dismissChoices(); pause(); configureMedia(); refreshMedia() }
+        .onChange(of: newGameConfirmation) { _ in pause() }
         .onChange(of: store.automatic) { _ in store.refresh() }
         .onChange(of: store.table) { _ in
             if case .hand(let seat) = panel, !store.table.canInspectHand(seat) { inspectionFocus = nil }
@@ -114,7 +142,10 @@ struct LandlordLiquidTable: View {
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
             withAnimation(animate ? .easeOut : nil) { effect = nil }
         }
-        .sheet(item: $panel) { panel in
+        .sheet(item: $panel, onDismiss: {
+            inspectionFocus = nil
+            if newGameAfterPanel { newGameAfterPanel = false; requestNewGame() }
+        }) { panel in
             NavigationStack {
                 panelView(panel)
                     .navigationBarTitleDisplayMode(.inline)
@@ -145,7 +176,7 @@ struct LandlordLiquidTable: View {
             if ProcessInfo.processInfo.arguments.contains("--landlord-liquid-ui-tests") {
                 Text("对局状态").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false)
                     .accessibilityIdentifier("landlord-liquid-probe")
-                    .accessibilityValue("phase=\(store.game.phase.rawValue);valid=\(store.game.validated ? 1 : 0);history=\(store.game.history.count);cards=\(store.game.hands.flatMap { $0 }.count);wild=\(store.game.wildcardRank ?? 0);players=\(media.decoderCount)")
+                    .accessibilityValue(diagnostic)
             }
             #endif
         }
@@ -171,6 +202,7 @@ struct LandlordLiquidTable: View {
             header
             HStack(alignment: .top, spacing: 8) { opponent(2, compact: true); opponent(1, compact: true) }
             status
+            bottomCards
             currentTarget
             historyTable.frame(minHeight: 110, maxHeight: .infinity)
             handArea(compact: false)
@@ -182,7 +214,7 @@ struct LandlordLiquidTable: View {
             header
             HStack(alignment: .top, spacing: 8) {
                 opponent(2, compact: false).frame(width: 125)
-                VStack(spacing: 3) { status; currentTarget; historyTable }
+                VStack(spacing: 3) { status; bottomCards; currentTarget; historyTable }
                 opponent(1, compact: false).frame(width: 125)
             }.frame(maxHeight: .infinity)
             handArea(compact: true)
@@ -235,11 +267,26 @@ struct LandlordLiquidTable: View {
             } else { Text("自由出牌 · 已出 \(store.game.history.reduce(0) { $0 + $1.cards.count })/54 张").font(.caption2).foregroundStyle(.secondary) }
         }.frame(height: 20)
     }
+    private var bottomCards: some View {
+        HStack(spacing: 6) {
+            Text("底牌").foregroundStyle(.secondary)
+            if store.game.landlord == nil { Text("▧  ▧  ▧").accessibilityLabel("三张底牌，叫分后公开") }
+            else {
+                ForEach(store.game.bottom) { card in
+                    Text(card.label).foregroundStyle(card.isRed ? Color.red : Color.primary)
+                }
+            }
+        }.font(.caption2.weight(.semibold)).frame(height: 17)
+    }
     private var historyTable: some View {
         LandlordHistoryTable(game: store.game, expanded: $store.table.expanded, offsets: $store.table.offsets,
-            card: { card, play in AnyView(cardView(card, concealed: false, role: .central, z: play.id * 100 + 100 + card.id, effective: play.interpretation?.substitutions[card.id])
+            card: { card, play in AnyView(cardView(card, concealed: false, role: .central, z: play.id * 100 + 100 + card.id, effective: play.interpretation?.substitutions[card.id], clip: tableViewport)
                 .matchedGeometryEffect(id: card.id, in: movement, isSource: false)) }, inspect: { panel = .pile($0) })
             .animation(animate ? .spring(response: 0.35, dampingFraction: 0.85) : nil, value: store.game.history.count)
+            .background { GeometryReader { g in
+                Color.clear.onAppear { tableViewport = g.frame(in: .global) }
+                    .onChange(of: g.frame(in: .global)) { tableViewport = $0; refreshMedia() }
+            } }
     }
     private func handArea(compact: Bool) -> some View {
         HStack(alignment: .center, spacing: 6) {
@@ -254,7 +301,9 @@ struct LandlordLiquidTable: View {
                             handRow(indices.map { cards[$0] }, width: geometry.size.width, compact: compact)
                         }
                     }
-                }.frame(height: compact ? 58 : (store.game.hands[0].count > max(6, min(12, Int(max(240, UIScreen.main.bounds.width - 20) / 30))) ? 118 : 58))
+                    .onAppear { handWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { handWidth = $0 }
+                }.frame(height: CGFloat(max(1, LandlordTableLayout.handRows(cardCount: store.game.hands[0].count, width: Double(handWidth), compact: compact).count)) * 64)
             }
         }.accessibilityIdentifier("landlord-hand")
     }
@@ -268,8 +317,8 @@ struct LandlordLiquidTable: View {
                     .matchedGeometryEffect(id: card.id, in: movement, isSource: true)
                     .offset(x: CGFloat(i) * step, y: store.selection.contains(card.id) ? -5 : 0)
                     .zIndex(Double(i))
-                    .onTapGesture { store.choose(card.id) }
-                    .onLongPressGesture { initialInspection = card.id; panel = .hand(0) }
+                    .onTapGesture { if Date.timeIntervalSinceReferenceDate > suppressTapUntil { store.choose(card.id) } }
+                    .onLongPressGesture { suppressTapUntil = Date.timeIntervalSinceReferenceDate + 0.7; initialInspection = card.id; panel = .hand(0) }
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { store.choose(card.id) }
                     .accessibilityIdentifier(store.table.canInspectHand(0) ? "landlord-hand-\(card.id)" : "landlord-concealed-hand")
@@ -314,19 +363,19 @@ struct LandlordLiquidTable: View {
 
     }
 
-    private func cardView(_ card: LandlordCard, concealed: Bool, role: CardPreviewRole, z: Int, effective: Int? = nil) -> some View {
+    private func cardView(_ card: LandlordCard, concealed: Bool, role: CardPreviewRole, z: Int, effective: Int? = nil, clip: CGRect? = nil) -> some View {
         let mediaID = !concealed && store.preferences.style == .media ? store.mapping.assignments[card.id] : nil
         return LandlordTableCard(card: card, concealed: concealed, wild: store.game.wildcardRank, effective: effective,
             feed: mediaID.flatMap { media.feed($0) }, selected: role == .hand && store.selection.contains(card.id))
             .background { if let mediaID { GeometryReader { geometry in
-                Color.clear.preference(key: LandlordMediaPlacementKey.self, value: [.init(card: card.id, media: mediaID, rect: geometry.frame(in: .global), role: role, z: z)])
+                Color.clear.preference(key: LandlordMediaPlacementKey.self, value: [.init(card: card.id, media: mediaID, rect: geometry.frame(in: .global), role: role, z: z, viewport: clip)])
             } } }
     }
     private func requestNewGame() {
         if store.game.phase == .finished || store.game.phase == .redeal { store.newGame() }
         else { newGameConfirmation = true }
     }
-    private func pause() { store.paused = panel != nil || !store.interpretations.isEmpty; store.refresh() }
+    private func pause() { store.paused = panel != nil || newGameConfirmation || newGameAfterPanel || !store.interpretations.isEmpty; store.refresh() }
     private func deal() {
         dealt = false
         Task { @MainActor in await Task.yield(); dealt = true }
@@ -344,7 +393,11 @@ struct LandlordLiquidTable: View {
             } else { media.update([], focus: nil) }
             return
         }
-        let source = placements.filter { !$0.rect.intersection(viewport).isNull }
+        let source = placements.compactMap { item -> LandlordMediaPlacement? in
+            let clipped = item.rect.intersection(viewport).intersection(item.viewport ?? viewport)
+            guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return nil }
+            return .init(card: item.card, media: item.media, rect: clipped, role: item.role, z: item.z)
+        }
         let candidates = source.map { value -> CardMediaCandidate in
             let covers = source.filter { $0.z > value.z }.map(\.rect)
             let area = CardMediaPolicy.visibleArea(value.rect.intersection(viewport), coveredBy: covers)
@@ -411,7 +464,7 @@ struct LandlordLiquidTable: View {
                 Toggle("下一局使用单癞子", isOn: $store.table.nextGameWild).accessibilityIdentifier("landlord-next-wild")
                 Text("只在开始新一局时生效。当前：" + (store.game.wildcardRank.map { "癞子 " + LandlordCard.rankLabel($0) } ?? "普通斗地主"))
                     .font(.caption).foregroundStyle(.secondary)
-                Button("开始新一局") { panel = nil; requestNewGame() }.accessibilityIdentifier("landlord-settings-new-game")
+                Button("开始新一局") { newGameAfterPanel = true; panel = nil }.accessibilityIdentifier("landlord-settings-new-game")
                 Button("查看完整规则") { panel = .rules }
             }
             Section("动态与牌面") {

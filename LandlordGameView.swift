@@ -16,7 +16,7 @@ struct LegacyLandlordGameView: View {
     @EnvironmentObject private var model: AppModel
     @State private var applicationActive = UIApplication.shared.applicationState == .active
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @StateObject private var store = LandlordGameStore()
+    @StateObject private var store = LandlordGameStore(legacy: true)
     @StateObject private var media = CardMediaCoordinator()
     @State private var settings = false
     @State private var history = false

@@ -70,6 +70,15 @@ private actor CardFrameRenderer {
     }
     private(set) static var ownedPlayers = 0
     private var slots: [String: Slot] = [:]
+    private struct GIFSlot {
+        let frames: RPGGIFFrames
+        let started: CFTimeInterval
+        let resume: Double
+        var index = -1
+    }
+    private var gifs: [String: GIFSlot] = [:]
+    private var gifTasks: [String: Task<Void, Never>] = [:]
+    private var desiredGIFs: Set<String> = []
     private var feeds: [String: CardMediaFrameFeed] = [:]
     private var cache = CardFrameLRU<UIImage>(maxEntries: 24, maxCost: 12 * 1024 * 1024)
     private let renderer = CardFrameRenderer()
@@ -98,9 +107,9 @@ private actor CardFrameRenderer {
     private(set) var focusID: Int?
     @Published private(set) var audible = false
     @Published private(set) var notice = ""
-    var decoderCount: Int { slots.count }
+    var decoderCount: Int { slots.count + gifs.count + gifTasks.count }
     var isUnderPressure: Bool { pressure }
-    var cacheBytes: Int { cache.cost }
+    var cacheBytes: Int { cache.cost + gifs.values.reduce(0) { $0 + $1.frames.cost } }
     var advancing: Int { slots.values.filter { $0.player.rate > 0 && $0.player.currentTime().seconds > 0.05 }.count }
     var muted: Bool { slots.values.allSatisfy { $0.player.isMuted } }
     init() {}
@@ -209,8 +218,28 @@ private actor CardFrameRenderer {
     }
     private func reconcile() {
         let visible = active ? candidates.filter { $0.visibility != .hidden && (focusID == nil || $0.cardID == focusID) } : []
-        let videos = visible.filter { entries[$0.mediaID]?.kind == .video && !failed.contains($0.mediaID) && !completed.contains($0.mediaID) }
-        let desired = Set(CardMediaPolicy.scheduled(videos, budget: budget))
+        let dynamic = visible.filter { candidate in
+            guard let entry = entries[candidate.mediaID] else { return false }
+            return (entry.kind == .video || isGIF(entry)) && !failed.contains(candidate.mediaID) && !completed.contains(candidate.mediaID)
+        }
+        let scheduled = Set(CardMediaPolicy.scheduled(dynamic, budget: budget))
+        let desired = Set(scheduled.filter { entries[$0]?.kind == .video })
+        desiredGIFs = scheduled.subtracting(desired)
+        for id in Set(gifs.keys).union(gifTasks.keys).subtracting(desiredGIFs) { releaseGIF(id) }
+        for id in desiredGIFs where gifs[id] == nil && gifTasks[id] == nil {
+            guard let url = entries[id]?.remoteURL else { continue }
+            let epoch = generation
+            gifTasks[id] = Task { [weak self] in
+                let decoded = await Task.detached(priority: .utility) { RPGGIFDecoder.decode(url) }.value
+                guard !Task.isCancelled, let self, generation == epoch, desiredGIFs.contains(id) else { return }
+                gifTasks[id] = nil
+                if let decoded {
+                    let seconds = snapshots.values.first { $0.mediaID == id }?.seconds ?? 0
+                    gifs[id] = GIFSlot(frames: decoded, started: CACurrentMediaTime(), resume: seconds)
+                } else { failed.insert(id); notice = "部分 GIF 无法解码，已保留封面或默认牌面。" }
+                reconcile()
+            }
+        }
         for id in Array(slots.keys) where !desired.contains(id) { release(id) }
         for id in desired where slots[id] == nil {
             guard let url = entries[id]?.remoteURL, ["file", "http", "https"].contains(url.scheme ?? "") else { continue }
@@ -229,12 +258,24 @@ private actor CardFrameRenderer {
         }
         for candidate in visible { enqueuePoster(candidate.mediaID) }
         startPoster()
-        if slots.isEmpty { timer?.invalidate(); timer = nil }
+        if slots.isEmpty && gifs.isEmpty { timer?.invalidate(); timer = nil }
         else if timer == nil {
             let timer = Timer(timeInterval: 1.0 / 12, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in self?.tick() }
             }
             RunLoop.main.add(timer, forMode: .common); self.timer = timer
+        }
+    }
+    private func isGIF(_ entry: MediaEntry) -> Bool {
+        entry.kind == .image && entry.remoteURL?.isFileURL == true && entry.remoteURL?.pathExtension.lowercased() == "gif"
+    }
+    private func releaseGIF(_ id: String) {
+        gifTasks.removeValue(forKey: id)?.cancel()
+        if let gif = gifs.removeValue(forKey: id) {
+            let seconds = gif.resume + CACurrentMediaTime() - gif.started
+            for key in Array(snapshots.keys) where snapshots[key]?.mediaID == id {
+                snapshots[key]?.seconds = max(0, seconds); snapshots[key]?.frameReference = cache.contains(id) ? id : nil
+            }
         }
     }
     private func release(_ id: String) {
@@ -253,6 +294,17 @@ private actor CardFrameRenderer {
         if reduced && now - lastTick < 1.0 / 6 { return }
         lastTick = now
         let epoch = generation
+        for (id, gif) in Array(gifs) {
+            let elapsed = gif.resume + now - gif.started
+            let looping = loopingMediaIDs?.contains(id) != false
+            let index = RPGGIFTiming.frameIndex(elapsed: elapsed, delays: gif.frames.delays, loop: looping)
+            if index != gif.index {
+                gifs[id]?.index = index
+                renderedFrames += 1
+                publish(CardRendered(image: gif.frames.images[index]), id: id)
+            }
+            if !looping && elapsed >= gif.frames.delays.reduce(0, +) { completed.insert(id); releaseGIF(id); reconcile() }
+        }
         for (id, slot) in Array(slots) {
             if slot.player.currentItem?.status == .failed {
                 failed.insert(id); notice = "部分素材无法播放，已保留封面或经典牌面。"; release(id); continue
@@ -297,6 +349,7 @@ private actor CardFrameRenderer {
     func stop(clear: Bool = false) {
         active = false; resumeAfterInterruption = false; interrupted = false; generation = UUID(); mute()
         timer?.invalidate(); timer = nil
+        for id in Set(gifs.keys).union(gifTasks.keys) { releaseGIF(id) }; desiredGIFs = []
         for id in Array(slots.keys) { release(id) }
         for task in posterTasks.values { task.cancel() }; posterTasks.removeAll(); posterQueue.removeAll()
         for token in observations { NotificationCenter.default.removeObserver(token) }; observations.removeAll()

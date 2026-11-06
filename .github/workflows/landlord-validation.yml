@@ -2,7 +2,7 @@ name: Liquid landlord validation
 on:
   push:
     branches: [codex/landlord-liquid-2d]
-    paths: ['Landlord*.swift', 'Features/Landlord/**', 'MoonlightApp.swift', 'Moonlight-iOS.xcodeproj/**', 'MoonlightUITests/**', 'tests/landlord/**', 'scripts/fetch_depth_model.sh', '.github/workflows/landlord-validation.yml']
+    paths: ['Landlord*.swift', 'CardMediaCoordinator.swift', 'Features/Landlord/**', 'MoonlightApp.swift', 'Moonlight-iOS.xcodeproj/**', 'MoonlightUITests/**', 'tests/landlord/**', 'scripts/fetch_depth_model.sh', '.github/workflows/landlord-validation.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
           SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(x["udid"] for group in json.load(sys.stdin)["devices"].values() for x in group if x["name"].startswith("iPhone")))')
           xcrun simctl boot "$SIMULATOR_ID" || true
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
-          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO -only-testing:MoonlightUITests/LandlordLiquidTests CODE_SIGNING_ALLOWED=NO -resultBundlePath build/landlord/UI.xcresult test 2>&1 | tee build/landlord/ui.log
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO -only-testing:MoonlightUITests/LandlordLiquidTests -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordClassicWholeGameAndNewRound -only-testing:MoonlightUITests/ScrollGestureTests/testLandlordMediaBudgetFocusBackgroundAndModeCleanup CODE_SIGNING_ALLOWED=NO -resultBundlePath build/landlord/UI.xcresult test 2>&1 | tee build/landlord/ui.log
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4

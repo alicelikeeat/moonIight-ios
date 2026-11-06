@@ -6,6 +6,7 @@ struct LandlordMediaPlacement: Equatable {
     let rect: CGRect
     let role: CardPreviewRole
     let z: Int
+    var viewport: CGRect? = nil
 }
 struct LandlordMediaPlacementKey: PreferenceKey {
     static let defaultValue: [LandlordMediaPlacement] = []
@@ -209,33 +210,49 @@ struct LandlordCardInspector: View {
     @State private var index = 0
     private var current: LandlordCard? { cards.isEmpty ? nil : cards[min(index, cards.count - 1)] }
     var body: some View {
-        VStack(spacing: 12) {
-            if let current {
-                Text(concealed ? "手牌已遮挡" : "\(current.label) · 第 \(min(index, cards.count - 1) + 1)/\(cards.count) 张").font(.headline)
-                LandlordTableCard(card: current, concealed: concealed, wild: wild, effective: substitutions[current.id], feed: concealed ? nil : feed(current.id))
-                    .frame(width: 185, height: 254)
-                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                        if let next = LandlordTableLayout.cardIndex(x: Double(value.location.x), width: 185, count: cards.count, cardWidth: 0) { index = next }
-                    })
-                    .accessibilityIdentifier("landlord-inspected-card")
-                Text("在大牌上滑动逐张检查，也可点下方列表").font(.caption).foregroundStyle(.secondary)
-                ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(cards.enumerated()), id: \.element.id) { i, c in
-                            Button { index = i } label: {
-                                LandlordTableCard(card: c, concealed: concealed, wild: wild, effective: substitutions[c.id], selected: index == i)
-                                    .frame(width: 48, height: 70)
-                            }.buttonStyle(.plain)
-                        }
-                    }.padding(8)
-                }
-            } else { Text("这家的牌已出完").foregroundStyle(.secondary) }
+        GeometryReader { g in
+            if g.size.width > g.size.height {
+                HStack(spacing: 14) {
+                    largeCard(width: min(170, g.size.height * 0.65))
+                    VStack(alignment: .leading, spacing: 8) {
+                        heading
+                        Text("在大牌上滑动逐张检查").font(.caption).foregroundStyle(.secondary)
+                        ScrollView { LazyVGrid(columns: [.init(.adaptive(minimum: 50))], spacing: 8) { thumbnails } }
+                    }
+                }.padding(10)
+            } else {
+                VStack(spacing: 12) {
+                    heading
+                    largeCard(width: min(185, g.size.height * 0.42))
+                    Text("在大牌上滑动逐张检查，也可点下方列表").font(.caption).foregroundStyle(.secondary)
+                    ScrollView(.horizontal) { HStack(spacing: 6) { thumbnails }.padding(8) }
+                }.padding()
+            }
         }
-        .padding()
         .onAppear { index = initialID.flatMap { id in cards.firstIndex { $0.id == id } } ?? 0; updateFocus() }
         .onChange(of: index) { _ in updateFocus() }
         .onChange(of: concealed) { _ in updateFocus() }
         .onDisappear { focus(nil) }
+    }
+    private var heading: some View {
+        Text(concealed ? "手牌已遮挡" : current.map { "\($0.label) · 第 \(min(index, cards.count - 1) + 1)/\(cards.count) 张" } ?? "这家的牌已出完").font(.headline)
+    }
+    @ViewBuilder private func largeCard(width: CGFloat) -> some View {
+        if let current {
+            LandlordTableCard(card: current, concealed: concealed, wild: wild, effective: substitutions[current.id], feed: concealed ? nil : feed(current.id))
+                .frame(width: width, height: width * 1.37)
+                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    if let next = LandlordTableLayout.cardIndex(x: Double(value.location.x), width: Double(width), count: cards.count, cardWidth: 0) { index = next }
+                }).accessibilityIdentifier("landlord-inspected-card")
+        }
+    }
+    private var thumbnails: some View {
+        ForEach(Array(cards.enumerated()), id: \.element.id) { i, c in
+            Button { index = i } label: {
+                LandlordTableCard(card: c, concealed: concealed, wild: wild, effective: substitutions[c.id], selected: index == i)
+                    .frame(width: 48, height: 70)
+            }.buttonStyle(.plain)
+        }
     }
     private func updateFocus() { focus(concealed ? nil : current?.id) }
 }

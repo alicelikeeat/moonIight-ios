@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class LandlordLiquidTests: XCTestCase {
     @MainActor private func openTable(_ app: XCUIApplication) {
@@ -8,6 +9,7 @@ final class LandlordLiquidTests: XCTestCase {
         let mode = app.buttons["treasure-landlord-mode"]
         XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.tap()
         XCTAssertTrue(app.buttons["landlord-seat-0"].waitForExistence(timeout: 12))
+        wait(app) { $0.contains("valid=1") }
     }
     @MainActor private func launch() -> XCUIApplication {
         XCUIDevice.shared.orientation = .portrait
@@ -35,6 +37,11 @@ final class LandlordLiquidTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["landlord-hidden-hand-1"].exists)
         let initial = probe(app)
         snapshot(app, "landlord-portrait")
+        let hand = app.buttons["landlord-hand-0"]
+        hand.press(forDuration: 0.65)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "landlord-inspected-card").firstMatch.waitForExistence(timeout: 5))
+        done(app)
+        XCTAssertEqual(hand.value as? String, "未选", "Long press inspection must not toggle selection")
         settings(app); app.buttons["landlord-reveal-all"].tap(); done(app)
         XCTAssertTrue(app.staticTexts["landlord-visible-hand-1"].waitForExistence(timeout: 5))
         app.buttons["landlord-seat-1"].tap()
@@ -79,4 +86,24 @@ final class LandlordLiquidTests: XCTestCase {
         app.launch(); openTable(app)
         wait(app) { $0 == final }
     }
+    @MainActor func testSharedGIFBudgetAndModalPause() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--scroll-ui-tests", "--landlord-liquid-ui-tests", "--landlord-media-ui-tests"]
+        app.launch(); openTable(app)
+        func number(_ key: String, in value: String) -> Int {
+            let field = value.split(separator: ";").first { $0.hasPrefix(key + "=") }
+            return field.flatMap { Int($0.dropFirst(key.count + 1)) } ?? -1
+        }
+        wait(app) { $0.contains("fixture=1") && number("frames", in:$0) > 2 && (1...2).contains(number("players", in:$0)) }
+        let before = number("frames", in:probe(app))
+        settings(app)
+        wait(app) { number("players", in:$0) == 0 }
+        done(app)
+        wait(app) { number("frames", in:$0) > before && (1...2).contains(number("players", in:$0)) }
+        snapshot(app, "landlord-shared-gif-budget")
+        XCUIDevice.shared.press(.home); app.activate()
+        wait(app) { number("frames", in:$0) > before && (1...2).contains(number("players", in:$0)) }
+    }
+
 }
