@@ -60,6 +60,19 @@ struct LandlordLiquidTable: View {
     private var animate: Bool { store.table.animations && !reduceMotion }
 
     var body: some View {
+        presentedContent
+        .overlay(alignment: .topLeading) {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--landlord-liquid-ui-tests") {
+                Text("对局状态").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false)
+                    .accessibilityIdentifier("landlord-liquid-probe")
+                    .accessibilityValue(diagnostic)
+            }
+            #endif
+        }
+    }
+
+    private var tableLayout: some View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
             ZStack {
@@ -80,6 +93,9 @@ struct LandlordLiquidTable: View {
             .accessibilityValue(landscape ? "横屏" : "竖屏")
             .accessibilityIdentifier("landlord-liquid-layout")
         }
+    }
+    private var observedContent: some View {
+        tableLayout
         .onPreferenceChange(LandlordMediaPlacementKey.self) { placements = $0; refreshMedia() }
         .task {
             #if DEBUG
@@ -142,6 +158,9 @@ struct LandlordLiquidTable: View {
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
             withAnimation(animate ? .easeOut : nil) { effect = nil }
         }
+    }
+    private var presentedContent: some View {
+        observedContent
         .sheet(item: $panel, onDismiss: {
             inspectionFocus = nil
             if newGameAfterPanel { newGameAfterPanel = false; requestNewGame() }
@@ -170,15 +189,6 @@ struct LandlordLiquidTable: View {
                 }.navigationTitle("选择本次出牌解释")
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { store.dismissChoices(); pause() } } }
             }.presentationDetents([.medium, .large])
-        }
-        .overlay(alignment: .topLeading) {
-            #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--landlord-liquid-ui-tests") {
-                Text("对局状态").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false)
-                    .accessibilityIdentifier("landlord-liquid-probe")
-                    .accessibilityValue(diagnostic)
-            }
-            #endif
         }
     }
 
