@@ -71,7 +71,7 @@ struct MediaCardHitAnchor: UIViewRepresentable {
 /// Whether the feed a card sits in is the one on screen. 首页 keeps 推荐 and
 /// 发现 mounted together (opacity 0 for the hidden one, to keep its scroll
 /// position), so a hidden card must leave the accessibility tree and the hit
-/// registry itself: a container's accessibilityHidden does not reach it.
+/// registry itself, and carry a different identifier for UI tests.
 private struct MoonlightFeedActiveKey: EnvironmentKey { static let defaultValue = true }
 extension EnvironmentValues {
     var moonlightFeedActive: Bool {

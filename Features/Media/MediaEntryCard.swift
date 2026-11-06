@@ -66,7 +66,9 @@ struct MediaEntryCard: View {
         ))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.title)
-        .accessibilityIdentifier("media-card-\(entry.id)")
+        // A card in the hidden feed (推荐 / 发现 stay mounted together) gets its
+        // own identifier: UI tests still find accessibilityHidden elements.
+        .accessibilityIdentifier(feedActive ? "media-card-\(entry.id)" : "hidden-media-card-\(entry.id)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { onSelect() }
         .accessibilityHidden(!feedActive)

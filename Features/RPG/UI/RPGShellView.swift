@@ -351,7 +351,9 @@ struct RPGShellView: View {
         #endif
     }
     @ViewBuilder private func stickCluster(size: CGFloat) -> some View {
-        if usesTestPad { movementPad.buttonStyle(MoonGlassButtonStyle()) } else {
+        // The test pad leaves the hierarchy under the control center: UI tests
+        // still find accessibilityHidden elements, and the pad holds no state.
+        if usesTestPad { if !controlCenter { movementPad.buttonStyle(MoonGlassButtonStyle()) } } else {
             HStack(alignment: .bottom, spacing: 6) {
                 RPGJoystick(session: session, size: size)
                 Button { session.returnToSpawn() } label: {
@@ -645,8 +647,6 @@ struct RPGShellView: View {
     private func moveButton(_ title: String, _ dx: Int, _ dz: Int) -> some View {
         Button(title) { session.move(dx: dx, dz: dz) }.frame(width: 44, height: 44)
             .accessibilityLabel("移动 \(dx), \(dz)").accessibilityIdentifier("rpg-move-\(dx)-\(dz)")
-            // The world container's accessibilityHidden does not reach these.
-            .accessibilityHidden(controlCenter)
     }
 }
 
