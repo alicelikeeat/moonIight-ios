@@ -865,7 +865,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 self.notice = L10n.t("世界已保存 · 修订 \(snapshot.revision)", "World saved · revision \(snapshot.revision)"); self.saveState = .saved
                 MoonlightWidgetBridge.publish(MoonlightWidgetBridge.snapshot(
                     title: self.worldTitle, health: snapshot.player.health, stamina: snapshot.player.stamina,
-                    shards: snapshot.inventory["moon-shard", default: 0], revision: snapshot.revision, spatial: snapshot.spatial), leaving: leaving)
+                    shards: snapshot.inventory["moon-shard", default: 0], revision: Int(clamping: snapshot.revision), spatial: snapshot.spatial), leaving: leaving)
             } catch {
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }; self.notice = error.localizedDescription
                 self.saveState = .failed(error.localizedDescription)
