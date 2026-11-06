@@ -645,6 +645,8 @@ struct RPGShellView: View {
     private func moveButton(_ title: String, _ dx: Int, _ dz: Int) -> some View {
         Button(title) { session.move(dx: dx, dz: dz) }.frame(width: 44, height: 44)
             .accessibilityLabel("移动 \(dx), \(dz)").accessibilityIdentifier("rpg-move-\(dx)-\(dz)")
+            // The world container's accessibilityHidden does not reach these.
+            .accessibilityHidden(controlCenter)
     }
 }
 

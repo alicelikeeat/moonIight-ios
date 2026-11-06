@@ -16,7 +16,7 @@ import UniformTypeIdentifiers
         // keep the global hold out of the scroll view's arbitration.
         let hit = window.hitTest(point, with: nil)
         return markers.allObjects.contains { marker in
-            guard marker.window === window, !marker.isHidden else { return false }
+            guard marker.window === window, marker.active, !marker.isHidden else { return false }
             let frame = marker.convert(marker.bounds, to: window)
             guard frame.width > 1, frame.height > 1, frame.contains(point) else { return false }
             guard let hit else { return true }
@@ -41,7 +41,9 @@ import UniformTypeIdentifiers
     }
 
     static func center(for id: String) -> CGPoint? {
-        guard let marker = markers.allObjects.first(where: { $0.entryID == id }), let window = marker.window else { return nil }
+        // 推荐 and 发现 stay mounted together and can show the same entry; only
+        // the feed on screen counts.
+        guard let marker = markers.allObjects.first(where: { $0.entryID == id && $0.active }), let window = marker.window else { return nil }
         let frame = marker.convert(marker.bounds, to: window)
         return CGPoint(x: frame.midX, y: frame.midY)
     }
@@ -49,6 +51,8 @@ import UniformTypeIdentifiers
 
 final class MediaCardHitMarker: UIView {
     var entryID = ""
+    /// False while the card's feed is mounted but hidden (opacity 0).
+    var active = true
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
@@ -59,8 +63,21 @@ final class MediaCardHitMarker: UIView {
 
 struct MediaCardHitAnchor: UIViewRepresentable {
     let entryID: String
+    var active = true
     func makeUIView(context: Context) -> MediaCardHitMarker { MediaCardHitMarker() }
-    func updateUIView(_ view: MediaCardHitMarker, context: Context) { view.entryID = entryID }
+    func updateUIView(_ view: MediaCardHitMarker, context: Context) { view.entryID = entryID; view.active = active }
+}
+
+/// Whether the feed a card sits in is the one on screen. 首页 keeps 推荐 and
+/// 发现 mounted together (opacity 0 for the hidden one, to keep its scroll
+/// position), so a hidden card must leave the accessibility tree and the hit
+/// registry itself: a container's accessibilityHidden does not reach it.
+private struct MoonlightFeedActiveKey: EnvironmentKey { static let defaultValue = true }
+extension EnvironmentValues {
+    var moonlightFeedActive: Bool {
+        get { self[MoonlightFeedActiveKey.self] }
+        set { self[MoonlightFeedActiveKey.self] = newValue }
+    }
 }
 
 struct NativeMediaCardInteractions: ViewModifier {

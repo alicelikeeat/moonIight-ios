@@ -326,11 +326,12 @@ struct RootView: View {
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--sandbox-launch-ui-tests") {
                 // Layout orientation as the app sees it, for the navigation tests.
+                // The reader must span the window: a 2×2 frame around it always read as portrait.
                 GeometryReader { geometry in
-                    Text("方向").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false)
+                    Text("方向").font(.system(size: 1)).opacity(0.01).frame(width: 2, height: 2)
                         .accessibilityIdentifier("app-orientation")
                         .accessibilityValue(geometry.size.width > geometry.size.height ? "landscape" : "portrait")
-                }.frame(width: 2, height: 2).allowsHitTesting(false)
+                }.ignoresSafeArea().allowsHitTesting(false)
             }
             if ProcessInfo.processInfo.arguments.contains("--background-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-video-ui-tests") || ProcessInfo.processInfo.arguments.contains("--treasure-wall-ui-tests") {
                 Text(backgroundStore.uiTestReady ? "背景测试就绪" : "背景准备中")
@@ -585,6 +586,7 @@ struct RootView: View {
                     .opacity(model.selectedTab == .home ? 1 : 0)
                     .allowsHitTesting(model.selectedTab == .home)
                     .accessibilityHidden(model.selectedTab != .home)
+                    .environment(\.moonlightFeedActive, model.selectedTab == .home)
                 if discoverMounted || model.selectedTab == .discover {
                     refreshable(.discover) {
                         DiscoverView(query: $discoveryQuery, onSelect: { activePlayer = $0 }, onSources: {
@@ -612,6 +614,7 @@ struct RootView: View {
                     .opacity(model.selectedTab == .discover ? 1 : 0)
                     .allowsHitTesting(model.selectedTab == .discover)
                     .accessibilityHidden(model.selectedTab != .discover)
+                    .environment(\.moonlightFeedActive, model.selectedTab == .discover)
                 }
             }
         }

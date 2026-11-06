@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 struct MediaEntryCard: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.moonlightFeedActive) private var feedActive
     let entry: MediaEntry
     let height: CGFloat
     var isSelected = false
@@ -52,7 +53,7 @@ struct MediaEntryCard: View {
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? MoonStyle.accent : .white.opacity(0.55), lineWidth: isSelected ? 2 : 1))
         .shadow(color: .black.opacity(0.055), radius: 10, y: 4)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .background { MediaCardHitAnchor(entryID: entry.id).allowsHitTesting(false).accessibilityHidden(true) }
+        .background { MediaCardHitAnchor(entryID: entry.id, active: feedActive).allowsHitTesting(false).accessibilityHidden(true) }
         .modifier(NativeMediaCardInteractions(
             holdEnabled: model.cardLongPressEnabled,
             onTap: onSelect,
@@ -68,6 +69,7 @@ struct MediaEntryCard: View {
         .accessibilityIdentifier("media-card-\(entry.id)")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { onSelect() }
+        .accessibilityHidden(!feedActive)
     }
 
     private func activateLongPress(at location: CGPoint) {
