@@ -8,7 +8,7 @@
         AD85000000000000000000D2 = {isa = PBXBuildFile; fileRef = AD85000000000000000000D1; };
         AD8500000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Landlord/Domain/LandlordTableState.swift; sourceTree = "<group>"; };
         AD8500000000000000000002 = {isa = PBXBuildFile; fileRef = AD8500000000000000000001; };
-        AD8500000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Landlord/LandlordGameView.swift; sourceTree = "<group>"; };
+        AD8500000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Landlord/LandlordLiquidTable.swift; sourceTree = "<group>"; };
         AD8500000000000000000004 = {isa = PBXBuildFile; fileRef = AD8500000000000000000003; };
         AD8500000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Features/Landlord/LandlordTableComponents.swift; sourceTree = "<group>"; };
         AD8500000000000000000006 = {isa = PBXBuildFile; fileRef = AD8500000000000000000005; };
