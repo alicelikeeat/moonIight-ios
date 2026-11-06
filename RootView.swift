@@ -196,11 +196,13 @@ struct RootView: View {
         .universalLongPress(target: .page(for: model.selectedTab))
         .overlay(alignment: .bottom) {
             // The sandbox is full screen: its own control center replaces the bar.
+            // Opacity 0 alone takes the bar out of the accessibility tree; an
+            // explicit accessibilityHidden modifier (even false) brought it back
+            // for UI tests and made the hidden bar count as hittable.
             tabBar.zIndex(100)
                 .opacity(navigationVisible && !blindMode && model.selectedTab != .sandbox ? 1 : 0)
                 .offset(y: navigationVisible ? 0 : 28)
                 .allowsHitTesting(navigationVisible && !blindMode && model.selectedTab != .sandbox)
-                .accessibilityHidden(model.selectedTab == .sandbox)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
         // The visible circles are deliberately decorative so their glass can
@@ -210,7 +212,6 @@ struct RootView: View {
             priorityNavigationLayer.zIndex(1_000)
                 .opacity(navigationVisible && !blindMode && model.selectedTab != .sandbox ? 1 : 0)
                 .allowsHitTesting(navigationVisible && !blindMode && model.selectedTab != .sandbox)
-                .accessibilityHidden(model.selectedTab == .sandbox)
                 .animation(.easeOut(duration: 0.28), value: navigationVisible)
         }
         // Observe taps without covering the feed with an invisible hit target.
