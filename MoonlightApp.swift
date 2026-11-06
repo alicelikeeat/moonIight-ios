@@ -41,12 +41,29 @@ final class MoonlightOrientationDelegate: NSObject, UIApplicationDelegate {
         // opt in exercise the rotation itself.
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--rpg-ui-tests") && !arguments.contains("--sandbox-landscape-ui-tests") { return }
+        let pinned = arguments.contains("--sandbox-landscape-ui-tests")
+        #else
+        let pinned = false
         #endif
         guard sandboxLandscape != landscape else { return }
         sandboxLandscape = landscape
-        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        // A mask that still includes portrait leaves a portrait simulator
+        // where it is. The landscape UI test has to ask for landscape itself.
+        applySandboxGeometry(pinned: pinned, landscape: landscape)
+    }
+
+    private static func applySandboxGeometry(pinned: Bool, landscape: Bool, attempt: Int = 0) {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else {
+            guard attempt < 8 else { return }
+            Task { @MainActor in
+                guard sandboxLandscape == landscape else { return }
+                applySandboxGeometry(pinned: pinned, landscape: landscape, attempt: attempt + 1)
+            }
+            return
+        }
         for window in scene.windows { window.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations() }
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: supported)) { error in
+        let orientations: UIInterfaceOrientationMask = pinned ? (landscape ? .landscape : .portrait) : supported
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { error in
             print("Orientation request declined: \(error.localizedDescription)")
         }
     }
