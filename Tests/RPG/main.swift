@@ -3098,50 +3098,143 @@ func hybridWorldV2() {
     camera.toggle()
     check(camera.mode == .spatial3D && rayReaches(camera.projection(viewSize: size), sample), "3D projection hits that same world point")
 
-    var world = SpatialWorld()
-    let edited = SpatialBlock(id: "user-wall", x: 110, y: 136, elevation: 0, thickness: 1, origin: .user)
-    world.blocks = [edited]
-    world.edit("town") { CentralTown.stamp(onto: &$0) }
-    check(world.blocks.contains { $0.id == "user-wall" && $0.origin == .user }, "player-edited blocks stay when the town is placed")
-    check(!world.blocks.contains { $0.id == "moonlight-town:nw:w:110:136:0" }, "the town does not pave over that edit")
-    check(SpatialWorldBuilder.layer(of: "moonlight-town:spire:r:122:160") == nil, "town ids are not World Director layers")
-    check((try? world.validate(bindings: [])) != nil, "central town validates inside the 256 region")
-    let geometry = SpatialGeometry(blocks: world.blocks, plants: world.plants)
-    check(!geometry.blocked(x: 128.5, y: 128.5, z: 0) && geometry.support(x: 128.5, y: 128.5, z: 0).height == 0, "the crossing stays walkable at ground height")
-    let spire = world.hybrid?.occluders.first { $0.id == "spire" }
-    check(spire != nil, "the spire publishes an occluder")
-    if let spire {
-        let doorX = Double((spire.minX + spire.maxX) / 2) + 0.5
-        check(!geometry.blocked(x: doorX, y: Double(spire.minY) + 0.5, z: 0), "the spire door is walkable")
-        check(geometry.blocked(x: Double(spire.minX) + 0.5, y: Double(spire.minY) + 0.5, z: 0), "the spire wall still blocks")
-        let indoors = SpatialVector(doorX, Double(spire.minY + spire.maxY) / 2, 0)
-        let eye = SpatialVector(indoors.x, Double(spire.minY) - 12, 24)
-        let pixel = OcclusionManager.resolve(player: indoors, cameraEye: eye, mode: .pixelRPG, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
-        check(spire.roofIDs.allSatisfy { pixel.hidden.contains($0) }, "pixel view hides the roof overhead")
-        check(geometry.ceiling(x: indoors.x, y: indoors.y, z: 0) != nil, "the hidden roof still has collision")
-        let spatial = OcclusionManager.resolve(player: indoors, cameraEye: eye, mode: .spatial3D, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
-        check(spatial.hidden.isEmpty && !spatial.faded.isEmpty, "3D keeps the roof and fades the camera-side walls")
-        let outside = OcclusionManager.resolve(player: SpatialVector(128.5, 128.5, 0), cameraEye: eye, mode: .pixelRPG, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
-        check(outside.hidden.isEmpty, "leaving the building restores the roof")
+    // Golden World · Architecture Kit: one grid standard, modules become ordinary blocks.
+    let kitHouse = KitBuildingSpec(key: "t", name: "测试屋", kind: .house, x0: 20, y0: 20, width: 8, depth: 6, storeys: 2, roof: .gable, door: .south)
+    let kitPieces = KitAssembler.building(kitHouse)
+    check(kitHouse.valid && !kitPieces.isEmpty && Set(kitPieces.map(\.tag)).count == kitPieces.count, "a kit house assembles with unique piece tags")
+    check(KitMetrics.storey == 3 && KitMetrics.doorHeight == 2 && kitHouse.eaves == 6, "grid standard: 3-cell storeys, 2-cell doors")
+    check(kitPieces.filter { $0.part == .wall }.allSatisfy { $0.bottom >= 0 && $0.top <= kitHouse.eaves + 1e-9 }, "walls stop at the eaves")
+    check(kitPieces.filter { $0.part == .roof && $0.collision == .solid }.allSatisfy { abs($0.bottom - kitHouse.eaves) < 1e-9 }, "the roof sits on the eaves")
+    check(abs((kitPieces.map(\.top).max() ?? 0) - kitHouse.roofTop) < 0.01, "roofTop predicts the ridge (\(kitPieces.map(\.top).max() ?? 0) vs \(kitHouse.roofTop))")
+    let kitBlocks = kitPieces.enumerated().map { GoldenCity.block($1, id: "k\($0)", pack: ArtStyle.crystalFantasy.pack, group: "g") }
+    let kitGeometry = SpatialGeometry(blocks: kitBlocks, plants: [])
+    check(kitHouse.doorCells.allSatisfy { !kitGeometry.blocked(x: Double($0.x) + 0.5, y: Double($0.y) + 0.5, z: 0) }, "the door is open")
+    check(kitGeometry.blocked(x: 20.5, y: 20.5, z: 0) && kitGeometry.ceiling(x: 23.5, y: 22.5, z: 0) != nil, "corners block and the roof covers the room")
+    var gateSpec = KitBuildingSpec(key: "g", name: "门", kind: .gatehouse, x0: 40, y0: 40, width: 10, depth: 6, storeys: 2, roof: .flat, door: .south)
+    gateSpec.doorWidth = 4; gateSpec.passage = true
+    let gateGeometry = SpatialGeometry(blocks: KitAssembler.building(gateSpec).enumerated().map { GoldenCity.block($1, id: "q\($0)", pack: ArtStyle.crystalFantasy.pack, group: "q") }, plants: [])
+    check((40...45).allSatisfy { !gateGeometry.blocked(x: 44.5, y: Double($0) + 0.5, z: 0) }, "a gate passage is open front to back")
+    let classicPack = ArtStyle.classicFantasy.pack, crystalPack = ArtStyle.crystalFantasy.pack
+    check(classicPack.palette != crystalPack.palette && KitSlot.allCases.allSatisfy { classicPack.materials[$0] != nil && crystalPack.materials[$0] != nil }, "both style packs fill every material slot")
+
+    // Dual-view materials: one semantic material, two looks.
+    let stonePixel = GlassMaterialResolver.resolve(.whiteStone, preset: .pixel, role: .structure, quality: .high, tintHex: "F1EEE8")
+    let stoneSpatial = GlassMaterialResolver.resolve(.whiteStone, preset: .spatial, role: .structure, quality: .high, tintHex: "F1EEE8")
+    check(stonePixel.opacity == 1 && stoneSpatial.opacity == 1, "stone is opaque in both views")
+    check(stoneSpatial.tintHex == "F1EEE8" && stonePixel.tintHex == GlassMaterialResolver.pixelTint("F1EEE8") && stonePixel.pixelated && !stoneSpatial.pixelated, "pixel view snaps the same colour to its palette")
+    check(GlassMaterialResolver.pixelTint("F1EEE8") == "E0E0E0" && GlassMaterialResolver.pixelTint("7EB6D8") == "80C0E0", "pixel palette steps of 0x20")
+    check(GlassMaterialResolver.resolve(.windowGlass, preset: .spatial, role: .structure, quality: .high).opacity < 1, "windows stay glass in 3D")
+
+    // Golden town plan: fixed district rules, seeded details.
+    let plan = GoldenCityPlanner.plan(seed: GoldenCity.defaultSeed)
+    check(plan.buildings.allSatisfy(\.valid), "every planned building meets the kit standard (\(plan.buildings.filter { !$0.valid }.map(\.key)))")
+    let keyBuildings = plan.buildings.filter { !$0.kind.repeats && $0.kind != .gatehouse }
+    check((12...20).contains(keyBuildings.count), "12–20 key buildings (\(keyBuildings.count))")
+    let designs = plan.buildings.filter { !$0.kind.repeats }.map(\.signature)
+    check(Set(designs).count == designs.count, "no two buildings share a design")
+    var roofClash: [String] = []
+    for (i, a) in plan.buildings.enumerated() {
+        for b in plan.buildings[(i + 1)...] {
+            let r = a.roofBounds, q = b.roofBounds
+            if r.x0 <= q.x1 && q.x0 <= r.x1 && r.y0 <= q.y1 && q.y0 <= r.y1 { roofClash.append(a.key + "/" + b.key) }
+        }
     }
-    let before = PerspectiveContinuity.capture(world)
-    var view = DualPerspectiveCamera.following(world.player.position)
-    view.applyToggle(to: &world)
-    view.applyToggle(to: &world)
-    check(PerspectiveContinuity.capture(world) == before && world.hybrid?.viewMode == .spatial3D, "switching twice restores the mode and changes nothing else")
-    view.applyToggle(to: &world)
-    check(world.player.position == before.position && world.hybrid?.viewMode == .pixelRPG, "one switch keeps the player and records pixel view")
+    check(roofClash.isEmpty, "no two buildings or their eaves touch (\(roofClash))")
+    check(plan.landmark.map { abs(Double($0.x0 + $0.x1) / 2 + 0.5 - 128) <= 2 && $0.finial } == true, "the spire stands on the avenue axis")
+    check(GoldenCityDraftBuilder.draft(plan) == GoldenCityDraftBuilder.draft(GoldenCityPlanner.plan(seed: GoldenCity.defaultSeed)), "same seed, same town")
+    check(GoldenCityPlanner.plan(seed: 7).buildings.map(\.signature) != plan.buildings.map(\.signature), "another seed varies the buildings")
+    check(plan.viewpoints.count >= 6 && plan.viewpoints.contains { $0.indoor }, "reference viewpoints include an interior")
+    let lakePlan = GoldenCityPlanner.plan(seed: GoldenCity.defaultSeed, intent: GoldenTownIntent.parse("湖边的水晶王城"))
+    check(lakePlan.intent.water == .lake && !lakePlan.bridgeDeck.isEmpty && lakePlan.water.count > plan.water.count, "a lake town gets a lake and a causeway")
+    check(GoldenTownIntent.parse("古典木屋小镇").style == .classicFantasy && GoldenTownIntent.parse("水晶城").style == .crystalFantasy, "words pick the style pack")
+
+    // Placing the town.
+    var town = SpatialWorld()
+    let stamp = GoldenCity.stamp(onto: &town, plan: plan, budget: .of(.standard))
+    print("Golden town: \(stamp.blocks) blocks, \(stamp.plants) plants, \(stamp.placedBuildings.count) buildings, left out \(stamp.skippedUnits)")
+    check(stamp.skippedUnits.isEmpty && stamp.placedBuildings.count == plan.buildings.count, "the whole town fits the standard budget (\(stamp.skippedUnits))")
+    check((try? town.validate(bindings: [])) != nil, "the town is valid save data")
+    let golden = GoldenSceneQualityGate.evaluate(town, plan: plan, budget: .of(.standard)) { $0.id.hasPrefix(GoldenCity.idPrefix + ":") }
+    print("Golden gate: focal \(Int(golden.focal)) variety \(Int(golden.variety)) connected \(Int(golden.connectivity)) pixel \(Int(golden.pixelClarity)) complete \(Int(golden.completeness)) materials \(Int(golden.materials)) budget \(Int(golden.budget)) · \(golden.violations)")
+    check(golden.passed, "the reference town passes the Golden Scene gate (\(golden.violations))")
+    var lowTown = SpatialWorld()
+    let lowStamp = GoldenCity.stamp(onto: &lowTown, plan: plan, budget: .of(.low))
+    check(lowStamp.blocks <= GoldenBudget.of(.low).maxBlocks && lowStamp.placedBuildings.contains("spire") && lowStamp.placedBuildings.contains("gate-s"), "a low budget keeps the castle and gate first (left out \(lowStamp.skippedUnits))")
+    var broken = town
+    if let index = broken.blocks.firstIndex(where: { $0.groupID == "golden:group:inn" && $0.hybridPart == .roof }) { broken.blocks[index].elevation += 9 }
+    check(!GoldenSceneQualityGate.evaluate(broken, plan: plan, budget: .of(.standard)) { $0.id.hasPrefix(GoldenCity.idPrefix + ":") }.passed, "the gate catches a floating roof block")
+
+    // The player's own build is never covered.
+    var world = SpatialWorld()
+    world.blocks = [SpatialBlock(id: "user-wall", x: 145, y: 133, elevation: 0, thickness: 2, origin: .user)]
+    world.edit("town") { GoldenCity.stamp(onto: &$0, plan: plan) }
+    check(world.blocks.contains { $0.id == "user-wall" && $0.origin == .user } && !world.blocks.contains { $0.groupID == "golden:group:shop-e" }, "a building over a player block is left out whole")
+    check(world.blocks.contains { $0.groupID == "golden:group:spire" }, "the rest of the town still goes in")
     let savedTown = world
     world.undoLast()
-    check(world.hybrid == nil && !world.blocks.contains { $0.id.hasPrefix(CentralTown.idPrefix) }, "undo removes the town and its occluders")
-    check(world.blocks.contains { $0.id == "user-wall" }, "undo keeps the player edit that was there before the town")
+    check(world.hybrid == nil && world.blocks.map(\.id) == ["user-wall"], "undo removes the whole town and keeps the player's block")
     world.redoLast()
-    check(world.hybrid?.occluders.count == savedTown.hybrid?.occluders.count, "redo brings the same town back")
+    check(world.blocks.count == savedTown.blocks.count && world.hybrid == savedTown.hybrid, "redo brings the same town back")
 
-    let fresh = CentralTown.stampedBlank()
-    let data = try! JSONEncoder().encode(fresh)
-    let decoded = try! JSONDecoder().decode(SpatialWorld.self, from: data)
-    check(decoded.hybrid?.regionColumn == 7 && decoded.blocks.count == fresh.blocks.count, "town save round-trips")
+    // Occlusion per building: roof cut inside, x-ray behind, nothing on the open plaza.
+    let townOccluders = town.hybrid?.occluders ?? []
+    check(townOccluders.count == stamp.placedBuildings.count && townOccluders.allSatisfy { !$0.groupID.isEmpty && $0.valid }, "every building publishes an occluder")
+    if let inn = plan.buildings.first(where: { $0.key == "inn" }), let innOccluder = townOccluders.first(where: { $0.id == "inn" }) {
+        let inside = SpatialVector(91.5, 133.5, 0)
+        let pixelDecision = OcclusionManager.resolve(player: inside, cameraEye: DualPerspectiveCamera.pixelEye(target: inside, profile: PixelRPGProfile()), mode: .pixelRPG, buildings: townOccluders)
+        check(pixelDecision.hidden.contains(OcclusionTag.roof(innOccluder.groupID)) && pixelDecision.faded.contains(OcclusionTag.wall(innOccluder.groupID, .south)), "pixel view cuts the inn roof and fades its south wall")
+        let spatialEye = SpatialCameraRules.position(SpatialCameraState(target: inside, tilt: SpatialCameraRules.playTilt, yaw: 0, distance: 14))
+        let spatialDecision = OcclusionManager.resolve(player: inside, cameraEye: spatialEye, mode: .spatial3D, buildings: townOccluders)
+        check(!spatialDecision.hidden.contains(OcclusionTag.roof(innOccluder.groupID)) && spatialDecision.faded.contains(OcclusionTag.wall(innOccluder.groupID, .south)), "3D keeps the roof and fades the camera-side wall")
+        check(SpatialGeometry(blocks: town.blocks, plants: town.plants).ceiling(x: inside.x, y: inside.y, z: 0) != nil, "the hidden roof still has collision")
+        let behind = SpatialVector(Double(inn.x0 + inn.x1) / 2 + 0.5, Double(inn.y1) + 2.5, 0)
+        let xray = OcclusionManager.resolve(player: behind, cameraEye: DualPerspectiveCamera.pixelEye(target: behind, profile: PixelRPGProfile()), mode: .pixelRPG, buildings: townOccluders)
+        check(xray.hidden.contains(OcclusionTag.roof(innOccluder.groupID)) && xray.faded.isSuperset(of: OcclusionTag.walls(innOccluder.groupID)), "standing behind the inn x-rays it in pixel view")
+    } else { check(false, "the inn is placed") }
+    let plazaSpot = SpatialVector(127.5, 121.5, 0)
+    check(OcclusionManager.resolve(player: plazaSpot, cameraEye: DualPerspectiveCamera.pixelEye(target: plazaSpot, profile: PixelRPGProfile()), mode: .pixelRPG, buildings: townOccluders) == OcclusionDecision(), "on the open plaza nothing is cut")
+    let occluderByGroup = Dictionary(townOccluders.map { ($0.groupID, $0) }, uniquingKeysWith: { first, _ in first })
+    let tagged = town.blocks.filter { OcclusionTag.of($0, occluders: occluderByGroup) != nil }
+    let taggedMeshes = Set(tagged.map { SpatialBatch.key($0, tag: OcclusionTag.of($0, occluders: occluderByGroup)) })
+    check(!tagged.isEmpty && taggedMeshes.count * 8 < tagged.count, "roofs and walls merge per building side (\(tagged.count) blocks → \(taggedMeshes.count) meshes)")
+
+    // One map, two cameras: switching changes only the saved mode.
+    town.player.position = stamp.spawn; town.player.lastSafe = stamp.spawn
+    let before = PerspectiveContinuity.capture(town)
+    var view = DualPerspectiveCamera.following(town.player.position)
+    view.applyToggle(to: &town)
+    view.applyToggle(to: &town)
+    check(PerspectiveContinuity.capture(town) == before && town.hybrid?.viewMode == .spatial3D, "switching twice changes nothing but the mode")
+    view.applyToggle(to: &town)
+    check(town.player.position == before.position && town.hybrid?.viewMode == .pixelRPG && town.blocks.count == stamp.blocks, "one switch keeps the spot and the same blocks")
+
+    let townData = try! JSONEncoder().encode(town)
+    let decoded = try! JSONDecoder().decode(SpatialWorld.self, from: townData)
+    check(decoded.blocks == town.blocks && decoded.hybrid == town.hybrid && decoded.plants == town.plants, "town save round-trips")
+    let firstSlice = #"{"id":"nw","name":"月门客栈","minX":110,"maxX":119,"minY":136,"maxY":145,"interiorCeiling":3,"floorIndex":0,"roofIDs":["a"],"wallIDs":["b"]}"#
+    let oldOccluder = try? JSONDecoder().decode(BuildingOccluder.self, from: Data(firstSlice.utf8))
+    check(oldOccluder?.groupID == "" && oldOccluder?.valid == true, "first-slice occluders still decode (and are ignored)")
+
+    // World Director: a sentence becomes a town blueprint, built with the kit and checked by both gates.
+    var townRequest = WorldGenerationRequest(theme: .crystalKingdom, prompt: "创建一座建立在湖边的幻想水晶王城。白色石材建筑，冷蓝色玻璃屋顶，中央喷泉，蜿蜒道路，外围森林，远处有高山。")
+    townRequest.seed = 5
+    let townBlueprint = WorldPlanner.plan(townRequest)
+    check(townBlueprint.town?.water == .lake && townBlueprint.town?.style == .crystalFantasy && townBlueprint.validate().isEmpty, "the lake-city sentence becomes a town intent (\(townBlueprint.validate()))")
+    let directorTown = try! SpatialWorldBuilder.build(townBlueprint, assets: [], onto: SpatialWorld())
+    let directorReport = WorldQualityEvaluator.evaluate(directorTown, blueprint: townBlueprint, assets: [])
+    print("Director town: \(directorReport.blocks) blocks, \(directorReport.plants) plants · \(directorReport.violations) · \(directorTown.notes)")
+    check(directorReport.passed, "the director's town passes both quality checks (\(directorReport.violations))")
+    check(directorTown.world.hybrid?.occluders.isEmpty == false && directorTown.world.blocks.contains { $0.id.hasSuffix(WorldBuildState.goldenSuffix) }, "director towns use the kit and publish occluders")
+    let townBuildings = directorTown.world.blocks.filter { SpatialWorldBuilder.layer(of: $0.id) == .buildings }.count
+    let replanted = try! WorldDirectorEngine.regenerate(directorTown.world, layers: [.plants], area: nil, seedOffset: 1)
+    check(replanted.world.blocks.filter { SpatialWorldBuilder.layer(of: $0.id) == .buildings }.count == townBuildings && !replanted.world.plants.isEmpty, "regenerating plants leaves every building alone")
+    let wdGroups = Set(directorTown.world.blocks.compactMap(\.groupID))
+    if let someGroup = wdGroups.sorted().first, let anyBlock = directorTown.world.blocks.first(where: { $0.groupID == someGroup }) {
+        let rebuilt = try! WorldDirectorEngine.regenerate(directorTown.world, layers: [.buildings], area: (WorldPoint(x: anyBlock.x, y: anyBlock.y, z: 0), 2), seedOffset: 2)
+        let groupSizes = Dictionary(grouping: rebuilt.world.blocks.compactMap(\.groupID), by: { $0 }).mapValues(\.count)
+        let originalSizes = Dictionary(grouping: directorTown.world.blocks.compactMap(\.groupID), by: { $0 }).mapValues(\.count)
+        check(groupSizes.allSatisfy { originalSizes[$0.key] == nil || originalSizes[$0.key] == $0.value }, "local regeneration never leaves half a building")
+    }
     let legacy = try! JSONDecoder().decode(SpatialWorld.self, from: try! JSONEncoder().encode(SpatialWorld()))
     check(legacy.hybrid == nil && legacy.blocks.isEmpty, "an old empty world still decodes without a hybrid section")
 
@@ -3153,7 +3246,7 @@ func hybridWorldV2() {
     check(landmark.clearcoat > house.clearcoat && landmark.prioritySpecular, "the landmark spends more specular budget than a house")
     check(!GlassMaterialResolver.resolve(.landmarkGlass, preset: .pixel, role: .landmark, quality: .high).prioritySpecular, "pixel glass does not turn on the expensive specular path")
     check(!GlassMaterialResolver.resolve(.landmarkGlass, preset: .spatial, role: .landmark, quality: .standard).prioritySpecular, "standard quality keeps landmark specular off the top tier")
-    check(groundPixel.tintHex == groundSpatial.tintHex && groundPixel.tintHex == GlassMaterialResolver.semantic(.streetCrystal).tintHex, "both presets share one street-crystal tint")
+    check(groundSpatial.tintHex == GlassMaterialResolver.semantic(.streetCrystal).tintHex && groundPixel.tintHex == GlassMaterialResolver.pixelTint(groundSpatial.tintHex), "both presets share one street-crystal tint (pixel snaps it)")
 
     // Distant terrain for the mid and far stream tiers.
     let terrain = RegionTerrain(graph: graph)
@@ -3196,10 +3289,9 @@ func hybridWorldV2() {
     }
     check(reach, "terrain stays inside the sky dome")
     check(terrain.patch(for: StreamRequest(address: focus, tier: .near, regionKey: "central-town", authored: true), focus: focus) == nil, "the open map gets no distant terrain")
-    let townBlocks = fresh.blocks.count
-    check(CentralTown.stampedBlank().blocks.count == townBlocks, "distant terrain adds no blocks to the save")
-    let outdoors = OcclusionManager.resolve(player: SpatialVector(20.5, 20.5, 0), cameraEye: SpatialVector(20.5, 8, 24), mode: .spatial3D, buildings: fresh.hybrid?.occluders ?? [], blocks: fresh.blocks)
-    check(outdoors == OcclusionDecision(), "outdoors the occlusion pass returns nothing")
+    check(town.blocks.count == stamp.blocks, "distant terrain adds no blocks to the save")
+    let outdoors = OcclusionManager.resolve(player: SpatialVector(20.5, 20.5, 0), cameraEye: SpatialVector(20.5, 8, 24), mode: .spatial3D, buildings: townOccluders)
+    check(outdoors == OcclusionDecision(), "far from the town the occlusion pass returns nothing")
     print("RPG hybrid world: \(checks) total checks passed")
 }
 

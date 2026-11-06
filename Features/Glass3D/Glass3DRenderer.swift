@@ -298,14 +298,25 @@ import Metal
     private var batchSignatures: [String: Int] = [:]
     private var batchedBlocks = 0
 
-    func showBlocks(_ all: [SpatialBlock], pivots: [String: SpatialVector]) {
+    func showBlocks(_ all: [SpatialBlock], pivots: [String: SpatialVector], occluders: [BuildingOccluder] = []) {
         // Still blocks without media are merged (see SpatialBatch); moving
-        // platforms and media blocks stay objects of their own.
+        // platforms and media blocks stay objects of their own. Roofs and
+        // walls of hybrid buildings merge per building side (their occlusion tag).
+        let byGroup = Dictionary(occluders.filter { !$0.groupID.isEmpty }.map { ($0.groupID, $0) }, uniquingKeysWith: { first, _ in first })
         var blocks: [SpatialBlock] = [], batches: [String: [SpatialBlock]] = [:]
+        blockTags.removeAll(keepingCapacity: true)
         for block in all {
-            if SpatialBatch.batchable(block, pivots: pivots) { batches[SpatialBatch.key(block), default: []].append(block) } else { blocks.append(block) }
+            let tag = OcclusionTag.of(block, occluders: byGroup)
+            if SpatialBatch.batchable(block, pivots: pivots) {
+                let key = SpatialBatch.key(block, tag: tag)
+                batches[key, default: []].append(block)
+                batchTags[key] = tag
+            } else {
+                blocks.append(block)
+                if let tag { blockTags[block.id] = tag }
+            }
         }
-        for (key, entity) in batchEntities where batches[key] == nil { entity.removeFromParent(); batchEntities[key] = nil; batchSignatures[key] = nil }
+        for (key, entity) in batchEntities where batches[key] == nil { entity.removeFromParent(); batchEntities[key] = nil; batchSignatures[key] = nil; batchTags[key] = nil }
         for (key, list) in batches {
             let signature = SpatialBatch.signature(list)
             if batchSignatures[key] == signature, batchEntities[key]?.parent != nil { continue }
@@ -398,7 +409,7 @@ import Metal
         if let preset = glassPreset, let semantic = glass.semantic.flatMap(GlassSemantic.init(rawValue:)) {
             let role = glass.role.flatMap(GlassRenderRole.init(rawValue:)) ?? .structure
             let tier: GlassQualityTier = quality == .high ? .high : quality == .performance ? .low : .standard
-            let look = GlassMaterialResolver.resolve(semantic, preset: preset, role: role, quality: tier)
+            let look = GlassMaterialResolver.resolve(semantic, preset: preset, role: role, quality: tier, tintHex: glass.tintHex)
             let resolved = resolvedMaterial(look, legacyTexture: false)
             materialCache[key] = resolved
             return resolved
@@ -471,25 +482,31 @@ import Metal
         return material
     }
 
-    private var hiddenBlockIDs = Set<String>()
-    private var fadedBlockIDs = Set<String>()
+    private var hiddenTags = Set<String>()
+    private var fadedTags = Set<String>()
+    /// Occlusion tag per merged mesh and per separate block (`OcclusionTag`).
+    private var batchTags: [String: String] = [:]
+    private var blockTags: [String: String] = [:]
 
-    /// Roof and wall visibility. Collision stays on the block list; this only toggles meshes.
+    /// Roof and wall visibility by occlusion tag. Collision stays on the block list; this only toggles meshes.
     func applyOcclusion(hidden: Set<String>, faded: Set<String>) {
-        guard hidden != hiddenBlockIDs || faded != fadedBlockIDs else { return }
-        hiddenBlockIDs = hidden
-        fadedBlockIDs = faded
+        guard hidden != hiddenTags || faded != fadedTags else { return }
+        hiddenTags = hidden
+        fadedTags = faded
         refreshOcclusion()
     }
 
     private func refreshOcclusion() {
-        for (id, entity) in blockEntities {
-            let hide = hiddenBlockIDs.contains(id)
+        func apply(_ entity: Entity, _ tag: String?) {
+            let hide = tag.map(hiddenTags.contains) ?? false
             if entity.isEnabled == hide { entity.isEnabled = !hide }
-            guard entity.isEnabled else { continue }
-            entity.components.remove(OpacityComponent.self)
-            if fadedBlockIDs.contains(id) { entity.components.set(OpacityComponent(opacity: 0.35)) }
+            guard entity.isEnabled else { return }
+            let fade = tag.map(fadedTags.contains) ?? false
+            if fade { entity.components.set(OpacityComponent(opacity: 0.3)) }
+            else if entity.components.has(OpacityComponent.self) { entity.components.remove(OpacityComponent.self) }
         }
+        for (key, tag) in batchTags { if let entity = batchEntities[key] { apply(entity, tag) } }
+        for (id, tag) in blockTags { if let entity = blockEntities[id] { apply(entity, tag) } }
     }
 
     // MARK: Plants

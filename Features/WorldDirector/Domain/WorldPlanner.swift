@@ -81,7 +81,10 @@ enum WorldThemeStyle {
         case .nature: MaterialPalette(primary: "BFE8D0", secondary: "8C8676", accent: "8FB8FF", opaqueShare: 0.55, glassDensity: 0.4, glow: 0.3)
         case .futureCity: MaterialPalette(primary: "9FD3FF", secondary: "5A6478", accent: "FF8FB1", opaqueShare: 0.4, glassDensity: 0.45, glow: 0.9)
         case .bossAdventure: MaterialPalette(primary: "C9C2B8", secondary: "4A4A55", accent: "FF7A5A", opaqueShare: 0.55, glassDensity: 0.5, glow: 0.5)
+        case .crystalKingdom: MaterialPalette(primary: "F1EEE8", secondary: "8FB8E0", accent: "F7FBFF", opaqueShare: 0.6, glassDensity: 0.5, glow: 0.4)
         }
+        // A town's colours come from its art style pack, not from loose colour words.
+        if theme == .crystalKingdom { return p }
         // Memory worlds take their accent from the chosen photos' colours
         // (most common dominant colour), unless the words name colours.
         if theme == .memory, intent.colors.isEmpty {
@@ -96,7 +99,7 @@ enum WorldThemeStyle {
     }
 
     static func defaultTime(_ theme: WorldTheme) -> WorldTimeOfDay {
-        switch theme { case .skyCity, .nature: .day; case .memory, .bossAdventure: .dusk; case .futureCity: .night }
+        switch theme { case .skyCity, .nature, .crystalKingdom: .day; case .memory, .bossAdventure: .dusk; case .futureCity: .night }
     }
 
     static func lighting(_ theme: WorldTheme, time: WorldTimeOfDay) -> LightingProfile {
@@ -138,8 +141,34 @@ enum WorldPlanner {
         case .nature: context.natureWorld()
         case .futureCity: context.futureCity()
         case .bossAdventure: context.bossWorld()
+        case .crystalKingdom: break
         }
-        context.addFarMountains(force: intent.mountains || theme == .skyCity || theme == .nature || theme == .bossAdventure)
+        var town: GoldenTownIntent?
+        var palette = WorldThemeStyle.palette(theme, intent: intent, assets: usable)
+        if theme == .crystalKingdom {
+            // Golden World: the town planner decides the layout; the blueprint records districts,
+            // landmark, spawn and route for the evaluator and for local regeneration.
+            var townIntent = GoldenTownIntent.parse(request.prompt)
+            if intent.forest { townIntent.forest = true }
+            if intent.mountains { townIntent.mountains = true }
+            let plan = GoldenCityPlanner.plan(seed: seed, intent: townIntent)
+            context.regions = plan.districts.map { BiomeRegion(id: $0.key, kind: $0.kind, center: WorldPoint(x: $0.x, y: $0.y, z: $0.z), radius: $0.radius, density: 1) }
+            context.features = plan.farMountains
+            context.spawn = WorldPoint(x: Int(plan.spawn.x), y: Int(plan.spawn.y), z: 0)
+            let castle = WorldPoint(x: 127, y: 155, z: GoldenCityPlan.terraceHeight)
+            context.landmark = LandmarkPlan(kind: .crystalPalace, position: castle, scale: 1)
+            context.routes = [ExplorationRoute(name: L10n.t("城门到城堡", "Gate to castle"), waypoints: Array(plan.route.dropLast()) + [castle])]
+            context.zones = []; context.roads = []; context.mediaSpots = []
+            let golden = GoldenBudget.of(request.tier)
+            budget.maxBlocks = golden.maxBlocks + (townIntent.mountains ? 1_200 : 0)
+            budget.maxPlants = golden.maxPlants
+            context.budget = budget
+            let pack = townIntent.style.pack
+            palette = MaterialPalette(primary: pack.material(.wall).tintHex, secondary: pack.material(.roof).tintHex, accent: pack.material(.accent).tintHex,
+                                      opaqueShare: 0.6, glassDensity: 0.5, glow: 0.4)
+            town = townIntent
+        }
+        context.addFarMountains(force: theme != .crystalKingdom && (intent.mountains || theme == .skyCity || theme == .nature || theme == .bossAdventure))
         let assignments = context.assign(usable)
         let facing = atan2(Double(context.landmark.position.y - context.spawn.y), Double(context.landmark.position.x - context.spawn.x)) * 180 / .pi
         var metadata = GenerationMetadata(generatorVersion: version, planner: planner, prompt: String(request.prompt.prefix(300)), candidate: variant)
@@ -147,13 +176,13 @@ enum WorldPlanner {
         if !intent.summary.isEmpty { metadata.notes.insert(intent.summary, at: 0) }
         return WorldBlueprint(
             blueprintID: "bp-\(seed % 1_000_000_000)-\(variant)", seed: seed, theme: theme,
-            palette: WorldThemeStyle.palette(theme, intent: intent, assets: usable),
+            palette: palette,
             terrainPlan: TerrainPlan(features: context.features), biomeRegions: context.regions,
             roadNetwork: RoadNetwork(segments: context.roads), landmarkPlan: context.landmark,
             buildingZones: context.zones, decorationPlan: context.decoration(),
             lightingProfile: WorldThemeStyle.lighting(theme, time: time),
             assetAssignments: assignments, spawnPlan: SpawnPlan(position: context.spawn, facing: facing),
-            explorationRoutes: context.routes, performanceBudget: budget, generationMetadata: metadata)
+            explorationRoutes: context.routes, performanceBudget: budget, generationMetadata: metadata, town: town)
     }
 }
 
@@ -164,7 +193,7 @@ struct PlanContext {
     let intent: WorldIntent
     let density: Double
     let heading: Double
-    let budget: PerformanceBudget
+    var budget: PerformanceBudget
     var features: [TerrainFeature] = []
     var regions: [BiomeRegion] = []
     var roads: [RoadSegment] = []
@@ -178,6 +207,7 @@ struct PlanContext {
     init(random: SpatialRandom, theme: WorldTheme, intent: WorldIntent, density: Double, heading: Double, budget: PerformanceBudget) {
         self.random = random; self.theme = theme; self.intent = intent; self.density = density; self.heading = heading; self.budget = budget
     }
+
 
     static func clampCell(_ v: Int) -> Int { min(240, max(16, v)) }
     func point(angle: Double, distance: Double, from origin: WorldPoint, z: Double = 0) -> WorldPoint {
@@ -389,6 +419,8 @@ struct PlanContext {
         case .nature: (700, 0.3, 120, 16, 8, 0)
         case .futureCity: (160, 0.4, 30, 60, 10, 0)
         case .bossAdventure: (380, 0.2, 60, 24, 12, 0)
+        // The town places its own trees, flowers and lamps.
+        case .crystalKingdom: (0, 0, 0, 0, 0, 0)
         }
         let plants = min(budget.maxPlants, Int(Double(base.plants) * density * (intent.gardens ? 1.3 : 1) * (intent.forest ? 1.3 : 1)))
         return DecorationPlan(plants: plants, flowersShare: base.flowers, trees: min(plants / 3, Int(Double(base.trees) * density * (intent.forest ? 1.6 : 1))),

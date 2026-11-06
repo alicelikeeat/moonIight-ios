@@ -65,6 +65,17 @@ enum SpatialWorldBuilder {
         guard problems.isEmpty else { throw WorldDirectorError.invalidBlueprint(problems) }
         var b = WorldBuildState(blueprint: blueprint, assets: assets, base: base, layers: layers, area: area, difficulty: difficulty)
         b.clear()
+        if blueprint.town != nil {
+            // Golden World town: the kit city takes terrain/roads/buildings/decorations/plants
+            // (filtered by layer inside), then the usual creatures and far mountains.
+            if cancelled() { throw WorldDirectorError.cancelled }
+            b.goldenCity()
+            if layers.contains(.creatures) { b.creatures() }
+            if cancelled() { throw WorldDirectorError.cancelled }
+            if layers.contains(.terrain) { b.terrain(far: true) }
+            if cancelled() { throw WorldDirectorError.cancelled }
+            return b.finish(updateAtmosphere: updateAtmosphere && layers.count == WorldLayer.allCases.count)
+        }
         let order: [(WorldLayer, (inout WorldBuildState) -> Void)] = [
             (.terrain, { $0.terrain(far: false) }), (.buildings, { $0.landmark() }), (.roads, { $0.roads() }),
             // The user's pictures before filler buildings: they get the spots.
@@ -163,7 +174,12 @@ struct WorldBuildState {
             let layer = SpatialWorldBuilder.layer(of: id) ?? SpatialWorldBuilder.fallbackLayer(block: block)
             return layers.contains(layer) && inside(x, y)
         }
+        let touchedGroups = Set(world.blocks.filter { replaced($0.id, origin: $0.origin, x: $0.x, y: $0.y, block: true) }.compactMap(\.groupID))
         world.blocks.removeAll { replaced($0.id, origin: $0.origin, x: $0.x, y: $0.y, block: true) }
+        // A town building is one unit: if part of it is replaced, all of it goes (never half a house).
+        if bp.town != nil && !touchedGroups.isEmpty {
+            world.blocks.removeAll { $0.origin == .generated && ($0.groupID.map(touchedGroups.contains) ?? false) }
+        }
         world.plants.removeAll { replaced($0.id, origin: $0.origin, x: $0.x, y: $0.y, block: false) }
         if full || layers.contains(.creatures) {
             world.creatures.removeAll { $0.origin == .generated && inside(Int($0.position.x), Int($0.position.y)) }
@@ -672,6 +688,67 @@ struct WorldBuildState {
         // Every world: a reward at the end of each route.
         for route in bp.explorationRoutes { if let end = route.waypoints.last, end != bp.landmarkPlan.position { chest(at: WorldPoint(x: end.x + 2, y: end.y, z: 0), shards: 2) } }
         random = r
+    }
+
+    // MARK: Golden World town
+
+    /// Id suffix that marks a town block (the layer tag stays in the middle, so local regeneration still works).
+    static let goldenSuffix = ":gc"
+
+    /// Builds the kit town from the blueprint's town intent, whole buildings or none,
+    /// inside the area and the budget, never over a player's own blocks.
+    mutating func goldenCity() {
+        guard let intent = bp.town else { return }
+        let plan = GoldenCityPlanner.plan(seed: bp.seed, intent: intent)
+        let draft = GoldenCityDraftBuilder.draft(plan)
+        let pack = plan.pack
+        let liveGroups = Set(world.groups.map(\.id))
+        var occluders = (world.hybrid?.occluders ?? []).filter { liveGroups.contains($0.groupID) }
+        let userCells = Set(world.blocks.filter { $0.origin == .user }.map { Self.key($0.x, $0.y) })
+        func free(_ piece: KitPiece) -> Bool {
+            inArea(piece.x, piece.y) && !userCells.contains(Self.key(piece.x, piece.y)) && (piece.collision != .solid || fits(piece.x, piece.y, piece.bottom, piece.top))
+        }
+        for unit in draft.units where layers.contains(unit.layer) {
+            if unit.atomic {
+                guard unit.pieces.allSatisfy(free) else {
+                    if unit.pieces.contains(where: { userCells.contains(Self.key($0.x, $0.y)) }) { notes.append(L10n.t("保留了你的建造，省略：", "Kept your build; left out: ") + unit.name) }
+                    continue
+                }
+                guard generatedBlocks + unit.pieces.count <= bp.performanceBudget.maxBlocks, world.blocks.count + unit.pieces.count < SpatialWorld.blockLimit - 50 else {
+                    notes.append(L10n.t("预算不足，省略：", "Over budget; left out: ") + unit.name); continue
+                }
+                let groupID = unit.building.map { group($0.name, template: "kit-" + $0.kind.rawValue) }
+                for piece in unit.pieces {
+                    add(GoldenCity.block(piece, id: nextID(unit.layer) + Self.goldenSuffix, pack: pack, group: groupID), layer: unit.layer)
+                }
+                if let spec = unit.building, let groupID { occluders.append(GoldenCity.occluder(spec, group: groupID)) }
+            } else {
+                for piece in unit.pieces where free(piece) {
+                    guard generatedBlocks < bp.performanceBudget.maxBlocks, world.blocks.count < SpatialWorld.blockLimit - 50 else { break }
+                    add(GoldenCity.block(piece, id: nextID(unit.layer) + Self.goldenSuffix, pack: pack, group: nil), layer: unit.layer)
+                    if unit.layer == .roads { roadCells.insert(Self.key(piece.x, piece.y)) }
+                }
+            }
+        }
+        for k in plan.roads.keys { roadCells.insert(k) }
+        // Plants never go on a block (road, water, wall), whichever seed laid it.
+        let covered = Set(world.blocks.map { Self.key($0.x, $0.y) })
+        if layers.contains(.plants) {
+            var planted = world.plants.filter { $0.origin == .generated }.count
+            for plant in draft.plants {
+                guard planted < bp.performanceBudget.maxPlants else { break }
+                let k = Self.key(plant.x, plant.y)
+                guard inArea(plant.x, plant.y), !userCells.contains(k), !roadCells.contains(k), !covered.contains(k), fits(plant.x, plant.y, plant.z, plant.z + 1.5) else { continue }
+                world.plants.append(PlantEntity(id: nextID(.plants), kind: plant.kind, x: plant.x, y: plant.y, z: plant.z, scale: plant.scale, hue: plant.hue, origin: .generated))
+                counts[.plants, default: 0] += 1
+                planted += 1
+                if plant.kind.solid { solid[k, default: []].append(plant.z...(plant.z + 1.5)) }
+            }
+        }
+        // Keep the spawn and route corridor out of the far-mountain pass.
+        for point in plan.route { for dx in -2...2 { for dy in -2...2 { reserved.insert(Self.key(point.x + dx, point.y + dy)) } } }
+        let mode = world.hybrid?.viewMode ?? .spatial3D
+        world.hybrid = HybridWorldSave(viewMode: mode, regionColumn: GoldenCity.address.column, regionRow: GoldenCity.address.row, occluders: Array(occluders.prefix(48)))
     }
 
     // MARK: Finish

@@ -264,7 +264,7 @@ struct Glass3DScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 moreRow("scope", L10n.t("恢复默认视角", "Reset View")) { controller.resetCamera() }
-                moreRow("building.columns", L10n.t("放置月光中央城", "Place Central Town")) { controller.placeCentralTown() }
+                moreRow("building.columns", L10n.t("放置月光水晶城", "Place Crystal Moon City")) { controller.placeGoldenCity() }
                     .accessibilityIdentifier("glass3d-place-town")
                 moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
                 moreHeader(L10n.t("编辑器", "Editors"))
@@ -374,8 +374,8 @@ struct Glass3DScreen: View {
                         .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
                 }
                 .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-generate-blank")
-                Button { controller.placeCentralTown() } label: {
-                    Label(L10n.t("先看看月光中央城", "Visit Central Town"), systemImage: "building.columns")
+                Button { controller.placeGoldenCity() } label: {
+                    Label(L10n.t("先看看月光水晶城", "Visit Crystal Moon City"), systemImage: "building.columns")
                         .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
                 }
                 .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-central-town")

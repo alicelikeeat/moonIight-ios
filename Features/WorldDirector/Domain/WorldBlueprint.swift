@@ -6,7 +6,7 @@ import Foundation
 // makes can be walked, edited, saved and undone like hand-built content.
 
 enum WorldTheme: String, Codable, CaseIterable, Sendable, Identifiable {
-    case skyCity, memory, nature, futureCity, bossAdventure
+    case skyCity, memory, nature, futureCity, bossAdventure, crystalKingdom
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +15,7 @@ enum WorldTheme: String, Codable, CaseIterable, Sendable, Identifiable {
         case .nature: L10n.t("幻想自然世界", "Fantasy Nature")
         case .futureCity: L10n.t("未来玻璃都市", "Future Glass City")
         case .bossAdventure: L10n.t("Boss 冒险世界", "Boss Adventure")
+        case .crystalKingdom: L10n.t("月光水晶城", "Crystal Moon City")
         }
     }
     var summary: String {
@@ -24,12 +25,13 @@ enum WorldTheme: String, Codable, CaseIterable, Sendable, Identifiable {
         case .nature: L10n.t("山丘、森林、湖泊、溪流、遗迹和自然小径", "Hills, forests, lakes, streams, ruins and trails")
         case .futureCity: L10n.t("道路网、街区、玻璃高楼、广场和动态广告牌", "Road grid, blocks, glass towers, plazas and live billboards")
         case .bossAdventure: L10n.t("安全出生区、探索路线、战斗区、奖励和 Boss 场地", "Safe start, a route, fights, rewards and a Boss arena")
+        case .crystalKingdom: L10n.t("城墙、城门、石桥、水晶城堡、喷泉广场、街区和外围森林（模块化建筑）", "Walls, gates, a stone bridge, a crystal castle, a fountain plaza, districts and forest (modular buildings)")
         }
     }
     var symbol: String {
         switch self {
         case .skyCity: "cloud.sun"; case .memory: "photo.on.rectangle.angled"; case .nature: "leaf"
-        case .futureCity: "building.2"; case .bossAdventure: "flame"
+        case .futureCity: "building.2"; case .bossAdventure: "flame"; case .crystalKingdom: "building.columns"
         }
     }
 }
@@ -236,6 +238,9 @@ struct WorldBlueprint: Codable, Equatable, Sendable, Identifiable {
     var explorationRoutes: [ExplorationRoute]
     var performanceBudget: PerformanceBudget
     var generationMetadata: GenerationMetadata
+    /// Golden World town (crystalKingdom): the plan is rebuilt from the seed and this intent.
+    /// Optional, so earlier blueprints decode unchanged.
+    var town: GoldenTownIntent? = nil
     var id: String { blueprintID }
 
     /// Structural problems (empty when the blueprint can be built).

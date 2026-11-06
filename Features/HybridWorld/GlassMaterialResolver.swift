@@ -11,6 +11,16 @@ enum GlassSemantic: String, Codable, CaseIterable, Sendable {
     case houseGlass
     case landmarkGlass
     case water
+    // Architecture Kit (Golden World). Stone, wood and tile are opaque in both views.
+    case whiteStone
+    case roofGlass
+    case windowGlass
+    case roofTile
+    case wood
+    case metalTrim
+
+    /// Opaque materials never join the transparent sort.
+    var opaque: Bool { self == .whiteStone || self == .roofTile || self == .wood || self == .metalTrim }
 }
 
 enum GlassRenderRole: String, Codable, Sendable {
@@ -63,12 +73,34 @@ enum GlassMaterialResolver {
             return SemanticGlass(id: id, tintHex: "F7FBFF", roughness: 0.08, transparencyIntent: 0.42, glow: 0.22)
         case .water:
             return SemanticGlass(id: id, tintHex: "7EB6D8", roughness: 0.05, transparencyIntent: 0.55, glow: 0.02)
+        case .whiteStone:
+            return SemanticGlass(id: id, tintHex: "F1EEE8", roughness: 0.78, transparencyIntent: 0, glow: 0)
+        case .roofGlass:
+            return SemanticGlass(id: id, tintHex: "8FB8E0", roughness: 0.16, transparencyIntent: 0.22, glow: 0.06)
+        case .windowGlass:
+            return SemanticGlass(id: id, tintHex: "BFE3FF", roughness: 0.06, transparencyIntent: 0.5, glow: 0.05)
+        case .roofTile:
+            return SemanticGlass(id: id, tintHex: "B5523B", roughness: 0.7, transparencyIntent: 0, glow: 0)
+        case .wood:
+            return SemanticGlass(id: id, tintHex: "7A5A3C", roughness: 0.82, transparencyIntent: 0, glow: 0)
+        case .metalTrim:
+            return SemanticGlass(id: id, tintHex: "9AA6B8", roughness: 0.32, transparencyIntent: 0, glow: 0)
         }
     }
 
-    static func resolve(_ id: GlassSemantic, preset: GlassViewPreset, role: GlassRenderRole, quality: GlassQualityTier) -> ResolvedGlassLook {
+    /// Pixel view palette: each channel snapped to steps of 0x20 so colours read as a small retro palette.
+    static func pixelTint(_ hex: String) -> String {
+        guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return hex }
+        func snap(_ channel: UInt32) -> UInt32 { min(255, ((channel + 16) / 32) * 32) }
+        let r = snap((value >> 16) & 0xFF), g = snap((value >> 8) & 0xFF), b = snap(value & 0xFF)
+        return String(format: "%02X%02X%02X", r, g, b)
+    }
+
+    /// `tintHex` overrides the semantic's own tint (style packs colour the same material differently).
+    static func resolve(_ id: GlassSemantic, preset: GlassViewPreset, role: GlassRenderRole, quality: GlassQualityTier, tintHex: String? = nil) -> ResolvedGlassLook {
         let source = semantic(id)
-        var look = ResolvedGlassLook(tintHex: source.tintHex, roughness: source.roughness, opacity: 1, metallic: 0.02, clearcoat: 0.1, emissive: source.glow, pixelated: preset == .pixel, prioritySpecular: false)
+        let tint = tintHex.flatMap { $0.count == 6 && $0.allSatisfy(\.isHexDigit) ? $0.uppercased() : nil } ?? source.tintHex
+        var look = ResolvedGlassLook(tintHex: tint, roughness: source.roughness, opacity: 1, metallic: 0.02, clearcoat: 0.1, emissive: source.glow, pixelated: preset == .pixel, prioritySpecular: false)
         switch (preset, role) {
         case (.pixel, .ground):
             look.opacity = 0.97; look.roughness = 0.62; look.clearcoat = 0.04; look.emissive = min(look.emissive, 0.02)
@@ -104,7 +136,11 @@ enum GlassMaterialResolver {
             look.opacity = max(look.opacity, preset == .pixel ? 0.97 : 0.94)
             look.prioritySpecular = false
         }
-        if preset == .pixel { look.prioritySpecular = false; look.pixelated = true }
+        if id.opaque {
+            look.opacity = 1; look.clearcoat = min(look.clearcoat, 0.08); look.roughness = max(look.roughness, source.roughness)
+            look.metallic = id == .metalTrim && preset == .spatial ? 0.7 : 0.02
+        }
+        if preset == .pixel { look.prioritySpecular = false; look.pixelated = true; look.tintHex = pixelTint(look.tintHex) }
         return look
     }
 }

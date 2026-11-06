@@ -124,6 +124,14 @@ enum WorldQualityEvaluator {
         let load = Double(generatedBlocks.count) / Double(max(1, bp.performanceBudget.maxBlocks))
         let performance = 100 * max(0, min(1, 1.15 - load * 0.6)) * (videoBindings <= bp.performanceBudget.maxVideos ? 1 : 0.3)
 
+        // Golden World towns must also pass the Golden Scene Quality Gate.
+        if let intent = bp.town {
+            let plan = GoldenCityPlanner.plan(seed: bp.seed, intent: intent)
+            let budget = GoldenBudget(maxBlocks: bp.performanceBudget.maxBlocks, maxPlants: bp.performanceBudget.maxPlants)
+            let gate = GoldenSceneQualityGate.evaluate(world, plan: plan, budget: budget) { $0.origin == .generated && $0.id.hasSuffix(WorldBuildState.goldenSuffix) }
+            violations += gate.violations.map { "golden: " + $0 }
+        }
+
         return WorldQualityReport(violations: violations, composition: composition, harmony: harmony, lighting: lighting, exploration: exploration,
                                   consistency: consistency, performance: performance, reachableShare: reachableShare,
                                   blocks: generatedBlocks.count, plants: generatedPlants.count, creatures: generatedCreatures.count)

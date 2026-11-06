@@ -358,7 +358,7 @@ struct Glass3DPending {
             eye = SpatialCameraRules.position(camera) + shake
             renderer.place(camera: camera, eye: eye, orthographicSpan: nil)
         }
-        let occlusion = OcclusionManager.resolve(player: world.player.position, cameraEye: eye, mode: viewMode, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
+        let occlusion = OcclusionManager.resolve(player: world.player.position, cameraEye: eye, mode: viewMode, buildings: world.hybrid?.occluders ?? [])
         renderer.applyOcclusion(hidden: occlusion.hidden, faded: occlusion.faded)
         updateCharacters()
         characters.generated.tick(Float(dt))
@@ -813,7 +813,7 @@ struct Glass3DPending {
             renderer.showGround(chunks: chunks, holes: Set(world.groundHoles ?? []))
             let all = allBlocks
             let visible = all.filter { chunks.contains(($0.y / 32) * 8 + $0.x / 32) }
-            renderer.showBlocks(visible, pivots: pivots)
+            renderer.showBlocks(visible, pivots: pivots, occluders: world.hybrid?.occluders ?? [])
             visibleBlockCache = visible
             renderer.showPlants(world.plants, chunks: chunks)
             let bindings = Dictionary(session.world.mediaBindings.map { ($0.id, $0.mediaID) }, uniquingKeysWith: { first, _ in first })
@@ -859,8 +859,8 @@ struct Glass3DPending {
     /// Keeps the 4096-region window pointed at whichever 256×256 map is open.
     /// Mid and far neighbours get distant terrain (visual only); their blocks are not generated.
     private func streamRegion() {
-        let column = world.hybrid?.regionColumn ?? CentralTown.address.column
-        let row = world.hybrid?.regionRow ?? CentralTown.address.row
+        let column = world.hybrid?.regionColumn ?? GoldenCity.address.column
+        let row = world.hybrid?.regionRow ?? GoldenCity.address.row
         let address = RegionAddress(column: column, row: row)
         let showsTerrain = world.hybrid != nil
         guard address != streamedRegion || showsTerrain != streamedTerrain else { return }
@@ -945,24 +945,33 @@ struct Glass3DPending {
             : L10n.t("第三人称 3D · 还在原地", "Third-person 3D · same spot")
     }
 
-    /// Drops the central town into the current region without covering player-edited solids.
-    func placeCentralTown() {
-        if world.blocks.contains(where: { $0.id.hasPrefix(CentralTown.idPrefix) }) {
-            notice = L10n.t("月光中央城已经在这里", "Central Town is already placed")
-            camera.target = SpatialVector(128.5, 128.5, camera.target.z)
+    /// Places 月光水晶城 (the Golden World reference town) into the open region, one undoable edit.
+    /// Player-built objects stay; a building that would touch one is left out whole.
+    func placeGoldenCity() {
+        if GoldenCity.isPlaced(world) {
+            notice = L10n.t("月光水晶城已经在这里", "Crystal Moon City is already here")
             return
         }
         let previous = renderer.glassPreset
         renderer.setGlassPreset(viewMode == .pixelRPG ? .pixel : .spatial)
         let revisionBefore = revision
-        edit(L10n.t("月光中央城", "Central Town")) { world in CentralTown.stamp(onto: &world) }
+        let tier: WorldPerformanceTier = quality == .performance ? .low : quality == .high ? .high : .standard
+        let plan = GoldenCityPlanner.plan(seed: GoldenCity.defaultSeed)
+        var report = GoldenStampReport()
+        edit(L10n.t("月光水晶城", "Crystal Moon City")) { world in report = GoldenCity.stamp(onto: &world, plan: plan, budget: .of(tier)) }
         guard revision != revisionBefore else {
             renderer.setGlassPreset(previous)
             rebuildAll()
             return
         }
-        camera.target = world.player.position
+        // Start at the bridge, facing the gate and the castle beyond it.
+        world.player.position = report.spawn; world.player.lastSafe = report.spawn
+        world.player.verticalSpeed = 0; world.player.facing = report.facing
+        camera.target = report.spawn
+        dirtyRuntime = true
         visibleDirty = true
+        let skipped = report.skippedUnits.isEmpty ? "" : L10n.t(" · 省略 ", " · left out ") + report.skippedUnits.prefix(3).joined(separator: "、")
+        notice = L10n.t("月光水晶城 · \(report.placedBuildings.count) 座建筑", "Crystal Moon City · \(report.placedBuildings.count) buildings") + skipped
     }
 
     /// What is under a screen point, nearest first (ray through the world).

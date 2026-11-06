@@ -7,10 +7,10 @@ import Foundation
 /// platforms and blocks with media stay separate objects.
 enum SpatialBatch {
     /// Blocks that can be merged: still (no moving group) and without media.
+    /// Roofs and walls of a building with an occluder are merged too, under their
+    /// occlusion tag (one mesh per building side), so the view can still hide them.
     static func batchable(_ block: SpatialBlock, pivots: [String: SpatialVector]) -> Bool {
-        // Roofs and walls toggle per building. A merged mesh cannot hide one of them.
-        if block.hybridPart == .roof || block.hybridPart == .wall { return false }
-        return block.media == nil && block.groupID.flatMap { pivots[$0] } == nil
+        block.media == nil && block.groupID.flatMap { pivots[$0] } == nil
     }
 
     /// 32×32 chunk index (8×8 chunks), the same as the ground and culling.
@@ -23,6 +23,11 @@ enum SpatialBatch {
 
     /// Batch key: chunk and material.
     static func key(_ block: SpatialBlock) -> String { "\(chunk(block))|" + materialKey(block.glass, collision: block.collision) }
+    /// Tagged blocks (see `OcclusionTag`) batch per tag, chunk and material.
+    static func key(_ block: SpatialBlock, tag: String?) -> String {
+        guard let tag else { return key(block) }
+        return "occ|\(tag)|" + key(block)
+    }
 
     /// Changes whenever a block in the batch is added, removed or reshaped.
     static func signature(_ blocks: [SpatialBlock]) -> Int {
