@@ -204,6 +204,9 @@ struct Glass3DPending {
     /// Continent index for the open 256×256 world. Neighbours are recorded, not built.
     private var regionManager = WorldRegionManager(graph: WorldGraph.continentIndex())
     private var streamedRegion: RegionAddress?
+    /// v1.86: the edge the player stands at (travel prompt), and the trip in progress.
+    @Published private(set) var travelEdge: TravelDirection?
+    @Published private(set) var travelling: String?
     /// v1.82: blocks, ground and plants are only re-checked when the world
     /// changed or the camera reached other chunks — before, every quarter
     /// second compared every block (a hitch in big worlds).
@@ -741,6 +744,7 @@ struct Glass3DPending {
         case .cameraBehind: cameraBehindPlayer()
         case .hotbar(let slot): if hotbar.indices.contains(slot) { castHotbar(slot) }
         case .switchMode: mode = mode == .play ? .edit : .play
+        case .switchPerspective: togglePerspective()
         case .flyUp: fly(2)
         case .flyDown: fly(-2)
         case .backToCharacter: backToCharacter()
@@ -797,6 +801,8 @@ struct Glass3DPending {
 
     private func refreshVisible() {
         streamRegion()
+        let edge = mode == .play && travelling == nil ? RegionTravel.edge(at: world.player.position).flatMap { RegionTravel.neighbour(of: regionAddress, $0) == nil ? nil : $0 } : nil
+        if edge != travelEdge { travelEdge = edge }
         clampCamera()
         let reach = camera.distance * (1 + sin(camera.tilt * .pi / 180) * 2) + 12
         let center = camera.target
@@ -865,6 +871,64 @@ struct Glass3DPending {
         guard let global = WorldRegionManager.compose(address: address, localX: localX, localY: localY) else { return }
         streamedRegion = address
         _ = regionManager.updateStreaming(around: global)
+    }
+
+    // MARK: Regions (v1.86)
+
+    /// The continent region this world is (Central Town for older saves).
+    var regionAddress: RegionAddress {
+        RegionAddress(column: world.hybrid?.regionColumn ?? CentralTown.address.column, row: world.hybrid?.regionRow ?? CentralTown.address.row)
+    }
+    func regionRecord(_ address: RegionAddress) -> WorldRegionRecord? { regionManager.region(at: address) }
+    var regionTitle: String { regionRecord(regionAddress).map(RegionTravel.title) ?? "" }
+
+    /// Walks over the edge the player stands at.
+    func travelAcrossEdge() {
+        guard let edge = travelEdge, let next = RegionTravel.neighbour(of: regionAddress, edge) else { return }
+        travel(to: next, arrival: RegionTravel.arrival(from: world.player.position, crossing: edge))
+    }
+
+    /// Leaves this region (saved to its own file) and opens another: its
+    /// saved world, or a new one built from its theme the first time.
+    /// `arrival` nil keeps a saved region's last position (or a new one's spawn).
+    func travel(to address: RegionAddress, arrival: SpatialVector? = nil) {
+        guard travelling == nil, address != regionAddress, let record = regionRecord(address) else { return }
+        let leaving = world, from = regionAddress
+        do { try RegionArchive.save(leaving, at: from) } catch {
+            notice = L10n.t("没能保存当前区域：", "Could not save this region: ") + error.localizedDescription
+            return
+        }
+        travelling = L10n.t("正在前往「\(RegionTravel.title(record))」…", "Travelling to \(RegionTravel.title(record))…")
+        travelEdge = nil
+        stick = (0, 0); look = (0, 0)
+        Task { [weak self] in
+            let region: SpatialWorld
+            if let saved = RegionArchive.load(address) {
+                region = saved
+            } else {
+                do { region = try await Task.detached(priority: .userInitiated) { try RegionTravel.build(record) }.value }
+                catch {
+                    self?.travelling = nil
+                    self?.notice = L10n.t("这个区域没能生成，请再试一次", "This region could not be built; please try again")
+                    return
+                }
+            }
+            self?.arrive(in: region, at: address, from: leaving, arrival: arrival, title: RegionTravel.title(record))
+        }
+    }
+
+    private func arrive(in region: SpatialWorld, at address: RegionAddress, from leaving: SpatialWorld, arrival: SpatialVector?, title: String) {
+        defer { travelling = nil }
+        let next = RegionTravel.enter(region, at: address, from: leaving, arrival: arrival)
+        guard session.commitSpatial(next) else { notice = session.notice; return }
+        world = next; revision += 1
+        selection = []; picked = nil; pending = nil; lockedTarget = nil; directorBackup = nil
+        resetCreatureBrains()
+        camera.target = world.player.position
+        if thirdPerson { cameraBehindPlayer() }
+        rebuildAll()
+        persist(force: true)
+        notice = L10n.t("来到「\(title)」", "Arrived at \(title)")
     }
 
     // MARK: Saving

@@ -75,6 +75,7 @@ extension SpatialPadAction {
         case .cameraBehind: L10n.t("镜头回到身后", "Camera Behind")
         case .hotbar(let i): L10n.t("技能栏 \(i + 1)", "Skill Slot \(i + 1)")
         case .switchMode: L10n.t("切换游玩 / 设计", "Switch Play / Design")
+        case .switchPerspective: L10n.t("切换像素 / 3D 视角", "Switch Pixel / 3D View")
         case .flyUp: L10n.t("镜头上升", "Camera Up")
         case .flyDown: L10n.t("镜头下降", "Camera Down")
         case .backToCharacter: L10n.t("回到角色", "Back to Character")
