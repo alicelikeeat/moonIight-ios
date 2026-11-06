@@ -244,6 +244,70 @@ final class ScrollGestureTests: XCTestCase {
     /// native glass layer, C one native glass per nearest cell, A the drawn
     /// texture), and a timed sample records a result. Functional only:
     /// simulator frame rates say nothing about iPhone performance.
+    /// The 3D world end to end: place 月光水晶城, check the Xbox-style HUD,
+    /// and make sure both the 3D and the pixel view actually draw something.
+    /// Saves a screenshot of each view for visual review.
+    @MainActor
+    func testGlass3DGoldenCityBothViews() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let enter = app.buttons["rpg-glass-world"]
+        XCTAssertTrue(enter.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: enter)], timeout: 20), .completed)
+        enter.tap()
+        let settings = app.buttons["glass3d-settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 20), "the 3D world opens")
+        settings.tap()
+        let place = app.buttons["glass3d-place-town"]
+        XCTAssertTrue(place.waitForExistence(timeout: 5)); place.tap()
+
+        // Face buttons follow the controller: attack on X, jump on A, dodge on B, skill on Y.
+        for (id, cap) in [("glass3d-attack", "X"), ("glass3d-jump", "A"), ("glass3d-roll", "B"), ("glass3d-skill", "Y")] {
+            let button = app.buttons[id]
+            XCTAssertTrue(button.waitForExistence(timeout: 10), "\(id) on the HUD")
+            XCTAssertTrue(button.label.hasSuffix("· " + cap), "\(id) is labelled with its Xbox button: \(button.label)")
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["glass3d-look-stick"].exists)
+
+        sleep(4) // let the town's meshes build and the camera settle
+        let spatial = app.screenshot()
+        attach(app, name: "review-glass3d-golden-3d")
+        XCTAssertGreaterThanOrEqual(colourVariety(spatial.image), 6, "the 3D view draws the town")
+
+        app.buttons["glass3d-perspective-switch"].tap()
+        sleep(3)
+        let pixel = app.screenshot()
+        attach(app, name: "review-glass3d-golden-pixel")
+        XCTAssertGreaterThanOrEqual(colourVariety(pixel.image), 6, "the pixel view draws the town, not a blank screen")
+
+        app.buttons["glass3d-perspective-switch"].tap()
+        sleep(2)
+        attach(app, name: "review-glass3d-golden-3d-again")
+    }
+
+    /// Distinct colours (quantised to 3 bits per channel) on a 16×16 grid
+    /// over the middle of the screen, away from the HUD. A blank view gives 1–2.
+    private func colourVariety(_ image: UIImage) -> Int {
+        guard let cg = image.cgImage else { return 0 }
+        let width = cg.width, height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return 0 }
+        var colours = Set<Int>()
+        for gy in 0..<16 { for gx in 0..<16 {
+            let x = width / 5 + (width * 3 / 5) * gx / 15
+            let y = height / 4 + (height / 2) * gy / 15
+            let i = (min(height - 1, y) * width + min(width - 1, x)) * 4
+            colours.insert(Int(pixels[i] >> 5) << 6 | Int(pixels[i + 1] >> 5) << 3 | Int(pixels[i + 2] >> 5))
+        } }
+        return colours.count
+    }
+
     @MainActor
     func testRPGGlassLabModesAndSample() {
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--glass-lab-ui-tests", "--glass-sample-short"])

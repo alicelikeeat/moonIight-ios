@@ -1607,6 +1607,25 @@ do {
     check(SpatialGamepad.action(for: .rightStick, playing: true) == .lock, "right stick click locks on")
     check(SpatialGamepad.action(for: .menu, playing: true) == .switchMode && SpatialGamepad.action(for: .menu, playing: false) == .switchMode, "Menu switches play / design")
     check(SpatialGamepad.action(for: .a, playing: false) == .backToCharacter && SpatialGamepad.action(for: .rightShoulder, playing: false) == .flyUp, "design: A back to character, RB fly up")
+    // The touch HUD is drawn as the controller: each spot is a physical button.
+    let hudFace = SpatialPadHUDLayout.actions(SpatialPadHUDLayout.face, mapping: .standard)
+    check(hudFace.map(\.button) == [.y, .x, .b, .a] && hudFace.map(\.action) == [.skill, .attack, .dodge, .jump], "HUD diamond: Y skill top, X attack left, B dodge right, A jump bottom")
+    let hudShoulders = SpatialPadHUDLayout.actions(SpatialPadHUDLayout.shoulders, mapping: .standard)
+    check(hudShoulders.map(\.action) == [.hotbar(2), .hotbar(0), .hotbar(1), .hotbar(3)], "HUD shoulders read LT LB | RB RT")
+    var hudRemap = SpatialPadMapping.standard
+    hudRemap.assign(.a, to: .attack, playing: true)
+    let hudAfter = SpatialPadHUDLayout.actions(SpatialPadHUDLayout.face, mapping: hudRemap)
+    check(hudAfter.first { $0.button == .a }?.action == .attack && hudAfter.first { $0.button == .x }?.action == .jump, "a remap moves the action on screen too")
+    let hudSize = 52.0
+    let hudCenters = SpatialPadHUDLayout.face.compactMap { SpatialPadHUDLayout.faceCenter($0, size: hudSize) }
+    var hudGap = Double.infinity
+    for i in 0..<hudCenters.count { for j in (i + 1)..<hudCenters.count {
+        let dx = hudCenters[i].x - hudCenters[j].x, dy = hudCenters[i].y - hudCenters[j].y
+        hudGap = min(hudGap, (dx * dx + dy * dy).squareRoot())
+    } }
+    let hudSide = SpatialPadHUDLayout.diamondSide(size: hudSize)
+    check(hudCenters.count == 4 && hudGap >= hudSize && hudCenters.allSatisfy { $0.x >= hudSize / 2 && $0.x <= hudSide - hudSize / 2 && $0.y >= hudSize / 2 && $0.y <= hudSide - hudSize / 2 },
+          "face buttons do not overlap and stay inside the diamond")
     var zoomIn = SpatialPadState(); zoomIn.rightTrigger = 1
     check(SpatialGamepad.zoomFactor(zoomIn, dt: 0.1) > 1 && SpatialGamepad.zoomFactor(SpatialPadState(), dt: 0.1) == 1, "design: RT zooms in, idle no zoom")
     print("RPG gamepad: \(checks) total checks passed")

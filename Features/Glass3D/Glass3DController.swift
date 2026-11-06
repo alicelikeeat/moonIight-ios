@@ -734,7 +734,8 @@ struct Glass3DPending {
         padMoving = playing && moving; padLooking = playing && looking
     }
 
-    private func perform(_ action: SpatialPadAction) {
+    /// One path for controller buttons and the on-screen controller.
+    func perform(_ action: SpatialPadAction) {
         switch action {
         case .jump: if health == 0 { revive() } else { jump() }
         case .attack: attack(.strike)

@@ -13,7 +13,10 @@ struct Glass3DPlayHUD: View {
         if portrait { portraitLayout } else { landscapeLayout }
     }
 
-    /// Landscape: move stick left; hotbar, actions and look stick right.
+    @ObservedObject private var pads = SpatialPadMappingStore.shared
+
+    /// Landscape: vitals and move stick left; shoulder row, face diamond and
+    /// look stick right, placed like an Xbox controller's right half.
     private var landscapeLayout: some View {
         HStack(alignment: .bottom, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
@@ -21,57 +24,76 @@ struct Glass3DPlayHUD: View {
                 Glass3DStick { x, y in controller.setStick(x, y) }
             }
             Spacer()
-            HStack(alignment: .bottom, spacing: 10) {
-                if controller.dead { reviveButton } else {
-                    RPGGlassGroup(spacing: 10) {
-                        HStack(alignment: .bottom, spacing: 10) {
-                            VStack(spacing: 8) { lockButton; Glass3DHotbar(live: controller.live, controller: controller, vertical: true) }
-                            actionCluster
-                        }
-                    }
+            if controller.dead { reviveButton } else {
+                VStack(alignment: .trailing, spacing: 10) {
+                    shoulderRow(size: 44)
+                    rightHalf(face: 56, stick: 104)
                 }
-                lookStick(size: 112)
             }
         }
     }
 
-    /// Portrait: vitals and hotbar row above; move stick, actions and look
-    /// stick along the bottom within thumb reach.
+    /// Portrait: vitals left and the shoulder row right above; the move
+    /// stick, look stick and face diamond along the bottom.
     private var portraitLayout: some View {
         VStack(spacing: 10) {
             HStack(alignment: .bottom, spacing: 8) {
                 Glass3DVitals(live: controller.live)
                 Spacer(minLength: 4)
-                if !controller.dead {
-                    RPGGlassGroup(spacing: 6) { HStack(spacing: 6) { lockButton; Glass3DHotbar(live: controller.live, controller: controller, vertical: false) } }
-                }
+                if !controller.dead { shoulderRow(size: 42) }
             }
             HStack(alignment: .bottom, spacing: 8) {
-                Glass3DStick(onVector: { x, y in controller.setStick(x, y) }, size: 112)
+                Glass3DStick(onVector: { x, y in controller.setStick(x, y) }, size: 108)
                 Spacer(minLength: 0)
-                if controller.dead { reviveButton } else { RPGGlassGroup(spacing: 8) { actionCluster } }
-                lookStick(size: 92)
+                if controller.dead { reviveButton } else { rightHalf(face: 52, stick: 88) }
             }
         }
     }
 
-    private var actionCluster: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            VStack(spacing: 8) {
-                Glass3DRoundButton(symbol: "sparkles", title: L10n.t("技能", "Skill"), size: 50, ring: .action(1), live: controller.live, id: "glass3d-skill") { controller.attack(.skill) }
-                Glass3DRoundButton(symbol: "arrow.triangle.2.circlepath", title: L10n.t("闪避", "Dodge"), size: 46, ring: .action(2), live: controller.live, id: "glass3d-roll") { controller.roll() }
-            }
-            VStack(spacing: 8) {
-                Glass3DRoundButton(symbol: "arrow.up.circle", title: L10n.t("跳跃", "Jump"), size: 50, ring: .none, live: controller.live, id: "glass3d-jump") { controller.jump() }
-                Glass3DRoundButton(symbol: "bolt.fill", title: L10n.t("攻击", "Attack"), size: 68, ring: .action(0), live: controller.live, id: "glass3d-attack") { controller.attack(.strike) }
+    /// LT LB | RB RT: the four skill slots in the order the shoulders are held.
+    private func shoulderRow(size: CGFloat) -> some View {
+        let slots = SpatialPadHUDLayout.actions(SpatialPadHUDLayout.shoulders, mapping: pads.mapping)
+        return RPGGlassGroup(spacing: 6) {
+            HStack(spacing: 6) {
+                ForEach(Array(slots.enumerated()), id: \.offset) { index, slot in
+                    if index == 2 { Spacer().frame(width: 6) }
+                    padButton(slot.button, slot.action, size: size)
+                }
             }
         }
     }
-    private var lockButton: some View {
-        Glass3DRoundButton(symbol: controller.lockedTarget == nil ? "scope" : "xmark.circle",
-                           title: controller.lockedTarget == nil ? L10n.t("锁定", "Lock") : L10n.t("解除锁定", "Unlock"),
-                           size: 42, ring: .none, live: controller.live, id: "glass3d-lock") { controller.toggleLock() }
+
+    /// Face diamond (Y top, X left, B right, A bottom) with the look stick
+    /// below and to its left, and lock-on (RS) above the stick — where the
+    /// right stick and its click are on the controller.
+    private func rightHalf(face size: CGFloat, stick: CGFloat) -> some View {
+        let side = CGFloat(SpatialPadHUDLayout.diamondSide(size: Double(size)))
+        let face = SpatialPadHUDLayout.actions(SpatialPadHUDLayout.face, mapping: pads.mapping)
+        let click = SpatialPadHUDLayout.stickClick
+        return HStack(alignment: .bottom, spacing: 6) {
+            VStack(spacing: 8) {
+                padButton(click, pads.mapping.action(for: click, playing: true), size: 42)
+                lookStick(size: stick)
+            }
+            RPGGlassGroup(spacing: 8) {
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(face.enumerated()), id: \.offset) { _, slot in
+                        if let c = SpatialPadHUDLayout.faceCenter(slot.button, size: Double(size)) {
+                            padButton(slot.button, slot.action, size: size)
+                                .position(x: CGFloat(c.x), y: CGFloat(c.y))
+                        }
+                    }
+                }
+                .frame(width: side, height: side)
+            }
+            .padding(.bottom, stick * 0.45)
+        }
     }
+
+    private func padButton(_ button: SpatialPadButton, _ action: SpatialPadAction?, size: CGFloat) -> some View {
+        Glass3DPadButton(controller: controller, live: controller.live, button: button, action: action, size: size)
+    }
+
     private func lookStick(size: CGFloat) -> some View {
         Glass3DStick(onVector: { x, y in controller.setLook(x, y) }, size: size, symbol: "eye", label: L10n.t("视角摇杆", "Look Stick"), identifier: "glass3d-look-stick")
     }
@@ -81,6 +103,51 @@ struct Glass3DPlayHUD: View {
                 .padding(.horizontal, 22).padding(.vertical, 14).background(Color.pink.gradient, in: Capsule())
         }
         .buttonStyle(RPGPressStyle()).accessibilityIdentifier("glass3d-revive")
+    }
+}
+
+/// One controller button on the HUD: the action the mapping puts on it,
+/// with its Xbox cap. Watches `live` itself, so skill-slot changes redraw
+/// only these buttons.
+@available(iOS 18.0, *)
+struct Glass3DPadButton: View {
+    @ObservedObject var controller: Glass3DController
+    @ObservedObject var live: Glass3DLive
+    let button: SpatialPadButton
+    let action: SpatialPadAction?
+    let size: CGFloat
+
+    var body: some View {
+        let look = action.map(visual) ?? PadVisual(symbol: "circle.dotted", title: L10n.t("未设置", "Not set"), id: "glass3d-pad-\(button.cap)", ring: .none, enabled: false)
+        Glass3DRoundButton(symbol: look.symbol, title: look.title, size: size, ring: look.ring, live: live, id: look.id, cap: button) {
+            if let action { controller.perform(action) }
+        }
+        .disabled(!look.enabled)
+        .opacity(look.enabled ? 1 : 0.45)
+    }
+
+    private struct PadVisual { var symbol: String, title: String, id: String, ring: Glass3DRing, enabled = true }
+
+    private func visual(_ action: SpatialPadAction) -> PadVisual {
+        switch action {
+        case .jump: PadVisual(symbol: "arrow.up.circle", title: L10n.t("跳跃", "Jump"), id: "glass3d-jump", ring: .none)
+        case .attack: PadVisual(symbol: "bolt.fill", title: L10n.t("攻击", "Attack"), id: "glass3d-attack", ring: .action(0))
+        case .skill: PadVisual(symbol: "sparkles", title: L10n.t("技能", "Skill"), id: "glass3d-skill", ring: .action(1))
+        case .dodge: PadVisual(symbol: "arrow.triangle.2.circlepath", title: L10n.t("闪避", "Dodge"), id: "glass3d-roll", ring: .action(2))
+        case .lock:
+            PadVisual(symbol: controller.lockedTarget == nil ? "scope" : "xmark.circle",
+                      title: controller.lockedTarget == nil ? L10n.t("锁定", "Lock") : L10n.t("解除锁定", "Unlock"), id: "glass3d-lock", ring: .none)
+        case .cameraBehind: PadVisual(symbol: "camera.rotate", title: L10n.t("镜头回到身后", "Camera Behind"), id: "glass3d-camera-behind", ring: .none)
+        case .hotbar(let i):
+            if let slot = live.hotbarSlots.first(where: { $0.index == i }) {
+                PadVisual(symbol: slot.symbol, title: slot.name, id: "glass3d-hotbar-\(i)", ring: .hotbar(i))
+            } else {
+                PadVisual(symbol: "circle.dotted", title: L10n.t("空技能栏", "Empty Slot"), id: "glass3d-hotbar-\(i)", ring: .none, enabled: false)
+            }
+        case .switchMode: PadVisual(symbol: "hammer", title: L10n.t("切换游玩 / 设计", "Play / Design"), id: "glass3d-pad-switch", ring: .none)
+        case .flyUp, .flyDown, .backToCharacter, .straightDown:
+            PadVisual(symbol: "circle.dotted", title: action.title, id: "glass3d-pad-\(action.key)", ring: .none, enabled: false)
+        }
     }
 }
 
@@ -96,6 +163,8 @@ struct Glass3DRoundButton: View {
     let ring: Glass3DRing
     let live: Glass3DLive
     let id: String
+    /// The controller button this stands for, drawn as a small Xbox cap.
+    var cap: SpatialPadButton? = nil
     let action: () -> Void
 
     var body: some View {
@@ -107,8 +176,26 @@ struct Glass3DRoundButton: View {
         }
         .buttonStyle(RPGPressStyle()).hudGlass(.interactive, in: Circle())
         .overlay { if ring != .none { Glass3DCooldownRing(live: live, ring: ring) } }
-        .accessibilityLabel(title).accessibilityIdentifier(id)
+        .overlay(alignment: .bottomTrailing) { if let cap { Glass3DCapBadge(button: cap) } }
+        .accessibilityLabel(cap.map { title + " · " + $0.xboxTitle } ?? title).accessibilityIdentifier(id)
     }
+}
+
+/// The Xbox letter on a HUD button: coloured A/B/X/Y, grey LB/RB/LT/RT/RS.
+struct Glass3DCapBadge: View {
+    let button: SpatialPadButton
+    var body: some View {
+        let face = button.capColor != .gray
+        Text(button.cap)
+            .font(.system(size: face ? 9 : 7.5, weight: .heavy, design: .rounded))
+            .foregroundStyle(face ? Color.white : Color.primary)
+            .padding(.horizontal, face ? 0 : 3)
+            .frame(minWidth: 15, minHeight: 15)
+            .background(Capsule().fill(face ? button.capColor.opacity(0.9) : Color.primary.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.5), lineWidth: 0.6))
+            .offset(x: 2, y: 2)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
 }
 
 @available(iOS 18.0, *)
@@ -124,19 +211,6 @@ struct Glass3DCooldownRing: View {
         Circle().trim(from: 0, to: value).stroke(Color.white.opacity(0.85), style: StrokeStyle(lineWidth: 3, lineCap: .round))
             .rotationEffect(.degrees(-90)).padding(2).allowsHitTesting(false)
             .accessibilityHidden(true)
-    }
-}
-
-/// Hotbar skills: the list redraws when slots change, rings on their own.
-@available(iOS 18.0, *)
-struct Glass3DHotbar: View {
-    @ObservedObject var live: Glass3DLive
-    let controller: Glass3DController
-    let vertical: Bool
-    var body: some View {
-        ForEach(live.hotbarSlots, id: \.index) { slot in
-            Glass3DRoundButton(symbol: slot.symbol, title: slot.name, size: 42, ring: .hotbar(slot.index), live: live, id: "glass3d-hotbar-\(slot.index)") { controller.castHotbar(slot.index) }
-        }
     }
 }
 

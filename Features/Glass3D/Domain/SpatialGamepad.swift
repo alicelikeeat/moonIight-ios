@@ -221,3 +221,34 @@ struct SpatialPadMapping: Codable, Equatable, Sendable {
     }
     func encoded() -> Data? { try? JSONEncoder().encode(normalized()) }
 }
+
+/// The touch HUD drawn as an Xbox controller: each spot is a physical
+/// button, showing whatever action the saved mapping puts on it, so the
+/// screen and the controller never disagree after a remap.
+enum SpatialPadHUDLayout {
+    /// Face buttons by position: top, left, right, bottom.
+    static let face: [SpatialPadButton] = [.y, .x, .b, .a]
+    /// Shoulder row, left to right as held: LT LB | RB RT.
+    static let shoulders: [SpatialPadButton] = [.leftTrigger, .leftShoulder, .rightShoulder, .rightTrigger]
+    /// Pressing the right stick (lock-on) sits by the look stick.
+    static let stickClick: SpatialPadButton = .rightStick
+
+    /// Centre of a face button in a diamond of `size`-wide buttons, origin top-left.
+    static func faceCenter(_ button: SpatialPadButton, size: Double) -> (x: Double, y: Double)? {
+        let pitch = size * 0.92
+        let mid = pitch + size / 2
+        switch button {
+        case .y: return (mid, size / 2)
+        case .x: return (size / 2, mid)
+        case .b: return (mid + pitch, mid)
+        case .a: return (mid, mid + pitch)
+        default: return nil
+        }
+    }
+    /// Width and height of the diamond.
+    static func diamondSide(size: Double) -> Double { size * 0.92 * 2 + size }
+
+    static func actions(_ buttons: [SpatialPadButton], mapping: SpatialPadMapping) -> [(button: SpatialPadButton, action: SpatialPadAction?)] {
+        buttons.map { ($0, mapping.action(for: $0, playing: true)) }
+    }
+}
