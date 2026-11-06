@@ -3252,7 +3252,7 @@ func hybridWorldV2() {
     let terrain = RegionTerrain(graph: graph)
     var streams = WorldRegionManager(graph: graph)
     _ = streams.updateStreaming(around: home)
-    let focus = CentralTown.address
+    let focus = GoldenCity.address
     let patches = terrain.patches(resident: streams.resident, graph: graph, focus: focus)
     let midCount = patches.filter { $0.tier == .mid }.count, farCount = patches.filter { $0.tier == .far }.count
     check(midCount == 8 && farCount == 12 && !patches.contains { $0.address == focus }, "8 mid + 12 far patches (far corners sit past the sky dome), none over the open map (\(midCount)/\(farCount))")
@@ -3280,11 +3280,15 @@ func hybridWorldV2() {
         }
         check(seamOK && mid.localX(column: mid.samples - 1) == far.localX(column: 0), "mid and far terrain share their seam without a crack")
     } else { check(false, "mid and far terrain share their seam without a crack") }
-    let reach = patches.allSatisfy { patch in
-        patch.triangles.allSatisfy { index in
-            let column = Int(index) % patch.samples, row = Int(index) / patch.samples
-            let dx = Double(patch.localX(column: column)) - RegionTerrain.mapCentre, dy = Double(patch.localY(row: row)) - RegionTerrain.mapCentre
-            return dx * dx + dy * dy <= RegionTerrain.visibleRadius * RegionTerrain.visibleRadius + 1e-6
+    var reach = true
+    let limit: Double = RegionTerrain.visibleRadius * RegionTerrain.visibleRadius + 1e-6
+    for patch in patches {
+        for index in patch.triangles {
+            let column: Int = Int(index) % patch.samples
+            let row: Int = Int(index) / patch.samples
+            let dx: Double = Double(patch.localX(column: column)) - RegionTerrain.mapCentre
+            let dy: Double = Double(patch.localY(row: row)) - RegionTerrain.mapCentre
+            if dx * dx + dy * dy > limit { reach = false }
         }
     }
     check(reach, "terrain stays inside the sky dome")
