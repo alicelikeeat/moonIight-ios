@@ -27,7 +27,11 @@ struct StreamDelta: Equatable, Sendable {
 struct RegionStreamHooks {
     var load: (StreamRequest) -> Void
     var unload: (RegionAddress) -> Void
-    static let ignore = RegionStreamHooks(load: { _ in }, unload: { _ in })
+    /// A fresh no-op pair. Not a stored static: the closures are not `Sendable`,
+    /// and Swift 6 rejects a shared static of that type.
+    static func ignore() -> RegionStreamHooks {
+        RegionStreamHooks(load: { _ in }, unload: { _ in })
+    }
 }
 
 struct WorldRegionManager: Sendable {
@@ -73,7 +77,7 @@ struct WorldRegionManager: Sendable {
     }
 
     /// Updates which regions should be resident. Calls hooks for new or retiered loads and for drops.
-    mutating func updateStreaming(around global: GlobalCell, hooks: RegionStreamHooks = .ignore) -> StreamDelta {
+    mutating func updateStreaming(around global: GlobalCell, hooks: RegionStreamHooks = .ignore()) -> StreamDelta {
         guard let focus = Self.decompose(global)?.address else { return StreamDelta(load: [], unload: []) }
         let window = Self.window(around: focus)
         var desired: [RegionAddress: StreamTier] = [:]
