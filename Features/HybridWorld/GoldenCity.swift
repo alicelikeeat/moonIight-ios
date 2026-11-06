@@ -152,7 +152,7 @@ enum GoldenCityPlanner {
         let t = GoldenCityPlan.terraceHeight
         var list: [KitBuildingSpec] = []
         // North: castle on the terrace. The spire is the focal point on the avenue axis.
-        var spire = spec("spire", "月光尖塔", .keep, 124, 158, 8, 8, door: .south, storeys: random.int(5...6), roof: .spire, base: t)
+        var spire = spec("spire", "月光尖塔", .keep, 124, 158, 8, 8, door: .south, storeys: 6, roof: .spire, base: t)
         spire.windowEvery = 2; spire.banner = true; spire.finial = true
         var westWing = spec("wing-w", "西翼殿", .keep, 110, 157, 12, 10, door: .south, storeys: 3, roof: .hip, base: t)
         westWing.windowEvery = 2; westWing.balcony = true
@@ -160,7 +160,7 @@ enum GoldenCityPlanner {
         eastWing.windowEvery = 3; eastWing.banner = true
         var westTower = spec("tower-w", "西塔", .castleTower, 102, 161, 6, 6, door: .south, storeys: 4, roof: .spire, base: t)
         westTower.windowEvery = 2
-        var eastTower = spec("tower-e", "东塔", .castleTower, 148, 161, 6, 6, door: .south, storeys: random.int(4...5), roof: .spire, base: t)
+        var eastTower = spec("tower-e", "东塔", .castleTower, 148, 161, 6, 6, door: .south, storeys: 4, roof: .spire, base: t)
         eastTower.windowEvery = 2; eastTower.banner = true
         list += [spire, westWing, eastWing, westTower, eastTower]
 

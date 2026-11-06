@@ -141,8 +141,9 @@ enum OcclusionManager {
 
     /// Segment–box test (slab method) between the eye and the player's head.
     static func blocksView(from eye: SpatialVector, to target: SpatialVector, _ building: BuildingOccluder) -> Bool {
-        let lo = (Double(building.minX), Double(building.minY), building.base)
-        let hi = (Double(building.maxX) + 1, Double(building.maxY) + 1, building.roofTop)
+        // The box includes the one-cell eaves overhang.
+        let lo = (Double(building.minX) - 1, Double(building.minY) - 1, building.base)
+        let hi = (Double(building.maxX) + 2, Double(building.maxY) + 2, building.roofTop)
         let d = (target.x - eye.x, target.y - eye.y, target.z - eye.z)
         var t0 = 0.0, t1 = 1.0
         for (origin, delta, low, high) in [(eye.x, d.0, lo.0, hi.0), (eye.y, d.1, lo.1, hi.1), (eye.z, d.2, lo.2, hi.2)] {
