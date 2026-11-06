@@ -156,6 +156,8 @@ struct RootView: View {
         .onChange(of: navigationHideDelay) { _ in scheduleNavigationHide() }
         .task { scheduleNavigationHide() }
         .onChange(of: model.command) { request in if let request { route(request.action, context: request.context) } }
+        // Widget and lock screen shortcuts.
+        .onOpenURL { url in openLink(url) }
         // Explicit .plain styles preserve existing single-glass circles and
         // media covers; shared containers keep their inner controls clear.
         // Full-blind mode hides the page layer itself. Search and the explicit
@@ -677,6 +679,22 @@ struct RootView: View {
             try? await Task.sleep(nanoseconds: UInt64(navigationHideDelay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.34)) { navigationVisible = false }
+        }
+    }
+
+    /// moonlight://sandbox, world3d, camera, search — what the widgets open.
+    private func openLink(_ url: URL) {
+        guard let link = MoonlightLink(url: url) else { return }
+        activeSheet = nil; treasureRoute = nil; activePlayer = nil
+        switch link {
+        case .sandbox: selectTab(.sandbox)
+        case .world3D:
+            WorldHost.shared.pendingGlassWorld = true
+            selectTab(.sandbox)
+            // Already in the sandbox: its onAppear will not run again.
+            NotificationCenter.default.post(name: WorldHost.openGlassWorldNotification, object: nil)
+        case .camera: openCamera(video: false)
+        case .search: route(.searchMedia, context: "")
         }
     }
 

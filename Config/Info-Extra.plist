@@ -7,6 +7,17 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.moonlight.feed.links</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>moonlight</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接你自己电脑上的「Moonlight 本地 3D」服务，把图片生成 3D 模型。</string>
 </dict>

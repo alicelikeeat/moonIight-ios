@@ -85,7 +85,9 @@ struct RPGShellView: View {
                 if session.ready { presentInitial() }
                 showPrologueIfNeeded()
                 openGlassWorldAtLaunch()
+                openLinkedGlassWorld()
             }
+            .onReceive(NotificationCenter.default.publisher(for: WorldHost.openGlassWorldNotification)) { _ in openLinkedGlassWorld() }
             .onDisappear { controlCenter = false; session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.pause() }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in session.activate() }
@@ -165,7 +167,7 @@ struct RPGShellView: View {
                 }
                 #endif
             }
-            .onChange(of:session.ready){ if $0 { presentInitial(); showPrologueIfNeeded(); openGlassWorldAtLaunch() } }
+            .onChange(of:session.ready){ if $0 { presentInitial(); showPrologueIfNeeded(); openGlassWorldAtLaunch(); openLinkedGlassWorld() } }
             .onChange(of: prologue == nil) { done in if done { openGlassWorldAtLaunch() } }
             .onChange(of:session.world.id){ _ in showPrologueIfNeeded() }
             .onChange(of: tools) { _ in syncOverlay() }
@@ -512,6 +514,17 @@ struct RPGShellView: View {
         #endif
         Glass3DLaunch.opened = true
         glassWorldDesign = true
+        glassWorld = true
+    }
+
+    /// The widget's 3D-world link: straight into the 3D world in play mode,
+    /// past the prologue and any open panel, as soon as the world is ready.
+    private func openLinkedGlassWorld() {
+        guard #available(iOS 18.0, *), WorldHost.shared.pendingGlassWorld, session.ready else { return }
+        WorldHost.shared.pendingGlassWorld = false
+        prologue = nil; tools = false; controlCenter = false
+        guard !glassWorld else { return }
+        glassWorldDesign = false
         glassWorld = true
     }
 

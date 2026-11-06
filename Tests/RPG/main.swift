@@ -3318,5 +3318,34 @@ func hybridWorldV2() {
     print("RPG hybrid world: \(checks) total checks passed")
 }
 
+/// Widgets: deep links, the shared snapshot and the minimap.
+func widgetShared() {
+    for link in MoonlightLink.allCases { check(MoonlightLink(url: link.url) == link, "\(link.rawValue) link round-trips") }
+    check(MoonlightLink(url: URL(string: "MOONLIGHT://World3D")!) == .world3D, "scheme and host are case-insensitive")
+    check(MoonlightLink(url: URL(string: "https://sandbox")!) == nil && MoonlightLink(url: URL(string: "moonlight://elsewhere")!) == nil, "other links are ignored")
+
+    let cells = [MoonlightMinimapCell(x: 128, y: 128, top: 1, rgb: 0x112233), MoonlightMinimapCell(x: 128, y: 128, top: 5, rgb: 0xAABBCC),
+                 MoonlightMinimapCell(x: 117, y: 139, top: 1, rgb: 0x445566), MoonlightMinimapCell(x: 116, y: 139, top: 1, rgb: 0x778899),
+                 MoonlightMinimapCell(x: 128, y: 140, top: 1, rgb: 0x000000)]
+    let map = MoonlightMinimap.build(cells, centerX: 128, centerY: 128, side: 24)
+    check(map.count == 576, "24 × 24 minimap")
+    check(map[(128 + 11 - 128) * 24 + 12] == 0xAABBCC + 1, "the highest block wins its cell")
+    check(map[0] == 0x778899 + 1 && map[1] == 0x445566 + 1, "north-west corner is the first cell, east of it the second")
+    check(map.filter { $0 > 0 }.count == 3, "cells outside the square are left out")
+    check(MoonlightMinimap.build([MoonlightMinimapCell(x: 128, y: 128, top: 0, rgb: 0)], centerX: 128, centerY: 128)[11 * 24 + 12] == 1, "a black block still shows (0 is ground)")
+    check(MoonlightMinimap.rgb(hex: "F1EEE8") == 0xF1EEE8 && MoonlightMinimap.rgb(hex: nil) == 0xDCEBF5 && MoonlightMinimap.rgb(hex: "zz") == 0xDCEBF5, "hex tints, clear glass")
+
+    let snapshot = MoonlightWidgetSnapshot(worldTitle: "原世界 · Seed 7", health: 79, stamina: 100, shards: 1, blocks: 7564, revision: 8030,
+                                           savedAt: Date(timeIntervalSince1970: 1_800_000_000), mapSide: 24, map: map)
+    check(snapshot.valid, "a real snapshot is valid")
+    check(MoonlightWidgetStore.decode(MoonlightWidgetStore.encode(snapshot)) == snapshot, "snapshot survives encode / decode")
+    var broken = snapshot; broken.map.removeLast()
+    check(!broken.valid && MoonlightWidgetStore.decode(MoonlightWidgetStore.encode(broken)) == nil, "a snapshot whose map does not match its side is rejected")
+    var future = snapshot; future.schema = 99
+    check(MoonlightWidgetStore.decode(MoonlightWidgetStore.encode(future)) == nil && MoonlightWidgetStore.decode(Data("{}".utf8)) == nil, "unknown schema and junk are ignored")
+    print("Widgets: \(MoonlightLink.allCases.count) links, \(map.filter { $0 > 0 }.count) mapped cells")
+}
+
 hybridWorldV2()
+widgetShared()
 print("RPG complete: \(checks) total checks passed")

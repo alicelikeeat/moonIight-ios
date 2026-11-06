@@ -244,6 +244,22 @@ final class ScrollGestureTests: XCTestCase {
     /// native glass layer, C one native glass per nearest cell, A the drawn
     /// texture), and a timed sample records a result. Functional only:
     /// simulator frame rates say nothing about iPhone performance.
+    /// Widget taps are moonlight:// links: each one lands where it says,
+    /// including straight into the 3D world from another page.
+    @MainActor
+    func testWidgetLinksOpenTheWorld() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        app.open(URL(string: "moonlight://search")!)
+        XCTAssertTrue(app.scrollViews["feed-scroll-discover"].waitForExistence(timeout: 10), "search opens 发现")
+        app.open(URL(string: "moonlight://world3d")!)
+        XCTAssertTrue(app.buttons["glass3d-settings"].waitForExistence(timeout: 30), "world3d opens the 3D world")
+        attach(app, name: "review-widget-link-world3d")
+        app.buttons["glass3d-close"].tap()
+        XCTAssertTrue(app.buttons["rpg-glass-world"].waitForExistence(timeout: 10), "closing it leaves the sandbox open")
+        app.open(URL(string: "moonlight://sandbox")!)
+        XCTAssertTrue(app.buttons["rpg-glass-world"].waitForExistence(timeout: 10), "sandbox stays in the sandbox")
+    }
+
     /// The 3D world end to end: place 月光水晶城, check the Xbox-style HUD,
     /// and make sure both the 3D and the pixel view actually draw something.
     /// Saves a screenshot of each view for visual review.

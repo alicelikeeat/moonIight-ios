@@ -13,6 +13,9 @@ import Foundation
     /// A page to open inside the sandbox on its next appearance, set when a
     /// search command such as 剧情编辑器 routes into the world.
     var pendingPage: RPGEntryPage?
+    /// Set by the widget's 3D-world link: open the 3D world once the sandbox is ready.
+    var pendingGlassWorld = false
+    static let openGlassWorldNotification = Notification.Name("moonlight.openGlassWorld")
     /// The portrait page to return to from 完成 / 继续 elsewhere.
     var returnTab: AppTab = .home
 

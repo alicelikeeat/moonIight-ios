@@ -276,7 +276,7 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
             }
         }
     }
-    func pause() { guiding?.cancel(); active = false; silenceMedia(); media?.pause(); applyScenePause(); loading?.cancel(); save() }
+    func pause() { guiding?.cancel(); active = false; silenceMedia(); media?.pause(); applyScenePause(); loading?.cancel(); save(leaving: true) }
     func shutdown() {
         guiding?.cancel()
         silenceMedia(); save(); active = false; media?.stop(); media=nil; mediaNotice=nil; generation = UUID(); loading?.cancel(); boot?.cancel(); edit?.cancel(); boot = nil
@@ -850,7 +850,8 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         do { try await storage.save(world); active = false; working = false; return true }
         catch { working = false; notice = error.localizedDescription; return false }
     }
-    func save() {
+    /// `leaving`: the world is being paused; the widgets redraw right away.
+    func save(leaving: Bool = false) {
         guard ready else { return }
         saveState = .saving
         saving?.cancel(); let snapshot = world, epoch = generation, storage = storage
@@ -862,6 +863,9 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }
                 self.saveMilliseconds=elapsed
                 self.notice = L10n.t("世界已保存 · 修订 \(snapshot.revision)", "World saved · revision \(snapshot.revision)"); self.saveState = .saved
+                MoonlightWidgetBridge.publish(MoonlightWidgetBridge.snapshot(
+                    title: self.worldTitle, health: snapshot.player.health, stamina: snapshot.player.stamina,
+                    shards: snapshot.inventory["moon-shard", default: 0], revision: snapshot.revision, spatial: snapshot.spatial), leaving: leaving)
             } catch {
                 guard !Task.isCancelled, let self, self.generation == epoch else { return }; self.notice = error.localizedDescription
                 self.saveState = .failed(error.localizedDescription)
