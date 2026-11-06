@@ -206,9 +206,9 @@ enum GoldenCityPlanner {
         var library = town("library", "星图书馆", .library, 101, 116, 10, 10, .north, storeys: 2...2)
         library.roof = .hip
         list.append(library)
-        var guard = town("guardhouse", "卫兵所", .guardhouse, 113, 96, 9, 9, .east, storeys: 2...2)
-        guard.roof = .flat; guard.banner = true
-        list.append(guard)
+        var guardhouse = town("guardhouse", "卫兵所", .guardhouse, 113, 96, 9, 9, .east, storeys: 2...2)
+        guardhouse.roof = .flat; guardhouse.banner = true
+        list.append(guardhouse)
         var lodge = town("lodge", "旅人驿站", .inn, 134, 95, 10, 10, .west, storeys: 2...2)
         lodge.roof = .gable; lodge.balcony = true; lodge.sign = true
         list.append(lodge)
@@ -558,7 +558,8 @@ enum GoldenCityDraftBuilder {
         for bed in plan.beds { furniture += KitAssembler.flowerBed(x0: bed.x, y0: bed.y, width: bed.width, depth: bed.depth) }
         for fence in plan.fences { furniture += KitAssembler.fence([(fence.x, fence.y)], base: fence.base) }
         units.append(GoldenUnit(key: "furniture", name: "街道设施", layer: .decorations, priority: 3, atomic: false, building: nil, pieces: furniture))
-        units.sort { $0.priority < $1.priority }
+        // Stable: same priority keeps the order above.
+        units = units.enumerated().sorted { ($0.element.priority, $0.offset) < ($1.element.priority, $1.offset) }.map(\.element)
 
         var plants: [GoldenPlant] = []
         var hue = SpatialRandom(seed: plan.seed ^ 0xF10E)
