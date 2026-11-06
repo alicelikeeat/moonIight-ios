@@ -230,7 +230,8 @@ private actor CardFrameRenderer {
             guard let url = entries[id]?.remoteURL else { continue }
             let epoch = generation
             gifTasks[id] = Task { [weak self] in
-                let decoded = await Task.detached(priority: .utility) { RPGGIFDecoder.decode(url) }.value
+                let decoding = Task.detached(priority: .utility) { RPGGIFDecoder.decode(url) }
+                let decoded = await withTaskCancellationHandler { await decoding.value } onCancel: { decoding.cancel() }
                 guard !Task.isCancelled, let self, generation == epoch, desiredGIFs.contains(id) else { return }
                 gifTasks[id] = nil
                 if let decoded {

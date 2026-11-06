@@ -79,6 +79,9 @@ final class LandlordLiquidTests: XCTestCase {
         XCTAssertTrue(app.scrollViews["landlord-full-deck"].waitForExistence(timeout: 5))
         snapshot(app, "landlord-full-deck")
         done(app)
+        app.buttons["landlord-table-menu"].tap(); app.buttons["收牌到桌面（完整54张）"].tap()
+        let table = app.descendants(matching: .any).matching(identifier: "landlord-table").firstMatch
+        XCTAssertTrue((table.value as? String ?? "").contains("54张桌面牌"))
         app.buttons["landlord-expand"].tap(); app.buttons["landlord-arrange"].tap()
         snapshot(app, "landlord-wild-finished")
         app.terminate()

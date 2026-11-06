@@ -65,6 +65,12 @@ for seed in 0..<8 {
         actions += 1; precondition(actions < 300, "round terminates")
     }
     check(game.phase == .finished && game.scores.reduce(0,+) == 0, "game settles")
+    let prior = game
+    let gathered = LandlordTablePile.piles(game, collect: true)
+    check(gathered.flatMap(\.cards).count == 54 && Set(gathered.flatMap(\.cards).map(\.id)).count == 54, "central table collects all 54 unique physical cards")
+    check(gathered.filter(\.played).count == game.history.count, "collection never becomes a fictitious play")
+    check(game == prior, "collecting does not mutate ownership or settlement")
+    check(LandlordTablePile.piles(game, collect: false).count == game.history.count, "history renderer never truncates plays")
     let reloaded = try JSONDecoder().decode(LandlordGame.self, from: JSONEncoder().encode(game))
     check(reloaded == game && reloaded.validated, "wild declarations and settlement persist")
     check(game.history.flatMap(\.cards).count + game.hands.flatMap { $0 }.count == 54, "table + hands exactly full deck")
@@ -73,6 +79,10 @@ var preferences = LandlordTablePreferences()
 check(preferences.canInspectHand(0) && !preferences.canInspectHand(1) && !preferences.canInspectHand(2), "default visibility")
 preferences.revealed = [true,true,true]; check(preferences.canInspectHand(1), "reveal all")
 preferences.revealed[1] = false; check(!preferences.canInspectHand(1), "hide again")
+let oldPreferences = try JSONSerialization.jsonObject(with: JSONEncoder().encode(preferences)) as! [String: Any]
+let oldPreferencesData = try JSONSerialization.data(withJSONObject: oldPreferences.filter { $0.key != "gatherRemaining" })
+let compatiblePreferences = try JSONDecoder().decode(LandlordTablePreferences.self, from: oldPreferencesData)
+check(compatiblePreferences.revealed == preferences.revealed && !compatiblePreferences.gatherRemaining, "new preferences preserve prior settings")
 preferences.offsets[0] = .init(x: .nan, y: 8); preferences.revealed = []; preferences.normalize()
 check(preferences.revealed == [true,false,false] && preferences.offsets[0] == .init(x:0,y:0.7), "damaged UI preferences bounded")
 let id = UUID(); preferences.begin(id); preferences.offsets[1] = .init(x:0.2,y:0.3); preferences.begin(id)

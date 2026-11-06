@@ -193,6 +193,8 @@ struct LandlordLiquidTable: View {
                 Button("牌面、明牌与角色") { panel = .settings }
                 Button("本局完整记录") { panel = .history }
                 Button("玩法说明") { panel = .rules }
+                Button(store.table.gatherRemaining ? "恢复对局牌桌" : "收牌到桌面（完整54张）") { store.table.gatherRemaining.toggle() }
+                    .disabled(store.game.phase != .finished).accessibilityIdentifier("landlord-collect")
                 Button("新一局") { requestNewGame() }
             } label: { Image(systemName: "ellipsis") }.accessibilityLabel("斗地主设置").accessibilityIdentifier("landlord-table-menu")
         }.font(.callout).frame(height: 36).buttonStyle(.moonLiquid)
@@ -261,7 +263,7 @@ struct LandlordLiquidTable: View {
         Group {
             if let play = store.game.lastPlay {
                 Button { panel = .pile(play.id) } label: {
-                    Text("当前要压：\(store.table.profiles[play.player].name) · \(play.interpretation?.title ?? play.pattern.kind.title) · \(play.cards.count)张")
+                    Text("\(store.game.phase == .finished ? "最后一手" : "当前要压")：\(store.table.profiles[play.player].name) · \(play.interpretation?.title ?? play.pattern.kind.title) · \(play.cards.count)张")
                         .font(.caption2).lineLimit(1)
                 }.buttonStyle(.plain).accessibilityIdentifier("landlord-current-target")
             } else { Text("自由出牌 · 已出 \(store.game.history.reduce(0) { $0 + $1.cards.count })/54 张").font(.caption2).foregroundStyle(.secondary) }
@@ -279,9 +281,10 @@ struct LandlordLiquidTable: View {
         }.font(.caption2.weight(.semibold)).frame(height: 17)
     }
     private var historyTable: some View {
-        LandlordHistoryTable(game: store.game, expanded: $store.table.expanded, offsets: $store.table.offsets,
-            card: { card, play in AnyView(cardView(card, concealed: false, role: .central, z: play.id * 100 + 100 + card.id, effective: play.interpretation?.substitutions[card.id], clip: tableViewport)
-                .matchedGeometryEffect(id: card.id, in: movement, isSource: false)) }, inspect: { panel = .pile($0) })
+        LandlordHistoryTable(game: store.game, collect: store.table.gatherRemaining, expanded: $store.table.expanded, offsets: $store.table.offsets,
+            card: { card, pile in AnyView(cardView(card, concealed: !pile.played && !store.table.canInspectHand(pile.player), role: .central,
+                z: pile.id * 100 + 100 + card.id, effective: pile.substitutions[card.id], clip: tableViewport)
+                .matchedGeometryEffect(id: card.id, in: movement, isSource: false)) }, inspect: { id in panel = id >= 54 ? .hand(id - 54) : .pile(id) })
             .animation(animate ? .spring(response: 0.35, dampingFraction: 0.85) : nil, value: store.game.history.count)
             .background { GeometryReader { g in
                 Color.clear.onAppear { tableViewport = g.frame(in: .global) }
@@ -304,6 +307,11 @@ struct LandlordLiquidTable: View {
                     .onAppear { handWidth = geometry.size.width }
                     .onChange(of: geometry.size.width) { handWidth = $0 }
                 }.frame(height: CGFloat(max(1, LandlordTableLayout.handRows(cardCount: store.game.hands[0].count, width: Double(handWidth), compact: compact).count)) * 64)
+                    .opacity(store.table.gatherRemaining && store.game.phase == .finished ? 0 : 1)
+                    .accessibilityHidden(store.table.gatherRemaining && store.game.phase == .finished)
+                    .overlay {
+                        if store.table.gatherRemaining && store.game.phase == .finished { Text("剩余手牌已收入桌面 · 仍按明暗牌设置显示").font(.caption).foregroundStyle(.secondary) }
+                    }
             }
         }.accessibilityIdentifier("landlord-hand")
     }
@@ -364,7 +372,8 @@ struct LandlordLiquidTable: View {
     }
 
     private func cardView(_ card: LandlordCard, concealed: Bool, role: CardPreviewRole, z: Int, effective: Int? = nil, clip: CGRect? = nil) -> some View {
-        let mediaID = !concealed && store.preferences.style == .media ? store.mapping.assignments[card.id] : nil
+        let hiddenHand = role == .hand && store.table.gatherRemaining && store.game.phase == .finished
+        let mediaID = !concealed && !hiddenHand && store.preferences.style == .media ? store.mapping.assignments[card.id] : nil
         return LandlordTableCard(card: card, concealed: concealed, wild: store.game.wildcardRank, effective: effective,
             feed: mediaID.flatMap { media.feed($0) }, selected: role == .hand && store.selection.contains(card.id))
             .background { if let mediaID { GeometryReader { geometry in

@@ -104,9 +104,11 @@ struct LandlordSeatFrame: View {
 /// Every historical play stays in this viewport. Stacking affects presentation only.
 struct LandlordHistoryTable: View {
     let game: LandlordGame
+    var collect = false
     @Binding var expanded: Bool
     @Binding var offsets: [Int: LandlordTableOffset]
-    let card: (LandlordCard, LandlordPlay) -> AnyView
+    private var piles: [LandlordTablePile] { LandlordTablePile.piles(game, collect: collect) }
+    let card: (LandlordCard, LandlordTablePile) -> AnyView
     let inspect: (Int) -> Void
     @State private var scale: CGFloat = 1
     @GestureState private var pinch: CGFloat = 1
@@ -117,7 +119,7 @@ struct LandlordHistoryTable: View {
                 ScrollView([.horizontal, .vertical]) {
                     if expanded {
                         LazyVStack(alignment: .leading, spacing: 14) {
-                            ForEach(game.history) { play in
+                            ForEach(piles) { play in
                                 VStack(alignment: .leading, spacing: 5) {
                                     groupHeader(play)
                                     HStack(spacing: 4) { ForEach(play.cards) { c in card(c, play).frame(width: 46, height: 65) } }
@@ -126,30 +128,30 @@ struct LandlordHistoryTable: View {
                         }.padding(16).frame(minWidth: max(0, geometry.size.width), alignment: .leading)
                     } else {
                         ZStack(alignment: .topLeading) {
-                            ForEach(Array(game.history.enumerated()), id: \.element.id) { index, play in
+                            ForEach(Array(piles.enumerated()), id: \.element.id) { index, play in
                                 stacked(play, index: index, width: geometry.size.width)
                                     .id(play.id)
                             }
                         }
-                        .frame(width: max(300, geometry.size.width * 2), height: max(geometry.size.height, CGFloat(game.history.count * 34 + 160)))
+                        .frame(width: max(300, geometry.size.width * 2), height: max(geometry.size.height, CGFloat(piles.count * 34 + 160)))
                         .scaleEffect(min(1.8, max(0.7, scale * pinch)), anchor: .topLeading)
                         .frame(width: max(300, geometry.size.width * 2) * min(1.8, max(0.7, scale * pinch)),
-                               height: max(geometry.size.height, CGFloat(game.history.count * 34 + 160)) * min(1.8, max(0.7, scale * pinch)), alignment: .topLeading)
+                               height: max(geometry.size.height, CGFloat(piles.count * 34 + 160)) * min(1.8, max(0.7, scale * pinch)), alignment: .topLeading)
                     }
                 }
                 .simultaneousGesture(MagnificationGesture().updating($pinch) { value, state, _ in state = value }.onEnded { scale = min(1.8, max(0.7, scale * $0)) })
                 .overlay(alignment: .bottomTrailing) {
                     HStack(spacing: 8) {
                         Button { offsets = [:]; scale = 1 } label: { Image(systemName: "arrow.uturn.backward") }.accessibilityLabel("自动整理牌桌").accessibilityIdentifier("landlord-arrange")
-                        Button { if let id = game.history.last?.id { withAnimation { proxy.scrollTo(id, anchor: .center) } } } label: { Image(systemName: "scope") }.accessibilityLabel("回到当前出牌")
+                        Button { if let id = piles.last?.id { withAnimation { proxy.scrollTo(id, anchor: .center) } } } label: { Image(systemName: "scope") }.accessibilityLabel("回到当前出牌")
                     }.font(.caption).buttonStyle(.moonLiquid).padding(6)
                 }
-                .onChange(of: game.history.count) { _ in
-                    if let id = game.history.last?.id { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) } }
+                .onChange(of: piles.count) { _ in
+                    if let id = piles.last?.id { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) } }
                 }
             }
             .overlay {
-                if game.history.isEmpty {
+                if piles.isEmpty {
                     VStack(spacing: 6) {
                         Image(systemName: "suit.spade").font(.title2)
                         Text("出牌将按顺序叠放在这里").font(.caption)
@@ -162,16 +164,16 @@ struct LandlordHistoryTable: View {
         .clipShape(RoundedRectangle(cornerRadius: 20))
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(Color.teal.opacity(0.18), lineWidth: 1))
         .accessibilityIdentifier("landlord-table")
-        .accessibilityValue("\(game.history.reduce(0) { $0 + $1.cards.count }) 张已出牌，\(game.history.count) 手")
+        .accessibilityValue("\(piles.reduce(0) { $0 + $1.cards.count })张桌面牌，\(game.history.count)手已出牌记录")
     }
-    private func groupHeader(_ play: LandlordPlay) -> some View {
+    private func groupHeader(_ play: LandlordTablePile) -> some View {
         Button { inspect(play.id) } label: {
-            Text("\(["我", "右家", "左家"][play.player]) · 第\(play.trick)轮 · \(play.interpretation?.title ?? play.pattern.kind.title) · \(play.cards.count)张")
+            Text("\(["我", "右家", "左家"][play.player]) · \(play.title) · \(play.cards.count)张")
                 .font(.caption2.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 4)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
         }.buttonStyle(.plain).accessibilityIdentifier("landlord-pile-\(play.id)")
     }
-    private func stacked(_ play: LandlordPlay, index: Int, width: CGFloat) -> some View {
+    private func stacked(_ play: LandlordTablePile, index: Int, width: CGFloat) -> some View {
         let pileWidth = max(150, min(260, width * 0.7))
         let step = min(23, (pileWidth - 35) / CGFloat(max(1, play.cards.count - 1)))
         let saved = offsets[play.id, default: .init()].bounded

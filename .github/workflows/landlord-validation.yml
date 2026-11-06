@@ -2,7 +2,7 @@ name: Liquid landlord validation
 on:
   push:
     branches: [codex/landlord-liquid-2d]
-    paths: ['Landlord*.swift', 'CardMediaCoordinator.swift', 'Features/Landlord/**', 'MoonlightApp.swift', 'Moonlight-iOS.xcodeproj/**', 'MoonlightUITests/**', 'tests/landlord/**', 'scripts/fetch_depth_model.sh', '.github/workflows/landlord-validation.yml']
+    paths: ['Landlord*.swift', 'CardMediaCoordinator.swift', 'Features/RPG/Media/RPGGIFLibrary.swift', 'Features/Landlord/**', 'MoonlightApp.swift', 'Moonlight-iOS.xcodeproj/**', 'MoonlightUITests/**', 'tests/landlord/**', 'scripts/fetch_depth_model.sh', '.github/workflows/landlord-validation.yml']
   workflow_dispatch:
 permissions:
   contents: read
