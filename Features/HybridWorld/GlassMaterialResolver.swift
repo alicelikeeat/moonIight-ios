@@ -88,10 +88,10 @@ enum GlassMaterialResolver {
         }
     }
 
-    /// Pixel view palette: each channel snapped to steps of 0x20 so colours read as a small retro palette.
+    /// Pixel view palette: 4-bit colour (each channel a multiple of 0x11), a small retro palette that keeps whites neutral.
     static func pixelTint(_ hex: String) -> String {
         guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return hex }
-        func snap(_ channel: UInt32) -> UInt32 { min(255, ((channel + 16) / 32) * 32) }
+        func snap(_ channel: UInt32) -> UInt32 { ((channel + 8) / 17) * 17 }
         let r = snap((value >> 16) & 0xFF), g = snap((value >> 8) & 0xFF), b = snap(value & 0xFF)
         return String(format: "%02X%02X%02X", r, g, b)
     }

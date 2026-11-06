@@ -3122,7 +3122,7 @@ func hybridWorldV2() {
     let stoneSpatial = GlassMaterialResolver.resolve(.whiteStone, preset: .spatial, role: .structure, quality: .high, tintHex: "F1EEE8")
     check(stonePixel.opacity == 1 && stoneSpatial.opacity == 1, "stone is opaque in both views")
     check(stoneSpatial.tintHex == "F1EEE8" && stonePixel.tintHex == GlassMaterialResolver.pixelTint("F1EEE8") && stonePixel.pixelated && !stoneSpatial.pixelated, "pixel view snaps the same colour to its palette")
-    check(GlassMaterialResolver.pixelTint("F1EEE8") == "E0E0E0" && GlassMaterialResolver.pixelTint("7EB6D8") == "80C0E0", "pixel palette steps of 0x20")
+    check(GlassMaterialResolver.pixelTint("F1EEE8") == "EEEEEE" && GlassMaterialResolver.pixelTint("7EB6D8") == "77BBDD" && GlassMaterialResolver.pixelTint("FFFFFF") == "FFFFFF", "pixel palette is 4-bit colour")
     check(GlassMaterialResolver.resolve(.windowGlass, preset: .spatial, role: .structure, quality: .high).opacity < 1, "windows stay glass in 3D")
 
     // Golden town plan: fixed district rules, seeded details.
