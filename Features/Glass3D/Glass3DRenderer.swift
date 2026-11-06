@@ -16,6 +16,9 @@ import Metal
 @MainActor final class Glass3DRenderer {
     let root = Entity()
     let camera = PerspectiveCamera()
+    /// Pixel RPG view. Added to the scene only while that mode is showing,
+    /// so the perspective camera is not left competing with it.
+    private let orthoCamera = Entity()
     private let ground = Entity(), blocksRoot = Entity(), plantsRoot = Entity(), creaturesRoot = Entity()
     private let pickupsRoot = Entity(), effects = Entity(), previewRoot = Entity(), selectionRoot = Entity()
     let playerEntity = Entity()
@@ -39,6 +42,8 @@ import Metal
     /// Native glass draws the block glass; SceneKit-era glass materials
     /// then thin out to edges so the system glass carries the look.
     private(set) var nativeGlass = false
+    /// Nil keeps the v1.8x glass path. Set when the player uses the hybrid view.
+    private(set) var glassPreset: GlassViewPreset?
     private var clock = 0.0
     let media = Glass3DMedia()
 
@@ -120,11 +125,40 @@ import Metal
 
     // MARK: Camera
 
-    func place(camera state: SpatialCameraState, eye: SpatialVector) {
+    func place(camera state: SpatialCameraState, eye: SpatialVector, orthographicSpan: Double? = nil) {
         let yaw = state.yaw * .pi / 180
-        // Looking straight down: "up" on screen is map-forward for this turn.
-        let up: SIMD3<Float> = state.tilt < 1 ? [Float(-sin(yaw)), 0, Float(-cos(yaw))] : [0, 1, 0]
-        camera.look(at: Self.position(state.target), from: Self.position(eye), upVector: up, relativeTo: nil)
+        if let span = orthographicSpan {
+            if camera.parent != nil { camera.removeFromParent() }
+            if orthoCamera.parent == nil { root.addChild(orthoCamera) }
+            var component = orthoCamera.components[OrthographicCameraComponent.self] ?? OrthographicCameraComponent()
+            component.scale = Float(max(1, span))
+            component.near = 0.05
+            component.far = 800
+            component.scaleDirection = .vertical
+            orthoCamera.components.set(component)
+            // Fixed oblique: screen up is world up, matching the orthographic profile.
+            orthoCamera.look(at: Self.position(state.target), from: Self.position(eye), upVector: [0, 1, 0], relativeTo: nil)
+        } else {
+            if orthoCamera.parent != nil { orthoCamera.removeFromParent() }
+            if camera.parent == nil { root.addChild(camera) }
+            // Looking straight down: "up" on screen is map-forward for this turn.
+            let up: SIMD3<Float> = state.tilt < 1 ? [Float(-sin(yaw)), 0, Float(-cos(yaw))] : [0, 1, 0]
+            camera.look(at: Self.position(state.target), from: Self.position(eye), upVector: up, relativeTo: nil)
+        }
+    }
+
+    /// Switches block and ground materials between legacy glass, pixel glass and spatial glass.
+    func setGlassPreset(_ preset: GlassViewPreset?) {
+        guard preset != glassPreset else { return }
+        glassPreset = preset
+        materialCache.removeAll()
+        blockVersions.removeAll()
+        batchSignatures.removeAll()
+        for entity in batchEntities.values { entity.removeFromParent() }
+        batchEntities.removeAll()
+        for entity in chunkEntities.values { entity.removeFromParent() }
+        chunkEntities.removeAll()
+        chunkHoleSignature.removeAll()
     }
 
     // MARK: Ground
@@ -149,11 +183,20 @@ import Metal
     }
 
     private func groundMaterial() -> RealityKit.Material {
-        if let cached = materialCache["ground"] { return cached }
-        var material = UnlitMaterial()
-        if let texture = Self.tileTexture { material.color = .init(tint: UIColor(white: 1, alpha: 0.9), texture: .init(texture, sampler: Self.repeatSampler)) }
-        material.blending = .transparent(opacity: .init(floatLiteral: 0.9))
-        materialCache["ground"] = material
+        let key = "ground|" + (glassPreset?.rawValue ?? "legacy")
+        if let cached = materialCache[key] { return cached }
+        let material: RealityKit.Material
+        if let preset = glassPreset {
+            let tier: GlassQualityTier = quality == .high ? .high : quality == .performance ? .low : .standard
+            let look = GlassMaterialResolver.resolve(.streetCrystal, preset: preset, role: .ground, quality: tier)
+            material = resolvedMaterial(look, legacyTexture: true)
+        } else {
+            var legacy = UnlitMaterial()
+            if let texture = Self.tileTexture { legacy.color = .init(tint: UIColor(white: 1, alpha: 0.9), texture: .init(texture, sampler: Self.repeatSampler)) }
+            legacy.blending = .transparent(opacity: .init(floatLiteral: 0.9))
+            material = legacy
+        }
+        materialCache[key] = material
         return material
     }
 
@@ -233,6 +276,7 @@ import Metal
             blockEntities[block.id] = entity; blockVersions[block.id] = block
         }
         for (group, entity) in groupEntities where entity.children.isEmpty { entity.removeFromParent(); groupEntities[group] = nil }
+        refreshOcclusion()
     }
 
     static func mergedMesh(_ blocks: [SpatialBlock]) -> MeshResource? {
@@ -288,8 +332,17 @@ import Metal
     }
 
     func glassMaterial(_ glass: SpatialGlass, collision: SpatialCollision) -> RealityKit.Material {
-        let key = SpatialBatch.materialKey(glass, collision: collision)
+        let presetTag = glassPreset?.rawValue ?? "legacy"
+        let key = SpatialBatch.materialKey(glass, collision: collision) + "|" + presetTag
         if let cached = materialCache[key] { return cached }
+        if let preset = glassPreset, let semantic = glass.semantic.flatMap(GlassSemantic.init(rawValue:)) {
+            let role = glass.role.flatMap(GlassRenderRole.init(rawValue:)) ?? .structure
+            let tier: GlassQualityTier = quality == .high ? .high : quality == .performance ? .low : .standard
+            let look = GlassMaterialResolver.resolve(semantic, preset: preset, role: role, quality: tier)
+            let resolved = resolvedMaterial(look, legacyTexture: false)
+            materialCache[key] = resolved
+            return resolved
+        }
         let tint = glass.tintHex.map { UIColor(rpgHex: $0) } ?? UIColor(white: 0.94, alpha: 1)
         // v1.81: stone and metal are opaque structure; crystal is bright glass.
         if let surface = glass.surface, surface == .stone || surface == .metal {
@@ -330,6 +383,53 @@ import Metal
         }
         materialCache[key] = result
         return result
+    }
+
+    /// Pixel presets stay unlit so edges stay hard. Spatial presets are PBR.
+    /// Opacity at 0.92 and above is drawn solid — large ground does not join the transparent sort.
+    private func resolvedMaterial(_ look: ResolvedGlassLook, legacyTexture: Bool) -> RealityKit.Material {
+        let tint = UIColor(rpgHex: look.tintHex)
+        let solid = look.opacity >= 0.92
+        if look.pixelated || quality == .performance {
+            var material = UnlitMaterial()
+            if legacyTexture, let texture = Self.tileTexture { material.color = .init(tint: tint, texture: .init(texture, sampler: Self.repeatSampler)) }
+            else { material.color = .init(tint: tint) }
+            if !solid { material.blending = .transparent(opacity: .init(floatLiteral: Float(look.opacity))) }
+            return material
+        }
+        var material = PhysicallyBasedMaterial()
+        if legacyTexture, let texture = Self.tileTexture { material.baseColor = .init(tint: tint, texture: .init(texture, sampler: Self.repeatSampler)) }
+        else { material.baseColor = .init(tint: tint) }
+        material.roughness = .init(floatLiteral: Float(look.roughness))
+        material.metallic = .init(floatLiteral: Float(look.metallic))
+        material.clearcoat = .init(floatLiteral: Float(look.prioritySpecular ? 1.0 : look.clearcoat))
+        if !solid { material.blending = .transparent(opacity: .init(floatLiteral: Float(look.opacity))) }
+        if look.emissive > 0.02 {
+            material.emissiveColor = .init(color: tint)
+            material.emissiveIntensity = Float(look.emissive) * glowBoost
+        }
+        return material
+    }
+
+    private var hiddenBlockIDs = Set<String>()
+    private var fadedBlockIDs = Set<String>()
+
+    /// Roof and wall visibility. Collision stays on the block list; this only toggles meshes.
+    func applyOcclusion(hidden: Set<String>, faded: Set<String>) {
+        guard hidden != hiddenBlockIDs || faded != fadedBlockIDs else { return }
+        hiddenBlockIDs = hidden
+        fadedBlockIDs = faded
+        refreshOcclusion()
+    }
+
+    private func refreshOcclusion() {
+        for (id, entity) in blockEntities {
+            let hide = hiddenBlockIDs.contains(id)
+            if entity.isEnabled == hide { entity.isEnabled = !hide }
+            guard entity.isEnabled else { continue }
+            entity.components.remove(OpacityComponent.self)
+            if fadedBlockIDs.contains(id) { entity.components.set(OpacityComponent(opacity: 0.35)) }
+        }
     }
 
     // MARK: Plants

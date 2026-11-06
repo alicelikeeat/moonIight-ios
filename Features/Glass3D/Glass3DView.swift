@@ -204,6 +204,7 @@ struct Glass3DScreen: View {
                     HStack(spacing: 2) {
                         icon("chevron.backward", L10n.t("返回沙盒", "Back to Sandbox"), id: "glass3d-close") { controller.stop(); onClose() }
                         modeSwitch(compact: portrait)
+                        perspectiveSwitch()
                     }
                     .padding(3).hudGlass(.panel, in: Capsule())
                     Spacer(minLength: 4)
@@ -263,6 +264,8 @@ struct Glass3DScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 moreRow("scope", L10n.t("恢复默认视角", "Reset View")) { controller.resetCamera() }
+                moreRow("building.columns", L10n.t("放置月光中央城", "Place Central Town")) { controller.placeCentralTown() }
+                    .accessibilityIdentifier("glass3d-place-town")
                 moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
                 moreHeader(L10n.t("编辑器", "Editors"))
                 moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
@@ -331,6 +334,20 @@ struct Glass3DScreen: View {
         .padding(3).background(Color.primary.opacity(0.08), in: Capsule())
     }
 
+    /// Same world, pixel overhead or third-person. Stays on the glass HUD, not on the terrain.
+    private func perspectiveSwitch() -> some View {
+        let pixel = controller.viewMode == .pixelRPG
+        return Button { controller.togglePerspective() } label: {
+            Image(systemName: pixel ? "cube" : "square.grid.3x3.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(pixel ? L10n.t("切换到 3D", "Switch to 3D") : L10n.t("切换到像素俯视", "Switch to Pixel View"))
+        .accessibilityIdentifier("glass3d-perspective-switch")
+    }
+
     private func icon(_ symbol: String, _ label: String, id: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34).contentShape(Rectangle()) }
             .buttonStyle(.borderless).accessibilityLabel(label).accessibilityIdentifier(id)
@@ -351,11 +368,18 @@ struct Glass3DScreen: View {
     /// melt into each other).
     @ViewBuilder private var blankWorldPrompt: some View {
         if controller.world.blocks.isEmpty && controller.world.creatures.isEmpty {
-            Button { generator = true } label: {
-                Label(L10n.t("这是一片空白玻璃世界 · 点这里一键生成", "A blank glass world · tap to generate one"), systemImage: "wand.and.stars")
-                    .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+            VStack(spacing: 8) {
+                Button { generator = true } label: {
+                    Label(L10n.t("这是一片空白玻璃世界 · 点这里一键生成", "A blank glass world · tap to generate one"), systemImage: "wand.and.stars")
+                        .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+                }
+                .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-generate-blank")
+                Button { controller.placeCentralTown() } label: {
+                    Label(L10n.t("先看看月光中央城", "Visit Central Town"), systemImage: "building.columns")
+                        .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+                }
+                .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-central-town")
             }
-            .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-generate-blank")
         }
     }
 

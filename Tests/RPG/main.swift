@@ -3052,4 +3052,110 @@ do {
     print("RPG v1.85 director with characters: \(checks) total checks passed")
 }
 
+func hybridWorldV2() {
+    check(WorldGeometry.width == 256 && HybridWorldScale.matchesLegacyMap(), "continent index sits on the 256 map, not a 4096 block grid")
+    check(HybridWorldScale.continentSide == 4096 && HybridWorldScale.logicalChunkCount == 16_384, "4096 continent, 16384 logical chunks")
+    let graph = WorldGraph.continentIndex()
+    check(graph.problems().isEmpty, "world graph invariants (\(graph.problems()))")
+    check(graph.main.kind == .main && graph.branches.contains { $0.id.kind == .branch && $0.saveKey != graph.main.key }, "branch worlds keep their own save key")
+    let wide = SpatialBlock(id: "wide", x: 300, y: 1, elevation: 0)
+    check(!wide.valid, "a block still cannot use a continent coordinate")
+    let global = GlobalCell(x: 7 * 256 + 300, y: 10)
+    let parts = WorldRegionManager.decompose(global)
+    check(parts?.address == RegionAddress(column: 8, row: 0) && parts?.localX == 44 && parts?.localY == 10, "global cells decompose into a 256 region")
+    if let parts, let round = WorldRegionManager.compose(address: parts.address, localX: parts.localX, localY: parts.localY) {
+        check(round == global, "region coordinates round-trip")
+    } else { check(false, "region coordinates round-trip") }
+    var manager = WorldRegionManager(graph: graph)
+    let home = GlobalCell(x: 7 * 256 + 128, y: 7 * 256 + 128)
+    var loaded: [String] = []
+    let first = manager.updateStreaming(around: home, hooks: RegionStreamHooks(load: { loaded.append($0.regionKey + ":" + $0.tier.rawValue) }, unload: { _ in }))
+    check(first.load.contains { $0.regionKey == "central-town" && $0.tier == .near && $0.authored }, "central town streams as the near authored region")
+    check(first.load.contains { $0.regionKey == "spirit-forest" && !$0.authored }, "named regions are indexed before they have geometry")
+    check(manager.region(at: RegionAddress(column: 7, row: 9))?.name == "精灵森林", "spirit forest keeps its plug-in address")
+    check(manager.region(at: RegionAddress(column: 7, row: 5))?.name == "古代王城", "ancient castle keeps its plug-in address")
+    let again = manager.updateStreaming(around: home)
+    check(again.load.isEmpty && again.unload.isEmpty, "standing still does not reload regions")
+    let east = manager.updateStreaming(around: GlobalCell(x: 8 * 256 + 4, y: 7 * 256 + 4))
+    check(east.unload.contains(RegionAddress(column: 5, row: 7)) && east.load.contains { $0.address.column == 10 }, "walking east drops the far west ring and loads the new one")
+    check(!loaded.isEmpty, "streaming hooks observe the load")
+
+    var camera = DualPerspectiveCamera.following(SpatialVector(128.5, 128.5, 0))
+    let held = camera.target
+    for _ in 0..<5 { camera.toggle() }
+    check(camera.target == held && camera.mode == .pixelRPG, "five switches leave the camera target on the same cell")
+    let size = CGSize(width: 800, height: 600)
+    func rayReaches(_ projection: SpatialProjection, _ point: SpatialVector) -> Bool {
+        guard let screen = projection.project(point) else { return false }
+        let ray = projection.ray(through: screen.point)
+        let along = SpatialProjection.dot(point - ray.origin, ray.direction)
+        let closest = ray.origin + ray.direction * along
+        let miss = point - closest
+        return (miss.x * miss.x + miss.y * miss.y + miss.z * miss.z) < 0.05
+    }
+    let sample = SpatialVector(131.5, 130.0, 1.2)
+    check(rayReaches(camera.projection(viewSize: size), sample), "pixel projection hits the same world point")
+    camera.toggle()
+    check(camera.mode == .spatial3D && rayReaches(camera.projection(viewSize: size), sample), "3D projection hits that same world point")
+
+    var world = SpatialWorld()
+    let edited = SpatialBlock(id: "user-wall", x: 110, y: 136, elevation: 0, thickness: 1, origin: .user)
+    world.blocks = [edited]
+    world.edit("town") { CentralTown.stamp(onto: &$0) }
+    check(world.blocks.contains { $0.id == "user-wall" && $0.origin == .user }, "player-edited blocks stay when the town is placed")
+    check(!world.blocks.contains { $0.id == "moonlight-town:nw:w:110:136:0" }, "the town does not pave over that edit")
+    check(SpatialWorldBuilder.layer(of: "moonlight-town:spire:r:122:160") == nil, "town ids are not World Director layers")
+    check((try? world.validate(bindings: [])) != nil, "central town validates inside the 256 region")
+    let geometry = SpatialGeometry(blocks: world.blocks, plants: world.plants)
+    check(!geometry.blocked(x: 128.5, y: 128.5, z: 0) && geometry.support(x: 128.5, y: 128.5, z: 0).height == 0, "the crossing stays walkable at ground height")
+    let spire = world.hybrid?.occluders.first { $0.id == "spire" }
+    check(spire != nil, "the spire publishes an occluder")
+    if let spire {
+        let doorX = Double((spire.minX + spire.maxX) / 2) + 0.5
+        check(!geometry.blocked(x: doorX, y: Double(spire.minY) + 0.5, z: 0), "the spire door is walkable")
+        check(geometry.blocked(x: Double(spire.minX) + 0.5, y: Double(spire.minY) + 0.5, z: 0), "the spire wall still blocks")
+        let indoors = SpatialVector(doorX, Double(spire.minY + spire.maxY) / 2, 0)
+        let eye = SpatialVector(indoors.x, Double(spire.minY) - 12, 24)
+        let pixel = OcclusionManager.resolve(player: indoors, cameraEye: eye, mode: .pixelRPG, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
+        check(spire.roofIDs.allSatisfy { pixel.hidden.contains($0) }, "pixel view hides the roof overhead")
+        check(geometry.ceiling(x: indoors.x, y: indoors.y, z: 0) != nil, "the hidden roof still has collision")
+        let spatial = OcclusionManager.resolve(player: indoors, cameraEye: eye, mode: .spatial3D, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
+        check(spatial.hidden.isEmpty && !spatial.faded.isEmpty, "3D keeps the roof and fades the camera-side walls")
+        let outside = OcclusionManager.resolve(player: SpatialVector(128.5, 128.5, 0), cameraEye: eye, mode: .pixelRPG, buildings: world.hybrid?.occluders ?? [], blocks: world.blocks)
+        check(outside.hidden.isEmpty, "leaving the building restores the roof")
+    }
+    let before = PerspectiveContinuity.capture(world)
+    var view = DualPerspectiveCamera.following(world.player.position)
+    view.applyToggle(to: &world)
+    view.applyToggle(to: &world)
+    check(PerspectiveContinuity.capture(world) == before && world.hybrid?.viewMode == .spatial3D, "switching twice restores the mode and changes nothing else")
+    view.applyToggle(to: &world)
+    check(world.player.position == before.position && world.hybrid?.viewMode == .pixelRPG, "one switch keeps the player and records pixel view")
+    let savedTown = world
+    world.undoLast()
+    check(world.hybrid == nil && !world.blocks.contains { $0.id.hasPrefix(CentralTown.idPrefix) }, "undo removes the town and its occluders")
+    check(world.blocks.contains { $0.id == "user-wall" }, "undo keeps the player edit that was there before the town")
+    world.redoLast()
+    check(world.hybrid?.occluders.count == savedTown.hybrid?.occluders.count, "redo brings the same town back")
+
+    let fresh = CentralTown.stampedBlank()
+    let data = try! JSONEncoder().encode(fresh)
+    let decoded = try! JSONDecoder().decode(SpatialWorld.self, from: data)
+    check(decoded.hybrid?.regionColumn == 7 && decoded.blocks.count == fresh.blocks.count, "town save round-trips")
+    let legacy = try! JSONDecoder().decode(SpatialWorld.self, from: try! JSONEncoder().encode(SpatialWorld()))
+    check(legacy.hybrid == nil && legacy.blocks.isEmpty, "an old empty world still decodes without a hybrid section")
+
+    let groundPixel = GlassMaterialResolver.resolve(.streetCrystal, preset: .pixel, role: .ground, quality: .high)
+    let groundSpatial = GlassMaterialResolver.resolve(.streetCrystal, preset: .spatial, role: .ground, quality: .high)
+    check(groundPixel.opacity >= 0.92 && groundSpatial.opacity >= 0.92 && groundPixel.pixelated && !groundSpatial.pixelated, "large ground is opaque crystal in both presets")
+    let house = GlassMaterialResolver.resolve(.houseGlass, preset: .spatial, role: .structure, quality: .high)
+    let landmark = GlassMaterialResolver.resolve(.landmarkGlass, preset: .spatial, role: .landmark, quality: .high)
+    check(landmark.clearcoat > house.clearcoat && landmark.prioritySpecular, "the landmark spends more specular budget than a house")
+    check(!GlassMaterialResolver.resolve(.landmarkGlass, preset: .pixel, role: .landmark, quality: .high).prioritySpecular, "pixel glass does not turn on the expensive specular path")
+    check(!GlassMaterialResolver.resolve(.landmarkGlass, preset: .spatial, role: .landmark, quality: .standard).prioritySpecular, "standard quality keeps landmark specular off the top tier")
+    check(groundPixel.tintHex == groundSpatial.tintHex && groundPixel.tintHex == GlassMaterialResolver.semantic(.streetCrystal).tintHex, "both presets share one street-crystal tint")
+    print("RPG hybrid world: \(checks) total checks passed")
+}
+
+hybridWorldV2()
 print("RPG complete: \(checks) total checks passed")
