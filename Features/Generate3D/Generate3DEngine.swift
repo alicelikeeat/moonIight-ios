@@ -100,13 +100,18 @@ enum Generate3DGuard {
 enum DepthAnythingModel {
     static let name = "DepthAnythingV2SmallF16"
     static let version = "2.0-small-f16"
+    /// CI compiles the package into this at build time (no compile on the phone).
+    static var bundledCompiledURL: URL? { Bundle.main.url(forResource: name, withExtension: "mlmodelc", subdirectory: "DepthModel") }
     static var packageURL: URL? { Bundle.main.url(forResource: name, withExtension: "mlpackage", subdirectory: "DepthModel") }
     static var bundled: Bool {
-        packageURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Data/com.apple.CoreML/weights/weight.bin").path) } ?? false
+        bundledCompiledURL != nil ||
+            (packageURL.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("Data/com.apple.CoreML/weights/weight.bin").path) } ?? false)
     }
     static var compiledURL: URL { Generated3DStore.folder("Engines").appendingPathComponent(name + ".mlmodelc", isDirectory: true) }
 
     static func compiled() async throws -> URL {
+        if let bundledCompiledURL { return bundledCompiledURL }
+        // Local builds without the CI step: compile the package once and cache it.
         let target = compiledURL
         let marker = target.appendingPathComponent(".moonlight-\(version)")
         if FileManager.default.fileExists(atPath: marker.path) { return target }

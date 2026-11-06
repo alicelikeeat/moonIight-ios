@@ -114,6 +114,11 @@ jobs:
           for attempt in 1 2 3; do curl -fsSL --retry 3 -o "$DIR/weight.bin" "$URL" && break || sleep 5; done
           echo "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed  $DIR/weight.bin" | shasum -a 256 -c -
           echo "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042  Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/model.mlmodel" | shasum -a 256 -c -
+          # Compile here, not on the phone: a device-side compile failed with
+          # "Failed to parse encoded Program", and a bad model should fail CI.
+          xcrun coremlcompiler compile Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage Resources/DepthModel/
+          test -d Resources/DepthModel/DepthAnythingV2SmallF16.mlmodelc
+          rm -rf Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage
       - name: Compile simulator build
         if: steps.version.outputs.release != 'true'
         env:
@@ -341,6 +346,11 @@ jobs:
           for attempt in 1 2 3; do curl -fsSL --retry 3 -o "$DIR/weight.bin" "$URL" && break || sleep 5; done
           echo "fa60d9b6a155734f59029ebb882fd54e549bfaee3539c1a9cbd2cbbab64a0fed  $DIR/weight.bin" | shasum -a 256 -c -
           echo "44ac97a3efcfd52113183fb2862ff59cd0368e9ec2e30a90a54980dd11407042  Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/model.mlmodel" | shasum -a 256 -c -
+          # Compile here, not on the phone: a device-side compile failed with
+          # "Failed to parse encoded Program", and a bad model should fail CI.
+          xcrun coremlcompiler compile Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage Resources/DepthModel/
+          test -d Resources/DepthModel/DepthAnythingV2SmallF16.mlmodelc
+          rm -rf Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage
       - name: Boot iOS simulator
         id: simulator
         if: steps.plan.outputs.shard != 'none'
