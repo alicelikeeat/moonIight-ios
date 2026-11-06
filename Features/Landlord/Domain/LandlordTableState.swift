@@ -86,6 +86,29 @@ struct LandlordTablePile: Identifiable, Equatable, Sendable {
 }
 
 enum LandlordTableLayout {
+    /// Public plays first, then separately owned hands. A full-deck rank-sorted
+    /// grid would disclose ownership even if every private card had a back.
+    static func inspectionOrder(_ game: LandlordGame, revealed: [Bool]) -> [LandlordCard] {
+        var result = game.history.flatMap(\.cards)
+        let used = Set(result.map(\.id))
+        if game.bottomIsPublic { result += game.bottom.filter { !used.contains($0.id) } }
+        let publicIDs = Set(result.map(\.id))
+        var seed: UInt64 = 1469598103934665603
+        for byte in game.id.uuidString.utf8 { seed = (seed ^ UInt64(byte)) &* 1099511628211 }
+        func key(_ card: LandlordCard) -> UInt64 {
+            var x = seed &+ UInt64(card.id + 1) &* 0x9e3779b97f4a7c15
+            x = (x ^ (x >> 30)) &* 0xbf58476d1ce4e5b9
+            x = (x ^ (x >> 27)) &* 0x94d049bb133111eb
+            return x ^ (x >> 31)
+        }
+        func masked(_ cards: [LandlordCard]) -> [LandlordCard] { cards.sorted { key($0) < key($1) } }
+        for player in 0..<3 {
+            let hand = game.hands[player].filter { !publicIDs.contains($0.id) }
+            result += revealed.count == 3 && revealed[player] ? hand : masked(hand)
+        }
+        if !game.bottomIsPublic { result += masked(game.bottom) }
+        return result
+    }
     static func handRows(cardCount: Int, width: Double, compact: Bool) -> [[Int]] {
         guard cardCount > 0 else { return [] }
         let columns = compact ? 20 : max(6, min(12, Int(max(240, width) / 30)))

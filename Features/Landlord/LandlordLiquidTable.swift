@@ -282,7 +282,7 @@ struct LandlordLiquidTable: View {
     private var bottomCards: some View {
         HStack(spacing: 6) {
             Text("底牌").foregroundStyle(.secondary)
-            if store.game.landlord == nil { Text("▧  ▧  ▧").accessibilityLabel("三张底牌，叫分后公开") }
+            if !store.game.bottomIsPublic { Text("▧  ▧  ▧").accessibilityLabel("三张底牌，叫分后公开") }
             else {
                 ForEach(store.game.bottom) { card in
                     Text(card.label).foregroundStyle(card.isRed ? Color.red : Color.primary)
@@ -291,7 +291,7 @@ struct LandlordLiquidTable: View {
         }.font(.caption2.weight(.semibold)).frame(height: 17)
     }
     private var historyTable: some View {
-        LandlordHistoryTable(game: store.game, collect: store.table.gatherRemaining, expanded: $store.table.expanded, offsets: $store.table.offsets,
+        LandlordHistoryTable(game: store.game, collect: store.table.gatherRemaining, names: store.table.profiles.map(\.name), expanded: $store.table.expanded, offsets: $store.table.offsets,
             card: { card, pile in AnyView(cardView(card, concealed: !pile.played && !store.table.canInspectHand(pile.player), role: .central,
                 z: pile.id * 100 + 100 + card.id, effective: pile.substitutions[card.id], clip: tableViewport)
                 .matchedGeometryEffect(id: card.id, in: movement, isSource: false)) }, inspect: { id in panel = id >= 54 ? .hand(id - 54) : .pile(id) })
@@ -532,11 +532,11 @@ struct LandlordLiquidTable: View {
         ScrollView {
             Text("全副54张 · 已出牌公开，未出手牌遵循明暗牌设置").font(.caption).foregroundStyle(.secondary).padding()
             LazyVGrid(columns: [.init(.adaptive(minimum: 60))], spacing: 12) {
-                ForEach(LandlordCard.deck) { card in
+                ForEach(LandlordTableLayout.inspectionOrder(store.game, revealed: store.table.revealed)) { card in
                     let play = store.game.history.first { $0.cards.contains(card) }
                     let owner = (0..<3).first { store.game.hands[$0].contains(card) }
                     let isBottom = store.game.bottom.contains(card)
-                    let known = play != nil || (owner.map { store.table.canInspectHand($0) } ?? false) || (isBottom && store.game.landlord != nil)
+                    let known = play != nil || (owner.map { store.table.canInspectHand($0) } ?? false) || (isBottom && store.game.bottomIsPublic)
                     VStack(spacing: 5) {
                         LandlordTableCard(card: card, concealed: !known, wild: store.game.wildcardRank, effective: play?.interpretation?.substitutions[card.id])
                             .frame(width: 56, height: 78)

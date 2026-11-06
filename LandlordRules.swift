@@ -175,6 +175,7 @@ struct LandlordGame: Codable, Equatable, Sendable {
         self.wildcardRank = wildcardRank.flatMap { (3...15).contains($0) ? $0 : nil }
     }
     var target: LandlordPattern? { lastPlay?.pattern }
+    var bottomIsPublic: Bool { phase == .playing || phase == .finished }
     var targetPlayer: Int? { lastPlay?.player }
     var conserved: Bool {
         let cards = hands.flatMap { $0 } + history.flatMap(\.cards) + ((phase == .bidding || phase == .redeal) ? bottom : [])

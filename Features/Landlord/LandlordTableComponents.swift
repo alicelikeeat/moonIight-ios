@@ -82,12 +82,12 @@ struct LandlordSeatFrame: View {
             HStack(spacing: compact ? 5 : 9) {
                 ZStack {
                     Circle().fill(seatColor.opacity(0.15))
-                    Image(systemName: player == game.landlord ? "crown.fill" : "person.fill").foregroundStyle(seatColor)
+                    Image(systemName: game.bottomIsPublic && player == game.landlord ? "crown.fill" : "person.fill").foregroundStyle(seatColor)
                     if let avatar { LandlordLiveImage(feed: avatar).clipShape(Circle()) }
                 }.frame(width: compact ? 30 : 44, height: compact ? 30 : 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.name).font(.caption.weight(.semibold)).lineLimit(1)
-                    Text("\(game.landlord == nil ? "待叫分" : game.landlord == player ? "地主" : "农民") · \(game.hands[player].count) 张")
+                    Text("\(!game.bottomIsPublic ? "叫分中" : game.landlord == player ? "地主" : "农民") · \(game.hands[player].count) 张")
                         .font(.caption2).lineLimit(1).minimumScaleFactor(0.8)
                     if !compact { Text("积分 \(game.scores[player]) · \(revealed ? "明牌" : "遮挡")").font(.caption2).foregroundStyle(.secondary) }
                 }
@@ -105,6 +105,7 @@ struct LandlordSeatFrame: View {
 struct LandlordHistoryTable: View {
     let game: LandlordGame
     var collect = false
+    var names = ["我", "右家", "左家"]
     @Binding var expanded: Bool
     @Binding var offsets: [Int: LandlordTableOffset]
     private var piles: [LandlordTablePile] { LandlordTablePile.piles(game, collect: collect) }
@@ -168,8 +169,8 @@ struct LandlordHistoryTable: View {
     }
     private func groupHeader(_ play: LandlordTablePile) -> some View {
         Button { inspect(play.id) } label: {
-            Text("\(["我", "右家", "左家"][play.player]) · \(play.title) · \(play.cards.count)张")
-                .font(.caption2.weight(.medium)).padding(.horizontal, 7).padding(.vertical, 4)
+            Text("\(names[play.player]) · \(play.title) · \(play.cards.count)张")
+                .font(.caption2.weight(.medium)).lineLimit(1).padding(.horizontal, 7).padding(.vertical, 4)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
         }.buttonStyle(.plain).accessibilityIdentifier("landlord-pile-\(play.id)")
     }

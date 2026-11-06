@@ -43,7 +43,13 @@ for choice in plane + straight + pairs + pureChoices + pair {
 }
 // Strip newly introduced optional keys to simulate a real v1.84 archive.
 var legacy = LandlordGame(deck: LandlordCard.deck)
+check(!legacy.bottomIsPublic, "bottom hidden before bidding")
+var tentative = legacy
+check(tentative.bid(1, player: 0) && !tentative.bottomIsPublic, "tentative landlord never exposes bottom early")
+let maskedOrder = LandlordTableLayout.inspectionOrder(tentative, revealed: [false,false,false])
+check(maskedOrder.count == 54 && Set(maskedOrder.map(\.id)).count == 54 && maskedOrder != LandlordCard.deck, "masked full-deck layout avoids rank-position disclosure")
 check(legacy.bid(3, player: 0), "classic bid")
+check(legacy.bottomIsPublic, "bottom only public after final bid")
 check(legacy.play([0], player: 0), "classic play")
 let legacyData = try JSONEncoder().encode(legacy)
 var object = try JSONSerialization.jsonObject(with: legacyData) as! [String: Any]
@@ -70,6 +76,8 @@ for seed in 0..<8 {
     check(gathered.flatMap(\.cards).count == 54 && Set(gathered.flatMap(\.cards).map(\.id)).count == 54, "central table collects all 54 unique physical cards")
     check(gathered.filter(\.played).count == game.history.count, "collection never becomes a fictitious play")
     check(game == prior, "collecting does not mutate ownership or settlement")
+    let inspection = LandlordTableLayout.inspectionOrder(game, revealed: [true,false,false])
+    check(inspection.count == 54 && Set(inspection.map(\.id)).count == 54, "inspection has all cards once, including already public bottom")
     check(LandlordTablePile.piles(game, collect: false).count == game.history.count, "history renderer never truncates plays")
     let reloaded = try JSONDecoder().decode(LandlordGame.self, from: JSONEncoder().encode(game))
     check(reloaded == game && reloaded.validated, "wild declarations and settlement persist")
