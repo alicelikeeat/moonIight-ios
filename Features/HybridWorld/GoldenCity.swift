@@ -578,9 +578,9 @@ struct GoldenBudget: Equatable, Sendable {
 
     static func of(_ tier: WorldPerformanceTier) -> GoldenBudget {
         switch tier {
-        case .low: GoldenBudget(maxBlocks: 8_000, maxPlants: 700)
-        case .standard: GoldenBudget(maxBlocks: 11_000, maxPlants: 1_100)
-        case .high: GoldenBudget(maxBlocks: 14_000, maxPlants: 1_600)
+        case .low: GoldenBudget(maxBlocks: 8_500, maxPlants: 700)
+        case .standard: GoldenBudget(maxBlocks: 12_000, maxPlants: 1_100)
+        case .high: GoldenBudget(maxBlocks: 15_000, maxPlants: 1_600)
         }
     }
 }
