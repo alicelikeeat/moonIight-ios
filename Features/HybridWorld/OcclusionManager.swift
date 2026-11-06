@@ -151,7 +151,7 @@ enum OcclusionManager {
                 continue
             }
             var a = (low - origin) / delta, b = (high - origin) / delta
-            if a > b { swap(&a, &b) }
+            if a > b { (a, b) = (b, a) }
             t0 = max(t0, a); t1 = min(t1, b)
             if t0 > t1 { return false }
         }
