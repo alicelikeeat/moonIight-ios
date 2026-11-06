@@ -3038,4 +3038,18 @@ do {
     print("RPG v1.84 controller mapping: \(checks) total checks passed")
 }
 
+do {
+    // v1.85: a world that already has characters (pictures bound in the
+    // session) must still give valid candidates.
+    var base = SpatialWorld()
+    var hero = CharacterTemplate(id: "char:hero", name: "Hero")
+    hero.clips["idle"] = ActionClip(bindingIDs: ["bind-hero-idle"])
+    base.characters = [hero]; base.playerCharacterID = "char:hero"
+    var req = WorldGenerationRequest(theme: .skyCity); req.seed = 11
+    let found = try! WorldDirectorEngine.candidates(req, intent: nil, base: base, cancelled: { false })
+    let reasons = found.flatMap(\.report.violations)
+    check(!reasons.contains("invalid world data") && found.contains { $0.report.passed }, "worlds with existing characters still pass (\(Set(reasons)))")
+    print("RPG v1.85 director with characters: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

@@ -31,6 +31,10 @@ struct SettingsView: View {
                         Label("手柄按键映射（Xbox）", systemImage: "gamecontroller")
                     }
                     .accessibilityIdentifier("gamepad-mapping-entry")
+                    NavigationLink { AppIconPicker() } label: {
+                        Label("App 图标", systemImage: "app.badge")
+                    }
+                    .accessibilityIdentifier("app-icon-entry")
                     Text("各页面、底部按键、长按圆环、头像和横幅的素材、应用范围及播放顺序统一在这里设置。")
                         .font(.caption).foregroundStyle(.secondary)
                 }

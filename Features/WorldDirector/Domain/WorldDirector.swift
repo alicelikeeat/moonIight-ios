@@ -40,7 +40,12 @@ enum WorldQualityEvaluator {
         let generatedCreatures = world.creatures.filter { $0.origin == .generated }
         // Data validity (the same rules a save must pass).
         let bindingIDs = Set(output.bindings.map(\.id))
+        // Pictures the world already used before generating (block media,
+        // characters' action clips) live in the session's bindings, not in
+        // this output: they are known, not missing. v1.85: characters were
+        // left out, so any world with characters failed every candidate.
         let referenced = Set(world.blocks.compactMap { $0.media?.bindingID })
+            .union((world.characters ?? []).flatMap { $0.clips.values.flatMap(\.bindingIDs) })
         do { try world.validate(bindings: bindingIDs.union(referenced)) } catch { violations.append("invalid world data") }
         if !world.blocks.allSatisfy(\.valid) { violations.append("invalid block") }
         // Budget.

@@ -25,6 +25,7 @@ struct Glass3DScreen: View {
     @State private var credits = false
     @State private var glassLook = false
     @State private var padMapping = false
+    @State private var iconPicker = false
     @State private var generate3D = false
     @State private var confirmClear = false
     /// v1.79: the ⋯ panel (our own, not the system menu).
@@ -87,6 +88,7 @@ struct Glass3DScreen: View {
                     topBar(portrait: portrait)
                     notices
                     Spacer(minLength: 0)
+                    blankWorldPrompt.padding(.bottom, 12)
                     if controller.mode == .play {
                         Glass3DPlayHUD(controller: controller, portrait: portrait).transition(.opacity)
                     } else {
@@ -146,6 +148,13 @@ struct Glass3DScreen: View {
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .sheet(isPresented: $iconPicker) {
+            NavigationStack {
+                AppIconPicker()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { iconPicker = false }.accessibilityIdentifier("app-icon-done") } }
+            }
+            .presentationDetents([.medium, .large])
+        }
         .sheet(isPresented: $padMapping) {
             NavigationStack {
                 GamepadMappingView()
@@ -266,6 +275,7 @@ struct Glass3DScreen: View {
                 moreHeader(L10n.t("显示", "Display"))
                 moreRow("drop.halffull", L10n.t("玻璃外观（透明度与颜色）", "Glass Look (Clarity & Colour)")) { glassLook = true }
                 moreRow("gamecontroller", L10n.t("手柄按键映射（Xbox）", "Controller Mapping (Xbox)")) { padMapping = true }
+                moreRow("app.badge", L10n.t("App 图标", "App Icon")) { iconPicker = true }
                 Toggle(L10n.t("3D 省电模式（更凉）", "3D Power Saver (cooler)"), isOn: $controller.powerSaver)
                     .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
                     .accessibilityIdentifier("glass3d-power-saver")
@@ -334,6 +344,12 @@ struct Glass3DScreen: View {
                 .transition(.opacity)
         }
         Glass3DBossBar(live: controller.live)
+    }
+
+    /// v1.85: the blank-world prompt sits low in the free middle of the
+    /// screen, apart from the notices at the top (they used to touch and
+    /// melt into each other).
+    @ViewBuilder private var blankWorldPrompt: some View {
         if controller.world.blocks.isEmpty && controller.world.creatures.isEmpty {
             Button { generator = true } label: {
                 Label(L10n.t("这是一片空白玻璃世界 · 点这里一键生成", "A blank glass world · tap to generate one"), systemImage: "wand.and.stars")
