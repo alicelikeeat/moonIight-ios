@@ -21,6 +21,10 @@ import Metal
     private let orthoCamera = Entity()
     private let ground = Entity(), blocksRoot = Entity(), plantsRoot = Entity(), creaturesRoot = Entity()
     private let pickupsRoot = Entity(), effects = Entity(), previewRoot = Entity(), selectionRoot = Entity()
+    /// Distant land around the open map (mid and far stream tiers). No collision.
+    private let terrainRoot = Entity()
+    private var terrainEntities: [String: ModelEntity] = [:]
+    private var terrainShown: [String: TerrainPatch] = [:]
     let playerEntity = Entity()
     private var chunkEntities: [Int: ModelEntity] = [:]
     private var blockEntities: [String: Entity] = [:]
@@ -50,7 +54,7 @@ import Metal
     static func position(_ v: SpatialVector) -> SIMD3<Float> { SIMD3(Float(v.x), Float(v.z), Float(-v.y)) }
 
     init() {
-        for entity in [ground, blocksRoot, movingBlocksRoot, plantsRoot, creaturesRoot, pickupsRoot, effects, previewRoot, selectionRoot, playerEntity] { root.addChild(entity) }
+        for entity in [ground, terrainRoot, blocksRoot, movingBlocksRoot, plantsRoot, creaturesRoot, pickupsRoot, effects, previewRoot, selectionRoot, playerEntity] { root.addChild(entity) }
         camera.camera.fieldOfViewInDegrees = Float(SpatialCameraRules.fieldOfView)
         // v1.78: the glass layer projects with a vertical field of view;
         // say so explicitly so portrait and landscape both match.
@@ -230,6 +234,62 @@ import Metal
         descriptor.primitives = .triangles([0, 1, 2, 0, 2, 3])
         return try? MeshResource.generate(from: [descriptor])
     }()
+
+    // MARK: Distant terrain
+
+    /// Replaces the distant land. Patches that did not change keep their entity.
+    func showTerrain(_ patches: [TerrainPatch]) {
+        let wanted = Dictionary(patches.map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
+        for (key, entity) in terrainEntities where wanted[key] == nil {
+            entity.removeFromParent(); terrainEntities[key] = nil; terrainShown[key] = nil
+        }
+        for (key, patch) in wanted where terrainShown[key] != patch {
+            terrainEntities[key]?.removeFromParent()
+            terrainEntities[key] = nil
+            terrainShown[key] = patch
+            guard let mesh = Self.terrainMesh(patch) else { continue }
+            let entity = ModelEntity(mesh: mesh, materials: [terrainMaterial(patch.biome)])
+            terrainRoot.addChild(entity)
+            terrainEntities[key] = entity
+        }
+    }
+
+    private func terrainMaterial(_ biome: RegionBiome) -> RealityKit.Material {
+        let key = "terrain|" + biome.rawValue
+        if let cached = materialCache[key] { return cached }
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: UIColor(rpgHex: biome.tintHex))
+        material.roughness = .init(floatLiteral: 0.85)
+        material.metallic = .init(floatLiteral: 0)
+        materialCache[key] = material
+        return material
+    }
+
+    /// Height grid in map cells → RealityKit (x, z, −y), normals from neighbouring samples.
+    static func terrainMesh(_ patch: TerrainPatch) -> MeshResource? {
+        let n = patch.samples
+        guard n >= 2, patch.heights.count == n * n, !patch.triangles.isEmpty else { return nil }
+        var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = []
+        positions.reserveCapacity(n * n); normals.reserveCapacity(n * n)
+        let step = Double(patch.spacing)
+        for row in 0..<n {
+            for column in 0..<n {
+                let x = Double(patch.localX(column: column)), y = Double(patch.localY(row: row))
+                positions.append(position(SpatialVector(x, y, patch.height(column: column, row: row))))
+                let east = patch.height(column: min(n - 1, column + 1), row: row) - patch.height(column: max(0, column - 1), row: row)
+                let north = patch.height(column: column, row: min(n - 1, row + 1)) - patch.height(column: column, row: max(0, row - 1))
+                // Map normal (-dh/dx, -dh/dy, 2·step), then into RealityKit axes.
+                let normal = SIMD3<Float>(Float(-east), Float(2 * step), Float(north))
+                normals.append(simd_normalize(normal))
+            }
+        }
+        var descriptor = MeshDescriptor(name: "terrain-" + patch.key)
+        descriptor.positions = MeshBuffers.Positions(positions)
+        descriptor.normals = MeshBuffers.Normals(normals)
+        // (x, y, z) → (x, z, −y) is a rotation, so the map's counter-clockwise triangles stay front-facing.
+        descriptor.primitives = .triangles(patch.triangles)
+        return try? MeshResource.generate(from: [descriptor])
+    }
 
     // MARK: Blocks
 

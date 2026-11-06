@@ -3154,6 +3154,52 @@ func hybridWorldV2() {
     check(!GlassMaterialResolver.resolve(.landmarkGlass, preset: .pixel, role: .landmark, quality: .high).prioritySpecular, "pixel glass does not turn on the expensive specular path")
     check(!GlassMaterialResolver.resolve(.landmarkGlass, preset: .spatial, role: .landmark, quality: .standard).prioritySpecular, "standard quality keeps landmark specular off the top tier")
     check(groundPixel.tintHex == groundSpatial.tintHex && groundPixel.tintHex == GlassMaterialResolver.semantic(.streetCrystal).tintHex, "both presets share one street-crystal tint")
+
+    // Distant terrain for the mid and far stream tiers.
+    let terrain = RegionTerrain(graph: graph)
+    var streams = WorldRegionManager(graph: graph)
+    _ = streams.updateStreaming(around: home)
+    let focus = CentralTown.address
+    let patches = terrain.patches(resident: streams.resident, graph: graph, focus: focus)
+    let midCount = patches.filter { $0.tier == .mid }.count, farCount = patches.filter { $0.tier == .far }.count
+    check(midCount == 8 && farCount == 12 && !patches.contains { $0.address == focus }, "8 mid + 12 far patches (far corners sit past the sky dome), none over the open map (\(midCount)/\(farCount))")
+    check(patches.allSatisfy { patch in patch.heights.allSatisfy(\.isFinite) && patch.triangles.count % 3 == 0 }, "terrain heights are finite and triangles are whole")
+    check(patches.allSatisfy { patch in patch.triangles.allSatisfy { Int($0) < patch.samples * patch.samples } }, "triangle indices stay inside each grid")
+    check(RegionTerrain(graph: graph).patches(resident: streams.resident, graph: graph, focus: focus) == patches, "terrain is deterministic")
+    let edgeHeight = terrain.height(globalX: Double(focus.originX + 256), globalY: Double(focus.originY + 128), focus: focus)
+    check(abs(edgeHeight - RegionTerrain.baseHeight) < 1e-9, "terrain meets the map edge at ground height")
+    let mountain = RegionAddress(column: 9, row: 7)
+    func mean(_ values: [Double]) -> Double { values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count) }
+    let mountainMean = mean(patches.filter { $0.address == mountain }.flatMap(\.heights))
+    let wildMean = mean(patches.filter { terrain.biome(at: $0.address) == .wild }.flatMap(\.heights))
+    check(terrain.biome(at: mountain) == .mountains && mountainMean > wildMean, "crystal mountains rise above the unnamed land (\(Int(mountainMean)) vs \(Int(wildMean)))")
+    // A mid patch and the far patch east of it agree along their shared edge.
+    if let mid = patches.first(where: { $0.address == RegionAddress(column: 8, row: 7) && $0.tier == .mid }),
+       let far = patches.first(where: { $0.address == RegionAddress(column: 9, row: 7) && $0.tier == .far }) {
+        var seamOK = true
+        for farRow in 0..<far.samples {
+            let midRow = farRow * (far.spacing / mid.spacing)
+            if abs(mid.height(column: mid.samples - 1, row: midRow) - far.height(column: 0, row: farRow)) > 1e-9 { seamOK = false }
+        }
+        for midRow in stride(from: 1, to: mid.samples, by: 2) {
+            let expected = (mid.height(column: mid.samples - 1, row: midRow - 1) + mid.height(column: mid.samples - 1, row: midRow + 1)) / 2
+            if abs(mid.height(column: mid.samples - 1, row: midRow) - expected) > 1e-9 { seamOK = false }
+        }
+        check(seamOK && mid.localX(column: mid.samples - 1) == far.localX(column: 0), "mid and far terrain share their seam without a crack")
+    } else { check(false, "mid and far terrain share their seam without a crack") }
+    let reach = patches.allSatisfy { patch in
+        patch.triangles.allSatisfy { index in
+            let column = Int(index) % patch.samples, row = Int(index) / patch.samples
+            let dx = Double(patch.localX(column: column)) - RegionTerrain.mapCentre, dy = Double(patch.localY(row: row)) - RegionTerrain.mapCentre
+            return dx * dx + dy * dy <= RegionTerrain.visibleRadius * RegionTerrain.visibleRadius + 1e-6
+        }
+    }
+    check(reach, "terrain stays inside the sky dome")
+    check(terrain.patch(for: StreamRequest(address: focus, tier: .near, regionKey: "central-town", authored: true), focus: focus) == nil, "the open map gets no distant terrain")
+    let townBlocks = fresh.blocks.count
+    check(CentralTown.stampedBlank().blocks.count == townBlocks, "distant terrain adds no blocks to the save")
+    let outdoors = OcclusionManager.resolve(player: SpatialVector(20.5, 20.5, 0), cameraEye: SpatialVector(20.5, 8, 24), mode: .spatial3D, buildings: fresh.hybrid?.occluders ?? [], blocks: fresh.blocks)
+    check(outdoors == OcclusionDecision(), "outdoors the occlusion pass returns nothing")
     print("RPG hybrid world: \(checks) total checks passed")
 }
 

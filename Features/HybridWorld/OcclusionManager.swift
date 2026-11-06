@@ -53,11 +53,15 @@ struct OcclusionDecision: Equatable, Sendable {
 enum OcclusionManager {
     /// Visual only. Callers keep the same `SpatialBlock` list for physics.
     static func resolve(player: SpatialVector, cameraEye: SpatialVector, mode: WorldViewMode, buildings: [BuildingOccluder], blocks: [SpatialBlock]) -> OcclusionDecision {
-        guard !buildings.isEmpty else { return OcclusionDecision() }
+        // Runs every frame: find the building first and only then index walls,
+        // so walking outdoors does not scan the whole block list.
+        let indoors = buildings.filter { contains(player, $0) && player.z < $0.interiorCeiling - 0.15 }
+        guard !indoors.isEmpty else { return OcclusionDecision() }
         var decision = OcclusionDecision()
-        let wallsByID = Dictionary(uniqueKeysWithValues: blocks.filter { $0.hybridPart == .wall }.map { ($0.id, $0) })
-        for building in buildings {
-            guard contains(player, building), player.z < building.interiorCeiling - 0.15 else { continue }
+        let wanted = Set(indoors.flatMap(\.wallIDs))
+        var wallsByID: [String: SpatialBlock] = [:]
+        for block in blocks where block.hybridPart == .wall && wanted.contains(block.id) { wallsByID[block.id] = block }
+        for building in indoors {
             if mode == .pixelRPG { decision.hidden.formUnion(building.roofIDs) }
             let walls = building.wallIDs.compactMap { wallsByID[$0] }
             decision.faded.formUnion(wallsFacing(cameraEye, player: player, building: building, walls: walls, mode: mode))

@@ -203,7 +203,10 @@ struct Glass3DPending {
     private var loadedChunks: Set<Int> = []
     /// Continent index for the open 256×256 world. Neighbours are recorded, not built.
     private var regionManager = WorldRegionManager(graph: WorldGraph.continentIndex())
+    private lazy var regionTerrain = RegionTerrain(graph: regionManager.graph)
     private var streamedRegion: RegionAddress?
+    /// Distant terrain is drawn only for hybrid worlds (town placed or view switched), not older themed worlds.
+    private var streamedTerrain = false
     /// v1.82: blocks, ground and plants are only re-checked when the world
     /// changed or the camera reached other chunks — before, every quarter
     /// second compared every block (a hitch in big worlds).
@@ -854,17 +857,21 @@ struct Glass3DPending {
     private func rebuildAll() { renderer.showAtmosphere(world.atmosphere); geometryChanged(); visibleDirty = true; refreshVisible() }
 
     /// Keeps the 4096-region window pointed at whichever 256×256 map is open.
-    /// Loading a neighbour does not generate it; that waits on a later terrain pass.
+    /// Mid and far neighbours get distant terrain (visual only); their blocks are not generated.
     private func streamRegion() {
         let column = world.hybrid?.regionColumn ?? CentralTown.address.column
         let row = world.hybrid?.regionRow ?? CentralTown.address.row
         let address = RegionAddress(column: column, row: row)
-        guard address != streamedRegion else { return }
+        let showsTerrain = world.hybrid != nil
+        guard address != streamedRegion || showsTerrain != streamedTerrain else { return }
         let localX = min(WorldGeometry.width - 1, max(0, Int(world.player.position.x.rounded(.down)) ?? 0))
         let localY = min(WorldGeometry.width - 1, max(0, Int(world.player.position.y.rounded(.down)) ?? 0))
         guard let global = WorldRegionManager.compose(address: address, localX: localX, localY: localY) else { return }
         streamedRegion = address
+        streamedTerrain = showsTerrain
         _ = regionManager.updateStreaming(around: global)
+        // Heights fade against the open region, so a new focus redraws every patch.
+        renderer.showTerrain(showsTerrain ? regionTerrain.patches(resident: regionManager.resident, graph: regionManager.graph, focus: address) : [])
     }
 
     // MARK: Saving

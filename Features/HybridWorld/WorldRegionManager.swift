@@ -4,8 +4,8 @@ import Foundation
 // world (the central town). Neighbour loads are signals for later terrain,
 // not generated continents.
 //
-// TODO: TerrainMeshSystem — near = full collision, mid = simplified meshes,
-// far = low terrain. Only the hook and the tier exist here.
+// Tiers: near = the open map with full collision; mid and far = visual-only
+// height fields from `RegionTerrain` (16- and 32-cell spacing).
 // TODO: fill the other 16×16 regions. Their records stay `authored == false`.
 
 enum StreamTier: String, Codable, Sendable {
