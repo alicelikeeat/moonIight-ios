@@ -128,6 +128,7 @@ struct Glass3DScreen: View {
         }
         .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit, powerSave: controller.powerSaving))
         .onAppear {
+            Glass3DLaunch.note("screen-appear")
             MoonlightOrientationDelegate.setSandboxLandscape(true)
             controller.renderer.media.resolve = { [weak store = model.mediaStore] id in
                 guard let item = store?.items.first(where: { $0.id == id }), let url = item.remoteURL, url.isFileURL else { return nil }
@@ -135,7 +136,7 @@ struct Glass3DScreen: View {
             }
             controller.start()
         }
-        .onDisappear { controller.stop() }
+        .onDisappear { Glass3DLaunch.note("screen-disappear"); controller.stop() }
         .onChange(of: worldSuspended) { _, hidden in
             controller.setSuspended(hidden, refresh: refreshOnReturn)
             if !hidden { refreshOnReturn = false }

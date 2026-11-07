@@ -251,6 +251,8 @@ final class ScrollGestureTests: XCTestCase {
         let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
         if !element.waitForExistence(timeout: timeout) {
             attach(app, name: "review-missing-" + id)
+            let trace = app.descendants(matching: .any).matching(identifier: "rpg-glass3d-trace").firstMatch
+            print("3D open trace: \(trace.exists ? (trace.value as? String ?? "") : "n/a")")
             print("Missing \(id):\n" + app.debugDescription)
             XCTFail(name)
         }
