@@ -130,9 +130,6 @@ struct RPGShellView: View {
             .fullScreenCover(isPresented: $glassWorld) {
                 if #available(iOS 18.0, *) {
                     Glass3DScreen(session: session, startInDesign: glassWorldDesign) { glassWorld = false; glassWorldDesign = false }.environmentObject(model)
-                        #if DEBUG
-                        .overlay(alignment: .topLeading) { Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-cover") }
-                        #endif
                 } else {
                     VStack(spacing: 12) {
                         Text(L10n.t("3D 玻璃世界需要 iOS 18 或更高版本。", "The 3D glass world needs iOS 18 or later."))
@@ -140,7 +137,7 @@ struct RPGShellView: View {
                     }.padding()
                 }
             }
-            .onChange(of: glassWorld) { v in Glass3DLaunch.note("cover=\(v)"); syncOverlay() }
+            .onChange(of: glassWorld) { _ in syncOverlay() }
             .sheet(isPresented: $appSettings) {
                 NavigationStack {
                     SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { appSettings = false }.accessibilityIdentifier("world-app-settings-close") } }
@@ -158,10 +155,6 @@ struct RPGShellView: View {
                         .accessibilityValue("mode=\(session.glassMode.rawValue);render=\(session.glassRender.label);samples=\(session.glassSamples.count)")
                     Text("世界格子").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("rpg-world-cells").accessibilityValue(session.cellContentSummaries)
-                    TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                        Text("3D 打开记录").font(.system(size:1)).frame(height:1).opacity(0.01).allowsHitTesting(false)
-                            .accessibilityIdentifier("rpg-glass3d-trace").accessibilityValue(Glass3DLaunch.trace.joined(separator: ","))
-                    }
                 }
                 #endif
             }
@@ -310,7 +303,7 @@ struct RPGShellView: View {
         HStack {
             Button(L10n.t("校验", "Check")) { session.validateRoundTrip() }.accessibilityIdentifier("rpg-validate").disabled(!session.ready)
             Button(L10n.t("编辑", "Edit")) { session.enterMapEditor() }.accessibilityIdentifier("rpg-map-editor").disabled(!session.ready)
-            Button("3D") { Glass3DLaunch.note("tap-3d"); glassWorld = true }.accessibilityIdentifier("rpg-glass-world").disabled(!session.ready)
+            Button("3D") { glassWorld = true }.accessibilityIdentifier("rpg-glass-world").disabled(!session.ready)
             Button(L10n.t("工具", "Tools")) { toolPath=[];tools = true }.accessibilityIdentifier("rpg-tools")
             Button(L10n.t("完成", "Done")) { Task { if await session.saveBeforeExit() { onExit() } } }.accessibilityIdentifier("rpg-close")
             Button { openControlCenter() } label: { Image(systemName: "square.grid.2x2").frame(width: 24, height: 24) }

@@ -8,13 +8,6 @@ enum Glass3DLaunch {
     static let key = "moonlight.glass3d.openAtLaunch"
     @MainActor static var opened = false
     @MainActor static var shouldOpen: Bool { !opened && (UserDefaults.standard.object(forKey: key) as? Bool ?? true) }
-    /// DEBUG: what happened when the 3D world was asked to open (read by UI tests).
-    @MainActor static var trace: [String] = []
-    @MainActor static func note(_ s: String) {
-        #if DEBUG
-        trace.append(s); if trace.count > 20 { trace.removeFirst() }
-        #endif
-    }
 }
 
 /// The 3D glass world screen: the RealityKit world, native iOS glass on
@@ -76,9 +69,6 @@ struct Glass3DScreen: View {
                 // The 3D view stays mounted; while hidden its scene is
                 // detached (nothing to draw) and a black cover sits on top.
                 // Re-creating the view on return could leave it empty (black).
-                #if DEBUG
-                Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-screen-bottom")
-                #endif
                 Glass3DWorldView(controller: controller, hidden: worldDetached).ignoresSafeArea()
                     // One accessibility element for the whole scene: enumerating its
                     // thousands of entities timed out every accessibility snapshot
@@ -100,9 +90,6 @@ struct Glass3DScreen: View {
                         .padding(.top, portrait ? 112 : 0).padding(.horizontal, 10)
                         .transition(.move(edge: portrait ? .trailing : .leading).combined(with: .opacity))
                 }
-                #if DEBUG
-                Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-screen-top")
-                #endif
                 VStack(spacing: 8) {
                     topBar(portrait: portrait)
                     notices
@@ -139,7 +126,6 @@ struct Glass3DScreen: View {
         }
         .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit, powerSave: controller.powerSaving))
         .onAppear {
-            Glass3DLaunch.note("screen-appear")
             MoonlightOrientationDelegate.setSandboxLandscape(true)
             controller.renderer.media.resolve = { [weak store = model.mediaStore] id in
                 guard let item = store?.items.first(where: { $0.id == id }), let url = item.remoteURL, url.isFileURL else { return nil }
@@ -147,7 +133,7 @@ struct Glass3DScreen: View {
             }
             controller.start()
         }
-        .onDisappear { Glass3DLaunch.note("screen-disappear"); controller.stop() }
+        .onDisappear { controller.stop() }
         .onChange(of: worldSuspended) { _, hidden in
             controller.setSuspended(hidden, refresh: refreshOnReturn)
             if !hidden { refreshOnReturn = false }
