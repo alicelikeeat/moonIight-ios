@@ -147,18 +147,22 @@ struct AssetCalibration: Codable, Equatable, Sendable {
     static func fit(_ samples: [(scores: [AssetScoredCategory], truth: AssetCategory)], precision: Double = 0.9, recall: Double = 0.95) -> AssetCalibration {
         let usable = samples.filter { !$0.scores.isEmpty }
         guard usable.count >= 8 else { return .starter }
-        let tops = usable.map { ($0.scores[0].score, $0.scores[0].category == $0.truth, $0.scores.prefix(3).contains { $0.category == $0.truth }) }
+        struct Top { var score: Double; var right: Bool; var inTop3: Bool }
+        let tops: [Top] = usable.map { sample in
+            Top(score: sample.scores[0].score, right: sample.scores[0].category == sample.truth,
+                inTop3: sample.scores.prefix(3).contains { $0.category == sample.truth })
+        }
         var automatic = 0.95
         for t in stride(from: 0.2, through: 0.95, by: 0.01) {
-            let above = tops.filter { $0.0 >= t }
+            let above = tops.filter { $0.score >= t }
             guard above.count >= 3 else { continue }
-            if Double(above.filter(\.1).count) / Double(above.count) >= precision { automatic = t; break }
+            if Double(above.filter(\.right).count) / Double(above.count) >= precision { automatic = t; break }
         }
         var candidates = min(automatic, 0.5)
         for t in stride(from: min(automatic, 0.6), through: 0.05, by: -0.01) {
-            let above = tops.filter { $0.0 >= t }
+            let above = tops.filter { $0.score >= t }
             guard !above.isEmpty else { continue }
-            if Double(above.filter(\.2).count) / Double(above.count) >= recall { candidates = t } else { break }
+            if Double(above.filter(\.inTop3).count) / Double(above.count) >= recall { candidates = t } else { break }
         }
         return AssetCalibration(automatic: automatic, candidates: min(candidates, automatic), fitted: true, sampleCount: usable.count)
     }
@@ -374,11 +378,19 @@ enum ArtStyleMatcher {
     static func nearestPack(_ colors: [String]) -> (style: ArtStyle, distance: Double)? {
         let rgbs = colors.compactMap(AssetAnalyzer.rgb)
         guard !rgbs.isEmpty else { return nil }
-        return ArtStyle.allCases.map { style -> (ArtStyle, Double) in
+        func distance(_ a: (Double, Double, Double), _ b: (Double, Double, Double)) -> Double {
+            let r = a.0 - b.0, g = a.1 - b.1, bl = a.2 - b.2
+            return (r * r + g * g + bl * bl).squareRoot()
+        }
+        var best: (style: ArtStyle, distance: Double)?
+        for style in ArtStyle.allCases {
             let palette = style.pack.palette.compactMap(AssetAnalyzer.rgb)
-            let d = rgbs.map { c in palette.map { p in ((c.0 - p.0) * (c.0 - p.0) + (c.1 - p.1) * (c.1 - p.1) + (c.2 - p.2) * (c.2 - p.2)).squareRoot() }.min() ?? 1 }
-            return (style, d.reduce(0, +) / Double(d.count))
-        }.min { $0.1 < $1.1 }.map { (style: $0.0, distance: $0.1) }
+            var total = 0.0
+            for c in rgbs { total += palette.map { distance(c, $0) }.min() ?? 1 }
+            let mean = total / Double(rgbs.count)
+            if best == nil || mean < best!.distance { best = (style, mean) }
+        }
+        return best
     }
 
     /// Groups of assets whose style vectors are close (for building a style pack).
