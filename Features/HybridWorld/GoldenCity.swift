@@ -18,6 +18,12 @@ enum GoldenWater: String, Codable, Sendable {
 }
 
 /// What the words ask of a town. Clamped data only — an AI may fill it.
+struct GoldenAssetSpot: Codable, Equatable, Sendable {
+    var key: String
+    var x: Int
+    var y: Int
+}
+
 struct GoldenTownIntent: Codable, Equatable, Sendable {
     var style = ArtStyle.crystalFantasy
     var water = GoldenWater.river
@@ -25,6 +31,8 @@ struct GoldenTownIntent: Codable, Equatable, Sendable {
     var mountains = true
     var gardens = true
     var winding = true
+    /// v1.87: glass tint taken from a material picture (RRGGBB), nil for the pack's own.
+    var glassTint: String? = nil
 
     static func parse(_ prompt: String) -> GoldenTownIntent {
         let t = prompt.lowercased()
@@ -114,7 +122,21 @@ struct GoldenCityPlan: Sendable {
     var route: [WorldPoint] = []
     var spawn = GoldenViewpoint(key: "spawn", name: "出发点", x: 127.5, y: 50.5, z: 0, yaw: 0)
 
-    var pack: ArtStylePack { intent.style.pack }
+    var pack: ArtStylePack {
+        var pack = intent.style.pack
+        // A material picture's colour tints the windows (and the glass roofs of the crystal style).
+        if let tint = intent.glassTint?.uppercased(), tint.count == 6, UInt32(tint, radix: 16) != nil {
+            pack.materials[.window]?.tintHex = tint
+            if intent.style == .crystalFantasy { pack.materials[.roof]?.tintHex = tint }
+        }
+        return pack
+    }
+    /// v1.87: open spots for imported models (checked again by the builder).
+    var assetSpots: [GoldenAssetSpot] {
+        [GoldenAssetSpot(key: "plaza-ne", x: 132, y: 132), GoldenAssetSpot(key: "plaza-nw", x: 122, y: 132),
+         GoldenAssetSpot(key: "plaza-se", x: 132, y: 122), GoldenAssetSpot(key: "plaza-sw", x: 122, y: 122),
+         GoldenAssetSpot(key: "garden", x: 152, y: 146), GoldenAssetSpot(key: "market", x: 94, y: 130)]
+    }
     var landmark: KitBuildingSpec? { buildings.first { $0.key == landmarkKey } }
     static func key(_ x: Int, _ y: Int) -> Int { y * WorldGeometry.width + x }
     static func cell(_ key: Int) -> GoldenCell { GoldenCell(x: key % WorldGeometry.width, y: key / WorldGeometry.width) }

@@ -40,6 +40,9 @@ struct AssetDescriptor: Codable, Equatable, Sendable, Identifiable {
     var duration: Double?
     var hasAlpha = false
     var title = ""
+    /// v1.87: what the Asset Director decided this asset does in a world
+    /// (optional, so earlier records decode unchanged).
+    var assetRole: AssetWorldRole? = nil
     var id: String { assetID }
 
     var aspect: Double { pixelHeight > 0 ? Double(pixelWidth) / Double(pixelHeight) : 1 }
@@ -70,6 +73,8 @@ enum AssetRules {
         if !asset.sourceType.userOwned && asset.sourceType != .builtin && !AssetLicense.usable(asset.license) {
             return .skipped(L10n.t("「\(asset.title)」没有可用的授权", "“\(asset.title)” has no usable licence"))
         }
+        // Style-only and material-tint assets never put pixels in a world.
+        if let role = asset.assetRole, !role.placed { return .ok }
         switch asset.mediaType {
         case .image, .gif, .video:
             if asset.libraryID == nil { return .skipped(L10n.t("「\(asset.title)」还没有导入素材库", "“\(asset.title)” is not in the library")) }

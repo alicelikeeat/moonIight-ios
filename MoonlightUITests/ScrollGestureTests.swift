@@ -247,7 +247,8 @@ final class ScrollGestureTests: XCTestCase {
     /// Widget taps are moonlight:// links: each one lands where it says,
     /// including straight into the 3D world from another page.
     @MainActor
-    func testWidgetLinksOpenTheWorld() {
+    func testWidgetLinksOpenTheWorld() throws {
+        guard #available(iOS 16.4, *) else { throw XCTSkip("XCUIApplication.open needs iOS 16.4") }
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
         app.open(URL(string: "moonlight://search")!)
         XCTAssertTrue(app.scrollViews["feed-scroll-discover"].waitForExistence(timeout: 10), "search opens 发现")

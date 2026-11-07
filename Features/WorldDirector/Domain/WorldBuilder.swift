@@ -708,6 +708,7 @@ struct WorldBuildState {
         func free(_ piece: KitPiece) -> Bool {
             inArea(piece.x, piece.y) && !userCells.contains(Self.key(piece.x, piece.y)) && (piece.collision != .solid || fits(piece.x, piece.y, piece.bottom, piece.top))
         }
+        var fountainWater: [String] = []
         for unit in draft.units where layers.contains(unit.layer) {
             if unit.atomic {
                 guard unit.pieces.allSatisfy(free) else {
@@ -719,7 +720,9 @@ struct WorldBuildState {
                 }
                 let groupID = unit.building.map { group($0.name, template: "kit-" + $0.kind.rawValue) }
                 for piece in unit.pieces {
-                    add(GoldenCity.block(piece, id: nextID(unit.layer) + Self.goldenSuffix, pack: pack, group: groupID), layer: unit.layer)
+                    let id = nextID(unit.layer) + Self.goldenSuffix
+                    add(GoldenCity.block(piece, id: id, pack: pack, group: groupID), layer: unit.layer)
+                    if unit.key == "fountain" && piece.tag.hasPrefix("fountain:water") { fountainWater.append(id) }
                 }
                 if let spec = unit.building, let groupID { occluders.append(GoldenCity.occluder(spec, group: groupID)) }
             } else {
@@ -747,8 +750,52 @@ struct WorldBuildState {
         }
         // Keep the spawn and route corridor out of the far-mountain pass.
         for point in plan.route { for dx in -2...2 { for dy in -2...2 { reserved.insert(Self.key(point.x + dx, point.y + dy)) } } }
+        townAssets(fountainWater: fountainWater.filter { id in world.blocks.contains { $0.id == id } })
         let mode = world.hybrid?.viewMode ?? .spatial3D
         world.hybrid = HybridWorldSave(viewMode: mode, regionColumn: GoldenCity.address.column, regionRow: GoldenCity.address.row, occluders: Array(occluders.prefix(48)))
+    }
+
+    /// v1.87: assets the Asset Director chose for the town. Loop footage
+    /// plays on the fountain water; models stand on the town's open spots
+    /// (or the nearest free cell). Every skip is noted.
+    mutating func townAssets(fountainWater: [String]) {
+        for (index, assignment) in bp.assetAssignments.enumerated() {
+            guard let asset = assets[assignment.assetID], let library = asset.libraryID else { continue }
+            switch assignment.slot {
+            case "fountainMedia":
+                guard !fountainWater.isEmpty else { notes.append(L10n.t("喷泉没有放下，水面影像省略", "No fountain; its water footage left out")); continue }
+                let kind: RPGMediaKind = asset.mediaType == .video ? .video : asset.mediaType == .gif ? .gif : .image
+                let binding = MediaBinding(id: "\(prefix):bind:town:\(index)", mediaID: library, kind: kind, fit: .fill)
+                bindings.append(binding)
+                SpatialBuilder.mediaGrid(bindingID: binding.id, blocks: fountainWater, face: .top, stretch: true, world: &world)
+                // mediaGrid marks blocks as user-edited; these stay generated.
+                let set = Set(fountainWater)
+                for i in world.blocks.indices where set.contains(world.blocks[i].id) { world.blocks[i].origin = .generated }
+            case "statue":
+                guard let spot = openSpot(near: assignment.position) else {
+                    notes.append(L10n.t("「\(asset.title)」附近没有空位，已省略", "No free spot for “\(asset.title)”; left out")); continue
+                }
+                statues.append(StatuePlacement(assetID: asset.assetID, modelID: library, position: SpatialVector(Double(spot.x) + 0.5, Double(spot.y) + 0.5, spot.z)))
+                solid[Self.key(spot.x, spot.y), default: []].append(spot.z...(spot.z + 1.8))
+            default: continue
+            }
+        }
+    }
+
+    /// The nearest cell (ring by ring, up to 3 away) with room for a figure,
+    /// standing on whatever floor is there.
+    func openSpot(near p: WorldPoint) -> (x: Int, y: Int, z: Double)? {
+        for r in 0...3 {
+            for dx in -r...r { for dy in -r...r where max(abs(dx), abs(dy)) == r {
+                let x = p.x + dx, y = p.y + dy
+                // Never on the gate → castle walking corridor.
+                guard inArea(x, y), !reserved.contains(Self.key(x, y)) else { continue }
+                let ground = surface(x, y)
+                let floor = (solid[Self.key(x, y)] ?? []).filter { $0.upperBound <= ground + 0.6 }.map(\.upperBound).max() ?? ground
+                if fits(x, y, floor + 0.01, floor + 1.8) { return (x, y, floor) }
+            } }
+        }
+        return nil
     }
 
     // MARK: Finish

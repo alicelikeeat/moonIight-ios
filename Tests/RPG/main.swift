@@ -3348,4 +3348,5 @@ func widgetShared() {
 
 hybridWorldV2()
 widgetShared()
+assetDirectorTests()
 print("RPG complete: \(checks) total checks passed")

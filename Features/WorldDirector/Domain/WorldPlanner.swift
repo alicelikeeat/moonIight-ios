@@ -149,6 +149,12 @@ enum WorldPlanner {
             // Golden World: the town planner decides the layout; the blueprint records districts,
             // landmark, spawn and route for the evaluator and for local regeneration.
             var townIntent = GoldenTownIntent.parse(request.prompt)
+            // v1.87 Asset Director: reference pictures choose the style pack
+            // unless the words name one; a material picture tints the glass.
+            let named = GoldenTownIntent.parse(request.prompt).style != .crystalFantasy || ["水晶", "crystal", "玻璃", "glass"].contains { request.prompt.lowercased().contains($0) }
+            let references = usable.filter { $0.assetRole == .styleOnly }.flatMap { $0.dominantColors.prefix(2) }
+            if !named, !references.isEmpty, let style = ArtStyleMatcher.nearestPack(references)?.style { townIntent.style = style }
+            if let tint = usable.first(where: { $0.assetRole == .material })?.dominantColors.first { townIntent.glassTint = tint }
             if intent.forest { townIntent.forest = true }
             if intent.mountains { townIntent.mountains = true }
             let plan = GoldenCityPlanner.plan(seed: seed, intent: townIntent)
@@ -159,6 +165,8 @@ enum WorldPlanner {
             context.landmark = LandmarkPlan(kind: .crystalPalace, position: castle, scale: 1)
             context.routes = [ExplorationRoute(name: L10n.t("城门到城堡", "Gate to castle"), waypoints: Array(plan.route.dropLast()) + [castle])]
             context.zones = []; context.roads = []; context.mediaSpots = []
+            context.townSpots = plan.assetSpots
+            context.fountainSpot = WorldPoint(x: plan.fountain.x, y: plan.fountain.y, z: 0)
             let golden = GoldenBudget.of(request.tier)
             budget.maxBlocks = golden.maxBlocks + (townIntent.mountains ? 1_200 : 0)
             budget.maxPlants = golden.maxPlants
@@ -203,6 +211,9 @@ struct PlanContext {
     var landmark = LandmarkPlan(kind: .spire, position: WorldPoint(x: 128, y: 170, z: 0), scale: 1)
     /// Where media walls may go (filled by the theme).
     var mediaSpots: [(WorldPoint, Int, String)] = []
+    /// Golden World town: open spots for models and the fountain (v1.87).
+    var townSpots: [GoldenAssetSpot] = []
+    var fountainSpot: WorldPoint?
 
     init(random: SpatialRandom, theme: WorldTheme, intent: WorldIntent, density: Double, heading: Double, budget: PerformanceBudget) {
         self.random = random; self.theme = theme; self.intent = intent; self.density = density; self.heading = heading; self.budget = budget
@@ -427,9 +438,27 @@ struct PlanContext {
                               lamps: base.lamps, crystals: base.crystals, clouds: base.clouds)
     }
 
+    /// Golden World town: one loop video / GIF on the fountain water, models on the town's open spots.
+    mutating func assignTown(_ assets: [AssetDescriptor]) -> [AssetAssignment] {
+        var result: [AssetAssignment] = []
+        if let fountain = fountainSpot,
+           let media = assets.first(where: { $0.assetRole == .fountainMedia || ($0.assetRole == nil && ($0.mediaType == .video || $0.mediaType == .gif)) }) {
+            result.append(AssetAssignment(assetID: media.assetID, slot: "fountainMedia", position: fountain, axis: 0))
+        }
+        // Characters take the plaza first; scene models fill the rest.
+        let models = assets.filter { $0.mediaType == .model }.sorted { ($0.assetRole == .character ? 0 : 1) < ($1.assetRole == .character ? 0 : 1) }
+        for (model, spot) in zip(models, townSpots) {
+            result.append(AssetAssignment(assetID: model.assetID, slot: "statue", position: WorldPoint(x: spot.x, y: spot.y, z: 0), axis: 0))
+        }
+        return result
+    }
+
     /// Asset → slot: videos to screens / billboards first (within the
     /// video budget), pictures to gallery walls; models become statues.
     mutating func assign(_ assets: [AssetDescriptor]) -> [AssetAssignment] {
+        // Style-only and material assets shape the plan; they are never placed.
+        let assets = assets.filter { $0.assetRole?.placed ?? true }
+        if theme == .crystalKingdom { return assignTown(assets) }
         var result: [AssetAssignment] = []
         var spots = mediaSpots
         var videos = 0
