@@ -713,6 +713,10 @@ enum VideoReconstructionPipeline {
             return original
         }
         guard let meshURL = meshURL(m) else { usdzReport[m.id] = L10n.t("USDZ：没有可转换的网格", "USDZ: no mesh to convert"); return nil }
+        // The RealityKit load check (and the rig loader) need iOS 18; an unchecked file is never offered.
+        guard #available(iOS 18.0, *) else {
+            usdzReport[m.id] = L10n.t("USDZ 转换需要 iOS 18 或更高版本", "USDZ conversion needs iOS 18 or later"); return nil
+        }
         let textureURL = textureURL(m)
         let moonlightRig = await Generate3DRigging.load(m)
         let importedRig = moonlightRig == nil ? (try? RiggingAssetStore(folder: Self.folder("Rigs")).load(m.id)) ?? nil : nil
