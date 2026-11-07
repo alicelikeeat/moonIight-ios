@@ -65,8 +65,16 @@ enum RPGStorySpatial {
     /// creatures are untouched. Returns whether anything changed.
     /// Outside the story's region (`inStoryRegion` false) no story enemy
     /// stands in 3D: the story's places are on the central region's grid.
-    static func reconcile(_ creatures: inout [CreatureEntity], with world: WorldState, inStoryRegion: Bool = true) -> Bool {
-        let wanted = inStoryRegion ? storyCreatures(for: world) : []
+    /// `free` says whether a 3D spot can hold a creature: a story enemy
+    /// whose cell is inside something stands on the nearest free cell.
+    static func reconcile(_ creatures: inout [CreatureEntity], with world: WorldState, inStoryRegion: Bool = true,
+                          free: ((SpatialVector) -> Bool)? = nil) -> Bool {
+        let wanted = (inStoryRegion ? storyCreatures(for: world) : []).map { creature -> CreatureEntity in
+            guard let free else { return creature }
+            var placed = creature
+            placed.position = nearestFree(creature.position, free: free); placed.home = placed.position
+            return placed
+        }
         let wantedIDs = Set(wanted.map(\.id))
         let before = creatures.count
         creatures.removeAll { $0.id.hasPrefix(creaturePrefix) && !wantedIDs.contains($0.id) && $0.alive }
@@ -74,6 +82,23 @@ enum RPGStorySpatial {
         let present = Set(creatures.map(\.id))
         for creature in wanted where !present.contains(creature.id) { creatures.append(creature); changed = true }
         return changed
+    }
+
+    /// The spot itself if free, else the closest free cell centre within six
+    /// cells (rings outward, a fixed order so it is the same every time),
+    /// else the spot unchanged.
+    static func nearestFree(_ at: SpatialVector, free: (SpatialVector) -> Bool) -> SpatialVector {
+        if free(at) { return at }
+        let cx = at.x.rounded(.down), cy = at.y.rounded(.down)
+        for radius in 1...6 {
+            for dy in -radius...radius { for dx in -radius...radius where max(abs(dx), abs(dy)) == radius {
+                let x = cx + Double(dx) + 0.5, y = cy + Double(dy) + 0.5
+                guard (0..<256).contains(x), (0..<256).contains(y) else { continue }
+                let spot = SpatialVector(x, y, at.z)
+                if free(spot) { return spot }
+            } }
+        }
+        return at
     }
 
     /// A 3D creature died. A story enemy is recorded the way a defeat on the

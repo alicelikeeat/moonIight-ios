@@ -49,6 +49,7 @@ func storySpatialTests() throws {
     let shown = RPGStorySpatial.storyCreatures(for: tale)
     check(shown.count == 1 && shown[0].id == RPGStorySpatial.creaturePrefix + guardID && shown[0].health == 45 && shown[0].alive, "3D story: the guard appears as a 3D creature")
     let guardCell = tale.combat.enemies.first { $0.id == guardID }?.surface
+    let guardCheckpoint = tale
     check(RPGStorySpatial.objective(world: tale, generator: generator)?.point == guardCell, "3D story: the marker points at the guard")
     var creatures = [CreatureEntity(id: "wild-slime", kind: .enemy, position: SpatialVector(10, 10, 0), home: SpatialVector(10, 10, 0), health: 20, maxHealth: 20, damage: 3)]
     check(RPGStorySpatial.reconcile(&creatures, with: tale) && creatures.count == 2, "3D story: reconcile adds the guard next to other creatures")
@@ -78,6 +79,17 @@ func storySpatialTests() throws {
     check(RPGStorySpatial.objective(world: tale, generator: generator) == nil && !RPGStorySpatial.conditionMet(world: tale, generator: generator), "3D story: nothing to point at once the chapter ends")
     let reloaded = try RPGWorldCodec.decode(RPGWorldCodec.encode(tale))
     check(reloaded == tale, "3D story: progress made in 3D saves and reloads unchanged")
+    // Story enemies stand on a free 3D cell near their story cell.
+    let wall: Set<String> = ["9,9", "10,9", "11,9", "9,10", "10,10", "11,10", "9,11", "10,11", "11,11"]
+    let freeSpot = RPGStorySpatial.nearestFree(SpatialVector(10.5, 10.5, 0)) { !wall.contains("\(Int($0.x)),\(Int($0.y))") }
+    check(freeSpot == SpatialVector(8.5, 8.5, 0), "3D story: a blocked spot moves to the nearest free cell, in a fixed order (\(freeSpot))")
+    check(RPGStorySpatial.nearestFree(SpatialVector(3.2, 4.7, 0)) { _ in true } == SpatialVector(3.2, 4.7, 0), "3D story: a free spot stays exactly where it is")
+    check(RPGStorySpatial.nearestFree(SpatialVector(50.5, 50.5, 0)) { _ in false } == SpatialVector(50.5, 50.5, 0), "3D story: nowhere free keeps the spot")
+    var placed: [CreatureEntity] = []
+    _ = RPGStorySpatial.reconcile(&placed, with: guardCheckpoint, free: { $0.x < Double(guardCell?.x ?? 0) })
+    check(placed.count == 1 && placed[0].position.x < Double(guardCell?.x ?? 0) && placed[0].home == placed[0].position,
+          "3D story: the guard is summoned onto a free cell, home included")
+
     // An old 2D save: wandering slimes and a stale combat flag.
     var old = WorldState(seed: 9); old.player.surface = generator.anchor(.spawn); old.player.perspective = .side
     old.combat.enemies = [RPGEnemyState(id: "slime:3:4", surface: SurfacePoint(x: 40, z: 40), aggro: true)]

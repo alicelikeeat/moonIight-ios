@@ -223,43 +223,26 @@ var badMedia=visualWorld;badMedia.backgroundBindingIDs=["missing"]
 rejected(badMedia,"invalid background reference")
 print("RPG P5: \(checks) total checks passed")
 
-// P6: actions are atomic, rewards and enemy identity survive saving and projection.
+// P6 (v1.88): fights run in the 3D world; a story enemy's defeat and the
+// gear on the save follow one rule set, and survive saving.
 var fighter = WorldState(seed:42)
 let arenaGenerator = RPGWorldGenerator(seed:42)
 fighter.sideRegions = [arenaGenerator.sideRegion]
 fighter.player.surface = arenaGenerator.anchor(.spawn)
 let origin = fighter.player.surface
-fighter.combat.enemies = [.init(id:"test-enemy",surface:.init(x:origin.x+2,z:origin.z),aggro:true)]
+fighter.combat.enemies = [.init(id:"story:1:test-enemy",surface:.init(x:origin.x+2,z:origin.z),aggro:true)]
 fighter.player.inCombat = true
-try RPGCombatRules.action(.attack,world:&fighter,generator:arenaGenerator,passable:{$0.valid})
-check(fighter.combat.enemies[0].health==18 && fighter.player.stamina==92,"attack shares health and stamina")
-let cooldownSnapshot=fighter
-do { try RPGCombatRules.action(.attack,world:&fighter,generator:arenaGenerator,passable:{$0.valid});preconditionFailure("cooldown accepted") }catch{check(fighter==cooldownSnapshot,"cooldown rejection is atomic")}
-try RPGCombatRules.action(.skill,world:&fighter,generator:arenaGenerator,passable:{$0.valid})
-check(fighter.combat.enemies[0].health==0 && fighter.inventory["moon-shard"]==1 && !fighter.player.inCombat,"one reward and combat exit")
-for _ in 0..<40 { RPGCombatRules.advance(world:&fighter,generator:arenaGenerator,delta:0.1,passable:{$0.valid}) }
-try RPGCombatRules.action(.skill,world:&fighter,generator:arenaGenerator,passable:{$0.valid})
-check(fighter.inventory["moon-shard"]==1 && fighter.combat.defeatedIDs==["test-enemy"],"dead enemies never drop twice")
+check(RPGStorySpatial.defeated(RPGStorySpatial.creaturePrefix+"story:1:test-enemy",world:&fighter) && !fighter.player.inCombat,"a 3D defeat ends the fight")
+check(!RPGStorySpatial.defeated(RPGStorySpatial.creaturePrefix+"story:1:test-enemy",world:&fighter) && fighter.combat.defeatedIDs==["story:1:test-enemy"],"dead enemies never count twice")
 let combatRestored=try RPGWorldCodec.decode(RPGWorldCodec.encode(fighter))
-check(combatRestored==fighter,"combat save restores cooldowns and exact defeated identities")
-var tired=fighter;tired.player.stamina=0;tired.combat.attackRemaining=0
-let tiredBefore=tired
-do {try RPGCombatRules.action(.attack,world:&tired,generator:arenaGenerator,passable:{$0.valid});preconditionFailure("stamina accepted")}catch{check(tired==tiredBefore,"stamina rejection rolls back cooldown")}
-var roller=fighter;roller.player.stamina=100;roller.combat.rollRemaining=0
-try RPGCombatRules.action(.roll,world:&roller,generator:arenaGenerator,passable:{$0.x<origin.x+2})
-check(roller.player.surface.x==origin.x+1 && roller.combat.invulnerableRemaining>0,"roll stops before obstruction")
-let pathStep=RPGCombatRules.nextStep(from:.init(x:10,z:10),to:.init(x:12,z:10),passable:{$0 != SurfacePoint(x:11,z:10)})
-check(pathStep != nil && pathStep != SurfacePoint(x:11,z:10),"enemy path routes around solid wall")
-var bossFight=WorldState(seed:42);bossFight.player.surface=origin;bossFight.player.weapon = .moonBlade
-bossFight.combat.enemies=[.init(id:"test-boss",boss:true,surface:.init(x:origin.x+1,z:origin.z),health:65,maximumHealth:120,aggro:true)]
-try RPGCombatRules.action(.attack,world:&bossFight,generator:arenaGenerator,passable:{$0.valid})
-check(bossFight.combat.enemies[0].phase==2 && bossFight.events.contains{$0.kind=="bossPhaseChanged"},"boss crosses second phase")
+check(combatRestored==fighter,"combat save restores exact defeated identities")
+check(RPGGear.attackDamage(base:12,weapon:.moonBlade)==20 && RPGGear.attackDamage(base:25,weapon:.none)==25,"the moon blade adds 8 to 3D attacks")
+check(RPGGear.damageTaken(10,armor:.stoneArmor)==6 && RPGGear.damageTaken(3,armor:.stoneArmor)==1 && RPGGear.damageTaken(10,armor:.none)==10 && RPGGear.damageTaken(0,armor:.stoneArmor)==0,
+      "stone armour takes 4 off a hit, never below 1, nothing from no hit")
 var sideFighter=WorldState(seed:42);sideFighter.sideRegions=[arenaGenerator.sideRegion]
 sideFighter.player.perspective = .side;sideFighter.player.side=arenaGenerator.sideRegion.landing
 let sideOrigin=sideFighter.player.side!
 sideFighter.combat.enemies=[.init(id:"side-target",scope:.sideOnly,surface:nil,side:.init(regionID:sideOrigin.regionID,horizontal:sideOrigin.horizontal+1,height:sideOrigin.height+1)),.init(id:"surface-target",surface:sideFighter.player.surface)]
-try RPGCombatRules.action(.attack,world:&sideFighter,generator:arenaGenerator,passable:{$0.valid})
-check(sideFighter.combat.enemies[0].health==18 && sideFighter.combat.enemies[1].health==30,"air attack uses side volume only")
 var brokenEnemy=sideFighter;brokenEnemy.combat.enemies[0].scope = .shared
 rejected(brokenEnemy,"shared enemy requires explicit surface mapping")
 var legacyCombat=try JSONSerialization.jsonObject(with:RPGWorldCodec.encode(fighter)) as! [String:Any]
@@ -302,13 +285,12 @@ var battleTale=villageChoiceCheckpoint
 try RPGStoryRuntime.advance(choiceID:"fight",world:&battleTale,generator:arenaGenerator)
 let guardID=RPGStoryRuntime.enemyID(graphID:RPGOfficialStory.graph.id,key:"village-guardian")
 check(battleTale.combat.enemies.contains{$0.id==guardID} && battleTale.player.inCombat,"battle branch creates stable enemy")
-try RPGCombatRules.action(.skill,world:&battleTale,generator:arenaGenerator,passable:{$0.valid})
-try RPGCombatRules.action(.attack,world:&battleTale,generator:arenaGenerator,passable:{$0.valid})
-for _ in 0..<4 {RPGCombatRules.advance(world:&battleTale,generator:arenaGenerator,delta:0.1,passable:{$0.valid})}
-try RPGCombatRules.action(.attack,world:&battleTale,generator:arenaGenerator,passable:{$0.valid})
+check(RPGStorySpatial.defeated(RPGStorySpatial.creaturePrefix+guardID,world:&battleTale),"the guard falls in 3D")
+RPGStoryRuntime.recordEvents(world:&battleTale)
 try RPGStoryRuntime.advance(world:&battleTale,generator:arenaGenerator)
 try RPGStoryRuntime.advance(world:&battleTale,generator:arenaGenerator)
-check(battleTale.story.activeProgress?.ended==true && battleTale.inventory["moon-shard"]==2,"combat event finishes alternative chapter branch")
+// The story pays its own shard; the 3D world pays the kill itself.
+check(battleTale.story.activeProgress?.ended==true && battleTale.inventory["moon-shard"]==1,"combat event finishes alternative chapter branch")
 var invalidGraph=RPGOfficialStory.graph;invalidGraph.nodes[0].next="missing"
 do{try invalidGraph.validate();preconditionFailure("broken link accepted")}catch{checks+=1}
 invalidGraph=RPGOfficialStory.graph;invalidGraph.nodes[0].next="prologue"

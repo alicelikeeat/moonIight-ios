@@ -461,7 +461,7 @@ struct Glass3DPending {
 
     private func hurt(_ damage: Int) {
         guard invulnerable <= 0, health > 0 else { return }
-        health = max(0, health - damage)
+        health = max(0, health - RPGGear.damageTaken(damage, armor: session.world.player.armor))
         if health == 0 { notice = L10n.t("生命耗尽，点「复苏」回到出生点。", "Out of health. Tap Revive to return to the spawn.") }
     }
 
@@ -545,7 +545,9 @@ struct Glass3DPending {
         // save starts); elsewhere the same cells are somewhere else.
         let home = regionAddress == GoldenCity.address
         if home { session.storyPlayerMoved3D(world.player.position) }
-        if RPGStorySpatial.reconcile(&world.creatures, with: session.world, inStoryRegion: home) { dirtyRuntime = true; refreshVisible() }
+        let geometry = staticGeometry
+        if RPGStorySpatial.reconcile(&world.creatures, with: session.world, inStoryRegion: home,
+                                     free: { !geometry.blocked(x: $0.x, y: $0.y, z: $0.z + 0.05) }) { dirtyRuntime = true; refreshVisible() }
         let objective = session.storyObjective
         renderer.showObjective(home ? objective.map { SpatialVector(Double($0.point.x) + 0.5, Double($0.point.z) + 0.5, 0) } : nil)
         let hint = objective.map { o -> String in
@@ -648,7 +650,7 @@ struct Glass3DPending {
             renderer.punch(lunge: false)
         }
         stamina -= cost
-        let damage = (kind == .strike ? 12 : 25) + (session.world.player.weapon == .moonBlade ? 8 : 0)
+        let damage = RPGGear.attackDamage(base: kind == .strike ? 12 : 25, weapon: session.world.player.weapon)
         let before = world.creatures
         let hits = SpatialCombat.attack(kind, from: world.player.position, facing: world.player.facing, damage: damage, creatures: &world.creatures, geometry: staticGeometry.moved(frames: world.groupFrames(pivots: pivots, clock: world.clock)))
         var shards = 0
