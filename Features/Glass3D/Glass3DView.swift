@@ -8,6 +8,13 @@ enum Glass3DLaunch {
     static let key = "moonlight.glass3d.openAtLaunch"
     @MainActor static var opened = false
     @MainActor static var shouldOpen: Bool { !opened && (UserDefaults.standard.object(forKey: key) as? Bool ?? true) }
+    /// DEBUG: what happened when the 3D world was asked to open (read by UI tests).
+    @MainActor static var trace: [String] = []
+    @MainActor static func note(_ s: String) {
+        #if DEBUG
+        trace.append(s); if trace.count > 20 { trace.removeFirst() }
+        #endif
+    }
 }
 
 /// The 3D glass world screen: the RealityKit world, native iOS glass on
