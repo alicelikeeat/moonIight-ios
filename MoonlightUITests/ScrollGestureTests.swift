@@ -253,6 +253,8 @@ final class ScrollGestureTests: XCTestCase {
             attach(app, name: "review-missing-" + id)
             let trace = app.descendants(matching: .any).matching(identifier: "rpg-glass3d-trace").firstMatch
             print("3D open trace: \(trace.exists ? (trace.value as? String ?? "") : "n/a")")
+            let probes = ["probe-cover", "probe-screen-bottom", "probe-screen-top"].map { "\($0)=\(app.descendants(matching: .any).matching(identifier: $0).firstMatch.exists)" }
+            print("3D probes: " + probes.joined(separator: " ") + " windows=\(app.windows.count)")
             print("Missing \(id):\n" + app.debugDescription)
             XCTFail(name)
         }

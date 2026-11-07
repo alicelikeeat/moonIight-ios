@@ -76,6 +76,9 @@ struct Glass3DScreen: View {
                 // The 3D view stays mounted; while hidden its scene is
                 // detached (nothing to draw) and a black cover sits on top.
                 // Re-creating the view on return could leave it empty (black).
+                #if DEBUG
+                Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-screen-bottom")
+                #endif
                 Glass3DWorldView(controller: controller, hidden: worldDetached).ignoresSafeArea()
                 Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
@@ -92,6 +95,9 @@ struct Glass3DScreen: View {
                         .padding(.top, portrait ? 112 : 0).padding(.horizontal, 10)
                         .transition(.move(edge: portrait ? .trailing : .leading).combined(with: .opacity))
                 }
+                #if DEBUG
+                Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-screen-top")
+                #endif
                 VStack(spacing: 8) {
                     topBar(portrait: portrait)
                     notices

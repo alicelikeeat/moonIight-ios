@@ -130,6 +130,9 @@ struct RPGShellView: View {
             .fullScreenCover(isPresented: $glassWorld) {
                 if #available(iOS 18.0, *) {
                     Glass3DScreen(session: session, startInDesign: glassWorldDesign) { glassWorld = false; glassWorldDesign = false }.environmentObject(model)
+                        #if DEBUG
+                        .overlay(alignment: .topLeading) { Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-cover") }
+                        #endif
                 } else {
                     VStack(spacing: 12) {
                         Text(L10n.t("3D 玻璃世界需要 iOS 18 或更高版本。", "The 3D glass world needs iOS 18 or later."))
