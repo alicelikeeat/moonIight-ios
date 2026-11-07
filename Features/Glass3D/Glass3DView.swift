@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import RealityKit
 import UIKit
 
@@ -25,6 +26,7 @@ struct Glass3DScreen: View {
     /// A sandbox page asked for from outside (search, shortcuts).
     @Binding private var page: RPGEntryPage?
     @State private var sandboxSheet: SandboxSheet?
+    @State private var importingPack = false
     @State private var generator = false
     @State private var classicGenerator = false
     @State private var panel = true
@@ -165,6 +167,13 @@ struct Glass3DScreen: View {
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(item: $sandboxSheet) { sheet in sandboxPage(sheet) }
+        .fileImporter(isPresented: $importingPack, allowedContentTypes: [.json]) { result in
+            guard case .success(let url) = result else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let data = try? Data(contentsOf: url) { _ = controller.importContent(data) }
+            else { controller.notice = L10n.t("无法读取这个文件", "Can't read this file") }
+        }
         // The story panel opens by itself once a quest's condition is met in 3D.
         .onReceive(session.$pendingStory) { pending in
             guard pending else { return }
@@ -330,6 +339,8 @@ struct Glass3DScreen: View {
                 moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
                 moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
                 moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
+                moreRow("square.and.arrow.down.on.square", L10n.t("导入内容包（JSON）", "Import Content Pack (JSON)")) { importingPack = true }
+                    .accessibilityIdentifier("glass3d-import-pack")
                 moreHeader(L10n.t("更多", "More"))
                 moreRow("cube.transparent", L10n.t("AI 生成 3D 模型", "AI 3D Models")) { generate3D = true }
                 moreRow("wand.and.stars", L10n.t("智能素材库", "Asset Director")) { assetDirector = true }

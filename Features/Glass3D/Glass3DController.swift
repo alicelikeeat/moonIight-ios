@@ -991,6 +991,25 @@ struct Glass3DPending {
     }
 
     /// One undoable edit, saved at once.
+    /// A content pack (skills, bosses, stories) from a file, through
+    /// ContentCompiler. Skills and bosses are kept like edits made in the
+    /// skill and Boss editors (outside undo, as those are); stories go into
+    /// the save's story list. Returns what happened, for the notice.
+    func importContent(_ data: Data) -> String {
+        let compiled = ContentCompiler.compile(data, existingSkills: Set((world.skills ?? []).map(\.id)))
+        var issues = compiled.issues
+        if !compiled.skills.isEmpty || !compiled.bosses.isEmpty {
+            edit(L10n.t("导入内容包", "Import Content Pack")) { w in ContentCompiler.merge(compiled, into: &w) }
+        }
+        for story in compiled.stories where !session.installStory(story, bindings: []) {
+            issues.append(.init(item: story.id, reason: session.notice))
+        }
+        var text = compiled.summary
+        if let first = issues.first { text += " · " + first.item + "：" + first.reason }
+        notice = text
+        return text
+    }
+
     func edit(_ title: String, bindings: [MediaBinding] = [], _ body: (inout SpatialWorld) -> Void) {
         var next = world
         next.edit(title, body)

@@ -66,7 +66,8 @@ struct ClaudeWorldPlanner: WorldPlanningProvider {
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         let (data, response) = try await URLSession.shared.data(for: urlRequest)
         let text = try ClaudeMotion.answerText(data, status: (response as? HTTPURLResponse)?.statusCode ?? 0)
-        guard let intent = WorldIntentResolver.decode(Data(text.utf8), theme: request.theme) else { throw ClaudeMotionError.badReply("plan did not match the schema") }
+        let compiled = ContentCompiler.worldIntent(Data(text.utf8), theme: request.theme)
+        guard let intent = compiled.intent else { throw ClaudeMotionError.badReply(compiled.issues.first?.reason ?? "plan did not match the schema") }
         return intent
     }
 }

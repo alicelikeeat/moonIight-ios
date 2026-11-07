@@ -3337,6 +3337,7 @@ hybridWorldV2()
 widgetShared()
 assetDirectorTests()
 try storySpatialTests()
+try contentCompilerTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.
