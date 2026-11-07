@@ -106,11 +106,21 @@ struct Glass3DPending {
     }
     private(set) var bossBar: (name: String, health: Int, maxHealth: Int, phase: Int)? {
         get { live.bossBar }
-        set { live.bossBar = newValue; if inCombat != (newValue != nil) { inCombat = newValue != nil } }
+        set {
+            // Publish only real changes: every publish rebuilds the HUD's accessibility tree.
+            let old = live.bossBar
+            if old?.name != newValue?.name || old?.health != newValue?.health || old?.maxHealth != newValue?.maxHealth || old?.phase != newValue?.phase { live.bossBar = newValue }
+            if inCombat != (newValue != nil) { inCombat = newValue != nil }
+        }
     }
     private(set) var stats: (visibleCells: Int, blocks: Int, creatures: Int, activeAI: Int, videos: Int, fps: Double) {
         get { live.stats }
-        set { live.stats = newValue; let text = nativeGlassStatus; if live.glassStatus != text { live.glassStatus = text } }
+        set {
+            let o = live.stats
+            if o.visibleCells != newValue.visibleCells || o.blocks != newValue.blocks || o.creatures != newValue.creatures || o.activeAI != newValue.activeAI
+                || o.videos != newValue.videos || Int(o.fps.rounded()) != Int(newValue.fps.rounded()) { live.stats = newValue }
+            let text = nativeGlassStatus; if live.glassStatus != text { live.glassStatus = text }
+        }
     }
     @Published var quality: RPGGlassQuality { didSet { applyQuality(); rebuildAll() } }
     // Builder settings.

@@ -279,8 +279,10 @@ struct Glass3DStatsLine: View {
         .background(Color.black.opacity(0.18), in: Capsule())
         .allowsHitTesting(false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.t("方块 \(live.stats.blocks) · \(live.glassStatus) · AI \(live.stats.activeAI) · \(fps) FPS",
-                                   "\(live.stats.blocks) blocks · \(live.glassStatus) · AI \(live.stats.activeAI) · \(fps) FPS"))
+        // FPS in steps of 5 for VoiceOver: the label does not churn every refresh.
+        .accessibilityLabel(L10n.t("方块 \(live.stats.blocks) · \(live.glassStatus) · AI \(live.stats.activeAI) · 约 \(fps / 5 * 5) FPS",
+                                   "\(live.stats.blocks) blocks · \(live.glassStatus) · AI \(live.stats.activeAI) · about \(fps / 5 * 5) FPS"))
+        .accessibilityAddTraits(.updatesFrequently)
         .accessibilityIdentifier("glass3d-stats")
     }
 }
