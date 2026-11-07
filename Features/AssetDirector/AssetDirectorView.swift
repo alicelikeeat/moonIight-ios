@@ -44,6 +44,14 @@ struct AssetDirectorView: View {
             }
             .onChange(of: photoItems) { picked in importPhotos(picked) }
             .onAppear { AppModelBridge.store = model.mediaStore }
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                Text("summary").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("asset-director-summary")
+                    .accessibilityValue(SemanticAssetLibrary.sorted(director.state).map { r in
+                        "\(r.title)=\(r.primaryCategory?.rawValue ?? "none")+\(r.secondaryCategories.map(\.rawValue).joined(separator: "/")):\(r.decision.rawValue):\(Int((r.confidence?.value ?? 0) * 100)):\(r.recommendedUses.prefix(3).map(\.rawValue).joined(separator: "/"))"
+                    }.joined(separator: " | "))
+            }
+            #endif
             .alert(L10n.t("开启云端视觉分析？", "Turn on cloud vision?"), isPresented: $cloudPrompt) {
                 Button(L10n.t("开启", "Turn on")) { director.updateSettings { $0.cloudVision = true } }
                 Button(L10n.t("取消", "Cancel"), role: .cancel) {}
@@ -81,12 +89,6 @@ struct AssetDirectorView: View {
             .buttonStyle(.borderless).font(.subheadline)
             if let message = director.message { Text(message).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("asset-director-message") }
             if let problem = director.loadProblem { Text(problem).font(.caption).foregroundStyle(.orange) }
-            #if DEBUG
-            Text("summary").font(.system(size: 1)).opacity(0.01).accessibilityIdentifier("asset-director-summary")
-                .accessibilityValue(SemanticAssetLibrary.sorted(director.state).map { r in
-                    "\(r.title)=\(r.primaryCategory?.rawValue ?? "none")+\(r.secondaryCategories.map(\.rawValue).joined(separator: "/")):\(r.decision.rawValue):\(Int((r.confidence?.value ?? 0) * 100)):\(r.recommendedUses.prefix(3).map(\.rawValue).joined(separator: "/"))"
-                }.joined(separator: " | "))
-            #endif
         } footer: {
             Text(L10n.t("默认只在本机分析。同一内容只分析一次；分析器更新后才会重新分析。", "Analysis runs on this device by default. The same content is analysed once, again only when the analyzer changes."))
         }
