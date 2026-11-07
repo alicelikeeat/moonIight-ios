@@ -316,7 +316,7 @@ jobs:
             printf '\n验证：本版为手动真机测试构建。GitHub Actions 设备架构归档与元数据校验通过；完整界面回归以分支 %s 的对应运行为准；真机验证尚未执行，自动化通过不等于真机通过。\n\n' "$GITHUB_REF_NAME"
             printf -- '- 构建记录：%s/%s/actions/runs/%s\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
             printf -- '- 源码快照：`%s`（分支 `%s`）\n' "$GITHUB_SHA" "$GITHUB_REF_NAME"
-            printf -- '- 安装包：`Moonlight-v%s.ipa`，版本 %s / 构建 %s，iPhoneOS arm64，最低 iOS 16.0。\n' "$APP_VERSION" "$APP_VERSION" "${{ steps.version.outputs.build }}"
+            printf -- '- 安装包：`Moonlight-v%s.ipa`，版本 %s / 构建 %s，iPhoneOS arm64，最低 iOS 18.0。\n' "$APP_VERSION" "$APP_VERSION" "${{ steps.version.outputs.build }}"
             printf -- '- 签名：%s。\n' "$SIGNING"
             printf -- '- SHA-256：`%s`\n' "$DIGEST"
           } >> "$NOTES_PATH"

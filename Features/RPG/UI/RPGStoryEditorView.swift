@@ -67,7 +67,7 @@ struct RPGStoryEditorView:View {
             Text(message).font(.caption).frame(maxWidth:.infinity,alignment:.leading).padding(12).background(.regularMaterial).accessibilityIdentifier("rpg-editor-status")
         }.navigationTitle("剧情编辑器").buttonStyle(MoonGlassButtonStyle())
             .navigationBarBackButtonHidden(true)
-            .toolbar{ToolbarItem(placement:.navigationBarLeading){Button("返回工具"){dismiss()}.accessibilityIdentifier("rpg-editor-back")}}
+            .toolbar{ToolbarItem(placement:.navigationBarLeading){Button(L10n.t("返回世界", "Back to World")){dismiss()}.accessibilityIdentifier("rpg-editor-back")}}
             .fileImporter(isPresented:$importing,allowedContentTypes:[.json]){result in
                 do {
                     let url=try result.get(),access=url.startAccessingSecurityScopedResource();defer{if access{url.stopAccessingSecurityScopedResource()}}

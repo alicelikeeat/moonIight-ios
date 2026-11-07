@@ -33,7 +33,7 @@ struct RPGStoryView: View {
                         }
                     }
                     if let condition = node.condition, condition.kind == .nearAnchor {
-                        Button("沿通路前往"+condition.anchor.title) { travel(condition.anchor) }.accessibilityIdentifier("rpg-story-travel")
+                        Button(L10n.t("回到世界，跟着金色光柱前往", "Back to the world: follow the gold beam to ")+condition.anchor.title) { travel(condition.anchor) }.accessibilityIdentifier("rpg-story-travel")
                     }
                 }
             }

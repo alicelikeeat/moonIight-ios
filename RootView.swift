@@ -78,9 +78,8 @@ struct RootView: View {
                 Group {
                     switch model.selectedTab {
                     case .sandbox:
-                        RPGShellView(session: WorldHost.shared.session,
-                                     onExit: { leaveSandbox(to: WorldHost.shared.returnTab) },
-                                     onNavigate: { leaveSandbox(to: $0) })
+                        SandboxHostView(session: WorldHost.shared.session,
+                                        onExit: { leaveSandbox(to: WorldHost.shared.returnTab) })
                     // Both segments share this branch, so switching between
                     // them keeps the same views and their scroll positions.
                     case .home, .discover: homeFeeds

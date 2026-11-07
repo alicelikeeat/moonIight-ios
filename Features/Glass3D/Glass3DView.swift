@@ -17,7 +17,14 @@ enum Glass3DLaunch {
 struct Glass3DScreen: View {
     @StateObject private var controller: Glass3DController
     @EnvironmentObject private var model: AppModel
+    /// Leaves the sandbox (the 3D world is the sandbox since v1.88).
     let onClose: () -> Void
+    /// Not observed: the story flag is read through its publisher, so a
+    /// health tick on the session does not redraw this screen.
+    private let session: RPGSession
+    /// A sandbox page asked for from outside (search, shortcuts).
+    @Binding private var page: RPGEntryPage?
+    @State private var sandboxSheet: SandboxSheet?
     @State private var generator = false
     @State private var classicGenerator = false
     @State private var panel = true
@@ -50,7 +57,9 @@ struct Glass3DScreen: View {
     @AppStorage(Glass3DLaunch.key) private var openAtLaunch = true
     @Namespace private var modeNamespace
 
-    init(session: RPGSession, startInDesign: Bool = false, onClose: @escaping () -> Void) {
+    init(session: RPGSession, startInDesign: Bool = false, page: Binding<RPGEntryPage?> = .constant(nil), onClose: @escaping () -> Void) {
+        self.session = session
+        _page = page
         _controller = StateObject(wrappedValue: {
             let controller = Glass3DController(session: session)
             if startInDesign { controller.mode = .edit; controller.designOverview() }
@@ -155,6 +164,23 @@ struct Glass3DScreen: View {
         // v1.81: World Director first; the classic generator stays one tap away.
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
+        .sheet(item: $sandboxSheet) { sheet in sandboxPage(sheet) }
+        // The story panel opens by itself once a quest's condition is met in 3D.
+        .onReceive(session.$pendingStory) { pending in
+            guard pending else { return }
+            session.acknowledgeStory()
+            if sandboxSheet == nil, !generator, !assetDirector, editor == nil { sandboxSheet = .story }
+        }
+        .onChange(of: page, initial: true) { _, requested in
+            guard let requested else { return }
+            page = nil
+            switch requested {
+            case .story: sandboxSheet = .story
+            case .editor: sandboxSheet = .storyEditor
+            case .diagnostics: sandboxSheet = .diagnostics
+            case .world: break
+            }
+        }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
         .sheet(isPresented: $assetDirector) { AssetDirectorView(controller: controller).environmentObject(model) }
         .sheet(isPresented: $continent) {
@@ -220,7 +246,7 @@ struct Glass3DScreen: View {
             RPGGlassGroup(spacing: 8) {
                 HStack(spacing: 8) {
                     HStack(spacing: 2) {
-                        icon("chevron.backward", L10n.t("返回沙盒", "Back to Sandbox"), id: "glass3d-close") { controller.stop(); onClose() }
+                        icon("chevron.backward", L10n.t("离开沙盒", "Leave the Sandbox"), id: "glass3d-close") { controller.persist(force: true); controller.stop(); onClose() }
                         modeSwitch(compact: portrait)
                         perspectiveSwitch()
                     }
@@ -285,6 +311,10 @@ struct Glass3DScreen: View {
                 moreRow("building.columns", L10n.t("放置月光水晶城", "Place Crystal Moon City")) { controller.placeGoldenCity() }
                     .accessibilityIdentifier("glass3d-place-town")
                 moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
+                moreHeader(L10n.t("剧情与世界", "Story & Worlds"))
+                moreRow("book", L10n.t("剧情与任务", "Story & Quests")) { sandboxSheet = .story }.accessibilityIdentifier("glass3d-story")
+                moreRow("pencil.and.list.clipboard", L10n.t("剧情编辑器", "Story Editor")) { sandboxSheet = .storyEditor }.accessibilityIdentifier("glass3d-story-editor")
+                moreRow("globe", L10n.t("世界与存档", "Worlds & Saves")) { sandboxSheet = .worlds }.accessibilityIdentifier("glass3d-worlds")
                 moreHeader(L10n.t("编辑器", "Editors"))
                 moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
                 moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
@@ -300,6 +330,8 @@ struct Glass3DScreen: View {
                 moreRow("gamecontroller", L10n.t("手柄按键映射（Xbox）", "Controller Mapping (Xbox)")) { padMapping = true }
                 moreRow("app.badge", L10n.t("App 图标", "App Icon")) { iconPicker = true }
                 moreRow("map", L10n.t("大陆地图（\(controller.regionTitle)）", "Continent Map (\(controller.regionTitle))")) { continent = true }
+                moreRow("speedometer", L10n.t("运行诊断", "Diagnostics")) { sandboxSheet = .diagnostics }.accessibilityIdentifier("glass3d-diagnostics")
+                moreRow("gearshape", L10n.t("应用设置", "App Settings")) { sandboxSheet = .appSettings }.accessibilityIdentifier("glass3d-app-settings")
                 Toggle(L10n.t("3D 省电模式（更凉）", "3D Power Saver (cooler)"), isOn: $controller.powerSaver)
                     .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
                     .accessibilityIdentifier("glass3d-power-saver")
@@ -381,7 +413,44 @@ struct Glass3DScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false).accessibilityIdentifier("glass3d-notice")
                 .transition(.opacity)
         }
+        if let hint = controller.storyHint, controller.mode == .play {
+            Button { sandboxSheet = .story } label: {
+                Label(hint, systemImage: "flag.fill").font(.caption.weight(.semibold)).lineLimit(1)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+            }
+            .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("glass3d-story-hint")
+        }
         Glass3DBossBar(live: controller.live)
+    }
+
+    // MARK: Sandbox pages (story, worlds, diagnostics, settings)
+
+    enum SandboxSheet: String, Identifiable { case story, storyEditor, diagnostics, worlds, appSettings; var id: String { rawValue } }
+
+    @ViewBuilder private func sandboxPage(_ sheet: SandboxSheet) -> some View {
+        switch sheet {
+        case .story:
+            NavigationStack {
+                RPGStoryView(session: session, travel: { _ in sandboxSheet = nil }, backTitle: L10n.t("返回世界", "Back to World"))
+            }
+            .environmentObject(model)
+        case .storyEditor:
+            NavigationStack {
+                RPGStoryEditorView(session: session)
+            }
+            .environmentObject(model)
+        case .diagnostics:
+            NavigationStack { Glass3DDiagnosticsView(controller: controller) }
+        case .worlds:
+            NavigationStack { SandboxWorldsView(session: session) }
+        case .appSettings:
+            NavigationStack {
+                SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { sandboxSheet = nil }.accessibilityIdentifier("world-app-settings-close") } }
+            }
+            .environmentObject(model).environmentObject(BackgroundStore.shared)
+        }
     }
 
     /// v1.86: at a map edge — cross into the next region; while travelling, progress.
