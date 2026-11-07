@@ -434,7 +434,9 @@ struct Glass3DScreen: View {
         if !controller.notice.isEmpty {
             Label(controller.notice, systemImage: "info.circle").font(.caption).lineLimit(2)
                 .padding(.horizontal, 12).padding(.vertical, 6).hudGlass(.light, radius: 14)
-                .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false).accessibilityIdentifier("glass3d-notice")
+                .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false)
+                // VoiceOver (and tests) read the notice itself, not the icon's name.
+                .accessibilityElement(children: .ignore).accessibilityLabel(controller.notice).accessibilityIdentifier("glass3d-notice")
                 .transition(.opacity)
         }
         if let caption = controller.cinematicCaption {
