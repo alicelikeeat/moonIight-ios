@@ -192,10 +192,10 @@ enum RPGCombatRules {
         }
         updateCombatFlag(&world);world.events=Array(world.events.suffix(256));world.revision+=1
     }
-    private static func event(_ kind:String,enemy:RPGEnemyState,world:inout WorldState) {
+    static func event(_ kind:String,enemy:RPGEnemyState,world:inout WorldState) {
         world.events.append(.init(id:"\(kind):\(world.revision+1):\(enemy.id)",kind:kind,entityID:enemy.id,definitionID:enemy.boss ? "boss":"slime"));world.events=Array(world.events.suffix(256))
     }
-    private static func updateCombatFlag(_ world:inout WorldState){
+    static func updateCombatFlag(_ world:inout WorldState){
         let was=world.player.inCombat
         world.player.inCombat=world.player.health>0 && world.combat.enemies.contains{enemy in
             guard enemy.health>0,enemy.aggro else{return false}

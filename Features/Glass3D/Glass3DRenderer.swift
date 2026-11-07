@@ -615,6 +615,23 @@ import Metal
         effects.addChild(disc); telegraphs[id] = (disc, clock, seconds)
     }
 
+    /// The story objective: a tall pale-gold beam, visible from afar (not
+    /// the red telegraph, which warns of an attack).
+    private var objectiveBeam: ModelEntity?
+    func showObjective(_ point: SpatialVector?) {
+        guard let point else { objectiveBeam?.removeFromParent(); objectiveBeam = nil; return }
+        if objectiveBeam == nil {
+            var gold = UnlitMaterial(color: UIColor(red: 1, green: 0.86, blue: 0.45, alpha: 1))
+            gold.blending = .transparent(opacity: .init(floatLiteral: 0.4))
+            let beam = ModelEntity(mesh: .generateCylinder(height: 14, radius: 0.35), materials: [gold])
+            beam.name = "story-objective"
+            objectiveBeam = beam
+        }
+        guard let beam = objectiveBeam else { return }
+        if beam.parent == nil { effects.addChild(beam) }
+        beam.position = Self.position(point + SpatialVector(0, 0, 7))
+    }
+
     /// Per-frame effects: telegraph growth, chest spin.
     func animate(clock: Double) {
         self.clock = clock

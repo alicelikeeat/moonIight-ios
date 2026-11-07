@@ -218,6 +218,9 @@ struct Glass3DPending {
     /// Distant terrain is drawn only for hybrid worlds (town placed or view switched), not older themed worlds.
     private var streamedTerrain = false
     /// v1.86: the edge the player stands at (travel prompt), and the trip in progress.
+    /// The current quest's place or target, when it has one ("Quest: 月光村 · 42 cells").
+    @Published private(set) var storyHint: String?
+    private var storyTimer = 0.0
     @Published private(set) var travelEdge: TravelDirection?
     @Published private(set) var travelling: String?
     /// v1.82: blocks, ground and plants are only re-checked when the world
@@ -438,6 +441,7 @@ struct Glass3DPending {
             dirtyRuntime = true
         }
         runBattle(dt: dt, geometry: geometry, alive: alive)
+        stepStory(dt: dt)
         if let id = lockedTarget, !(world.creatures.first { $0.id == id }.map { $0.alive && ($0.position - world.player.position).flatLength < 20 } ?? false) { lockedTarget = nil }
         let bar = boss.map { ($0.kind.title, $0.health, $0.maxHealth, (battle.bosses[$0.id]?.phase ?? 0) + 1) }
         if bar?.0 != bossBar?.name || bar?.1 != bossBar?.health || bar?.3 != bossBar?.phase { bossBar = bar }
@@ -531,6 +535,25 @@ struct Glass3DPending {
         if lockedTarget == nil { notice = L10n.t("附近没有可锁定的敌人", "No enemy nearby to lock") }
     }
 
+    /// The story in 3D, four times a second: the player's cell, story
+    /// enemies as 3D creatures, and the quest marker and hint.
+    private func stepStory(dt: Double) {
+        storyTimer += dt
+        guard storyTimer >= 0.25 else { return }
+        storyTimer = 0
+        session.storyPlayerMoved3D(world.player.position)
+        if RPGStorySpatial.reconcile(&world.creatures, with: session.world) { dirtyRuntime = true; refreshVisible() }
+        let objective = session.storyObjective
+        renderer.showObjective(objective.map { SpatialVector(Double($0.point.x) + 0.5, Double($0.point.z) + 0.5, 0) })
+        let hint = objective.map { o -> String in
+            let here = session.world.player.surface
+            let distance = abs(o.point.x - here.x) + abs(o.point.z - here.z)
+            return distance <= o.radius ? L10n.t("任务：已到达\(o.title)", "Quest: reached \(o.title)")
+                : L10n.t("任务：\(o.title) · 金色光柱，\(distance) 格", "Quest: \(o.title) · the gold beam, \(distance) cells")
+        }
+        if hint != storyHint { storyHint = hint }
+    }
+
     private func runBattle(dt: Double, geometry: SpatialGeometry, alive: Bool) {
         let out = battle.step(dt, world: &world, playerFacing: world.player.facing, playerInvulnerable: invulnerable > 0, playerAlive: alive,
                               geometry: geometry, clock: world.clock, roll: { id, n in
@@ -549,6 +572,7 @@ struct Glass3DPending {
         if !out.visuals.isEmpty || !battle.casts.isEmpty { effects.show(out.visuals, clock: world.clock, quality: quality, renderer: renderer) }
         var shards = 0
         for creature in out.defeated {
+            session.storyCreatureDefeated3D(creature.id)
             shards += creature.kind == .boss ? (SpatialBattle.script(for: creature, in: world)?.rewardShards ?? 25) : SpatialCombat.reward(creature.kind)
             effects.burst(.explosion, at: creature.position + SpatialVector(0, 0, 0.8), seconds: 0.4, clock: world.clock, quality: quality)
             if creature.kind == .boss { notice = L10n.t("大 Boss 已击败！", "Boss defeated!") } else if creature.kind == .miniBoss { notice = L10n.t("小 Boss 已击败！", "Mini boss defeated!") }
@@ -626,6 +650,7 @@ struct Glass3DPending {
         var shards = 0
         for id in hits {
             guard let after = world.creatures.first(where: { $0.id == id }), let was = before.first(where: { $0.id == id }), was.alive, !after.alive else { continue }
+            session.storyCreatureDefeated3D(id)
             shards += SpatialCombat.reward(after.kind)
             if after.kind == .boss { notice = L10n.t("大 Boss 已击败！获得月晶 ×\(SpatialCombat.reward(.boss))", "Boss defeated! +\(SpatialCombat.reward(.boss)) moon shards") }
             else if after.kind == .miniBoss { notice = L10n.t("小 Boss 已击败！", "Mini boss defeated!") }
@@ -1177,7 +1202,10 @@ struct Glass3DPending {
         case .place:
             placeBlock(at: first.cell, onTopOf: first.kind == "block" ? first.height : nil)
         case .erase:
-            if first.kind == "block", !first.id.hasPrefix("legacy:") { let id = first.id; edit(L10n.t("擦除方块", "Erase Block")) { w in w.blocks.removeAll { $0.id == id } } }
+            if first.kind == "block", !first.id.hasPrefix("legacy:") {
+                let id = first.id; edit(L10n.t("擦除方块", "Erase Block")) { w in w.blocks.removeAll { $0.id == id } }
+                if !world.blocks.contains(where: { $0.id == id }) { session.storyBlocksDestroyed3D([id]) }
+            }
             else if first.kind == "creature" { let id = first.id; edit(L10n.t("删除生物", "Remove Creature")) { w in w.creatures.removeAll { $0.id == id } } }
         case .building:
             proposeBuilding(at: first.cell)
@@ -1319,7 +1347,7 @@ struct Glass3DPending {
     func raiseSelection(_ dz: Double) { let ids = Set(selection); edit(L10n.t("升降", "Raise / Lower")) { w in SpatialBuilder.raise(ids, by: dz, world: &w) } }
     func alignSelection() { let ids = Set(selection), h = buildHeight; edit(L10n.t("高度对齐", "Align Heights")) { w in SpatialBuilder.align(ids, elevation: h, world: &w) } }
     func gradientSelection(to top: Double) { let ids = Set(selection), h = buildHeight; edit(L10n.t("高度渐变", "Height Gradient")) { w in SpatialBuilder.gradient(ids, from: h, to: top, world: &w) } }
-    func deleteSelection() { let ids = Set(selection); edit(L10n.t("删除 \(ids.count) 个方块", "Delete \(ids.count) blocks")) { w in w.blocks.removeAll { ids.contains($0.id) } }; selection = [] }
+    func deleteSelection() { let ids = Set(selection); edit(L10n.t("删除 \(ids.count) 个方块", "Delete \(ids.count) blocks")) { w in w.blocks.removeAll { ids.contains($0.id) } }; session.storyBlocksDestroyed3D(ids.filter { id in !world.blocks.contains { $0.id == id } }.sorted()); selection = [] }
 
     /// v1.78 selection tools: copy the selection beside itself (undoable).
     func duplicateSelection() {

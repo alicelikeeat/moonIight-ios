@@ -3354,6 +3354,7 @@ func widgetShared() {
 hybridWorldV2()
 widgetShared()
 assetDirectorTests()
+try storySpatialTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.

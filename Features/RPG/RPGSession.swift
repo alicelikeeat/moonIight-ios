@@ -977,6 +977,37 @@ enum RPGTool: String, CaseIterable { case select, paint, erase }
         returnToSpawn(); refreshCombat(); save()
     }
     func acknowledgeStory(){pendingStory=false}
+
+    // MARK: Story in the 3D world
+
+    /// Whether the current quest's condition held at the last check: the
+    /// story panel opens once when it becomes true.
+    private var storyConditionWasMet = false
+    /// The 3D player's position; four times a second from the 3D world.
+    func storyPlayerMoved3D(_ position: SpatialVector) {
+        guard ready else { return }
+        simulating = true
+        let moved = RPGStorySpatial.syncPlayer(position, world: &world)
+        simulating = false
+        if moved { checkStoryObjective() }
+    }
+    /// A creature fell in 3D; story enemies are recorded and saved.
+    func storyCreatureDefeated3D(_ id: String) {
+        guard ready, RPGStorySpatial.defeated(id, world: &world) else { return }
+        RPGStoryRuntime.recordEvents(world: &world); checkStoryObjective(); save()
+    }
+    /// Blocks removed in 3D count as broken for the story.
+    func storyBlocksDestroyed3D(_ ids: [String]) {
+        guard ready, !ids.isEmpty else { return }
+        RPGStorySpatial.blocksDestroyed(ids, world: &world)
+        RPGStoryRuntime.recordEvents(world: &world); checkStoryObjective(); save()
+    }
+    var storyObjective: RPGStorySpatial.Objective? { ready ? RPGStorySpatial.objective(world: world, generator: generator) : nil }
+    private func checkStoryObjective() {
+        let met = RPGStorySpatial.conditionMet(world: world, generator: generator)
+        if met && !storyConditionWasMet { pendingStory = true }
+        storyConditionWasMet = met
+    }
     private func tapBehavior() {
         guard let target=selectedEntity,world.behaviors.bindings.contains(where:{$0.entityID==target.id && $0.trigger == .tap && !world.behaviors.firedIDs.contains($0.id)}) else{return}
         perform{world,generator in try RPGBehaviorRules.fire(.tap,targetID:target.id,entities:[target],world:&world,generator:generator)}
