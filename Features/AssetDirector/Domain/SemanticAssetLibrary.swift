@@ -89,7 +89,7 @@ enum SemanticAssetLibrary {
     /// Adds a new asset or returns the existing record for the same content.
     @discardableResult
     static func upsert(_ record: AssetIntelligenceRecord, into state: inout AssetLibraryState) -> (record: AssetIntelligenceRecord, duplicate: Bool) {
-        if let existing = record(forHash: record.contentHash, in: state) { return (existing, true) }
+        if let existing = Self.record(forHash: record.contentHash, in: state) { return (existing, true) }
         state.records[record.assetID] = record
         return (record, false)
     }
