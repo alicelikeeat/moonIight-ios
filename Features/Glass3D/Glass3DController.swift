@@ -1142,6 +1142,18 @@ struct Glass3DPending {
 
     /// Places 月光水晶城 (the Golden World reference town) into the open region, one undoable edit.
     /// Player-built objects stay; a building that would touch one is left out whole.
+    /// v1.88: the playable demo — the town (placed first if missing), a
+    /// battle field and a Boss arena around the spawn, reachable on foot.
+    @discardableResult func placeDemoLevel() -> DemoLevel.Report {
+        if !GoldenCity.isPlaced(world) { placeGoldenCity() }
+        var report = DemoLevel.Report()
+        edit(L10n.t("演示关卡", "Demo Level")) { w in report = DemoLevel.stamp(onto: &w) }
+        resetCreatureBrains(); introducedBosses = []
+        notice = report.problems.first ?? L10n.t("演示关卡已放好：城镇、战斗区（\(report.enemies) 个敌人）和 Boss 场地，都能从出生点走到",
+                                                  "Demo level placed: the town, a battle field (\(report.enemies) enemies) and a Boss arena, all reachable from the spawn")
+        return report
+    }
+
     func placeGoldenCity() {
         if GoldenCity.isPlaced(world) {
             notice = L10n.t("月光水晶城已经在这里", "Crystal Moon City is already here")

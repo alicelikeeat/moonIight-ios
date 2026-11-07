@@ -400,6 +400,20 @@ final class ScrollGestureTests: XCTestCase {
         waitProbe(app, "the new world is empty") { $0["legacy"] == "0" && ($0["world"] ?? "") != "future-world" }
     }
 
+    /// The minimal playable level: town, battle field and Boss arena placed
+    /// from the ⋯ panel, with the enemies and the Boss in the save.
+    @MainActor
+    func testDemoLevelPlacesTownBattleFieldAndBoss() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        enterSandbox(app)
+        openMore("glass3d-place-demo", in: app)
+        waitProbe(app, "the demo's enemies and Boss are in the save", timeout: 30) { $0["demoEnemies"] == "6" && $0["demoBoss"] == "1" }
+        let notice = waitForAny("glass3d-notice", in: app, timeout: 10, "the placement notice")
+        XCTAssertTrue(notice.label.contains("演示关卡已放好"), "the level reports it is reachable: \(notice.label)")
+        sleep(4)
+        attach(app, name: "review-demo-level")
+    }
+
     /// The sandbox opens in 3D and leaves cleanly; other pages keep working.
     @MainActor
     func testSandboxOpensThe3DWorldAndLeaves() {

@@ -330,6 +330,8 @@ struct Glass3DScreen: View {
                 moreRow("scope", L10n.t("恢复默认视角", "Reset View")) { controller.resetCamera() }
                 moreRow("building.columns", L10n.t("放置月光水晶城", "Place Crystal Moon City")) { controller.placeGoldenCity() }
                     .accessibilityIdentifier("glass3d-place-town")
+                moreRow("flag.checkered", L10n.t("演示关卡（城镇 + 战斗区 + Boss）", "Demo Level (Town + Battle + Boss)")) { controller.placeDemoLevel() }
+                    .accessibilityIdentifier("glass3d-place-demo")
                 moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
                 moreHeader(L10n.t("剧情与世界", "Story & Worlds"))
                 moreRow("book", L10n.t("剧情与任务", "Story & Quests")) { sandboxSheet = .story }.accessibilityIdentifier("glass3d-story")
@@ -460,7 +462,9 @@ struct Glass3DScreen: View {
     #if DEBUG
     static func probe(_ session: RPGSession) -> String {
         let story = session.world.story
+        let creatures = session.world.spatial?.creatures ?? []
         return "shards=\(session.moonShards);legacy=\(session.world.entities.count);ended=\(story.activeProgress?.ended == true ? 1 : 0);node=\(story.activeProgress?.current ?? "-");world=\(session.world.id)"
+            + ";creatures=\(creatures.count);demoEnemies=\(creatures.filter { $0.id.hasPrefix(DemoLevel.prefix + "enemy") }.count);demoBoss=\(creatures.contains { $0.id == DemoLevel.prefix + "boss" } ? 1 : 0)"
     }
     #endif
 
