@@ -593,9 +593,9 @@ enum VideoReconstructionPipeline {
         if MDLAsset.canExportFileExtension("usdz") {
             let exported = await Task.detached(priority: .utility) { Generate3DExport.usdz(mesh, texture: textureURL, to: usdzURL) }.value
             if exported, (try? await Entity(contentsOf: usdzURL)) != nil { usdzFile = id + ".usdz" }
-            else { try? FileManager.default.removeItem(at: usdzURL); notes.append(L10n.t("USDZ 导出未通过加载检查，模型以内部格式保存。", "USDZ export did not load back; the model is kept in the internal format.")) }
+            else { try? FileManager.default.removeItem(at: usdzURL); notes.append(L10n.t("Model I/O 生成的 USDZ 未通过加载检查；导出时会由 Moonlight 重新转换。", "Model I/O's USDZ did not load back; Moonlight converts again when you export.")) }
         } else {
-            notes.append(L10n.t("本系统不支持导出 USDZ，模型以内部格式保存，可导出 OBJ。", "This system cannot export USDZ; the model is kept in the internal format and can be exported as OBJ."))
+            notes.append(L10n.t("本系统的 Model I/O 不支持导出 USDZ；导出时会由 Moonlight 自己转换 USDZ。", "Model I/O on this system cannot export USDZ; Moonlight converts to USDZ itself when you export."))
         }
         let manifest = Generated3DManifest(
             id: id, name: name, createdAt: Date(), source: source, sourceName: sourceName, sourceHash: hash,
@@ -661,7 +661,7 @@ enum VideoReconstructionPipeline {
         reload()
     }
 
-    /// Files to share: OBJ + MTL + texture, GLB, STL, plus USDZ when there is one.
+    /// Files to share: OBJ + MTL + texture, GLB, STL and USDZ (converted now, see `usdzExport`).
     func exportFiles(_ m: Generated3DManifest) async -> [URL] {
         var files: [URL] = []
         let folder = Self.folder("Exports").appendingPathComponent(m.id, isDirectory: true)
@@ -695,8 +695,64 @@ enum VideoReconstructionPipeline {
             }.value
             files += written
         }
-        if let usdz = usdzURL(m), FileManager.default.fileExists(atPath: usdz.path) { files.append(usdz) }
+        if let usdz = await usdzExport(m, folder: folder) { files.append(usdz) }
         return files
+    }
+
+    /// What the last export's USDZ holds (or why there is none), per model.
+    @Published private(set) var usdzReport: [String: String] = [:]
+
+    /// v1.87: USDZ as its own conversion step. An original USDZ (imported,
+    /// Object Capture) is shared as is. Otherwise Moonlight writes the USD
+    /// scene itself from the stored mesh, texture and rig — no dependence on
+    /// Model I/O's export support — and only offers the file once RealityKit
+    /// loads it back (and finds the animation when clips were written).
+    func usdzExport(_ m: Generated3DManifest, folder: URL) async -> URL? {
+        if let original = usdzURL(m), FileManager.default.fileExists(atPath: original.path) {
+            usdzReport[m.id] = L10n.t("USDZ：原始文件（导入或多视角重建时生成），按原样导出", "USDZ: the original file (imported or reconstructed), exported as is")
+            return original
+        }
+        guard let meshURL = meshURL(m) else { usdzReport[m.id] = L10n.t("USDZ：没有可转换的网格", "USDZ: no mesh to convert"); return nil }
+        let textureURL = textureURL(m)
+        let moonlightRig = await Generate3DRigging.load(m)
+        let importedRig = moonlightRig == nil ? (try? RiggingAssetStore(folder: Self.folder("Rigs")).load(m.id)) ?? nil : nil
+        let target = folder.appendingPathComponent("model.usdz")
+        let built = await Task.detached(priority: .userInitiated) { () -> USDZContents? in
+            guard let data = try? Data(contentsOf: meshURL), let mesh = GeneratedMeshCodec.decode(data) else { return nil }
+            var skin: USDSkinnedData?
+            if let (package, weights) = moonlightRig { skin = USDSkinnedData.moonlight(skeleton: package.skeleton, skin: weights, clips: package.clips) }
+            else if let (character, influences) = importedRig { skin = USDSkinnedData.imported(skeleton: character.skeleton, skin: influences, clips: character.clips) }
+            let texture = textureURL.flatMap { try? Data(contentsOf: $0) }
+            let package = USDZPackage.make(mesh: mesh, texture: texture, skin: skin)
+            try? FileManager.default.removeItem(at: target)
+            guard (try? package.data.write(to: target, options: .atomic)) != nil else { return nil }
+            return package.contents
+        }.value
+        guard let contents = built else { usdzReport[m.id] = L10n.t("USDZ：写入失败", "USDZ: writing failed"); return nil }
+        do {
+            let entity = try await Entity(contentsOf: target)
+            let animations = Self.animationCount(entity)
+            var parts = [L10n.t("USDZ：\(contents.vertices) 顶点 · \(contents.triangles) 三角面", "USDZ: \(contents.vertices) vertices · \(contents.triangles) triangles"),
+                         contents.texture ? L10n.t("贴图 ✓", "texture ✓") : contents.vertexColours ? L10n.t("顶点色 ✓", "vertex colours ✓") : L10n.t("无贴图", "no texture")]
+            if contents.skinned { parts.append(L10n.t("骨骼 \(contents.joints) 个关节 ✓ · 蒙皮 ✓", "skeleton \(contents.joints) joints ✓ · skin ✓")) }
+            else { parts.append(L10n.t("无骨骼", "no skeleton")) }
+            if !contents.clipNames.isEmpty {
+                parts.append(animations > 0
+                    ? L10n.t("动画 ✓：\(contents.clipNames.joined(separator: "、")) 首尾相接在一条时间轴上", "animation ✓: \(contents.clipNames.joined(separator: ", ")) one after another on one timeline")
+                    : L10n.t("动画已写入，但 RealityKit 没有读到动画，请在目标软件里检查", "animation written, but RealityKit found none; check it in the target app"))
+            }
+            parts.append(L10n.t("已通过 RealityKit 加载检查", "passed the RealityKit load check"))
+            usdzReport[m.id] = parts.joined(separator: " · ")
+            return target
+        } catch {
+            try? FileManager.default.removeItem(at: target)
+            usdzReport[m.id] = L10n.t("USDZ 未通过 RealityKit 加载检查，已不提供：", "USDZ failed the RealityKit load check and is not offered: ") + error.localizedDescription
+            return nil
+        }
+    }
+
+    static func animationCount(_ entity: Entity) -> Int {
+        entity.availableAnimations.count + entity.children.reduce(0) { $0 + animationCount($1) }
     }
 }
 

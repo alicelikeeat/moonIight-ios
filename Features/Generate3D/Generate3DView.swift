@@ -74,7 +74,7 @@ struct Generate3DScreen: View {
             capability(L10n.t("AI 深度估计", "AI depth"), capabilities.depthModelReady ? L10n.t("可用", "Ready") : capabilities.depthModelBundled ? L10n.t("需要 iOS 17", "Needs iOS 17") : L10n.t("本安装包未内置", "Not in this build"), capabilities.depthModelReady)
             capability(L10n.t("人像照片自带深度", "Portrait photo depth"), L10n.t("可用（无需 AI）", "Ready (no AI needed)"), true)
             capability(L10n.t("视频多视角重建", "Multi-view video"), capabilities.objectCapture ? L10n.t("本机支持", "Supported") : L10n.t("本机不支持，可用基础立体化", "Not on this device; basic depth model available"), capabilities.objectCapture)
-            capability(L10n.t("USDZ 导出", "USDZ export"), capabilities.usdzExport ? L10n.t("可用（保存时实际加载验证）", "Ready (verified by loading)") : L10n.t("不可用，可导出 OBJ", "Unavailable; OBJ export works"), capabilities.usdzExport)
+            capability(L10n.t("USDZ 导出", "USDZ export"), L10n.t("导出时由 Moonlight 转换（网格、贴图、骨骼、动画），并经 RealityKit 加载检查（未经真机验收）", "Converted by Moonlight on export (mesh, texture, skeleton, animation) and load-checked with RealityKit (not yet accepted on a device)"), true)
             capability(L10n.t("自动骨骼 / 动画", "Auto rig / animation"), L10n.t("可用：本机 27 关节自动绑定与 8 项动作测试（未经真机验收）；换装尚未实现", "Available: on-device 27-joint auto rig and 8 motion tests (not yet accepted on a device); outfits not implemented"), true)
             HStack {
                 Text(L10n.t("精度", "Quality")).font(.subheadline)
@@ -903,6 +903,9 @@ struct Generated3DDetailView: View {
                         .buttonStyle(Glass3DChipStyle(tint: .accentColor))
                 }
                 Button(role: .destructive) { confirmDelete = true } label: { Label(L10n.t("删除", "Delete"), systemImage: "trash") }.buttonStyle(Glass3DChipStyle(tint: .red))
+            }
+            if let report = store.usdzReport[current.id] {
+                Text(report).font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("generate3d-usdz-report")
             }
         }
     }
