@@ -454,7 +454,9 @@ final class AIAssetDirector: ObservableObject {
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
             let gif = item.kind == "gif"
             guard let signals = try? await AssetWork.run({ gif ? try VisualSemanticAnalyzer.gif(url, fileBytes: size) : try VisualSemanticAnalyzer.image(url, fileBytes: size) }) else { continue }
-            results.append((item.file, AssetClassifier.classify(signals).scores, truth))
+            // The top Vision labels go with the name, so a confusion shows its evidence.
+            let labels = signals.labels.sorted { $0.score > $1.score }.prefix(3).map { "\($0.name) \(Int($0.score * 100))" }.joined(separator: ", ")
+            results.append((item.file + " [" + labels + "]", AssetClassifier.classify(signals).scores, truth))
         }
         let evaluation = AssetEvaluation.measure(results)
         let calibration = AssetCalibration.fit(results.map { ($0.scores, $0.truth) })

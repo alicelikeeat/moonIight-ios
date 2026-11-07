@@ -261,8 +261,18 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     private func reveal(_ id: String, in app: XCUIApplication, _ name: String) -> XCUIElement {
         let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
-        for _ in 0..<12 where !(element.exists && element.isHittable) { app.swipeUp() }
-        if !element.exists { attach(app, name: "review-missing-" + id); XCTFail(name) }
+        let window = app.windows.firstMatch.frame
+        // Gentle drags in the middle of the screen: a swipe down at the top of a
+        // sheet would close it, a drag only scrolls.
+        func drag(_ dy: CGFloat) {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
+        }
+        for _ in 0..<14 {
+            if element.exists && element.isHittable { break }
+            if element.exists && element.frame.midY < window.midY { drag(220) } else { drag(-260) }
+        }
+        if !(element.exists && element.isHittable) { attach(app, name: "review-missing-" + id); XCTFail(name) }
         return element
     }
 
