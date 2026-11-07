@@ -80,6 +80,11 @@ struct Glass3DScreen: View {
                 Text("probe").font(.system(size: 1)).opacity(0.01).allowsHitTesting(false).accessibilityIdentifier("probe-screen-bottom")
                 #endif
                 Glass3DWorldView(controller: controller, hidden: worldDetached).ignoresSafeArea()
+                    // One accessibility element for the whole scene: enumerating its
+                    // thousands of entities timed out every accessibility snapshot
+                    // (UI tests lost the whole 3D screen; VoiceOver met a wall of blocks).
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(L10n.t("3D 世界场景", "3D world scene"))
                 Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
                 Glass3DOverlay(glass: controller.nativeGlass, controller: controller).ignoresSafeArea()
