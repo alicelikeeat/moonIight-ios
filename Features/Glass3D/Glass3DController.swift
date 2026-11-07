@@ -218,6 +218,45 @@ struct Glass3DPending {
     /// Distant terrain is drawn only for hybrid worlds (town placed or view switched), not older themed worlds.
     private var streamedTerrain = false
     /// v1.86: the edge the player stands at (travel prompt), and the trip in progress.
+    /// v1.88: the playing cinematic (Boss entrances), its caption, and the
+    /// Bosses already introduced this session.
+    @Published private(set) var cinematicCaption: String?
+    private var cinematic: (timeline: CinematicTimeline, started: Double, last: Double)?
+    private var introducedBosses: Set<String> = []
+    var cinematicPlaying: Bool { cinematic != nil }
+    func skipCinematic() { cinematic = nil; if cinematicCaption != nil { cinematicCaption = nil } }
+    private func startBossIntro(_ boss: CreatureEntity) {
+        guard !introducedBosses.contains(boss.id), cinematic == nil else { return }
+        introducedBosses.insert(boss.id)
+        let script = SpatialBattle.script(for: boss, in: world)
+        let timeline = CinematicPlayer.bossIntro(id: boss.id, name: script?.name ?? boss.kind.title, phases: script?.phases.count ?? 1,
+                                                 boss: boss.position, player: world.player.position)
+        guard timeline.valid else { return }
+        cinematic = (timeline, world.clock, -1)
+        // The entrance never costs the player: no hits while it plays.
+        invulnerable = max(invulnerable, timeline.length)
+    }
+    /// One step of the cinematic: the camera eases to the current shot (in
+    /// the 3D view, unless Reduce Motion is on), captions show, cues fire.
+    private func stepCinematic(dt: Double) {
+        guard let playing = cinematic else { return }
+        let now = world.clock - playing.started
+        let frame = CinematicPlayer.frame(playing.timeline, from: playing.last, to: now)
+        cinematic?.last = now
+        if let goal = frame.camera, viewMode == .spatial3D, !UIAccessibility.isReduceMotionEnabled {
+            let k = min(1, dt * 4)
+            camera.target = SpatialVector.lerp(camera.target, goal.target, k)
+            camera.tilt += (goal.tilt - camera.tilt) * k
+            camera.distance += (goal.distance - camera.distance) * k
+            camera.yaw = ThirdPersonCamera.approach(camera.yaw, goal.yaw, rate: 240, dt: dt)
+            clampCamera()
+        }
+        for cue in frame.cues { effects.burst(cue.preset, at: cue.at, seconds: cue.seconds, clock: world.clock, quality: quality) }
+        let caption = frame.captions.first
+        if caption != cinematicCaption { cinematicCaption = caption }
+        if frame.finished { skipCinematic() }
+    }
+
     /// The current quest's place or target, when it has one ("Quest: 月光村 · 42 cells").
     @Published private(set) var storyHint: String?
     private var storyTimer = 0.0
@@ -277,6 +316,7 @@ struct Glass3DPending {
     private func modeChanged() {
         glide = nil; stick = (0, 0); look = (0, 0); padMoving = false; padLooking = false
         pending = nil; selection = []; trackPoints = []; picked = nil
+        skipCinematic()
         if mode == .edit { designOverview(); return }
         camera.tilt = SpatialCameraRules.playTilt
         camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() }
@@ -359,7 +399,7 @@ struct Glass3DPending {
                 camera.tilt = SpatialCameraRules.clampTilt(camera.tilt - look.y * 70 * dt)
                 manualCameraUntil = world.clock + 1.5
             }
-            follow(dt: dt)
+            if cinematic != nil { stepCinematic(dt: dt) } else { follow(dt: dt) }
         } else {
             stepGlide(dt: dt)
         }
@@ -443,6 +483,7 @@ struct Glass3DPending {
         runBattle(dt: dt, geometry: geometry, alive: alive)
         stepStory(dt: dt)
         if let id = lockedTarget, !(world.creatures.first { $0.id == id }.map { $0.alive && ($0.position - world.player.position).flatLength < 20 } ?? false) { lockedTarget = nil }
+        if let boss { startBossIntro(boss) }
         let bar = boss.map { ($0.kind.title, $0.health, $0.maxHealth, (battle.bosses[$0.id]?.phase ?? 0) + 1) }
         if bar?.0 != bossBar?.name || bar?.1 != bossBar?.health || bar?.3 != bossBar?.phase { bossBar = bar }
         activeAI = active

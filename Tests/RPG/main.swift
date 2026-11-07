@@ -3365,6 +3365,7 @@ widgetShared()
 assetDirectorTests()
 try storySpatialTests()
 try contentCompilerTests()
+cinematicTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.

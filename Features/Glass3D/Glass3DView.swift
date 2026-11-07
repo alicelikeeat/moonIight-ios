@@ -435,6 +435,16 @@ struct Glass3DScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false).accessibilityIdentifier("glass3d-notice")
                 .transition(.opacity)
         }
+        if let caption = controller.cinematicCaption {
+            HStack(spacing: 10) {
+                Text(caption).font(.title3.weight(.bold)).lineLimit(2).accessibilityIdentifier("glass3d-cinematic-caption")
+                Button(L10n.t("跳过", "Skip")) { controller.skipCinematic() }
+                    .font(.caption.weight(.semibold)).buttonStyle(RPGPressStyle()).accessibilityIdentifier("glass3d-cinematic-skip")
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10).hudGlass(.light, radius: 18)
+            .frame(maxWidth: .infinity)
+            .transition(.opacity)
+        }
         if let hint = controller.storyHint, controller.mode == .play {
             Button { sandboxSheet = .story } label: {
                 Label(hint, systemImage: "flag.fill").font(.caption.weight(.semibold)).lineLimit(1)
