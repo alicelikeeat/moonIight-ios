@@ -417,6 +417,51 @@ final class ScrollGestureTests: XCTestCase {
         attach(app, name: "review-demo-level")
     }
 
+    /// A phone showed a black world after an AI model was picked as a
+    /// creature's look in design mode: walk the same steps and check that
+    /// both views still draw something after each one.
+    @MainActor
+    func testModelLookCreatureKeepsTheWorldDrawn() {
+        executionTimeAllowance = 900
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--asset-director-fixtures"])
+        enterSandbox(app)
+        openMore("glass3d-place-town", in: app)
+        sleep(3)
+        // The fixtures bring OBJ models into the AI model store.
+        openMore("glass3d-asset-director", in: app)
+        waitForAny("asset-director-import-fixtures", in: app, timeout: 15, "the test-asset import").tap()
+        let status = waitForAny("asset-director-status", in: app, timeout: 10, "status counts")
+        let settled = NSPredicate(format: "value CONTAINS 'queued=0 analysing=0' AND NOT (value CONTAINS 'ready=0 review=0')")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: status)], timeout: 180), .completed)
+        waitForAny("asset-director-done", in: app, timeout: 5, "close the library").tap()
+        func check(_ name: String) {
+            sleep(3)
+            let shot = app.screenshot()
+            attach(app, name: "review-model-look-" + name)
+            let variety = colourVariety(shot.image)
+            print("Model look \(name): colour variety \(variety); probe \(probeValues(app))")
+            XCTAssertGreaterThanOrEqual(variety, 6, "the world still draws: \(name)")
+        }
+        check("before")
+        waitForAny("glass3d-mode-edit", in: app, timeout: 10, "design mode").tap()
+        check("design")
+        let creatureTool = app.descendants(matching: .any).matching(identifier: "glass3d-tool-creature").firstMatch
+        for _ in 0..<4 where !(creatureTool.exists && creatureTool.isHittable) {
+            let dock = app.descendants(matching: .any).matching(identifier: "glass3d-tool-select").firstMatch
+            if dock.exists { dock.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.96))) }
+        }
+        XCTAssertTrue(creatureTool.waitForExistence(timeout: 5)); creatureTool.tap()
+        let look = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'glass3d-look-model-'")).firstMatch
+        XCTAssertTrue(look.waitForExistence(timeout: 10), "an AI model is offered as a look"); look.tap()
+        check("look-picked")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.42)).tap()
+        check("creature-placed")
+        waitForAny("glass3d-perspective-switch", in: app, timeout: 5, "the view switch").tap()
+        check("pixel")
+        waitForAny("glass3d-mode-play", in: app, timeout: 5, "play mode").tap()
+        check("pixel-play")
+    }
+
     /// The sandbox opens in 3D and leaves cleanly; other pages keep working.
     @MainActor
     func testSandboxOpensThe3DWorldAndLeaves() {
