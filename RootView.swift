@@ -137,6 +137,7 @@ struct RootView: View {
             revealNavigation()
         }
         .onAppear {
+            AppModelBridge.store = model.mediaStore
             if model.selectedTab == .discover { discoverMounted = true }
             MoonlightOrientationDelegate.setSandboxLandscape(model.selectedTab == .sandbox)
         }

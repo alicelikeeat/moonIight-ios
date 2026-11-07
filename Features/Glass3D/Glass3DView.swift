@@ -23,6 +23,7 @@ struct Glass3DScreen: View {
     @State private var panel = true
     @State private var editor: Glass3DEditorKind?
     @State private var credits = false
+    @State private var assetDirector = false
     @State private var glassLook = false
     @State private var padMapping = false
     @State private var iconPicker = false
@@ -155,6 +156,7 @@ struct Glass3DScreen: View {
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .sheet(isPresented: $assetDirector) { AssetDirectorView(controller: controller).environmentObject(model) }
         .sheet(isPresented: $continent) {
             NavigationStack {
                 ContinentMapView(controller: controller) { continent = false }
@@ -289,6 +291,8 @@ struct Glass3DScreen: View {
                 moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
                 moreHeader(L10n.t("更多", "More"))
                 moreRow("cube.transparent", L10n.t("AI 生成 3D 模型", "AI 3D Models")) { generate3D = true }
+                moreRow("wand.and.stars", L10n.t("智能素材库", "Asset Director")) { assetDirector = true }
+                    .accessibilityIdentifier("glass3d-asset-director")
                 moreRow("checkmark.seal", L10n.t("素材来源与授权", "Credits & Licences")) { credits = true }
                 moreRow("trash", L10n.t("一键清空世界", "Clear World"), destructive: true) { confirmClear = true }
                 moreHeader(L10n.t("显示", "Display"))

@@ -162,6 +162,10 @@ struct WorldDirectorSheet: View {
             if !chosenMedia.isEmpty || !chosenModels.isEmpty {
                 Text(L10n.t("已选 \(chosenMedia.count) 个图片 / 视频，\(chosenModels.count) 个 3D 模型", "\(chosenMedia.count) pictures / videos, \(chosenModels.count) 3D models chosen")).font(.caption)
             }
+            if !AIAssetDirector.shared.directorPicks.isEmpty {
+                Text(L10n.t("另有智能素材库的 \(AIAssetDirector.shared.directorPicks.count) 个已分析素材", "Plus \(AIAssetDirector.shared.directorPicks.count) analysed assets from the Asset Director"))
+                    .font(.caption).accessibilityIdentifier("world-director-smart-assets")
+            }
         } header: { Text(L10n.t("素材（可选）", "Assets (optional)")) } footer: {
             Text(L10n.t("照片和视频会放进画廊墙、影像屏和广告牌，AI 3D 模型会站在出生点附近。照片只保存在手机里；网络素材只使用允许商用和改编的授权，并记入「素材来源与授权」。", "Pictures and videos go on gallery walls, screens and billboards; AI 3D models stand near the start. Photos stay on the phone; online assets only with licences that allow commercial use and changes, recorded under Credits."))
         }
@@ -291,6 +295,14 @@ struct WorldDirectorSheet: View {
             }
             var request = WorldGenerationRequest(theme: theme, prompt: prompt, seed: seed, timeOfDay: time, density: density, difficulty: difficulty, tier: tier)
             request.assets = await WorldAssetReader.describe(entries: entries) + modelAssets
+            // v1.87: analysed assets from the Asset Director, with their roles; every use and skip is listed.
+            let picks = AIAssetDirector.shared.directorPicks
+            if !picks.isEmpty {
+                let selection = AIAssetDirector.shared.worldSelection(picks, theme: theme)
+                request.assets += selection.descriptors
+                notes += selection.usage.map { L10n.t("素材「\($0.title)」：", "Asset “\($0.title)”: ") + ($0.role?.title ?? "") + " · " + $0.reason }
+                notes += selection.skipped.map { L10n.t("未使用「\($0.title)」：", "Not used “\($0.title)”: ") + $0.reason }
+            }
             var intent: WorldIntent? = nil, planner = "local"
             if useAI, let key = SecureSettings.read(ClaudeMotion.keyAccount) {
                 box.stage = .planning

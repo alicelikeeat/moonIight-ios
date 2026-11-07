@@ -257,6 +257,75 @@ final class ScrollGestureTests: XCTestCase {
         return element
     }
 
+    /// Scrolls until the element is on screen (lists build rows lazily).
+    @MainActor
+    private func reveal(_ id: String, in app: XCUIApplication, _ name: String) -> XCUIElement {
+        let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
+        for _ in 0..<12 where !(element.exists && element.isHittable) { app.swipeUp() }
+        if !element.exists { attach(app, name: "review-missing-" + id); XCTFail(name) }
+        return element
+    }
+
+    /// AI Asset Director end to end (the 月光水晶城 scenario): import five
+    /// mixed assets, let them be analysed, run the real CC0 evaluation, hand
+    /// the results to the World Director and build the town with them.
+    @MainActor
+    func testAssetDirectorFeedsTheGoldenCity() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--asset-director-fixtures"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let enter = app.buttons["rpg-glass-world"]
+        XCTAssertTrue(enter.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: enter)], timeout: 20), .completed)
+        enter.tap()
+        waitForAny("glass3d-settings", in: app, timeout: 40, "the 3D world opens").tap()
+        reveal("glass3d-asset-director", in: app, "the ⋯ panel offers the Asset Director").tap()
+        waitForAny("asset-director-import-fixtures", in: app, timeout: 10, "the test-asset import").tap()
+
+        // Every asset analysed (none queued or running), within two minutes.
+        let status = waitForAny("asset-director-status", in: app, timeout: 10, "status counts")
+        let settled = NSPredicate(format: "value CONTAINS 'queued=0 analysing=0' AND NOT (value CONTAINS 'ready=0 review=0')")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: status)], timeout: 120), .completed, "analysis finishes: \(status.value ?? "")")
+        print("Asset Director status: \(status.value ?? "")")
+        for name in ["castle-reference", "glass-material", "fountain", "house-model", "person-model"] {
+            let row = app.descendants(matching: .any).matching(identifier: "asset-row-" + name).firstMatch
+            print("Asset Director row \(name): exists=\(row.exists) category=\(row.value as? String ?? "?")")
+        }
+        attach(app, name: "review-asset-director-analysed")
+
+        // The real accuracy check on the bundled CC0 files.
+        reveal("asset-director-evaluate", in: app, "the evaluation button").tap()
+        let evaluation = app.descendants(matching: .any).matching(identifier: "asset-director-evaluation").firstMatch
+        for _ in 0..<40 where !evaluation.exists { sleep(3); if !evaluation.exists { app.swipeUp() } }
+        XCTAssertTrue(evaluation.exists, "the evaluation reports")
+        print("Asset Director evaluation: \(evaluation.value ?? "")")
+        attach(app, name: "review-asset-director-evaluation")
+
+        // Hand the analysed assets to the World Director.
+        for _ in 0..<12 { app.swipeDown() }
+        reveal("asset-director-use-all-for-director", in: app, "send to the World Director").tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "asset-director-picks").firstMatch.waitForExistence(timeout: 5))
+        waitForAny("asset-director-done", in: app, timeout: 5, "close the library").tap()
+        waitForAny("glass3d-generate", in: app, timeout: 10, "the World Director button").tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "world-director-smart-assets").firstMatch.waitForExistence(timeout: 10) ||
+                      reveal("world-director-smart-assets", in: app, "the director lists the analysed assets").exists)
+        for _ in 0..<12 { app.swipeDown() }
+        reveal("world-director-theme-crystalKingdom", in: app, "the crystal-city theme").tap()
+        reveal("world-director-generate", in: app, "generate").tap()
+        let apply = app.descendants(matching: .any).matching(identifier: "world-director-apply-0").firstMatch
+        for _ in 0..<60 where !apply.exists { sleep(3) }
+        XCTAssertTrue(apply.exists, "a town candidate is ready")
+        let usage = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '素材「' OR label BEGINSWITH 'Asset “'"))
+        print("Asset Director usage lines: \(usage.count) — " + usage.allElementsBoundByIndex.prefix(6).map(\.label).joined(separator: " | "))
+        XCTAssertGreaterThanOrEqual(usage.count, 1, "the run lists how the imported assets were used")
+        attach(app, name: "review-asset-director-candidate")
+        reveal("world-director-apply-0", in: app, "apply").tap()
+        sleep(6)
+        attach(app, name: "review-asset-director-town-3d")
+        waitForAny("glass3d-perspective-switch", in: app, timeout: 10, "the view switch").tap()
+        sleep(3)
+        attach(app, name: "review-asset-director-town-pixel")
+    }
+
     /// Widget taps are moonlight:// links: each one lands where it says,
     /// including straight into the 3D world from another page.
     @MainActor
