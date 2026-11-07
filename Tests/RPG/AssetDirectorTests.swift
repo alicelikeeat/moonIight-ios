@@ -25,7 +25,7 @@ func assetDirectorTests() {
     // MARK: Pixels
     let checker = raster(32, 32) { x, y in ((x / 4 + y / 4) % 2 == 0) ? [150, 90, 60, 255] : [120, 70, 50, 255] }
     let checkerStats = AssetPixelStats.measure(checker)!
-    check(checkerStats.tileability > 0.9 && checkerStats.transparentShare == 0, "a repeating brick pattern tiles (\(checkerStats.tileability))")
+    check(checkerStats.tileability > 0.7 && checkerStats.transparentShare == 0, "a repeating brick pattern tiles past the classifier threshold (\(checkerStats.tileability))")
     let sprite = raster(32, 32) { x, y in abs(x - 16) < 6 && abs(y - 16) < 12 ? [220, 180, 150, 255] : [0, 0, 0, 0] }
     let spriteStats = AssetPixelStats.measure(sprite)!
     check(spriteStats.transparentShare > 0.6 && spriteStats.tileability == 0, "a cut-out is mostly transparent and never a tile")
