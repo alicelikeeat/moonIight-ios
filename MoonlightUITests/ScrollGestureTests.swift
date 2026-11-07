@@ -271,6 +271,8 @@ final class ScrollGestureTests: XCTestCase {
     /// the results to the World Director and build the town with them.
     @MainActor
     func testAssetDirectorFeedsTheGoldenCity() {
+        // A hang fails this test on its own instead of timing out the whole shard.
+        executionTimeAllowance = 600
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--asset-director-fixtures"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
         let enter = app.buttons["rpg-glass-world"]
