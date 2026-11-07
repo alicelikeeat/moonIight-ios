@@ -19,13 +19,6 @@ enum AssetDirectorLog {
         logger.notice("stage \(s, privacy: .public)")
     }
 
-    /// Counts hot paths (body evaluations and the like); logs every 50th.
-    nonisolated(unsafe) private static var counters: [String: Int] = [:]
-    static func count(_ name: String) {
-        lock.lock(); let n = (counters[name] ?? 0) + 1; counters[name] = n; lock.unlock()
-        if n == 1 || n % 50 == 0 { logger.notice("count \(name, privacy: .public) = \(n)") }
-    }
-
     @MainActor static func startWatchdog() {
         #if DEBUG
         lock.lock(); defer { lock.unlock() }

@@ -49,7 +49,6 @@ struct WorldDirectorSheet: View {
     private var hasKey: Bool { SecureSettings.read(ClaudeMotion.keyAccount)?.isEmpty == false }
 
     var body: some View {
-        let _ = AssetDirectorLog.count("world-director body")
         NavigationStack {
             Form { Group {
                 if controller.world.director != nil { currentWorld }

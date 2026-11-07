@@ -64,7 +64,6 @@ struct Glass3DScreen: View {
     }
 
     var body: some View {
-        let _ = AssetDirectorLog.count("glass3d body")
         GeometryReader { geometry in
             let portrait = geometry.size.height > geometry.size.width
             ZStack {
