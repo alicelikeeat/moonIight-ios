@@ -443,6 +443,11 @@ jobs:
             SKIP+=("-skip-testing:MoonlightUITests/ScrollGestureTests/${TEST_NAME}")
           done
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test-without-building
+      - name: Asset Director pipeline log
+        if: always() && steps.plan.outputs.shard == 'rpg'
+        shell: bash
+        run: |
+          xcrun simctl spawn "$SIMULATOR_ID" log show --style compact --last 90m --predicate 'subsystem == "com.moonlight.assetdirector"' | tail -150 || true
       - name: Export UI review screenshots
         if: always() && steps.plan.outputs.shard != 'none'
         shell: bash

@@ -3,6 +3,40 @@ import Foundation
 import ImageIO
 import SwiftUI
 import UIKit
+import os
+
+/// Pipeline breadcrumbs (subsystem com.moonlight.assetdirector), and in DEBUG a
+/// main-thread watchdog that logs stalls with the stage that was running.
+enum AssetDirectorLog {
+    static let logger = Logger(subsystem: "com.moonlight.assetdirector", category: "pipeline")
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var stage = "idle"
+    nonisolated(unsafe) private static var heartbeat = Date()
+    nonisolated(unsafe) private static var started = false
+
+    static func mark(_ s: String) {
+        lock.lock(); stage = s; lock.unlock()
+        logger.notice("stage \(s, privacy: .public)")
+    }
+
+    @MainActor static func startWatchdog() {
+        #if DEBUG
+        lock.lock(); defer { lock.unlock() }
+        guard !started else { return }
+        started = true
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in lock.lock(); heartbeat = Date(); lock.unlock() }
+        Thread.detachNewThread {
+            var reported = false
+            while true {
+                Thread.sleep(forTimeInterval: 1)
+                lock.lock(); let gap = Date().timeIntervalSince(heartbeat), now = stage; lock.unlock()
+                if gap > 3 { if !reported { logger.error("main thread blocked \(Int(gap))s during: \(now, privacy: .public)") }; reported = gap < 30 ? false : true }
+                else { reported = false }
+            }
+        }
+        #endif
+    }
+}
 
 // v1.87 AI Asset Director — the app-side coordinator. It owns the library
 // state (records, links, queue, settings) in its own versioned file,
@@ -66,6 +100,7 @@ final class AIAssetDirector: ObservableObject {
         center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { self.inBackground = false; self.pump() }
         }
+        AssetDirectorLog.startWatchdog()
         pump()
     }
 
@@ -124,6 +159,7 @@ final class AIAssetDirector: ObservableObject {
     enum IngestResult { case added, duplicate, refused(String) }
 
     private func ingest(_ url: URL, name: String, origin: AssetSourceType, store: MediaStore, license: String? = nil, author: String? = nil, proof: String? = nil) async -> IngestResult {
+        AssetDirectorLog.mark("ingest \(name): probe")
         let probe = await Task.detached(priority: .userInitiated) { () -> (size: Int, head: [UInt8], hash: String?) in
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
             let head = (try? FileHandle(forReadingFrom: url)).map { h -> [UInt8] in defer { try? h.close() }; return [UInt8]((try? h.read(upToCount: 64)) ?? Data()) } ?? []
@@ -136,6 +172,7 @@ final class AIAssetDirector: ObservableObject {
         }
         guard let hash = probe.hash else { return .refused(AssetImportRejection.damaged(L10n.t("无法计算内容哈希", "no content hash")).message) }
         if SemanticAssetLibrary.record(forHash: hash, in: state) != nil { return .duplicate }
+        AssetDirectorLog.mark("ingest \(name): store \(type.rawValue)")
         let id = "asset:" + String(hash.prefix(24))
         let storage: AssetStorageReference
         switch type {
@@ -166,6 +203,7 @@ final class AIAssetDirector: ObservableObject {
             } catch { return .refused(error.localizedDescription) }
             storage = .directorFile(target)
         }
+        AssetDirectorLog.mark("ingest \(name): added")
         add(id: id, hash: hash, type: type, storage: storage, title: (name as NSString).deletingPathExtension,
             provenance: .initial(origin: origin, license: license, author: author, proof: proof))
         return .added
@@ -270,7 +308,8 @@ final class AIAssetDirector: ObservableObject {
     }
 
     private func analyse(_ id: String) async {
-        defer { running[id] = nil; pump() }
+        defer { running[id] = nil; AssetDirectorLog.mark("analyse \(id): done"); pump() }
+        AssetDirectorLog.mark("analyse \(id): start \(state.records[id]?.mediaType.rawValue ?? "?")")
         guard let record = state.records[id] else { mutate { AssetQueuePolicy.finish(id, in: &$0.queue) }; return }
         let cloudWanted = state.settings.cloudVision && (record.mediaType == .image || record.mediaType == .gif)
         let key = cacheKey(record, cloud: cloudWanted)
@@ -289,6 +328,7 @@ final class AIAssetDirector: ObservableObject {
                 if cloudWanted, let enriched = await cloudLabels(record) { signals.labels += enriched.labels }
             }
             try Task.checkCancellation()
+            AssetDirectorLog.mark("analyse \(id): classify")
             let classification = AssetClassifier.classify(signals, calibration: state.calibration)
             let info = AssetAnalysisInfo(analyzerID: key.analyzerID, analyzerVersion: key.analyzerVersion, configurationVersion: key.configurationVersion,
                                          analyzedAt: Date(), cloud: cloudWanted, milliseconds: Int(Date().timeIntervalSince(started) * 1000))

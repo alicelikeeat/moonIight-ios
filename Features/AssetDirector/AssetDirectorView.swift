@@ -121,7 +121,9 @@ struct AssetDirectorView: View {
             if ProcessInfo.processInfo.arguments.contains("--asset-director-fixtures") {
                 Button(L10n.t("导入测试素材（城堡参考、房屋模型、玻璃材质、喷泉视频、人物模型）", "Import test assets")) {
                     Task {
+                        AssetDirectorLog.mark("fixtures: writing")
                         let urls = await Task.detached { AssetDirectorFixtures.write() }.value
+                        AssetDirectorLog.mark("fixtures: \(urls.count) written")
                         await director.importFiles(urls, origin: .files, store: model.mediaStore)
                     }
                 }
