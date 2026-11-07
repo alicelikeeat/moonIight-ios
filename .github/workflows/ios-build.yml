@@ -13,6 +13,10 @@ on:
         type: choice
         default: all
         options: [all, rpg, landlord, directed, treasure, preview, settings, scroll, none]
+      only_test:
+        description: 'Run just this one UI test (e.g. testAssetDirectorFeedsTheGoldenCity), on one shard, with a 15-minute limit'
+        type: string
+        default: ''
       device_ipa:
         description: 'Also archive a device IPA and attach it to this run (no GitHub Release)'
         type: boolean
@@ -349,7 +353,13 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}
           SUITE: ${{ inputs.ui_suite }}
+          ONLY: ${{ inputs.only_test }}
         run: |
+          # One named test: run it on the rpg shard only, nothing else.
+          if [[ -n "$ONLY" ]]; then
+            if [[ "$SHARD" == rpg ]]; then echo "shard=single" >> "$GITHUB_OUTPUT"; else echo "shard=none" >> "$GITHUB_OUTPUT"; fi
+            exit 0
+          fi
           case "$SHARD:$SUITE" in
             *: | *:all | rpg:rpg | scroll:scroll | other:landlord | other:directed | other:treasure | other:preview | other:settings)
               echo "shard=$SHARD" >> "$GITHUB_OUTPUT" ;;
@@ -392,6 +402,15 @@ jobs:
           # xcodebuild's first launch can sit for minutes if the simulator
           # service is not ready, so wait here, outside the suite deadlines.
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
+      - name: Run one UI test
+        if: ${{ !cancelled() && steps.plan.outputs.shard == 'single' && steps.compile.outcome == 'success' }}
+        timeout-minutes: 15
+        shell: bash
+        env:
+          ONLY: ${{ inputs.only_test }}
+        run: |
+          [[ "$ONLY" =~ ^test[A-Za-z0-9_]+$ ]] || { echo "only_test must be a test method name"; exit 1; }
+          xcodebuild -project Moonlight-iOS.xcodeproj -scheme Moonlight -configuration Debug -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -derivedDataPath build/DerivedData -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "-only-testing:MoonlightUITests/ScrollGestureTests/$ONLY" -resultBundlePath build/RPGTests.xcresult test-without-building
       - name: Run RPG stage validation
         if: ${{ !cancelled() && steps.plan.outputs.shard == 'rpg' && steps.compile.outcome == 'success' && (inputs.ui_suite == '' || inputs.ui_suite == 'all' || inputs.ui_suite == 'rpg') }}
         timeout-minutes: 35
@@ -444,7 +463,7 @@ jobs:
           done
           xcodebuild "${COMMON[@]}" -resultBundlePath build/ScrollGestureTests.xcresult "${SKIP[@]}" test-without-building
       - name: Asset Director pipeline log
-        if: always() && steps.plan.outputs.shard == 'rpg'
+        if: always() && (steps.plan.outputs.shard == 'rpg' || steps.plan.outputs.shard == 'single')
         shell: bash
         run: |
           xcrun simctl spawn "$SIMULATOR_ID" log show --style compact --last 90m --predicate 'subsystem == "com.moonlight.assetdirector"' | tail -150 || true
