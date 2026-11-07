@@ -10,6 +10,24 @@ import Vision
 // Pictures are read as small thumbnails made by ImageIO (no EXIF, location
 // or other metadata is kept); faces and bodies are only counted.
 
+/// Blocking work (Vision, ImageIO, audio and model reading) runs on its own
+/// GCD queue, never on Swift's cooperative pool: blocking pool threads with
+/// Vision (which itself needs the pool on iOS 18+) while video analysis
+/// awaited AVFoundation deadlocked the pipeline on a 3-core simulator.
+enum AssetWork {
+    static let queue = DispatchQueue(label: "com.moonlight.asset-analysis", qos: .utility, attributes: .concurrent)
+
+    static func run<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result { try body() }) }
+        }
+    }
+
+    static func run<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in queue.async { continuation.resume(returning: body()) } }
+    }
+}
+
 enum AssetAnalyzerError: Error, LocalizedError {
     case unreadable(String)
     var errorDescription: String? {
@@ -153,17 +171,19 @@ enum VisualSemanticAnalyzer {
             try Task.checkCancellation()
             guard let frame = try? await generator.image(at: CMTime(seconds: t, preferredTimescale: 600)).image else { continue }
             analysed += 1
-            let v = vision(frame)
+            let v = await AssetWork.run { vision(frame) }
             for l in v.labels { labelSums[l.name, default: 0] += l.score }
             if s.featurePrint == nil { s.featurePrint = v.print }
             if colours.isEmpty, let r = ModelAnimationExport.raster(frame) { colours = AssetAnalyzer.dominantColors(r); s.pixel = AssetPixelStats.measure(r) }
             s.peopleCount = max(s.peopleCount, v.people)
-            let pose = VNDetectHumanBodyPoseRequest()
-            try? VNImageRequestHandler(cgImage: frame, options: [:]).perform([pose])
-            if let body = pose.results?.first, let points = try? body.recognizedPoints(.all) {
+            let share: Double? = await AssetWork.run {
+                let pose = VNDetectHumanBodyPoseRequest()
+                try? VNImageRequestHandler(cgImage: frame, options: [:]).perform([pose])
+                guard let body = pose.results?.first, let points = try? body.recognizedPoints(.all) else { return nil }
                 let good = points.values.filter { $0.confidence > 0.3 }
-                if good.count >= 8 { personTimes.append((t, Double(good.count) / Double(max(1, points.count)))) }
+                return good.count >= 8 ? Double(good.count) / Double(max(1, points.count)) : nil
             }
+            if let share { personTimes.append((t, share)) }
         }
         // Average over the analysed frames (a label seen once scores low).
         s.labels = labelSums.map { AssetTag(name: $0.key, score: $0.value / Double(max(1, analysed)), source: .vision) }

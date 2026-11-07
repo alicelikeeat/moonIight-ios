@@ -160,11 +160,11 @@ final class AIAssetDirector: ObservableObject {
 
     private func ingest(_ url: URL, name: String, origin: AssetSourceType, store: MediaStore, license: String? = nil, author: String? = nil, proof: String? = nil) async -> IngestResult {
         AssetDirectorLog.mark("ingest \(name): probe")
-        let probe = await Task.detached(priority: .userInitiated) { () -> (size: Int, head: [UInt8], hash: String?) in
+        let probe = await AssetWork.run { () -> (size: Int, head: [UInt8], hash: String?) in
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
             let head = (try? FileHandle(forReadingFrom: url)).map { h -> [UInt8] in defer { try? h.close() }; return [UInt8]((try? h.read(upToCount: 64)) ?? Data()) } ?? []
             return (size, head, size > 0 ? try? MediaImportIndex.sha256(of: url) : nil)
-        }.value
+        }
         let type: AssetMediaType
         switch AssetFileSafety.check(fileName: name, size: probe.size, head: probe.head) {
         case .failure(let rejection): return .refused(rejection.message)
@@ -187,7 +187,7 @@ final class AIAssetDirector: ObservableObject {
             do { data = try Data(contentsOf: url, options: .mappedIfSafe) } catch { return .refused(error.localizedDescription) }
             let unsafe = AssetFileSafety.externalReferences(modelExtension: ext, data: data)
             if let first = unsafe.first { return .refused(AssetImportRejection.externalReference(first).message) }
-            if let pre = try? await Task.detached(priority: .userInitiated, operation: { try ModelInspector.file(url, fileBytes: probe.size, companions: [:]) }).value {
+            if let pre = try? await AssetWork.run({ try ModelInspector.file(url, fileBytes: probe.size, companions: [:]) }) {
                 if let problem = pre.parseError { return .refused(AssetImportRejection.damaged(problem).message) }
                 fileSignals[id] = pre
             }
@@ -224,7 +224,8 @@ final class AIAssetDirector: ObservableObject {
         var added = 0
         let attributions = Glass3DAttributions.shared.byMedia
         for item in items {
-            let hash = (try? await Task.detached { try MediaImportIndex.sha256(of: item.url) }.value) ?? ("library:" + item.id)
+            let url = item.url
+            let hash = (try? await AssetWork.run { try MediaImportIndex.sha256(of: url) }) ?? ("library:" + item.id)
             guard SemanticAssetLibrary.record(forHash: hash, in: state) == nil else { continue }
             let type: AssetMediaType = item.kind == .video ? .video : item.kind == .gif ? .gif : .image
             let credit = attributions[item.id]
@@ -384,11 +385,11 @@ final class AIAssetDirector: ObservableObject {
         }
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
         switch r.mediaType {
-        case .image: return try await Task.detached(priority: .utility) { try VisualSemanticAnalyzer.image(url, fileBytes: size) }.value
-        case .gif: return try await Task.detached(priority: .utility) { try VisualSemanticAnalyzer.gif(url, fileBytes: size) }.value
+        case .image: return try await AssetWork.run { try VisualSemanticAnalyzer.image(url, fileBytes: size) }
+        case .gif: return try await AssetWork.run { try VisualSemanticAnalyzer.gif(url, fileBytes: size) }
         case .video: return try await Task.detached(priority: .utility) { try await VisualSemanticAnalyzer.video(url, fileBytes: size) }.value
-        case .audio: return try await Task.detached(priority: .utility) { try AudioAssetAnalyzer.analyze(url, fileBytes: size) }.value
-        case .model: return try await Task.detached(priority: .utility) { try ModelInspector.file(url, fileBytes: size, companions: [:]) }.value
+        case .audio: return try await AssetWork.run { try AudioAssetAnalyzer.analyze(url, fileBytes: size) }
+        case .model: return try await AssetWork.run { try ModelInspector.file(url, fileBytes: size, companions: [:]) }
         }
     }
 
@@ -452,7 +453,7 @@ final class AIAssetDirector: ObservableObject {
                   let url = Glass3DStarterPack.url(item) else { continue }
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
             let gif = item.kind == "gif"
-            guard let signals = try? await Task.detached(priority: .utility, operation: { gif ? try VisualSemanticAnalyzer.gif(url, fileBytes: size) : try VisualSemanticAnalyzer.image(url, fileBytes: size) }).value else { continue }
+            guard let signals = try? await AssetWork.run({ gif ? try VisualSemanticAnalyzer.gif(url, fileBytes: size) : try VisualSemanticAnalyzer.image(url, fileBytes: size) }) else { continue }
             results.append((item.file, AssetClassifier.classify(signals).scores, truth))
         }
         let evaluation = AssetEvaluation.measure(results)
