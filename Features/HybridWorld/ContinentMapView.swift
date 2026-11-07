@@ -99,6 +99,7 @@ struct ContinentMapView: View {
         case .memory: return .pink
         case .futureCity: return .purple
         case .bossAdventure: return .red
+        case .crystalKingdom: return .orange
         }
     }
 }
