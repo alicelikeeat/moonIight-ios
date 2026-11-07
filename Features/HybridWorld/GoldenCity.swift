@@ -656,6 +656,19 @@ enum GoldenCity {
     /// Places the town into the open region. User-made or user-edited objects
     /// stay; a building that would touch one is left out whole.
     @discardableResult
+    /// The hub region's world on its first visit (v1.86 region travel):
+    /// the town on a blank region, the player at its spawn by the bridge.
+    static func stampedBlank(seed: UInt64 = defaultSeed) -> SpatialWorld {
+        var world = SpatialWorld()
+        let plan = GoldenCityPlanner.plan(seed: seed)
+        _ = stamp(onto: &world, plan: plan)
+        let spawn = SpatialVector(plan.spawn.x, plan.spawn.y, plan.spawn.z)
+        world.spawn = spawn
+        world.player.position = spawn
+        world.history = SpatialHistory()
+        return world
+    }
+
     static func stamp(onto world: inout SpatialWorld, plan: GoldenCityPlan, budget: GoldenBudget = .of(.standard)) -> GoldenStampReport {
         let draft = GoldenCityDraftBuilder.draft(plan)
         let pack = plan.pack

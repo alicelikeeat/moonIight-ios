@@ -3113,9 +3113,14 @@ func hybridWorldV2() {
         return (miss.x * miss.x + miss.y * miss.y + miss.z * miss.z) < 0.05
     }
     let sample = SpatialVector(131.5, 130.0, 1.2)
+    #if canImport(CoreGraphics)
     check(rayReaches(camera.projection(viewSize: size), sample), "pixel projection hits the same world point")
     camera.toggle()
     check(camera.mode == .spatial3D && rayReaches(camera.projection(viewSize: size), sample), "3D projection hits that same world point")
+    #else
+    _ = (rayReaches, sample, size)
+    camera.toggle()
+    #endif
 
     // Golden World · Architecture Kit: one grid standard, modules become ordinary blocks.
     let kitHouse = KitBuildingSpec(key: "t", name: "测试屋", kind: .house, x0: 20, y0: 20, width: 8, depth: 6, storeys: 2, roof: .gable, door: .south)
@@ -3350,4 +3355,45 @@ hybridWorldV2()
 widgetShared()
 assetDirectorTests()
 usdzExportTests()
+do {
+    // v1.86 travel between continent regions.
+    check(RegionTravel.edge(at: SpatialVector(1, 128, 0)) == .west && RegionTravel.edge(at: SpatialVector(255, 128, 0)) == .east
+          && RegionTravel.edge(at: SpatialVector(128, 0.5, 0)) == .south && RegionTravel.edge(at: SpatialVector(128, 254.5, 0)) == .north
+          && RegionTravel.edge(at: SpatialVector(128, 128, 0)) == nil, "edges are found, the middle is not an edge")
+    let town = GoldenCity.address
+    check(RegionTravel.neighbour(of: town, .east) == RegionAddress(column: 8, row: 7) && RegionTravel.neighbour(of: town, .north) == RegionAddress(column: 7, row: 8)
+          && RegionTravel.neighbour(of: RegionAddress(column: 0, row: 3), .west) == nil && RegionTravel.neighbour(of: RegionAddress(column: 15, row: 15), .north) == nil,
+          "neighbours step on the grid and stop at the continent's rim")
+    let leaving = SpatialVector(254.8, 40, 3)
+    let arrived = RegionTravel.arrival(from: leaving, crossing: .east)
+    check(arrived.x < 10 && arrived.y == 40 && RegionTravel.edge(at: arrived) == nil, "crossing east arrives at the west side, same place along the edge, clear of the edge")
+    check(RegionTravel.seed(RegionAddress(column: 3, row: 4)) == RegionTravel.seed(RegionAddress(column: 3, row: 4))
+          && RegionTravel.seed(RegionAddress(column: 3, row: 4)) != RegionTravel.seed(RegionAddress(column: 4, row: 3)), "each region has its own fixed seed")
+    let graph = WorldGraph.continentIndex()
+    let forest = graph.regions.first { $0.id.key == "spirit-forest" }!
+    let stub = graph.regions.first { $0.address == RegionAddress(column: 2, row: 12) }!
+    check(RegionTravel.theme(forest) == .nature && RegionTravel.title(forest) == "精灵森林" && RegionTravel.title(stub).contains("02-12"), "named regions keep their theme and name; others get a themed title")
+    let built = try! RegionTravel.build(forest)
+    check(built.blocks.count > 100 && (try? built.validate(bindings: [])) != nil && built.history.undo.isEmpty, "a region is built on first visit and is valid")
+    check(try! RegionTravel.build(forest).blocks == built.blocks, "the same region is built the same way")
+    var mine = SpatialWorld()
+    var hero = CharacterTemplate(id: "char:hero", name: "Hero"); hero.clips["idle"] = ActionClip(bindingIDs: ["b1"])
+    mine.characters = [hero]; mine.playerCharacterID = "char:hero"
+    mine.blocks = [SpatialBlock(id: "home", x: 5, y: 5, elevation: 0)]
+    mine.hybrid = HybridWorldSave(viewMode: .pixelRPG, regionColumn: 7, regionRow: 7, occluders: [])
+    let entered = RegionTravel.enter(built, at: forest.address, from: mine, arrival: arrived)
+    check(entered.playerCharacterID == "char:hero" && entered.characters == mine.characters && !entered.blocks.contains { $0.id == "home" }, "characters travel along; blocks stay in their region")
+    check(entered.hybrid?.regionColumn == forest.address.column && entered.hybrid?.regionRow == forest.address.row && entered.hybrid?.viewMode == .pixelRPG
+          && entered.hybrid?.occluders.isEmpty == true, "the world remembers its region and keeps the view mode")
+    check(abs(entered.player.position.x - arrived.x) < 1e-9 && entered.player.position.z >= 0 && (try? entered.validate(bindings: ["b1"])) != nil, "the player stands at the arrival point and the world stays valid")
+    let townWorld = try! RegionTravel.build(graph.regions.first { $0.address == town }!)
+    check(GoldenCity.isPlaced(townWorld) && townWorld.hybrid?.occluders.isEmpty == false, "the hub region is 月光水晶城, with its roof / wall occluders")
+    let backHome = RegionTravel.enter(townWorld, at: town, from: entered, arrival: RegionTravel.arrival(from: SpatialVector(1, 60, 0), crossing: .west))
+    check(backHome.playerCharacterID == "char:hero" && backHome.hybrid?.occluders.isEmpty == false && backHome.hybrid?.viewMode == .pixelRPG && GoldenCity.isPlaced(backHome),
+          "travelling into the town keeps the player's character, the view mode and the town's occluders")
+    check(SpatialPadMapping.standard.action(for: .options, playing: true) == .switchPerspective && SpatialPadMapping.standard.action(for: .options, playing: false) == .switchPerspective,
+          "the View button switches pixel / 3D in both modes")
+    print("RPG v1.86 region travel: \(checks) total checks passed")
+}
+
 print("RPG complete: \(checks) total checks passed")

@@ -26,6 +26,7 @@ struct Glass3DScreen: View {
     @State private var glassLook = false
     @State private var padMapping = false
     @State private var iconPicker = false
+    @State private var continent = false
     @State private var generate3D = false
     @State private var confirmClear = false
     /// v1.79: the ⋯ panel (our own, not the system menu).
@@ -89,6 +90,7 @@ struct Glass3DScreen: View {
                     notices
                     Spacer(minLength: 0)
                     blankWorldPrompt.padding(.bottom, 12)
+                    travelPrompt.padding(.bottom, 12)
                     if controller.mode == .play {
                         Glass3DPlayHUD(controller: controller, portrait: portrait).transition(.opacity)
                     } else {
@@ -148,6 +150,12 @@ struct Glass3DScreen: View {
         .sheet(isPresented: $generator) { WorldDirectorSheet(controller: controller, store: model.mediaStore, onClassic: { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { classicGenerator = true } }) }
         .sheet(isPresented: $classicGenerator) { Glass3DGeneratorSheet(controller: controller) }
         .sheet(isPresented: $credits) { Glass3DCreditsView(store: model.mediaStore) }
+        .sheet(isPresented: $continent) {
+            NavigationStack {
+                ContinentMapView(controller: controller) { continent = false }
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { continent = false }.accessibilityIdentifier("continent-done") } }
+            }
+        }
         .sheet(isPresented: $iconPicker) {
             NavigationStack {
                 AppIconPicker()
@@ -279,6 +287,7 @@ struct Glass3DScreen: View {
                 moreRow("drop.halffull", L10n.t("玻璃外观（透明度与颜色）", "Glass Look (Clarity & Colour)")) { glassLook = true }
                 moreRow("gamecontroller", L10n.t("手柄按键映射（Xbox）", "Controller Mapping (Xbox)")) { padMapping = true }
                 moreRow("app.badge", L10n.t("App 图标", "App Icon")) { iconPicker = true }
+                moreRow("map", L10n.t("大陆地图（\(controller.regionTitle)）", "Continent Map (\(controller.regionTitle))")) { continent = true }
                 Toggle(L10n.t("3D 省电模式（更凉）", "3D Power Saver (cooler)"), isOn: $controller.powerSaver)
                     .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
                     .accessibilityIdentifier("glass3d-power-saver")
@@ -361,6 +370,22 @@ struct Glass3DScreen: View {
                 .transition(.opacity)
         }
         Glass3DBossBar(live: controller.live)
+    }
+
+    /// v1.86: at a map edge — cross into the next region; while travelling, progress.
+    @ViewBuilder private var travelPrompt: some View {
+        if let label = controller.travelling {
+            HStack(spacing: 8) { ProgressView(); Text(label).font(.callout.weight(.semibold)) }
+                .padding(.horizontal, 16).padding(.vertical, 10).hudGlass(.light, radius: 20)
+                .accessibilityIdentifier("glass3d-travelling")
+        } else if let edge = controller.travelEdge, let next = RegionTravel.neighbour(of: controller.regionAddress, edge), let record = controller.regionRecord(next) {
+            Button { controller.travelAcrossEdge() } label: {
+                Label(L10n.t("前往「\(RegionTravel.title(record))」", "Go to \(RegionTravel.title(record))"), systemImage: edge.symbol)
+                    .font(.callout.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
+            }
+            .buttonStyle(RPGPressStyle()).hudGlass(.interactive, radius: 20).accessibilityIdentifier("glass3d-travel-edge")
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        }
     }
 
     /// v1.85: the blank-world prompt sits low in the free middle of the

@@ -145,6 +145,7 @@ struct Glass3DPadButton: View {
                 PadVisual(symbol: "circle.dotted", title: L10n.t("空技能栏", "Empty Slot"), id: "glass3d-hotbar-\(i)", ring: .none, enabled: false)
             }
         case .switchMode: PadVisual(symbol: "hammer", title: L10n.t("切换游玩 / 设计", "Play / Design"), id: "glass3d-pad-switch", ring: .none)
+        case .switchPerspective: PadVisual(symbol: "square.grid.3x3.fill", title: L10n.t("切换像素 / 3D", "Pixel / 3D"), id: "glass3d-pad-perspective", ring: .none)
         case .flyUp, .flyDown, .backToCharacter, .straightDown:
             PadVisual(symbol: "circle.dotted", title: action.title, id: "glass3d-pad-\(action.key)", ring: .none, enabled: false)
         }

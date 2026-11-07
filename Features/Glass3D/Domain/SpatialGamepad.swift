@@ -29,6 +29,8 @@ enum SpatialPadAction: Equatable, Sendable {
     case lock, cameraBehind
     case hotbar(Int)
     case switchMode
+    /// v1.86: pixel overhead ⇄ third-person 3D (hybrid world).
+    case switchPerspective
     case flyUp, flyDown, backToCharacter, straightDown
 }
 
@@ -80,6 +82,7 @@ enum SpatialGamepad {
     /// The standard layout (also what `SpatialPadMapping.standard` holds).
     static func action(for button: SpatialPadButton, playing: Bool) -> SpatialPadAction? {
         if button == .menu { return .switchMode }
+        if button == .options { return .switchPerspective }
         if playing {
             switch button {
             case .a: return .jump
@@ -132,6 +135,7 @@ extension SpatialPadAction {
         case .cameraBehind: return "cameraBehind"
         case .hotbar(let i): return "hotbar\(i)"
         case .switchMode: return "switchMode"
+        case .switchPerspective: return "switchPerspective"
         case .flyUp: return "flyUp"
         case .flyDown: return "flyDown"
         case .backToCharacter: return "backToCharacter"
@@ -143,8 +147,8 @@ extension SpatialPadAction {
         self = action
     }
     /// Actions that can be put on a button while playing / designing.
-    static let playActions: [SpatialPadAction] = [.jump, .attack, .skill, .dodge, .lock, .cameraBehind, .hotbar(0), .hotbar(1), .hotbar(2), .hotbar(3), .switchMode]
-    static let designActions: [SpatialPadAction] = [.backToCharacter, .straightDown, .flyUp, .flyDown, .switchMode]
+    static let playActions: [SpatialPadAction] = [.jump, .attack, .skill, .dodge, .lock, .cameraBehind, .hotbar(0), .hotbar(1), .hotbar(2), .hotbar(3), .switchMode, .switchPerspective]
+    static let designActions: [SpatialPadAction] = [.backToCharacter, .straightDown, .flyUp, .flyDown, .switchMode, .switchPerspective]
 }
 
 /// Which button does what, per mode, plus stick options. One button does
