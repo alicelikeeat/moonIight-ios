@@ -140,8 +140,11 @@ extension Glass3DController {
     func directorCandidates(_ request: WorldGenerationRequest, intent: WorldIntent?, planner: String, flag: WorldDirectorCancelFlag,
                             progress: @escaping @Sendable (WorldGenerationStage, Double) -> Void) async throws -> [WorldCandidate] {
         let base = world
+        AssetDirectorLog.mark("director: engine queued")
         return try await Task.detached(priority: .userInitiated) {
-            try WorldDirectorEngine.candidates(request, intent: intent, planner: planner, base: base, progress: progress, cancelled: { flag.isSet })
+            AssetDirectorLog.mark("director: engine running")
+            defer { AssetDirectorLog.mark("director: engine finished") }
+            return try WorldDirectorEngine.candidates(request, intent: intent, planner: planner, base: base, progress: progress, cancelled: { flag.isSet })
         }.value
     }
 

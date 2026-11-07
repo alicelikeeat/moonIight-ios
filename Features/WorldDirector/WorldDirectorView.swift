@@ -49,6 +49,7 @@ struct WorldDirectorSheet: View {
     private var hasKey: Bool { SecureSettings.read(ClaudeMotion.keyAccount)?.isEmpty == false }
 
     var body: some View {
+        let _ = AssetDirectorLog.count("world-director body")
         NavigationStack {
             Form { Group {
                 if controller.world.director != nil { currentWorld }
@@ -286,8 +287,10 @@ struct WorldDirectorSheet: View {
         let mediaItems = glass3DMediaItems(store).filter { chosenMedia.contains($0.id) }
         let attributions = Glass3DAttributions.shared.byMedia
         let modelAssets = models.models.filter { chosenModels.contains($0.id) }.map { WorldAssetReader.model(id: $0.id, title: $0.name, triangles: $0.triangleCount) }
+        AssetDirectorLog.mark("director: generate tapped")
         Task {
             defer { box.stage = nil }
+            AssetDirectorLog.mark("director: task started")
             let entries = mediaItems.map { item -> (id: String, title: String, url: URL?, kind: RPGMediaKind, source: AssetSourceType, license: String?) in
                 let attribution = attributions[item.id]
                 let source: AssetSourceType = attribution == nil ? .library : (attribution!.provider.contains("Kenney") ? .builtin : .internet)
@@ -303,6 +306,7 @@ struct WorldDirectorSheet: View {
                 notes += selection.usage.map { L10n.t("素材「\($0.title)」：", "Asset “\($0.title)”: ") + ($0.role?.title ?? "") + " · " + $0.reason }
                 notes += selection.skipped.map { L10n.t("未使用「\($0.title)」：", "Not used “\($0.title)”: ") + $0.reason }
             }
+            AssetDirectorLog.mark("director: request ready (\(request.assets.count) assets)")
             var intent: WorldIntent? = nil, planner = "local"
             if useAI, let key = SecureSettings.read(ClaudeMotion.keyAccount) {
                 box.stage = .planning
@@ -315,12 +319,15 @@ struct WorldDirectorSheet: View {
                 let found = try await controller.directorCandidates(request, intent: intent, planner: planner, flag: flag) { s, f in
                     Task { @MainActor in box.stage = s; box.fraction = f }
                 }
+                AssetDirectorLog.mark("director: \(found.count) candidates back on main")
                 candidates = found
                 notes += found.first?.blueprint.generationMetadata.notes.dropFirst() ?? []
                 for c in found {
                     if let cg = ModelAnimationExport.cgImage(WorldPreview.raster(c.output.world, blueprint: c.blueprint)) { previews[c.id] = UIImage(cgImage: cg) }
                 }
+                AssetDirectorLog.mark("director: previews done")
             } catch {
+                AssetDirectorLog.mark("director: failed \(error)")
                 message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
         }

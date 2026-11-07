@@ -466,7 +466,7 @@ jobs:
         if: always() && (steps.plan.outputs.shard == 'rpg' || steps.plan.outputs.shard == 'single')
         shell: bash
         run: |
-          xcrun simctl spawn "$SIMULATOR_ID" log show --style compact --last 90m --predicate 'subsystem == "com.moonlight.assetdirector"' | tail -150 || true
+          xcrun simctl spawn "$SIMULATOR_ID" log show --style compact --last 90m --predicate 'subsystem == "com.moonlight.assetdirector"' | tail -400 || true
       - name: Export UI review screenshots
         if: always() && steps.plan.outputs.shard != 'none'
         shell: bash
