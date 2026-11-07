@@ -1147,10 +1147,13 @@ struct Glass3DPending {
     @discardableResult func placeDemoLevel() -> DemoLevel.Report {
         if !GoldenCity.isPlaced(world) { placeGoldenCity() }
         var report = DemoLevel.Report()
-        edit(L10n.t("演示关卡", "Demo Level")) { w in report = DemoLevel.stamp(onto: &w) }
+        // From where the player stands: placing the town moves the player to
+        // its entrance but leaves the world's spawn where it was.
+        let start = world.player.position
+        edit(L10n.t("演示关卡", "Demo Level")) { w in report = DemoLevel.stamp(onto: &w, start: start) }
         resetCreatureBrains(); introducedBosses = []
-        notice = report.problems.first ?? L10n.t("演示关卡已放好：城镇、战斗区（\(report.enemies) 个敌人）和 Boss 场地，都能从出生点走到",
-                                                  "Demo level placed: the town, a battle field (\(report.enemies) enemies) and a Boss arena, all reachable from the spawn")
+        notice = report.problems.first ?? L10n.t("演示关卡已放好：城镇、战斗区（\(report.enemies) 个敌人）和 Boss 场地，都能从这里走到",
+                                                  "Demo level placed: the town, a battle field (\(report.enemies) enemies) and a Boss arena, all reachable from here")
         return report
     }
 

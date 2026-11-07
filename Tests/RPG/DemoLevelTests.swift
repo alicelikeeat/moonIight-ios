@@ -27,6 +27,12 @@ func demoLevelTests() {
     let second = DemoLevel.stamp(onto: &again)
     check(second == report && again.blocks.count == world.blocks.count && again.creatures.count == world.creatures.count && again.pickups.count == world.pickups.count,
           "demo: placing it again replaces it, it does not pile up")
+    // The 3D world's way: the town placed onto a world whose spawn stayed in
+    // the middle, the walk checked from where the player stands.
+    var placed = SpatialWorld.blank()
+    let town = GoldenCity.stamp(onto: &placed, plan: GoldenCityPlanner.plan(seed: GoldenCity.defaultSeed))
+    let fromEntrance = DemoLevel.stamp(onto: &placed, start: town.spawn)
+    check(fromEntrance.reachable && fromEntrance.enemies == DemoLevel.enemyCount, "demo: placed after the town, it is checked from the town's entrance (\(fromEntrance.problems))")
     var crowded = SpatialWorld.blank()
     for y in 0..<WorldGeometry.width { for x in 0..<WorldGeometry.width where (x + y) % 3 == 0 { crowded.blocks.append(SpatialBlock(id: "c\(x):\(y)", x: x, y: y, elevation: 0, thickness: 2)) } }
     let refused = DemoLevel.stamp(onto: &crowded)

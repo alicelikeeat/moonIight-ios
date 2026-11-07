@@ -23,12 +23,14 @@ enum DemoLevel {
         var problems: [String] = []
     }
 
-    static func stamp(onto world: inout SpatialWorld) -> Report {
+    /// `start`: where the walk checks begin (the world's spawn unless given;
+    /// the 3D world passes where the player stands, which is always walkable).
+    static func stamp(onto world: inout SpatialWorld, start: SpatialVector? = nil) -> Report {
         var report = Report()
         world.blocks.removeAll { $0.id.hasPrefix(prefix) }
         world.creatures.removeAll { $0.id.hasPrefix(prefix) }
         world.pickups.removeAll { $0.id.hasPrefix(prefix) }
-        let spawn = world.spawn
+        let spawn = start ?? world.spawn
         var geometry = SpatialGeometry(blocks: world.blocks, plants: world.plants)
         geometry.groundHoles = Set(world.groundHoles ?? [])
         let navigator = SpatialNavigator(geometry: geometry)
