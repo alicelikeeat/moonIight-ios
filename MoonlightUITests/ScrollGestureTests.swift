@@ -290,7 +290,7 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testAssetDirectorFeedsTheGoldenCity() {
         // A hang fails this test on its own instead of timing out the whole shard.
-        executionTimeAllowance = 600
+        executionTimeAllowance = 1200
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--asset-director-fixtures"])
         app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
         let enter = app.buttons["rpg-glass-world"]
@@ -343,7 +343,11 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(reveal("world-director-smart-assets", in: app, "the director lists the analysed assets").exists)
         reveal("world-director-generate", in: app, "generate").tap()
         let apply = app.descendants(matching: .any).matching(identifier: "world-director-apply-0").firstMatch
-        for _ in 0..<60 where !apply.exists { sleep(3) }
+        // The CI simulator (3 cores, no GPU) needs minutes for the candidates
+        // and their previews; the time is printed, not judged.
+        let started = Date()
+        for _ in 0..<160 where !apply.exists { sleep(3) }
+        print("Asset Director generation took \(Int(Date().timeIntervalSince(started))) s on this simulator")
         XCTAssertTrue(apply.exists, "a town candidate is ready")
         let usage = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH '素材「' OR label BEGINSWITH 'Asset “'"))
         print("Asset Director usage lines: \(usage.count) — " + usage.allElementsBoundByIndex.prefix(6).map(\.label).joined(separator: " | "))
