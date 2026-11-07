@@ -544,7 +544,7 @@ struct Glass3DPending {
         // The story's places are on the central region's grid (where every
         // save starts); elsewhere the same cells are somewhere else.
         let home = regionAddress == GoldenCity.address
-        if home { session.storyPlayerMoved3D(world.player.position) }
+        session.handle(.playerMoved(world.player.position, inStoryRegion: home))
         let geometry = staticGeometry
         if RPGStorySpatial.reconcile(&world.creatures, with: session.world, inStoryRegion: home,
                                      free: { !geometry.blocked(x: $0.x, y: $0.y, z: $0.z + 0.05) }) { dirtyRuntime = true; refreshVisible() }
@@ -578,7 +578,7 @@ struct Glass3DPending {
         if !out.visuals.isEmpty || !battle.casts.isEmpty { effects.show(out.visuals, clock: world.clock, quality: quality, renderer: renderer) }
         var shards = 0
         for creature in out.defeated {
-            session.storyCreatureDefeated3D(creature.id)
+            session.handle(.creatureDefeated(id: creature.id))
             shards += creature.kind == .boss ? (SpatialBattle.script(for: creature, in: world)?.rewardShards ?? 25) : SpatialCombat.reward(creature.kind)
             effects.burst(.explosion, at: creature.position + SpatialVector(0, 0, 0.8), seconds: 0.4, clock: world.clock, quality: quality)
             if creature.kind == .boss { notice = L10n.t("大 Boss 已击败！", "Boss defeated!") } else if creature.kind == .miniBoss { notice = L10n.t("小 Boss 已击败！", "Mini boss defeated!") }
@@ -656,7 +656,7 @@ struct Glass3DPending {
         var shards = 0
         for id in hits {
             guard let after = world.creatures.first(where: { $0.id == id }), let was = before.first(where: { $0.id == id }), was.alive, !after.alive else { continue }
-            session.storyCreatureDefeated3D(id)
+            session.handle(.creatureDefeated(id: id))
             shards += SpatialCombat.reward(after.kind)
             if after.kind == .boss { notice = L10n.t("大 Boss 已击败！获得月晶 ×\(SpatialCombat.reward(.boss))", "Boss defeated! +\(SpatialCombat.reward(.boss)) moon shards") }
             else if after.kind == .miniBoss { notice = L10n.t("小 Boss 已击败！", "Mini boss defeated!") }
@@ -1210,7 +1210,7 @@ struct Glass3DPending {
         case .erase:
             if first.kind == "block", !first.id.hasPrefix("legacy:") {
                 let id = first.id; edit(L10n.t("擦除方块", "Erase Block")) { w in w.blocks.removeAll { $0.id == id } }
-                if !world.blocks.contains(where: { $0.id == id }) { session.storyBlocksDestroyed3D([id]) }
+                if !world.blocks.contains(where: { $0.id == id }) { session.handle(.blocksRemoved([id])) }
             }
             else if first.kind == "creature" { let id = first.id; edit(L10n.t("删除生物", "Remove Creature")) { w in w.creatures.removeAll { $0.id == id } } }
         case .building:
@@ -1353,7 +1353,7 @@ struct Glass3DPending {
     func raiseSelection(_ dz: Double) { let ids = Set(selection); edit(L10n.t("升降", "Raise / Lower")) { w in SpatialBuilder.raise(ids, by: dz, world: &w) } }
     func alignSelection() { let ids = Set(selection), h = buildHeight; edit(L10n.t("高度对齐", "Align Heights")) { w in SpatialBuilder.align(ids, elevation: h, world: &w) } }
     func gradientSelection(to top: Double) { let ids = Set(selection), h = buildHeight; edit(L10n.t("高度渐变", "Height Gradient")) { w in SpatialBuilder.gradient(ids, from: h, to: top, world: &w) } }
-    func deleteSelection() { let ids = Set(selection); edit(L10n.t("删除 \(ids.count) 个方块", "Delete \(ids.count) blocks")) { w in w.blocks.removeAll { ids.contains($0.id) } }; session.storyBlocksDestroyed3D(ids.filter { id in !world.blocks.contains { $0.id == id } }.sorted()); selection = [] }
+    func deleteSelection() { let ids = Set(selection); edit(L10n.t("删除 \(ids.count) 个方块", "Delete \(ids.count) blocks")) { w in w.blocks.removeAll { ids.contains($0.id) } }; session.handle(.blocksRemoved(ids.filter { id in !world.blocks.contains { $0.id == id } }.sorted())); selection = [] }
 
     /// v1.78 selection tools: copy the selection beside itself (undoable).
     func duplicateSelection() {

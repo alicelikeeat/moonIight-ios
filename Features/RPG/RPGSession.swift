@@ -348,29 +348,16 @@ import Combine
     /// Whether the current quest's condition held at the last check: the
     /// story panel opens once when it becomes true.
     private var storyConditionWasMet = false
-    /// The 3D player's position; four times a second from the 3D world.
-    func storyPlayerMoved3D(_ position: SpatialVector) {
+    /// Everything the 3D world reports (position four times a second,
+    /// defeats, removed blocks) comes in here.
+    func handle(_ event: GameEvent) {
         guard ready else { return }
-        simulating = true
-        let moved = RPGStorySpatial.syncPlayer(position, world: &world)
+        if case .playerMoved = event { simulating = true }
+        let outcome = GameEventRules.apply(event, to: &world, generator: generator)
         simulating = false
-        if moved { checkStoryObjective() }
-    }
-    /// A creature fell in 3D; story enemies are recorded and saved.
-    func storyCreatureDefeated3D(_ id: String) {
-        guard ready, RPGStorySpatial.defeated(id, world: &world) else { return }
-        RPGStoryRuntime.recordEvents(world: &world); checkStoryObjective(); save()
-    }
-    /// Blocks removed in 3D count as broken for the story.
-    func storyBlocksDestroyed3D(_ ids: [String]) {
-        guard ready, !ids.isEmpty else { return }
-        RPGStorySpatial.blocksDestroyed(ids, world: &world)
-        RPGStoryRuntime.recordEvents(world: &world); checkStoryObjective(); save()
+        if outcome.conditionMet && !storyConditionWasMet { pendingStory = true }
+        storyConditionWasMet = outcome.conditionMet
+        if outcome.persist { save() }
     }
     var storyObjective: RPGStorySpatial.Objective? { ready ? RPGStorySpatial.objective(world: world, generator: generator) : nil }
-    private func checkStoryObjective() {
-        let met = RPGStorySpatial.conditionMet(world: world, generator: generator)
-        if met && !storyConditionWasMet { pendingStory = true }
-        storyConditionWasMet = met
-    }
 }

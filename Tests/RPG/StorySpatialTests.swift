@@ -104,5 +104,21 @@ func storySpatialTests() throws {
     var fighting = tale; fighting.combat.enemies.append(RPGEnemyState(id: "story:1:boss", surface: SurfacePoint(x: 50, z: 50), health: 30, aggro: true)); fighting.player.inCombat = true
     RPGStorySpatial.normalize(&fighting)
     check(fighting.player.inCombat && fighting.combat.enemies.contains { $0.id == "story:1:boss" }, "3D story: a living story enemy keeps the fight going")
+    // The typed event layer: one way in for everything the 3D world reports.
+    var routed = WorldState(seed: 42); routed.player.surface = generator.anchor(.spawn); routed.sideRegions = [generator.sideRegion]
+    try RPGStoryRuntime.start(graphID: RPGOfficialStory.graph.id, world: &routed)
+    for choice in [nil, nil, "help"] { try RPGStoryRuntime.advance(choiceID: choice, world: &routed, generator: generator) }
+    var outcome = GameEventRules.apply(.creatureDefeated(id: "wild-slime"), to: &routed, generator: generator)
+    check(outcome == GameEventOutcome(persist: false, conditionMet: false), "events: an ordinary creature changes nothing in the save")
+    outcome = GameEventRules.apply(.blocksRemoved([]), to: &routed, generator: generator)
+    check(!outcome.persist, "events: removing nothing is not saved")
+    outcome = GameEventRules.apply(.blocksRemoved(["b1", "b2"]), to: &routed, generator: generator)
+    check(outcome.persist && outcome.conditionMet && routed.story.eventCounts["blockDestroyed"] == 2, "events: removed blocks are recorded, saved and meet the quest")
+    try RPGStoryRuntime.advance(world: &routed, generator: generator)
+    let gate = generator.anchor(.village), before = routed.player.surface
+    outcome = GameEventRules.apply(.playerMoved(SpatialVector(Double(gate.x) + 0.5, Double(gate.z) + 0.5, 0), inStoryRegion: false), to: &routed, generator: generator)
+    check(routed.player.surface == before && !outcome.conditionMet && !outcome.persist, "events: in another region the same cell is not the village")
+    outcome = GameEventRules.apply(.playerMoved(SpatialVector(Double(gate.x) + 0.5, Double(gate.z) + 0.5, 0), inStoryRegion: true), to: &routed, generator: generator)
+    check(routed.player.surface == gate && outcome.conditionMet && !outcome.persist, "events: walking there in the story region meets the quest without a save per step")
     print("RPG 3D story: official chapter played from 3D events")
 }
