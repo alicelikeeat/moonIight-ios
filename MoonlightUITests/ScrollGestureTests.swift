@@ -1,7 +1,6 @@
 import XCTest
 
 final class ScrollGestureTests: XCTestCase {
-    @MainActor
     // MARK: The sandbox is the 3D world (v1.88)
 
     /// Opens the sandbox from 我 and waits for the 3D world.
