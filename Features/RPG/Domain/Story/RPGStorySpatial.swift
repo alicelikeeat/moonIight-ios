@@ -63,8 +63,10 @@ enum RPGStorySpatial {
     /// Brings the 3D creatures in line with the story: adds story enemies
     /// that are missing, removes ones the story no longer has. Other
     /// creatures are untouched. Returns whether anything changed.
-    static func reconcile(_ creatures: inout [CreatureEntity], with world: WorldState) -> Bool {
-        let wanted = storyCreatures(for: world)
+    /// Outside the story's region (`inStoryRegion` false) no story enemy
+    /// stands in 3D: the story's places are on the central region's grid.
+    static func reconcile(_ creatures: inout [CreatureEntity], with world: WorldState, inStoryRegion: Bool = true) -> Bool {
+        let wanted = inStoryRegion ? storyCreatures(for: world) : []
         let wantedIDs = Set(wanted.map(\.id))
         let before = creatures.count
         creatures.removeAll { $0.id.hasPrefix(creaturePrefix) && !wantedIDs.contains($0.id) && $0.alive }

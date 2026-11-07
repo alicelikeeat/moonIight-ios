@@ -53,6 +53,10 @@ func storySpatialTests() throws {
     var creatures = [CreatureEntity(id: "wild-slime", kind: .enemy, position: SpatialVector(10, 10, 0), home: SpatialVector(10, 10, 0), health: 20, maxHealth: 20, damage: 3)]
     check(RPGStorySpatial.reconcile(&creatures, with: tale) && creatures.count == 2, "3D story: reconcile adds the guard next to other creatures")
     check(!RPGStorySpatial.reconcile(&creatures, with: tale) && creatures.count == 2, "3D story: reconcile is idempotent")
+    var elsewhere = creatures
+    check(RPGStorySpatial.reconcile(&elsewhere, with: tale, inStoryRegion: false) && elsewhere.map(\.id) == ["wild-slime"],
+          "3D story: outside the story's region the guard is not in the world")
+    check(RPGStorySpatial.reconcile(&elsewhere, with: tale) && elsewhere.count == 2, "3D story: back in the region the guard returns")
     check(!RPGStorySpatial.defeated("wild-slime", world: &tale), "3D story: other creatures are not story enemies")
     let shards = tale.inventory["moon-shard", default: 0]
     check(RPGStorySpatial.defeated(RPGStorySpatial.creaturePrefix + guardID, world: &tale), "3D story: defeating the guard in 3D is recorded")

@@ -541,11 +541,15 @@ struct Glass3DPending {
         storyTimer += dt
         guard storyTimer >= 0.25 else { return }
         storyTimer = 0
-        session.storyPlayerMoved3D(world.player.position)
-        if RPGStorySpatial.reconcile(&world.creatures, with: session.world) { dirtyRuntime = true; refreshVisible() }
+        // The story's places are on the central region's grid (where every
+        // save starts); elsewhere the same cells are somewhere else.
+        let home = regionAddress == GoldenCity.address
+        if home { session.storyPlayerMoved3D(world.player.position) }
+        if RPGStorySpatial.reconcile(&world.creatures, with: session.world, inStoryRegion: home) { dirtyRuntime = true; refreshVisible() }
         let objective = session.storyObjective
-        renderer.showObjective(objective.map { SpatialVector(Double($0.point.x) + 0.5, Double($0.point.z) + 0.5, 0) })
+        renderer.showObjective(home ? objective.map { SpatialVector(Double($0.point.x) + 0.5, Double($0.point.z) + 0.5, 0) } : nil)
         let hint = objective.map { o -> String in
+            guard home else { return L10n.t("任务：\(o.title) · 在中央区域", "Quest: \(o.title) · in the central region") }
             let here = session.world.player.surface
             let distance = abs(o.point.x - here.x) + abs(o.point.z - here.z)
             return distance <= o.radius ? L10n.t("任务：已到达\(o.title)", "Quest: reached \(o.title)")
