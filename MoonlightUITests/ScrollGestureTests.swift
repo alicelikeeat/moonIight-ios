@@ -286,10 +286,8 @@ final class ScrollGestureTests: XCTestCase {
         let settled = NSPredicate(format: "value CONTAINS 'queued=0 analysing=0' AND NOT (value CONTAINS 'ready=0 review=0')")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: status)], timeout: 120), .completed, "analysis finishes: \(status.value ?? "")")
         print("Asset Director status: \(status.value ?? "")")
-        for name in ["castle-reference", "glass-material", "fountain", "house-model", "person-model"] {
-            let row = app.descendants(matching: .any).matching(identifier: "asset-row-" + name).firstMatch
-            print("Asset Director row \(name): exists=\(row.exists) category=\(row.value as? String ?? "?")")
-        }
+        let summary = app.descendants(matching: .any).matching(identifier: "asset-director-summary").firstMatch
+        print("Asset Director categories: \(summary.exists ? (summary.value as? String ?? "") : "n/a")")
         attach(app, name: "review-asset-director-analysed")
 
         // The real accuracy check on the bundled CC0 files.
