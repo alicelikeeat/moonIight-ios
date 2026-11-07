@@ -601,16 +601,43 @@ struct Glass3DPending {
 
     // MARK: Characters (v1.60)
 
-    func requestAnimation(_ owner: String, _ action: CharacterAction, length: Double) {
+    /// `template`: the owner's character, when the caller has it; its clip
+    /// for the action sets how long a one-shot plays.
+    func requestAnimation(_ owner: String, _ action: CharacterAction, length: Double, template: CharacterTemplate? = nil) {
         var state = animations[owner] ?? CharacterAnimationState()
-        CharacterAnimator.request(&state, action, clock: world.clock, length: length)
+        let clip = (template ?? (owner == SpatialBattle.playerID ? playerTemplate : nil))?.clip(action)
+        let own = clip.map { $0.length / max(0.1, $0.speed) } ?? length
+        CharacterAnimator.request(&state, action, clock: world.clock, length: own)
         animations[owner] = state
+    }
+    private var playerTemplate: CharacterTemplate? {
+        world.playerCharacterID.flatMap { id in (world.characters ?? []).first { $0.id == id } }
+    }
+    /// v1.88: a strike whose spark waits for the character clip's hit moment.
+    private var strikeSparkPending = false
+    private func strikeSpark() {
+        let radians = world.player.facing * .pi / 180
+        effects.burst(.spark, at: world.player.position + SpatialVector(cos(radians) * 0.9, sin(radians) * 0.9, 0.9), seconds: 0.2, clock: world.clock, quality: quality)
+    }
+    /// Steps every animation state: effect moments and ends of one-shots.
+    private func stepAnimations() {
+        for owner in Array(animations.keys) {
+            guard var state = animations[owner] else { continue }
+            let template = owner == SpatialBattle.playerID ? playerTemplate : nil
+            let eventTime = template?.clip(state.action).map { $0.eventTime / max(0.1, $0.speed) } ?? state.length * 0.4
+            let events = CharacterAnimator.step(&state, clock: world.clock, eventTime: eventTime)
+            animations[owner] = state
+            if owner == SpatialBattle.playerID, strikeSparkPending, events.contains(where: { $0 == .effect(.attack) || $0 == .finished(.attack) }) {
+                strikeSparkPending = false; strikeSpark()
+            }
+        }
     }
 
     private var lastPlayerPosition = SpatialVector.zero
     private func updateCharacters() {
         let templates = world.characters ?? []
         guard !templates.isEmpty else { renderer.playerBodyVisible = true; return }
+        stepAnimations()
         let speed = (world.player.position - lastPlayerPosition).flatLength / max(0.001, 1.0 / 60) ; lastPlayerPosition = world.player.position
         requestAnimation(SpatialBattle.playerID, health == 0 ? .death : CharacterAnimator.movement(speed: speed, grounded: world.player.grounded, verticalSpeed: world.player.verticalSpeed), length: 0.6)
         let playerTemplate = world.playerCharacterID.flatMap { id in templates.first { $0.id == id } }
@@ -620,7 +647,7 @@ struct Glass3DPending {
         renderer.playerBodyVisible = !applied
         for creature in world.creatures {
             guard let id = creature.characterID, let template = templates.first(where: { $0.id == id }), let holder = renderer.creatureEntity(creature.id) else { continue }
-            requestAnimation(creature.id, CharacterAnimator.action(for: creature.state, moving: creature.state == .chase || creature.state == .wander || creature.state == .returning), length: 0.6)
+            requestAnimation(creature.id, CharacterAnimator.action(for: creature.state, moving: creature.state == .chase || creature.state == .wander || creature.state == .returning), length: 0.6, template: template)
             let facing = atan2(world.player.position.y - creature.position.y, world.player.position.x - creature.position.x) * 180 / .pi
             let shown = characters.apply(template, to: holder, ownerID: creature.id, action: animations[creature.id]?.action ?? .idle,
                                          direction: CharacterAnimator.direction(facing: facing, cameraYaw: camera.yaw, count: template.mode.directions))
@@ -640,9 +667,10 @@ struct Glass3DPending {
         guard stamina >= cost else { notice = L10n.t("耐力不足", "Not enough stamina"); return }
         if kind == .strike { guard localCooldowns.strike <= 0 else { return }; localCooldowns.strike = 0.35 } else { guard localCooldowns.skill <= 0 else { return }; localCooldowns.skill = 3 }
         // Always visible, hit or miss: a swing burst in front, or a ring around.
-        let radians = world.player.facing * .pi / 180
+        requestAnimation(SpatialBattle.playerID, kind == .strike ? .attack : .skill, length: kind == .strike ? 0.35 : 0.6)
         if kind == .strike {
-            effects.burst(.spark, at: world.player.position + SpatialVector(cos(radians) * 0.9, sin(radians) * 0.9, 0.9), seconds: 0.2, clock: world.clock, quality: quality)
+            // With its own attack clip the spark lands on the clip's hit moment.
+            if playerTemplate?.clips[CharacterAction.attack.rawValue]?.bindingIDs.isEmpty == false { strikeSparkPending = true } else { strikeSpark() }
             renderer.punch(lunge: true)
         } else {
             effects.burst(.magic, at: world.player.position + SpatialVector(0, 0, 0.4), seconds: 0.5, clock: world.clock, quality: quality)
@@ -671,6 +699,7 @@ struct Glass3DPending {
     func roll() {
         guard mode == .play, health > 0, localCooldowns.roll <= 0, stamina >= 18 else { return }
         localCooldowns.roll = 1.2; stamina -= 18; invulnerable = 0.35
+        requestAnimation(SpatialBattle.playerID, .dodge, length: 0.4)
         effects.burst(.smoke, at: world.player.position + SpatialVector(0, 0, 0.3), seconds: 0.3, clock: world.clock, quality: quality)
         renderer.punch(lunge: true)
         let radians = world.player.facing * .pi / 180

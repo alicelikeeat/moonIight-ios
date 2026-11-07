@@ -104,6 +104,21 @@ struct CharacterTemplate: Codable, Equatable, Identifiable, Sendable {
 struct CharacterAnimationState: Equatable, Sendable {
     var action = CharacterAction.idle
     var started = 0.0
+    /// This action's own length: a one-shot ends after it (v1.88; before,
+    /// the length of whichever request came next decided).
+    var length = 0.6
+    /// A one-shot asked for while the current one could not be cut short,
+    /// played as soon as it ends (one input remembered, like a game pad buffer).
+    var queued: CharacterAction?
+    var queuedLength = 0.6
+    var effectFired = false
+}
+
+/// What the state machine reports while stepping: the clip's effect moment
+/// (attack hit, skill release, at `ActionClip.eventTime`) and the end of a one-shot.
+enum AnimationEvent: Equatable, Sendable {
+    case effect(CharacterAction)
+    case finished(CharacterAction)
 }
 
 enum CharacterAnimator {
@@ -120,14 +135,44 @@ enum CharacterAnimator {
         case .idle, .alert: .idle
         }
     }
+    /// Share of a one-shot after which the same action may start over (a
+    /// combo); before it, pressing again does nothing.
+    static let cancelFraction = 0.6
+
     /// Applies a requested action: higher or equal priority interrupts; a
-    /// one-shot action keeps playing until its clip length is over.
+    /// one-shot keeps playing until its own length is over; the same
+    /// one-shot restarts once its cancel window opens; a lower one-shot
+    /// asked for meanwhile is remembered and plays next. Death is final.
     static func request(_ state: inout CharacterAnimationState, _ action: CharacterAction, clock: Double, length: Double) {
         if state.action == .death { return }
-        if action == state.action { return }
         let current = state.action
-        let finished = !current.oneShot || clock - state.started >= length
-        if action.priority >= current.priority || finished { state.action = action; state.started = clock }
+        let elapsed = clock - state.started
+        if action == current {
+            if current.oneShot && elapsed >= state.length * cancelFraction { start(&state, action, clock: clock, length: length) }
+            return
+        }
+        let finished = !current.oneShot || elapsed >= state.length
+        if action.priority >= current.priority || finished { start(&state, action, clock: clock, length: length); return }
+        if action.oneShot { state.queued = action; state.queuedLength = length }
+    }
+    private static func start(_ state: inout CharacterAnimationState, _ action: CharacterAction, clock: Double, length: Double) {
+        state.action = action; state.started = clock; state.length = max(0.05, length.isFinite ? length : 0.6); state.effectFired = false
+        if state.queued == action { state.queued = nil }
+    }
+    /// Advances a one-shot: its effect moment once (at `eventTime`, capped
+    /// at its length), then its end, then the remembered action or idle
+    /// (movement takes over on the next request).
+    static func step(_ state: inout CharacterAnimationState, clock: Double, eventTime: Double) -> [AnimationEvent] {
+        guard state.action.oneShot, state.action != .death else { return [] }
+        var events: [AnimationEvent] = []
+        let elapsed = clock - state.started
+        if !state.effectFired && elapsed >= min(max(0, eventTime), state.length) { state.effectFired = true; events.append(.effect(state.action)) }
+        if elapsed >= state.length {
+            events.append(.finished(state.action))
+            if let next = state.queued { state.queued = nil; start(&state, next, clock: clock, length: state.queuedLength) }
+            else { state.action = .idle; state.started = clock; state.length = 0.6; state.effectFired = false }
+        }
+        return events
     }
     /// Which direction picture to show (0 = facing the camera, counting
     /// clockwise), from the facing angle and the camera turn.
