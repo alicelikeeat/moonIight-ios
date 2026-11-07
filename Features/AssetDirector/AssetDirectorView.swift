@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 // v1.87 AI Asset Director — the 智能素材库 workbench.
 
+@available(iOS 18.0, *)
 struct AssetDirectorView: View {
     /// The open 3D world, when opened from there (placement needs it).
     let controller: AnyObject?
@@ -241,6 +242,7 @@ struct AssetDirectorView: View {
 
 // MARK: Row
 
+@available(iOS 18.0, *)
 struct AssetRow: View {
     let record: AssetIntelligenceRecord
     var body: some View {
@@ -271,6 +273,7 @@ struct AssetRow: View {
 }
 
 /// A small preview made off the main thread (first frame for video).
+@available(iOS 18.0, *)
 struct AssetThumbnail: View {
     let record: AssetIntelligenceRecord
     let side: CGFloat
@@ -304,6 +307,7 @@ struct AssetThumbnail: View {
 
 // MARK: Detail
 
+@available(iOS 18.0, *)
 struct AssetDetailView: View {
     let assetID: String
     let controller: AnyObject?

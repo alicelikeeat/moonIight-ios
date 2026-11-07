@@ -11,6 +11,7 @@ import UIKit
 // audio), runs analysis through a bounded queue, and executes confirmed
 // operations through Moonlight's existing pipelines.
 
+@available(iOS 18.0, *)
 @MainActor
 final class AIAssetDirector: ObservableObject {
     static let shared = AIAssetDirector()
@@ -434,7 +435,7 @@ final class AIAssetDirector: ObservableObject {
         case .generateModelFromImage:
             guard let url = fileURL(r.storage) else { return L10n.t("原图不存在", "The picture is missing") }
             let manager = GenerationTaskManager()
-            manager.generate(image: url, name: r.title, quality: .standard, store: Generated3DStore.shared, removeAfter: false)
+            manager.generate(image: url, name: r.title, quality: .medium, store: Generated3DStore.shared, removeAfter: false)
             while manager.running { try? await Task.sleep(nanoseconds: 300_000_000) }
             switch manager.phase {
             case .finished(let modelID):

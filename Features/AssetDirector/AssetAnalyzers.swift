@@ -308,6 +308,7 @@ enum ModelInspector {
 
     /// A model already in the Moonlight 3D store: facts come from its
     /// manifest and rig package (no second parse of the mesh).
+    @available(iOS 18.0, *)
     @MainActor static func inspect(_ manifest: Generated3DManifest) async -> AssetSignals {
         var s = AssetSignals(mediaType: .model)
         s.technical.vertexCount = manifest.vertexCount
@@ -320,7 +321,7 @@ enum ModelInspector {
         if manifest.rigFile != nil, let (package, _) = await Generate3DRigging.load(manifest) {
             s.technical.hasSkeleton = true
             s.technical.hasSkin = true
-            joints = package.skeleton.joints.map(\.name)
+            joints = package.skeleton.bones.map { "\($0.bone)" }
             s.technical.jointCount = joints.count
             s.technical.animationNames = package.clips.map(\.name)
         } else {
@@ -364,7 +365,7 @@ enum ModelInspector {
             s.technical.realityKitReady = model.mesh.triangleCount <= AssetRules.maxPolygons
             s.technical.realityKitNote = s.technical.realityKitReady == true ? L10n.t("可导入并放进 RealityKit 场景", "Can be imported into the RealityKit scene")
                 : L10n.t("面数超过 \(AssetRules.maxPolygons)", "More than \(AssetRules.maxPolygons) triangles")
-            s.humanoidShape = humanoid(bounds: s.technical.bounds, jointNames: model.rig?.skeleton.joints.map(\.name) ?? [])
+            s.humanoidShape = humanoid(bounds: s.technical.bounds, jointNames: model.rig?.skeleton.joints.map(\.jointID) ?? [])
         } catch {
             s.parseError = error.localizedDescription
             s.technical.realityKitReady = false
