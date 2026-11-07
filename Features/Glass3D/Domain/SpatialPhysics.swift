@@ -209,7 +209,7 @@ enum SpatialPhysics {
 
 /// The tilting, turning camera. Tilt is measured from straight down:
 /// 0° looks straight down (editing), 45° is the play view, 65° the most.
-struct SpatialCameraState: Equatable, Sendable {
+struct SpatialCameraState: Codable, Equatable, Sendable {
     var target = SpatialVector(128.5, 128.5, 0)
     var tilt = 45.0
     var yaw = 0.0
