@@ -448,7 +448,10 @@ final class ScrollGestureTests: XCTestCase {
         let creatureTool = app.descendants(matching: .any).matching(identifier: "glass3d-tool-creature").firstMatch
         for _ in 0..<4 where !(creatureTool.exists && creatureTool.isHittable) {
             let dock = app.descendants(matching: .any).matching(identifier: "glass3d-tool-select").firstMatch
-            if dock.exists { dock.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.96))) }
+            if dock.exists {
+                let from = dock.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                from.press(forDuration: 0.05, thenDragTo: from.withOffset(CGVector(dx: -260, dy: 0)))
+            }
         }
         XCTAssertTrue(creatureTool.waitForExistence(timeout: 5)); creatureTool.tap()
         let look = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'glass3d-look-model-'")).firstMatch
