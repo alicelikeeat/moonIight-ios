@@ -288,6 +288,21 @@ func assetDirectorTests() {
     check(oldRecord.assetRole == nil, "a v1.86 asset descriptor still decodes")
     let oldTown = try! JSONDecoder().decode(GoldenTownIntent.self, from: Data(#"{"style":"crystalFantasy","water":"river","forest":true,"mountains":true,"gardens":true,"winding":true}"#.utf8))
     check(oldTown.glassTint == nil, "a v1.86 town intent still decodes")
+    // Timing of the World Director run the UI test makes (crystal city, the
+    // analysed assets) on a blank and on a golden-city base: unoptimised
+    // build, so close to the simulator's Debug app.
+    for (label, base) in [("blank", SpatialWorld()), ("golden", GoldenCity.stampedBlank())] {
+        for tier in [WorldPerformanceTier.standard, .high] {
+            var r = WorldGenerationRequest(theme: .crystalKingdom, prompt: "", tier: tier)
+            r.seed = 11; r.assets = selection.descriptors
+            let start = Date(); var phases: [String] = []; var last = Date()
+            let found = try? WorldDirectorEngine.candidates(r, intent: nil, base: base, progress: { stage, _ in
+                phases.append("\(stage)@\(String(format: "%.1f", Date().timeIntervalSince(last)))"); last = Date()
+            })
+            print("Director timing \(label)/\(tier): \(String(format: "%.1f", Date().timeIntervalSince(start))) s, candidates \(found?.count ?? -1), passed \(found?.map(\.report.passed) ?? []), base blocks \(base.blocks.count)")
+            print("Director phases \(label)/\(tier): " + phases.joined(separator: " "))
+        }
+    }
     print("Asset Director: town roles \(selection.usage.count), skipped \(selection.skipped.count), statues \(built.statues.count), gate passed \(gate.passed)")
 }
 
