@@ -49,7 +49,23 @@ struct MoonTreasureMapView: View {
     }
     private var items: [MediaEntry] { Array(filteredItems.prefix(TreasureRules.count(selected: dropCount, available: filteredItems.count))) }
     private var darkCards: Bool { appearance.isDark(system: colorScheme) }
+    // Split in three (layout, lifecycle and change handlers, covers): one
+    // chain was too long for the type checker once iOS 18 APIs joined in.
     var body: some View {
+        bodyEvents(bodyLayout)
+        .fullScreenCover(item: $activeEntry) { entry in
+            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 }).environmentObject(model)
+        }
+        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(get: { actionEntry != nil }, set: { if !$0 { actionEntry = nil } }), titleVisibility: .visible) {
+            Button("打开播放") { activeEntry = actionEntry; actionEntry = nil }
+            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") { if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }; actionEntry = nil }
+            Button("加入播放队列") { if let entry = actionEntry { model.mediaStore.enqueue([entry]) }; actionEntry = nil }
+            Button("取消", role: .cancel) { actionEntry = nil }
+        }
+        .overlay(alignment: .bottomTrailing) { debugLabels }
+        .task { await updateDiagnostics() }
+    }
+    private var bodyLayout: some View {
         VStack(spacing: 10) {
             HStack(spacing: 4) {
                 Button { experience = .free } label: {
@@ -89,6 +105,9 @@ struct MoonTreasureMapView: View {
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showingAppearance = false } } }
             }
         }
+    }
+    private func bodyEvents(_ content: some View) -> some View {
+        content
         .onAppear {
             pageVisible = true
             if !initialized {
@@ -127,17 +146,6 @@ struct MoonTreasureMapView: View {
             videoPreviews.stopAll(); scene.setVideoPreviews([:]); refreshVideoPreviews()
         }
         .onReceive(videoPreviews.$players) { scene.setVideoPreviews(organized || !freeActive ? [:] : $0) }
-        .fullScreenCover(item: $activeEntry) { entry in
-            MediaPlayerView(entry: entry, onShareToMoments: { activeEntry = nil }, onQueueAdvance: { activeEntry = $0 }).environmentObject(model)
-        }
-        .confirmationDialog(actionEntry?.title ?? "藏品操作", isPresented: Binding(get: { actionEntry != nil }, set: { if !$0 { actionEntry = nil } }), titleVisibility: .visible) {
-            Button("打开播放") { activeEntry = actionEntry; actionEntry = nil }
-            Button(actionEntry?.isFavorite == true ? "取消收藏" : "收藏") { if let entry = actionEntry { model.mediaStore.toggleFavorite(entry) }; actionEntry = nil }
-            Button("加入播放队列") { if let entry = actionEntry { model.mediaStore.enqueue([entry]) }; actionEntry = nil }
-            Button("取消", role: .cancel) { actionEntry = nil }
-        }
-        .overlay(alignment: .bottomTrailing) { debugLabels }
-        .task { await updateDiagnostics() }
     }
     private var freeContent: some View {
         VStack(spacing: 10) {

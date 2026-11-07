@@ -176,23 +176,28 @@ struct LandlordGameView: View {
             ScrollView(.horizontal) {
                 HStack(spacing: -12) {
                     ForEach(Array(store.game.hands[0].enumerated()), id: \.element.id) { index, card in
-                        face(card, role: .hand, z: index, viewport: viewport, width: 66, height: 96)
-                            .overlay { if store.selection.contains(card.id) { RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor, lineWidth: 3) } }
-                            .matchedGeometryEffect(id: card.id, in: movement, isSource: true)
-                            .offset(y: store.selection.contains(card.id) ? -9 : 0)
-                            .contentShape(RoundedRectangle(cornerRadius: 10))
-                            .modifier(NativeMediaCardInteractions(holdEnabled: true,
-                                onTap: { store.choose(card.id) }, onHold: { focus = card }))
-                            .accessibilityAddTraits(.isButton)
-                            .accessibilityValue((store.selection.contains(card.id) ? "已选" : "未选") + " · " + cardMediaDescription(card.id))
-                            .accessibilityAction { store.choose(card.id) }
-                            .accessibilityAction(named: "预览") { focus = card }
-                            .accessibilityIdentifier("landlord-hand-\(card.id)")
-                            .zIndex(Double(index))
+                        handCard(card, index: index, viewport: viewport)
                     }
                 }.padding(.horizontal, 14).padding(.vertical, 12)
             }.frame(height: 122).accessibilityIdentifier("landlord-hand")
         }
+    }
+    /// One card in the hand (its own function: the chain was too long for
+    /// the type checker inside the ForEach).
+    private func handCard(_ card: LandlordCard, index: Int, viewport: CGRect) -> some View {
+        face(card, role: .hand, z: index, viewport: viewport, width: 66, height: 96)
+            .overlay { if store.selection.contains(card.id) { RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor, lineWidth: 3) } }
+            .matchedGeometryEffect(id: card.id, in: movement, isSource: true)
+            .offset(y: store.selection.contains(card.id) ? -9 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            .modifier(NativeMediaCardInteractions(holdEnabled: true,
+                onTap: { store.choose(card.id) }, onHold: { focus = card }))
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue((store.selection.contains(card.id) ? "已选" : "未选") + " · " + cardMediaDescription(card.id))
+            .accessibilityAction { store.choose(card.id) }
+            .accessibilityAction(named: "预览") { focus = card }
+            .accessibilityIdentifier("landlord-hand-\(card.id)")
+            .zIndex(Double(index))
     }
     private func cardMediaDescription(_ cardID: Int) -> String {
         guard store.preferences.style == .media, let id = mapping.assignments[cardID], let entry = assets.first(where: { $0.id == id }) else { return "经典牌面" }

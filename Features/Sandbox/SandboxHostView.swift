@@ -16,7 +16,6 @@ struct SandboxHostView: View {
     /// Leaves the sandbox for the previous page (after saving).
     var onExit: () -> Void = {}
     @EnvironmentObject private var model: AppModel
-    @Environment(\.accessibilityReduceMotion) private var reducedMotion
     @State private var prologue: WorldPrologue?
     /// A page requested from outside (search), opened once the world is ready.
     @State private var page: RPGEntryPage?
@@ -35,7 +34,7 @@ struct SandboxHostView: View {
         }
         .background(Color.black.ignoresSafeArea())
         .onAppear {
-            session.attachMediaStore(model.mediaStore); session.setReducedMotion(reducedMotion); session.activate()
+            session.activate()
             if let requested = WorldHost.shared.pendingPage { WorldHost.shared.pendingPage = nil; page = requested == .world ? nil : requested }
             // The widget's 3D link needs nothing more: the sandbox is the 3D world.
             WorldHost.shared.pendingGlassWorld = false
@@ -49,7 +48,6 @@ struct SandboxHostView: View {
         }
         .onChange(of: session.ready) { _, ready in if ready { showPrologueIfNeeded() } }
         .onChange(of: session.world.id) { _, _ in showPrologueIfNeeded() }
-        .onChange(of: reducedMotion) { _, on in session.setReducedMotion(on) }
     }
 
     /// Once per app launch the 3D world can open in design mode (setting in

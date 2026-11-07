@@ -74,5 +74,19 @@ func storySpatialTests() throws {
     check(RPGStorySpatial.objective(world: tale, generator: generator) == nil && !RPGStorySpatial.conditionMet(world: tale, generator: generator), "3D story: nothing to point at once the chapter ends")
     let reloaded = try RPGWorldCodec.decode(RPGWorldCodec.encode(tale))
     check(reloaded == tale, "3D story: progress made in 3D saves and reloads unchanged")
+    // An old 2D save: wandering slimes and a stale combat flag.
+    var old = WorldState(seed: 9); old.player.surface = generator.anchor(.spawn); old.player.perspective = .side
+    old.combat.enemies = [RPGEnemyState(id: "slime:3:4", surface: SurfacePoint(x: 40, z: 40), aggro: true)]
+    old.player.inCombat = true
+    let oldEntities = old.entities, oldInventory = old.inventory
+    check(RPGStorySpatial.storyCreatures(for: old).isEmpty, "3D story: 2D wandering enemies are never summoned in 3D")
+    RPGStorySpatial.normalize(&old)
+    check(old.combat.enemies.isEmpty && !old.player.inCombat && old.player.perspective == .topDown && old.entities == oldEntities && old.inventory == oldInventory,
+          "3D story: an old save drops 2D wanderers and the stale combat flag, nothing else")
+    try RPGStoryRuntime.start(graphID: RPGOfficialStory.graph.id, world: &old)
+    check(old.story.activeGraphID == RPGOfficialStory.graph.id, "3D story: the story can start in a normalised old save")
+    var fighting = tale; fighting.combat.enemies.append(RPGEnemyState(id: "story:1:boss", surface: SurfacePoint(x: 50, z: 50), health: 30, aggro: true)); fighting.player.inCombat = true
+    RPGStorySpatial.normalize(&fighting)
+    check(fighting.player.inCombat && fighting.combat.enemies.contains { $0.id == "story:1:boss" }, "3D story: a living story enemy keeps the fight going")
     print("RPG 3D story: official chapter played from 3D events")
 }

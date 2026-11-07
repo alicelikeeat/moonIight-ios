@@ -59,24 +59,3 @@ struct ShapeThumbnail: View {
             .accessibilityHidden(true)
     }
 }
-
-/// The sandbox's single way in: shows the editor on iOS 26+, nothing before.
-struct GlassShapeEditorEntry: View {
-    static var available: Bool {
-        if #available(iOS 26.0, *) { return true }
-        return false
-    }
-    var onApply: ((ShapeOutline) -> Void)?
-    var onClose: () -> Void
-
-    var body: some View {
-        if #available(iOS 26.0, *) {
-            GlassShapeEditorView(onApply: onApply, onClose: onClose)
-        } else {
-            VStack(spacing: 12) {
-                Text(L10n.t("形状编辑器需要 iOS 26 或更高版本。", "The shape editor needs iOS 26 or later."))
-                Button(L10n.t("关闭", "Close"), action: onClose)
-            }.padding()
-        }
-    }
-}

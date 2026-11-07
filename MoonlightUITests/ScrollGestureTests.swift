@@ -2,248 +2,162 @@ import XCTest
 
 final class ScrollGestureTests: XCTestCase {
     @MainActor
+    // MARK: The sandbox is the 3D world (v1.88)
+
+    /// Opens the sandbox from 我 and waits for the 3D world.
+    @MainActor
+    private func enterSandbox(_ app: XCUIApplication) {
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "the sandbox opens the 3D world")
+    }
+    /// Opens a row of the 3D world's ⋯ panel (never drags: that would close it).
+    @MainActor
+    private func openMore(_ id: String, in app: XCUIApplication) {
+        waitForAny("glass3d-settings", in: app, timeout: 20, "the ⋯ button").tap()
+        waitForAny(id, in: app, timeout: 15, "\(id) in the ⋯ panel").tap()
+    }
+    /// The DEBUG world probe on the 3D screen: shards, legacy blocks, story state.
+    @MainActor
+    private func probeValues(_ app: XCUIApplication) -> [String: String] {
+        let probe = app.descendants(matching: .any).matching(identifier: "glass3d-world-probe").firstMatch
+        return Dictionary((probe.value as? String ?? "").split(separator: ";").compactMap { item in
+            let pair = item.split(separator: "=", maxSplits: 1); guard pair.count == 2 else { return nil }; return (String(pair[0]), String(pair[1]))
+        }, uniquingKeysWith: { a, _ in a })
+    }
+    @MainActor
+    private func waitProbe(_ app: XCUIApplication, _ name: String, timeout: TimeInterval = 15, _ condition: @escaping ([String: String]) -> Bool) {
+        let probe = app.descendants(matching: .any).matching(identifier: "glass3d-world-probe").firstMatch
+        let met = NSPredicate { _, _ in condition(self.probeValues(app)) }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: met, object: probe)], timeout: timeout)
+        XCTAssertEqual(result, .completed, "\(name): \(probe.exists ? (probe.value as? String ?? "") : "no probe")")
+    }
+
+    @MainActor
     func testRPGUnindexedRecoveryPreservesConstructionAndRewardReceipt() {
-        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-recovery-ui-tests"])
-        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
-        let recovery=app.buttons["rpg-recover-recover-target"]
-        XCTAssertTrue(recovery.waitForExistence(timeout:12));recovery.tap()
-        let reward=NSPredicate(format:"label CONTAINS %@","月晶 7")
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:12),.completed)
-        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String,"1")
-        app.buttons["rpg-tools"].tap()
-        let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
-        XCTAssertTrue(app.staticTexts["rpg-story-ended"].waitForExistence(timeout:8))
-        app.buttons["rpg-story-back"].tap();app.buttons["rpg-tools-close"].tap();app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:8));app.buttons["me-rpg-entrance"].tap()
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:12),.completed)
-        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String,"1")
-        XCTAssertFalse(recovery.exists);attach(app,name:"review-rpg-p9-unindexed-recovery")
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--rpg-recovery-ui-tests"])
+        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
+        let recovery = app.buttons["rpg-recover-recover-target"]
+        XCTAssertTrue(recovery.waitForExistence(timeout: 12)); recovery.tap()
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "the recovered world opens in 3D")
+        waitProbe(app, "reward and building survive the interrupted save") { $0["shards"] == "7" && $0["legacy"] == "1" && $0["ended"] == "1" }
+        openMore("glass3d-story", in: app)
+        XCTAssertTrue(app.staticTexts["rpg-story-ended"].waitForExistence(timeout: 8))
+        app.buttons["rpg-story-back"].tap()
+        waitForAny("glass3d-close", in: app, timeout: 8, "leave the sandbox").tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "the world opens again")
+        waitProbe(app, "the receipt is kept after reopening") { $0["shards"] == "7" && $0["legacy"] == "1" }
+        XCTAssertFalse(recovery.exists); attach(app, name: "review-rpg-p9-unindexed-recovery")
     }
 
     @MainActor
     func testRPGSearchOpensStoryEditorAndDiagnosticsDirectly() {
-        let app=launch(discover:false,flags:["--assistant-dock-ui-tests","--rpg-ui-tests","--rpg-reset-world"])
-        let routes=[("剧情编辑器","rpgEditor","rpg-story-title","rpg-editor-back"),("序章","rpgStory","rpg-story-text","rpg-story-back"),("沙盒运行诊断","rpgDiagnostics","rpg-diagnostics-report","rpg-diagnostics-back")]
-        for (query,command,target,back) in routes {
-            let input=app.textFields["assistant-input"];XCTAssertTrue(input.waitForExistence(timeout:6));input.tap();input.typeText(query)
-            let result=app.buttons["assistant-command-"+command];XCTAssertTrue(result.waitForExistence(timeout:6));result.tap()
-            XCTAssertTrue(app.descendants(matching:.any).matching(identifier:target).firstMatch.waitForExistence(timeout:12))
-            app.buttons[back].tap();app.buttons["rpg-tools-close"].tap();app.buttons["rpg-close"].tap()
+        let app = launch(discover: false, flags: ["--assistant-dock-ui-tests", "--rpg-ui-tests", "--rpg-reset-world"])
+        let routes = [("剧情编辑器", "rpgEditor", "rpg-story-title", "rpg-editor-back"), ("序章", "rpgStory", "rpg-story-text", "rpg-story-back"), ("沙盒运行诊断", "rpgDiagnostics", "rpg-diagnostics-report", "rpg-diagnostics-back")]
+        for (query, command, target, back) in routes {
+            let input = app.textFields["assistant-input"]; XCTAssertTrue(input.waitForExistence(timeout: 10)); input.tap(); input.typeText(query)
+            let result = app.buttons["assistant-command-" + command]; XCTAssertTrue(result.waitForExistence(timeout: 6)); result.tap()
+            XCTAssertTrue(app.descendants(matching: .any).matching(identifier: target).firstMatch.waitForExistence(timeout: 40), "\(command) opens \(target)")
+            app.buttons[back].tap()
+            waitForAny("glass3d-close", in: app, timeout: 10, "leave the sandbox").tap()
         }
         XCTAssertFalse(app.navigationBars["智能对话"].exists)
     }
 
     @MainActor
-    func testRPGSideCombatAndDiagnostics() {
-        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
-        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
-        app.segmentedControls["rpg-mode"].buttons["创造"].tap();app.buttons["rpg-temple"].tap();app.buttons["rpg-tools-close"].tap()
-        app.buttons["rpg-perspective"].tap()
-        let side=NSPredicate{_,_ in (app.staticTexts["rpg-projection-evidence"].value as? String ?? "").hasPrefix("side:")}
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:side,object:app)],timeout:10),.completed)
-        app.buttons["rpg-tools"].tap()
-        let training=app.buttons["rpg-training"];guard revealListControl(training,in:app) else{return};training.tap();app.buttons["rpg-tools-close"].tap()
-        app.buttons["rpg-skill"].tap();app.buttons["rpg-attack"].tap()
-        let reward=NSPredicate(format:"label CONTAINS %@","月晶 1")
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:10),.completed)
-        app.buttons["rpg-perspective"].tap()
-        app.buttons["rpg-tools"].tap()
-        let diagnostics=app.buttons["rpg-diagnostics"];guard revealListControl(diagnostics,in:app) else{return};diagnostics.tap()
-        let report=app.staticTexts["rpg-diagnostics-report"];XCTAssertTrue(report.waitForExistence(timeout:8))
-        XCTAssertTrue(report.label.contains("p95") && report.label.contains("待验证"));attach(app,name:"review-rpg-p10-diagnostics")
-    }
-
-    @MainActor
     func testRPGAuthoredCutsceneProducesFramesAndResumesMuted() {
-        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
-        let ready=app.staticTexts["background-test-state"];XCTAssertTrue(ready.waitForExistence(timeout:15))
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","背景测试就绪"),object:ready)],timeout:20),.completed)
-        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
-        let editor=app.buttons["rpg-story-editor"];guard revealListControl(editor,in:app) else{return};editor.tap()
-        let node=app.buttons["rpg-edit-node-media"];guard revealListControl(node,in:app) else{return};node.tap()
-        let picker=app.buttons["rpg-node-media"];guard revealListControl(picker,in:app) else{return};picker.tap()
-        let video=app.buttons["Scroll fixture 0"];XCTAssertTrue(video.waitForExistence(timeout:6));video.tap()
-        let loop=app.switches["rpg-node-loop"];guard revealListControl(loop,in:app) else{return};if loop.value as? String == "0"{loop.tap()}
-        let apply=app.buttons["rpg-node-apply"];XCTAssertTrue(apply.waitForExistence(timeout:6));apply.tap()
-        let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
-        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
-        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
-        let probe=app.staticTexts["rpg-cutscene-probe"]
-        func values()->[String:Int]{
-            Dictionary((probe.value as? String ?? "").split(separator:";").compactMap{item in let p=item.split(separator:"=");guard p.count==2,let n=Int(p[1]) else{return nil};return(String(p[0]),n)},uniquingKeysWith:{a,_ in a})
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--rpg-media-ui-tests", "--treasure-wall-ui-tests"])
+        let ready = app.staticTexts["background-test-state"]; XCTAssertTrue(ready.waitForExistence(timeout: 15))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "背景测试就绪"), object: ready)], timeout: 20), .completed)
+        enterSandbox(app)
+        openMore("glass3d-story-editor", in: app)
+        let node = app.buttons["rpg-edit-node-media"]; guard revealListControl(node, in: app) else { return }; node.tap()
+        let picker = app.buttons["rpg-node-media"]; guard revealListControl(picker, in: app) else { return }; picker.tap()
+        let video = app.buttons["Scroll fixture 0"]; XCTAssertTrue(video.waitForExistence(timeout: 6)); video.tap()
+        let loop = app.switches["rpg-node-loop"]; guard revealListControl(loop, in: app) else { return }; if loop.value as? String == "0" { loop.tap() }
+        let apply = app.buttons["rpg-node-apply"]; XCTAssertTrue(apply.waitForExistence(timeout: 6)); apply.tap()
+        let preview = app.buttons["rpg-story-preview"]; guard revealListControl(preview, in: app) else { return }; preview.tap()
+        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout: 8)); app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout: 6)); app.buttons["rpg-preview-choice-watch"].tap()
+        let probe = app.staticTexts["rpg-cutscene-probe"]
+        func values() -> [String: Int] {
+            Dictionary((probe.value as? String ?? "").split(separator: ";").compactMap { item in let p = item.split(separator: "="); guard p.count == 2, let n = Int(p[1]) else { return nil }; return (String(p[0]), n) }, uniquingKeysWith: { a, _ in a })
         }
-        let active=NSPredicate{_,_ in let v=values();return (v["frames"] ?? 0)>0 && (v["players"] ?? 99)<=1 && (v["global"] ?? 99)<=1}
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:active,object:probe)],timeout:25),.completed)
-        let frames=values()["frames"] ?? 0
-        XCUIDevice.shared.press(.home);app.activate()
-        let resumed=NSPredicate{_,_ in let v=values();return (v["frames"] ?? 0)>frames && v["muted"]==1 && (v["global"] ?? 99)<=1}
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:resumed,object:probe)],timeout:25),.completed)
-        attach(app,name:"review-rpg-p10-authored-video")
+        let active = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > 0 && (v["players"] ?? 99) <= 1 && (v["global"] ?? 99) <= 1 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: probe)], timeout: 25), .completed)
+        let frames = values()["frames"] ?? 0
+        XCUIDevice.shared.press(.home); app.activate()
+        let resumed = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > frames && v["muted"] == 1 && (v["global"] ?? 99) <= 1 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: probe)], timeout: 25), .completed)
+        attach(app, name: "review-rpg-p10-authored-video")
         app.buttons["rpg-preview-close"].tap()
     }
 
     @MainActor
     func testRPGStoryEditorCanPreviewAndPublishBranch() {
-        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
-        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
-        let editor=app.buttons["rpg-story-editor"];guard revealListControl(editor,in:app) else{return};editor.tap()
-        let title=app.textFields["rpg-story-title"];XCTAssertTrue(title.waitForExistence(timeout:8));title.tap();title.typeText(" UI\n")
-        let validate=app.buttons["rpg-story-validate"];guard revealListControl(validate,in:app) else{return};validate.tap()
-        let preview=app.buttons["rpg-story-preview"];guard revealListControl(preview,in:app) else{return};preview.tap()
-        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout:8));app.buttons["rpg-preview-next"].tap()
-        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout:6));app.buttons["rpg-preview-choice-watch"].tap()
-        XCTAssertTrue(app.staticTexts["rpg-preview-text"].label.contains("字幕"));app.buttons["rpg-preview-next"].tap()
-        XCTAssertTrue(app.staticTexts["rpg-preview-ended"].waitForExistence(timeout:6));app.buttons["rpg-preview-close"].tap()
-        let publish=app.buttons["rpg-story-publish"];guard revealListControl(publish,in:app) else{return};publish.tap()
-        let status=app.staticTexts["rpg-editor-status"];XCTAssertTrue(status.waitForExistence(timeout:8))
-        XCTAssertTrue(status.label.contains("已保存"));attach(app,name:"review-rpg-p8-editor")
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        enterSandbox(app)
+        openMore("glass3d-story-editor", in: app)
+        let title = app.textFields["rpg-story-title"]; XCTAssertTrue(title.waitForExistence(timeout: 8)); title.tap(); title.typeText(" UI\n")
+        let validate = app.buttons["rpg-story-validate"]; guard revealListControl(validate, in: app) else { return }; validate.tap()
+        let preview = app.buttons["rpg-story-preview"]; guard revealListControl(preview, in: app) else { return }; preview.tap()
+        XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout: 8)); app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.buttons["rpg-preview-choice-watch"].waitForExistence(timeout: 6)); app.buttons["rpg-preview-choice-watch"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-preview-text"].label.contains("字幕")); app.buttons["rpg-preview-next"].tap()
+        XCTAssertTrue(app.staticTexts["rpg-preview-ended"].waitForExistence(timeout: 6)); app.buttons["rpg-preview-close"].tap()
+        let publish = app.buttons["rpg-story-publish"]; guard revealListControl(publish, in: app) else { return }; publish.tap()
+        let status = app.staticTexts["rpg-editor-status"]; XCTAssertTrue(status.waitForExistence(timeout: 8))
+        XCTAssertTrue(status.label.contains("已保存")); attach(app, name: "review-rpg-p8-editor")
         app.buttons["rpg-editor-back"].tap()
-        let story=app.buttons["rpg-story"];guard revealListControl(story,in:app) else{return};story.tap()
-        let custom=app.buttons.matching(NSPredicate(format:"label CONTAINS %@"," UI")).firstMatch
-        guard revealListControl(custom,in:app) else{return};custom.tap()
-        let intro=NSPredicate(format:"label CONTAINS %@","你的故事从这里开始")
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:intro,object:app.staticTexts["rpg-story-text"])],timeout:8),.completed)
+        openMore("glass3d-story", in: app)
+        let custom = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", " UI")).firstMatch
+        guard revealListControl(custom, in: app) else { return }; custom.tap()
+        let intro = NSPredicate(format: "label CONTAINS %@", "你的故事从这里开始")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: intro, object: app.staticTexts["rpg-story-text"])], timeout: 8), .completed)
     }
 
     @MainActor
     func testRPGStoryChoicePersistsAndWaitsForRealWorldEvent() {
-        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
-        let story = app.buttons["rpg-story"]
-        guard revealListControl(story,in:app) else { return }; story.tap()
-        XCTAssertTrue(app.staticTexts["rpg-story-text"].waitForExistence(timeout:8))
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        enterSandbox(app)
+        openMore("glass3d-story", in: app)
+        XCTAssertTrue(app.staticTexts["rpg-story-text"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["rpg-story-text"].label.contains("月核破碎"))
         app.buttons["rpg-story-next"].tap()
         let help = app.buttons["rpg-story-choice-help"]
-        XCTAssertTrue(help.waitForExistence(timeout:8)); help.tap()
-        let gathered = NSPredicate(format:"label CONTAINS %@","收集第一份材料")
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:gathered,object:app.staticTexts["rpg-story-text"])],timeout:10),.completed)
+        XCTAssertTrue(help.waitForExistence(timeout: 8)); help.tap()
+        let gathered = NSPredicate(format: "label CONTAINS %@", "收集第一份材料")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: gathered, object: app.staticTexts["rpg-story-text"])], timeout: 10), .completed)
+        // Nothing broken in the 3D world yet: the quest waits.
         app.buttons["rpg-story-next"].tap()
         XCTAssertTrue(app.staticTexts["rpg-story-text"].label.contains("收集第一份材料"))
-        app.buttons["rpg-story-back"].tap(); app.buttons["rpg-tools-close"].tap(); app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:6)); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
-        guard revealListControl(app.buttons["rpg-story"],in:app) else { return }; app.buttons["rpg-story"].tap()
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:gathered,object:app.staticTexts["rpg-story-text"])],timeout:10),.completed)
-        attach(app,name:"review-rpg-p7-story")
+        app.buttons["rpg-story-back"].tap()
+        waitForAny("glass3d-close", in: app, timeout: 8, "leave the sandbox").tap()
+        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "the world opens again")
+        openMore("glass3d-story", in: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: gathered, object: app.staticTexts["rpg-story-text"])], timeout: 10), .completed)
+        attach(app, name: "review-rpg-p7-story")
     }
 
+    /// The quest to walk to 月光村: the 3D world shows where (hint and gold
+    /// beam), the hint opens the story panel, and following it closes the panel.
     @MainActor
-    func testRPGCombatRewardsPersistWithoutDuplicateDrop() {
-        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
-        let training = app.buttons["rpg-training"]
-        guard revealListControl(training,in:app) else { return }; training.tap()
-        app.buttons["rpg-tools-close"].tap()
-        app.buttons["rpg-skill"].tap(); app.buttons["rpg-attack"].tap()
-        let stats = app.staticTexts["rpg-combat-stats"]
-        let reward = NSPredicate(format:"label CONTAINS %@","月晶 1")
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:stats)],timeout:10),.completed)
-        attach(app,name:"review-rpg-p6-combat")
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout:6)); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:reward,object:app.staticTexts["rpg-combat-stats"])],timeout:10),.completed)
-        app.buttons["rpg-attack"].tap()
-        XCTAssertTrue(app.staticTexts["rpg-combat-stats"].label.contains("月晶 1"))
+    func testStoryQuestPointsTheWayIn3D() {
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--rpg-story-village-ui-tests"])
+        enterSandbox(app)
+        waitProbe(app, "the fixture is at the village quest") { $0["node"] == "villageGate" }
+        let hint = waitForAny("glass3d-story-hint", in: app, timeout: 10, "the quest hint on the 3D HUD")
+        XCTAssertTrue(hint.label.contains("月光村"), "the hint names the place: \(hint.label)")
+        attach(app, name: "review-story-hint-3d")
+        hint.tap()
+        let text = app.staticTexts["rpg-story-text"]
+        XCTAssertTrue(text.waitForExistence(timeout: 8)); XCTAssertTrue(text.label.contains("月光村"), text.label)
+        let travel = app.buttons["rpg-story-travel"]; XCTAssertTrue(travel.waitForExistence(timeout: 5)); travel.tap()
+        XCTAssertTrue(waitForAny("glass3d-story-hint", in: app, timeout: 10, "back in the world with the hint").exists)
+        XCTAssertFalse(app.staticTexts["rpg-story-text"].exists, "following the way closes the panel")
     }
 
-    @MainActor
-    func testRPGMediaFramesBudgetLoopAndBackground() {
-        let app=launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world","--rpg-media-ui-tests","--treasure-wall-ui-tests"])
-        let ready=app.staticTexts["background-test-state"]
-        XCTAssertTrue(ready.waitForExistence(timeout:15))
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label == %@","背景测试就绪"),object:ready)],timeout:20),.completed)
-        app.buttons["navigation-me"].tap();app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8));app.buttons["rpg-tools"].tap()
-        func media(_ id:String,_ index:Int) {
-            let entrance=app.buttons[id]
-            guard revealListControl(entrance,in:app) else{return};entrance.tap()
-            let item=app.buttons["rpg-pick-scroll-fixture-\(index)"]
-            guard revealListControl(item,in:app) else{return};item.tap()
-            XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:NSPredicate(format:"label CONTAINS %@","Scroll fixture \(index)"),object:app.staticTexts["rpg-current-media"])],timeout:10),.completed)
-            app.buttons["rpg-media-back"].tap()
-        }
-        media("rpg-media-player",0);media("rpg-media-background",11)
-        app.buttons["rpg-tools-close"].tap()
-        let probe=app.staticTexts["rpg-media-probe"]
-        func waitMedia(_ condition:@escaping ([String:Int])->Bool) {
-            let predicate=NSPredicate{_,_ in
-                let pairs=(probe.value as? String ?? "").split(separator:";").compactMap{item->(String,Int)? in
-                    let pair=item.split(separator:"=",maxSplits:1);guard pair.count==2,let number=Int(pair[1]) else{return nil};return(String(pair[0]),number)
-                }
-                return condition(Dictionary(pairs,uniquingKeysWith:{first,_ in first}))
-            }
-            let result=XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:predicate,object:probe)],timeout:25)
-            if result != .completed { print("RPG_MEDIA_TIMEOUT: \(probe.value as? String ?? "missing")");print(app.debugDescription) }
-            XCTAssertEqual(result,.completed)
-        }
-        waitMedia{($0["frames"] ?? 0)>0 && ($0["posters"] ?? 0)>0 && ($0["advancing"] ?? 0)>0 && ($0["global"] ?? 99)<=2 && $0["muted"]==1}
-        XCUIDevice.shared.press(.home);app.activate()
-        waitMedia{($0["advancing"] ?? 0)>0 && $0["muted"]==1}
-        app.buttons["rpg-tools"].tap()
-        let player=app.buttons["rpg-media-player"];guard revealListControl(player,in:app) else{return};player.tap()
-        let loop=app.switches["rpg-binding-loop"]
-        guard revealListControl(loop,in:app) else{return};if loop.value as? String=="1"{loop.tap()}
-        XCTAssertEqual(loop.value as? String,"0")
-        app.buttons["rpg-media-back"].tap();app.buttons["rpg-tools-close"].tap()
-        waitMedia{($0["completed"] ?? 0)>0 && $0["players"]==0}
-        attach(app,name:"review-rpg-p5-media")
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout:5))
-    }
-
-    @MainActor
-    func testRPGSharedEntityAndSafeDualProjection() {
-        let app = launch(discover:false,flags:["--rpg-ui-tests","--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout:8)); app.buttons["rpg-tools"].tap()
-        app.segmentedControls["rpg-mode"].buttons["创造"].tap()
-        app.buttons["rpg-temple"].tap(); app.buttons["rpg-choose-mapped"].tap()
-        app.buttons["rpg-tools-close"].tap(); app.buttons["rpg-place"].tap()
-        let evidence = app.staticTexts["rpg-projection-evidence"]
-        let hasShared = NSPredicate { _,_ in (evidence.value as? String ?? "").contains("placed:") }
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:hasShared,object:evidence)],timeout:15),.completed)
-        let top = evidence.value as? String ?? ""
-        app.buttons["rpg-perspective"].tap()
-        let side = NSPredicate { _,_ in (evidence.value as? String ?? "").hasPrefix("side:") }
-        XCTAssertEqual(XCTWaiter.wait(for:[XCTNSPredicateExpectation(predicate:side,object:evidence)],timeout:10),.completed)
-        XCTAssertEqual((evidence.value as? String ?? "").dropFirst(5),top.dropFirst(8))
-        attach(app,name:"review-rpg-p4-side")
-        app.buttons["rpg-move-0-1"].tap()
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout:5))
-    }
-
-    @MainActor
-    func testRPGBuildUndoSaveAndReopen() {
-        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout: 8)); app.buttons["rpg-tools"].tap()
-        let mode = app.segmentedControls["rpg-mode"]
-        XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.buttons["创造"].tap()
-        app.buttons["rpg-choose-site"].tap(); app.buttons["rpg-tools-close"].tap()
-        app.buttons["rpg-place"].tap()
-        let count = app.staticTexts["rpg-placed-count"]
-        func waitCount(_ value: String) {
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value),object:count)],timeout:15),.completed)
-        }
-        waitCount("1"); app.buttons["rpg-undo"].tap(); waitCount("0")
-        app.buttons["rpg-redo"].tap(); waitCount("1")
-        app.buttons["rpg-close"].tap()
-        app.buttons["me-rpg-entrance"].tap(); waitCount("1")
-        attach(app,name:"review-rpg-p3-persisted-build")
-        app.buttons["rpg-close"].tap()
-    }
-
-    /// Glass lab: each experimental mode switches what renders (B one merged
-    /// native glass layer, C one native glass per nearest cell, A the drawn
-    /// texture), and a timed sample records a result. Functional only:
-    /// simulator frame rates say nothing about iPhone performance.
     /// An element by identifier, whatever type the system exposes it as
     /// (glass containers can report buttons as other types).
     @MainActor
@@ -292,12 +206,8 @@ final class ScrollGestureTests: XCTestCase {
         // A hang fails this test on its own instead of timing out the whole shard.
         executionTimeAllowance = 900
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--asset-director-fixtures"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        let enter = app.buttons["rpg-glass-world"]
-        XCTAssertTrue(enter.waitForExistence(timeout: 15))
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: enter)], timeout: 20), .completed)
-        enter.tap()
-        waitForAny("glass3d-settings", in: app, timeout: 40, "the 3D world opens").tap()
+        enterSandbox(app)
+        waitForAny("glass3d-settings", in: app, timeout: 5, "the ⋯ button").tap()
         // Never drag here: a drag on the 3D scene closes the ⋯ panel.
         waitForAny("glass3d-asset-director", in: app, timeout: 30, "the ⋯ panel offers the Asset Director").tap()
         waitForAny("asset-director-import-fixtures", in: app, timeout: 10, "the test-asset import").tap()
@@ -377,9 +287,9 @@ final class ScrollGestureTests: XCTestCase {
         _ = waitForAny("glass3d-settings", in: app, timeout: 40, "world3d opens the 3D world")
         attach(app, name: "review-widget-link-world3d")
         waitForAny("glass3d-close", in: app, timeout: 5, "the 3D world has a back button").tap()
-        XCTAssertTrue(app.buttons["rpg-glass-world"].waitForExistence(timeout: 10), "closing it leaves the sandbox open")
+        XCTAssertTrue(app.scrollViews["feed-scroll-discover"].waitForExistence(timeout: 10), "leaving returns to the page it came from")
         app.open(URL(string: "moonlight://sandbox")!)
-        XCTAssertTrue(app.buttons["rpg-glass-world"].waitForExistence(timeout: 10), "sandbox stays in the sandbox")
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "the sandbox link opens the 3D world too")
     }
 
     /// The 3D world end to end: place 月光水晶城, check the Xbox-style HUD,
@@ -388,12 +298,8 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     func testGlass3DGoldenCityBothViews() {
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        let enter = app.buttons["rpg-glass-world"]
-        XCTAssertTrue(enter.waitForExistence(timeout: 15))
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: enter)], timeout: 20), .completed)
-        enter.tap()
-        waitForAny("glass3d-settings", in: app, timeout: 40, "the 3D world opens").tap()
+        enterSandbox(app)
+        waitForAny("glass3d-settings", in: app, timeout: 5, "the ⋯ button").tap()
         waitForAny("glass3d-place-town", in: app, timeout: 5, "the ⋯ panel offers 月光水晶城").tap()
 
         // Face buttons follow the controller: attack on X, jump on A, dodge on B, skill on Y.
@@ -442,69 +348,11 @@ final class ScrollGestureTests: XCTestCase {
         return colours.count
     }
 
+    /// Launching straight into the sandbox: the prologue once, landscape,
+    /// no bottom bar, leaving returns to the last page, and coming back
+    /// neither replays the prologue nor rebuilds anything.
     @MainActor
-    func testRPGGlassLabModesAndSample() {
-        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world", "--glass-lab-ui-tests", "--glass-sample-short"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        let tools = app.buttons["rpg-tools"]
-        XCTAssertTrue(tools.waitForExistence(timeout: 10))
-        let state = app.staticTexts["rpg-glass-state"]
-        func waitState(_ fragment: String, _ timeout: TimeInterval = 10, _ line: UInt = #line) {
-            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", fragment), object: state)], timeout: timeout)
-            XCTAssertEqual(result, .completed, "glass state \(state.value ?? "nil") lacks \(fragment)", line: line)
-        }
-        func choose(_ mode: String, nearest: String? = nil) {
-            tools.tap()
-            let diagnostics = app.buttons["rpg-diagnostics"]
-            guard revealListControl(diagnostics, in: app) else { return }
-            diagnostics.tap()
-            let button = app.buttons["rpg-glass-mode-" + mode]
-            XCTAssertTrue(button.waitForExistence(timeout: 5)); button.tap()
-            if let nearest {
-                let picker = app.segmentedControls["rpg-glass-nearest"]
-                XCTAssertTrue(picker.waitForExistence(timeout: 5)); picker.buttons[nearest].tap()
-            }
-            app.buttons["rpg-diagnostics-back"].tap(); app.buttons["rpg-tools-close"].tap()
-        }
-        let grid = app.descendants(matching: .any)["rpg-grid-glass"]
-
-        choose("nativeMerged")
-        waitState("render=nativeMerged")
-        XCTAssertTrue(grid.waitForExistence(timeout: 5))
-        XCTAssertTrue((grid.value as? String ?? "").hasPrefix("merged:"), "B is one merged glass layer: \(grid.value ?? "nil")")
-        attach(app, name: "review-glass-lab-b-merged")
-
-        choose("nativeNearest", nearest: "64")
-        waitState("render=nativeNearest:64")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "nearest:64"), object: grid)], timeout: 5), .completed)
-        attach(app, name: "review-glass-lab-c-nearest-64")
-
-        choose("texture")
-        waitState("render=texture")
-        XCTAssertFalse(grid.waitForExistence(timeout: 2), "A is drawn by SpriteKit, no native glass views")
-        attach(app, name: "review-glass-lab-a-texture")
-
-        tools.tap()
-        let diagnostics = app.buttons["rpg-diagnostics"]
-        guard revealListControl(diagnostics, in: app) else { return }
-        diagnostics.tap()
-        let run = app.buttons["rpg-glass-run"]
-        XCTAssertTrue(run.waitForExistence(timeout: 5)); run.tap()
-        XCTAssertTrue(app.staticTexts["rpg-glass-sample"].waitForExistence(timeout: 8), "sample runs on the uncovered world")
-        waitState("samples=1", 30)
-
-        choose("selected")
-        waitState("render=selected")
-        app.buttons["rpg-close"].tap()
-    }
-
-    /// Task C: the app opens into the most recent world in landscape with
-    /// the bottom bar hidden; the prologue is skippable without touching the
-    /// world; the control center pauses input and returns the world as it
-    /// was; leaving goes to portrait pages and coming back neither reloads
-    /// the world nor replays the prologue.
-    @MainActor
-    func testSandboxLaunchControlCenterAndPortraitPages() {
+    func testSandboxLaunchPrologueAndReturn() {
         let app = XCUIApplication()
         app.launchArguments = ["--scroll-ui-tests", "--rpg-ui-tests", "--rpg-reset-world", "--sandbox-launch-ui-tests",
                                "--sandbox-landscape-ui-tests", "--prologue-ui-tests"]
@@ -514,62 +362,29 @@ final class ScrollGestureTests: XCTestCase {
             let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: orientation)], timeout: 10)
             XCTAssertEqual(result, .completed, "layout is \(orientation.value ?? "nil"), expected \(value)", line: line)
         }
-        func waitGone(_ element: XCUIElement, _ line: UInt = #line) {
-            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)], timeout: 6)
-            XCTAssertEqual(result, .completed, "\(element) still on screen", line: line)
-        }
         let prologue = app.descendants(matching: .any)["world-prologue"]
-        XCTAssertTrue(prologue.waitForExistence(timeout: 25), "world prologue after launch")
+        XCTAssertTrue(prologue.waitForExistence(timeout: 40), "world prologue after launch")
         attach(app, name: "review-sandbox-prologue")
         prologue.tap()
-        waitGone(prologue)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: prologue)], timeout: 6), .completed)
+        _ = waitForAny("glass3d-settings", in: app, timeout: 20, "the 3D world under the prologue")
         waitOrientation("landscape")
-        let count = app.staticTexts["rpg-placed-count"]
-        XCTAssertEqual(count.value as? String, "0", "skipping the prologue must not build")
         XCTAssertFalse(app.buttons["navigation-home"].exists && app.buttons["navigation-home"].isHittable, "bottom bar hidden in the sandbox")
-        let position = app.staticTexts["rpg-position"]
-        XCTAssertTrue(position.waitForExistence(timeout: 5))
-        let startPosition = position.label
+        let world = probeValues(app)["world"]
         attach(app, name: "review-sandbox-landscape")
-
-        let menu = app.buttons["rpg-menu"]
-        menu.tap()
-        let center = app.descendants(matching: .any)["world-control-center"]
-        XCTAssertTrue(center.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["world-title"].label.hasPrefix("原世界 · Seed"))
-        for id in ["world-nav-home", "world-nav-discover", "world-nav-camera", "world-nav-moments", "world-nav-me",
-                   "world-fn-build", "world-fn-story", "world-fn-media", "world-fn-settings", "world-fn-app-settings", "world-create"] {
-            XCTAssertTrue(app.buttons[id].exists, "control center entry \(id)")
-        }
-        XCTAssertFalse(app.buttons["rpg-move-1-0"].exists, "world controls are shielded while the center is open")
-        attach(app, name: "review-world-control-center")
-        app.buttons["world-continue"].tap()
-        waitGone(center)
-        XCTAssertTrue(app.buttons["rpg-move-1-0"].waitForExistence(timeout: 5))
-        XCTAssertEqual(position.label, startPosition, "world unchanged after the control center")
-
-        menu.tap()
-        XCTAssertTrue(center.waitForExistence(timeout: 5))
-        app.buttons["world-nav-discover"].tap()
-        XCTAssertTrue(app.buttons["discover-sources"].waitForExistence(timeout: 10))
+        waitForAny("glass3d-close", in: app, timeout: 5, "leave the sandbox").tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 10), "leaving returns to the last page")
         waitOrientation("portrait")
         XCTAssertTrue(app.buttons["navigation-sandbox"].waitForExistence(timeout: 5))
-        app.buttons["home-segment-recommend"].tap()
-        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 5))
-        attach(app, name: "review-home-recommend-discover")
-
         app.buttons["navigation-sandbox"].tap()
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "back into the 3D world")
         waitOrientation("landscape")
         XCTAssertFalse(prologue.waitForExistence(timeout: 2), "prologue does not replay when returning")
-        XCTAssertEqual(position.label, startPosition, "returning resumes the same world")
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 10), "完成 returns to the last page")
-        waitOrientation("portrait")
+        XCTAssertEqual(probeValues(app)["world"], world, "returning resumes the same world")
+        waitForAny("glass3d-close", in: app, timeout: 5, "leave again").tap()
+        XCTAssertTrue(app.scrollViews["feed-scroll-home"].waitForExistence(timeout: 10))
     }
 
-    /// A world saved by a newer app version cannot open: instead of a blank
-    /// or endless loading screen the sandbox explains and offers a new world.
     @MainActor
     func testSandboxLoadFailureOffersNewWorld() {
         let app = XCUIApplication()
@@ -581,126 +396,19 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.buttons["world-load-retry"].exists)
         attach(app, name: "review-sandbox-load-failure")
         create.tap()
-        let chunks = app.staticTexts["rpg-loaded-chunks"]
-        let loaded = NSPredicate { _, _ in (Int(chunks.value as? String ?? "0") ?? 0) > 0 }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: loaded, object: chunks)], timeout: 20), .completed)
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "a new world opens in 3D")
         XCTAssertFalse(create.exists)
-        XCTAssertEqual(app.staticTexts["rpg-placed-count"].value as? String, "0")
+        waitProbe(app, "the new world is empty") { $0["legacy"] == "0" && ($0["world"] ?? "") != "future-world" }
     }
 
-    /// Cell content MVP: one block gets a number, an edit is cancelled, an
-    /// icon is applied and undone, the selection glass follows the camera,
-    /// delete and undo, and the content survives closing and reopening.
+    /// The sandbox opens in 3D and leaves cleanly; other pages keep working.
     @MainActor
-    func testRPGCellContentEditorGlassAndReopen() {
+    func testSandboxOpensThe3DWorldAndLeaves() {
         let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertTrue(app.buttons["rpg-tools"].waitForExistence(timeout: 8)); app.buttons["rpg-tools"].tap()
-        let mode = app.segmentedControls["rpg-mode"]
-        XCTAssertTrue(mode.waitForExistence(timeout: 8)); mode.buttons["创造"].tap()
-        app.buttons["rpg-choose-site"].tap(); app.buttons["rpg-tools-close"].tap()
-        app.buttons["rpg-place"].tap()
-        let count = app.staticTexts["rpg-placed-count"]
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
-        let content = app.staticTexts["rpg-cell-content"]
-        func waitContent(_ value: String, _ line: UInt = #line) {
-            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: content)], timeout: 15)
-            XCTAssertEqual(result, .completed, "cell content \(content.value ?? "nil") != \(value)", line: line)
-        }
-        waitContent("empty")
-
-        let glass = app.descendants(matching: .any)["rpg-selection-glass"]
-        XCTAssertTrue(glass.waitForExistence(timeout: 8))
-        XCTAssertEqual(glass.value as? String, "native", "iOS 26 simulator uses native Liquid Glass")
-        XCTAssertGreaterThan(glass.frame.width, 20)
-
-        let kind = app.segmentedControls["rpg-cell-kind"]
-        let confirm = app.buttons["rpg-cell-confirm"]
-        app.buttons["rpg-edit-cell"].tap()
-        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["数字"].tap()
-        let field = app.textFields["rpg-cell-value"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap()
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 6) + "42")
-        let preview = app.descendants(matching: .any)["rpg-cell-preview"]
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "number:42"), object: preview)], timeout: 5), .completed)
-        attach(app, name: "review-rpg-cell-editor-number")
-        confirm.tap()
-        waitContent("number:42")
-
-        app.buttons["rpg-edit-cell"].tap()
-        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["文字"].tap()
-        app.buttons["rpg-cell-cancel"].tap()
-        waitContent("number:42")
-
-        app.buttons["rpg-edit-cell"].tap()
-        XCTAssertTrue(kind.waitForExistence(timeout: 8)); kind.buttons["图标"].tap()
-        app.buttons["rpg-cell-symbol-moon.stars.fill"].tap(); confirm.tap()
-        waitContent("icon:moon.stars.fill")
-        attach(app, name: "review-rpg-cell-icon-glass")
-        app.buttons["rpg-undo"].tap()
-        waitContent("number:42")
-
-        // Moving the player moves the camera; the glass must stay on the
-        // selected cell, so its on-screen position shifts.
-        let start = glass.frame
-        var followed = false
-        for direction in ["rpg-move-1-0", "rpg-move--1-0", "rpg-move-0-1", "rpg-move-0--1"] where !followed {
-            app.buttons[direction].tap()
-            let moved = NSPredicate { _, _ in abs(glass.frame.midX - start.midX) > 10 || abs(glass.frame.midY - start.midY) > 10 }
-            followed = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 4) == .completed
-        }
-        XCTAssertTrue(followed, "selection glass follows the camera")
-        waitContent("number:42")
-
-        // Delete clears the content but keeps the block, and is undoable.
-        app.buttons["rpg-edit-cell"].tap()
-        XCTAssertTrue(app.buttons["rpg-cell-delete"].waitForExistence(timeout: 8)); app.buttons["rpg-cell-delete"].tap()
-        waitContent("empty")
-        XCTAssertEqual(count.value as? String, "1", "deleting content keeps the block")
-        app.buttons["rpg-undo"].tap()
-        waitContent("number:42")
-
-        // The content survives leaving and reopening the world. Checked over
-        // the whole world so the result does not depend on re-selecting.
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-rpg-entrance"].waitForExistence(timeout: 8)); app.buttons["me-rpg-entrance"].tap()
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: count)], timeout: 15), .completed)
-        let cells = app.staticTexts["rpg-world-cells"]
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "number:42"), object: cells)], timeout: 15), .completed,
-                       "world cells after reopening: \(cells.value ?? "nil")")
-        attach(app, name: "review-rpg-cell-reopened")
-        app.buttons["rpg-close"].tap()
-    }
-
-    @MainActor
-    func testRPGWorldSeedChunksAndMovement() {
-        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
-        app.buttons["navigation-me"].tap(); app.buttons["me-rpg-entrance"].tap()
-        let count = app.staticTexts["rpg-loaded-chunks"]
-        XCTAssertTrue(count.waitForExistence(timeout: 8))
-        let ready = NSPredicate { _, _ in (Int(count.value as? String ?? "0") ?? 0) > 0 }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: count)], timeout: 20), .completed)
-        let position = app.staticTexts["rpg-position"]
-        let before = position.label
-        app.buttons["rpg-move-1-0"].tap()
-        XCTAssertNotEqual(position.label, before)
-        app.buttons["rpg-move--1-0"].tap()
-        XCTAssertEqual(position.label, before)
-        attach(app, name: "review-rpg-p2-world")
-        app.buttons["rpg-close"].tap()
-    }
-
-    @MainActor
-    func testRPGSkeletonCanValidateExitAndPreserveOtherModules() {
-        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
-        app.buttons["navigation-me"].tap()
-        let entrance = app.buttons["me-rpg-entrance"]
-        XCTAssertTrue(entrance.waitForExistence(timeout: 5)); entrance.tap()
-        XCTAssertTrue(app.buttons["rpg-close"].waitForExistence(timeout: 5))
-        app.buttons["rpg-validate"].tap()
-        XCTAssertTrue(app.staticTexts["世界数据往返校验通过。"].waitForExistence(timeout: 5))
-        app.buttons["rpg-close"].tap()
-        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout: 5))
+        enterSandbox(app)
+        XCTAssertFalse(app.buttons["rpg-tools"].exists, "the old 2D sandbox is gone")
+        waitForAny("glass3d-close", in: app, timeout: 5, "leave the sandbox").tap()
+        XCTAssertTrue(app.buttons["me-library"].waitForExistence(timeout: 8))
         app.buttons["me-treasure-map"].tap()
         XCTAssertTrue(app.buttons["treasure-wall-mode"].waitForExistence(timeout: 5))
         app.buttons["treasure-map-close"].tap()

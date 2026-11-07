@@ -31,13 +31,29 @@ enum RPGStorySpatial {
         return true
     }
 
+    // MARK: Opening a save
+
+    /// Story enemies carry ids from `RPGStoryRuntime.enemyID`.
+    static func isStoryEnemy(_ id: String) -> Bool { id.hasPrefix("story:") }
+
+    /// A save from the old 2D sandbox: the wandering enemies its map spawned
+    /// never appear in 3D, so they are dropped, and the combat flag only
+    /// counts story enemies still standing (a stale flag would block every
+    /// story from starting). Story enemies, the defeated list and everything
+    /// else stay as saved.
+    static func normalize(_ world: inout WorldState) {
+        world.combat.enemies.removeAll { !isStoryEnemy($0.id) }
+        world.player.inCombat = world.player.health > 0 && world.combat.enemies.contains { $0.health > 0 && $0.aggro && $0.surface != nil && $0.scope != .sideOnly }
+        if world.player.perspective != .topDown { world.player.perspective = .topDown }
+    }
+
     // MARK: Enemies
 
     /// Story enemies the 3D world should show: alive, on the surface, not
     /// already defeated.
     static func storyCreatures(for world: WorldState) -> [CreatureEntity] {
         world.combat.enemies.compactMap { enemy in
-            guard enemy.health > 0, let s = enemy.surface, enemy.scope != .sideOnly, !world.combat.defeatedIDs.contains(enemy.id) else { return nil }
+            guard isStoryEnemy(enemy.id), enemy.health > 0, let s = enemy.surface, enemy.scope != .sideOnly, !world.combat.defeatedIDs.contains(enemy.id) else { return nil }
             let at = SpatialVector(Double(s.x) + 0.5, Double(s.z) + 0.5, 0)
             return CreatureEntity(id: creaturePrefix + enemy.id, kind: enemy.boss ? .miniBoss : .enemy, position: at, home: at,
                                   health: enemy.health, maxHealth: enemy.maximumHealth, damage: enemy.boss ? 10 : 7, origin: .generated)

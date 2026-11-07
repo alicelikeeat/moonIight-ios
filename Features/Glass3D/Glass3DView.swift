@@ -227,6 +227,17 @@ struct Glass3DScreen: View {
             ForEach(controller.pickChoices) { choice in Button(choice.title) { controller.selection = [choice.id]; controller.pickChoices = [] } }
             Button(L10n.t("取消", "Cancel"), role: .cancel) { controller.pickChoices = [] }
         }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            if ProcessInfo.processInfo.arguments.contains("--rpg-ui-tests") {
+                // What the save holds, for UI tests (this screen does not observe the session).
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    Text("world").font(.system(size: 1)).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("glass3d-world-probe").accessibilityValue(Self.probe(session))
+                }
+            }
+        }
+        #endif
         .statusBarHidden()
         // A container that keeps its children: an identifier on the bare root
         // made the whole screen one opaque element (tests and VoiceOver saw nothing inside).
@@ -424,6 +435,13 @@ struct Glass3DScreen: View {
         }
         Glass3DBossBar(live: controller.live)
     }
+
+    #if DEBUG
+    static func probe(_ session: RPGSession) -> String {
+        let story = session.world.story
+        return "shards=\(session.moonShards);legacy=\(session.world.entities.count);ended=\(story.activeProgress?.ended == true ? 1 : 0);node=\(story.activeProgress?.current ?? "-");world=\(session.world.id)"
+    }
+    #endif
 
     // MARK: Sandbox pages (story, worlds, diagnostics, settings)
 
