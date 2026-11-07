@@ -3047,7 +3047,7 @@ do {
     check(m.action(for: .b, playing: true) == .jump && m.action(for: .a, playing: true) == .dodge, "assigning a taken button swaps the two actions")
     check(!m.assign(.rightTrigger, to: .flyUp, playing: false) && m.button(for: .flyUp, playing: false) == .rightShoulder, "triggers stay reserved for design-mode zoom")
     m.assign(.up, to: .flyUp, playing: false)
-    check(m.action(for: .up, playing: false) == .flyUp && m.action(for: .rightShoulder, playing: false) == nil && m.action(for: .up, playing: true) == nil, "modes keep separate tables")
+    check(m.action(for: .up, playing: false) == .flyUp && m.action(for: .rightShoulder, playing: false) == nil && m.action(for: .up, playing: true) == .flight, "modes keep separate tables (play keeps D-pad up for flight)")
     m.clear(.attack, playing: true)
     let x = SpatialPadState(buttons: [.x])
     check(SpatialGamepad.actions(x, previous: SpatialPadState(), playing: true, mapping: m).isEmpty, "a cleared action does nothing")
@@ -3367,6 +3367,7 @@ try storySpatialTests()
 try contentCompilerTests()
 cinematicTests()
 demoLevelTests()
+flightTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.

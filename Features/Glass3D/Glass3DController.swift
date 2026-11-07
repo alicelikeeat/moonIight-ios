@@ -190,6 +190,24 @@ struct Glass3DPending {
     private var lastTime: CFTimeInterval?
     private var stick = (x: 0.0, y: 0.0)
     private var jumpRequested = false
+    /// v1.89 flight: on/off, and the lift from the touch buttons and the pad.
+    @Published private(set) var flying = false
+    private var touchLift = 0.0, padLift = 0.0
+    private var flightCarry = 0.0
+    func setLift(_ value: Double) { touchLift = value.isFinite ? max(-1, min(1, value)) : 0 }
+    func toggleFlight() {
+        guard mode == .play, health > 0 else { return }
+        if flying { endFlight(L10n.t("飞行结束，慢慢落下", "Flight off: gliding down")); return }
+        guard stamina >= SpatialFlight.takeOffStamina else { notice = L10n.t("耐力不足，不能起飞", "Not enough stamina to take off"); return }
+        flying = true; flightCarry = 0
+        notice = L10n.t("飞行中：按住 ↑ 上升、↓ 下降，空中每秒耐力 −6", "Flying: hold ↑ to climb, ↓ to sink; 6 stamina a second in the air")
+        effects.burst(.magic, at: world.player.position + SpatialVector(0, 0, 0.3), seconds: 0.5, clock: world.clock, quality: quality)
+    }
+    private func endFlight(_ message: String? = nil) {
+        guard flying else { return }
+        flying = false; touchLift = 0; padLift = 0
+        if let message { notice = message }
+    }
     private var invulnerable = 0.0
     private var localCooldowns = (strike: 0.0, skill: 0.0, roll: 0.0)
     private var staticGeometry = SpatialGeometry(blocks: [])
@@ -316,7 +334,7 @@ struct Glass3DPending {
     private func modeChanged() {
         glide = nil; stick = (0, 0); look = (0, 0); padMoving = false; padLooking = false
         pending = nil; selection = []; trackPoints = []; picked = nil
-        skipCinematic()
+        skipCinematic(); endFlight()
         if mode == .edit { designOverview(); return }
         camera.tilt = SpatialCameraRules.playTilt
         camera.target = world.player.position; if thirdPerson { cameraBehindPlayer() }
@@ -447,7 +465,8 @@ struct Glass3DPending {
         let alive = health > 0
         if alive {
             let direction = SpatialCameraRules.worldDirection(stickX: stick.x, stickY: stick.y, yaw: camera.yaw)
-            let input = SpatialInput(dx: direction.dx, dy: direction.dy, jump: jumpRequested)
+            let input = SpatialInput(dx: direction.dx, dy: direction.dy, jump: jumpRequested && !flying, flying: flying,
+                                     lift: max(-1, min(1, touchLift + padLift)))
             jumpRequested = false
             SpatialPhysics.step(&world.player, input: input, dt: dt, geometry: geometry, previous: previousGeometry)
             for box in geometry.touching(x: world.player.position.x, y: world.player.position.y, z: world.player.position.z) where box.buttonTarget != nil {
@@ -459,8 +478,14 @@ struct Glass3DPending {
         localCooldowns = (max(0, localCooldowns.strike - dt), max(0, localCooldowns.skill - dt), max(0, localCooldowns.roll - dt))
         let rings = [localCooldowns.strike / 0.35, localCooldowns.skill / 3, localCooldowns.roll / 1.2].map { ($0 * 10).rounded() / 10 }
         if rings != cooldowns { cooldowns = rings }
-        staminaBuffer += dt * 14
-        if alive, stamina < 100, staminaBuffer >= 1 { stamina = min(100, stamina + Int(staminaBuffer)); staminaBuffer = 0 }
+        if flying && !world.player.grounded {
+            // In the air: stamina drains instead of refilling; empty ends the flight.
+            stamina = SpatialFlight.stamina(stamina, afterAirborne: dt, carry: &flightCarry)
+            if stamina == 0 { endFlight(L10n.t("耐力耗尽，开始下落", "Out of stamina: falling")) }
+        } else {
+            staminaBuffer += dt * 14
+            if alive, stamina < 100, staminaBuffer >= 1 { stamina = min(100, stamina + Int(staminaBuffer)); staminaBuffer = 0 }
+        }
         // Creatures: near ones every frame, far ones twice a second.
         farTimer += dt
         let far = farTimer >= 0.5
@@ -503,7 +528,7 @@ struct Glass3DPending {
     private func hurt(_ damage: Int) {
         guard invulnerable <= 0, health > 0 else { return }
         health = max(0, health - RPGGear.damageTaken(damage, armor: session.world.player.armor))
-        if health == 0 { notice = L10n.t("生命耗尽，点「复苏」回到出生点。", "Out of health. Tap Revive to return to the spawn.") }
+        if health == 0 { endFlight(); notice = L10n.t("生命耗尽，点「复苏」回到出生点。", "Out of health. Tap Revive to return to the spawn.") }
     }
 
     private func collectPickups() {
@@ -833,6 +858,9 @@ struct Glass3DPending {
         let playing = mode == .play
         let layout = mapping.mapping
         for action in SpatialGamepad.actions(pad, previous: previous, playing: playing, mapping: layout) { perform(action) }
+        // Flying: A held climbs, B held sinks.
+        let held = SpatialGamepad.held(pad)
+        padLift = flying && playing ? (held.contains(.a) ? 1 : 0) - (held.contains(.b) ? 1 : 0) : 0
         let move = SpatialGamepad.move(pad, mapping: layout), look = SpatialGamepad.look(pad, mapping: layout)
         let moving = move.x != 0 || move.y != 0, looking = look.x != 0 || look.y != 0
         if playing {
@@ -864,6 +892,7 @@ struct Glass3DPending {
         case .flyDown: fly(-2)
         case .backToCharacter: backToCharacter()
         case .straightDown: lookStraightDown()
+        case .flight: toggleFlight()
         }
     }
 

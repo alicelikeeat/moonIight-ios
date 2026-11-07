@@ -21,6 +21,7 @@ struct Glass3DPlayHUD: View {
         HStack(alignment: .bottom, spacing: 12) {
             VStack(alignment: .leading, spacing: 8) {
                 Glass3DVitals(live: controller.live)
+                if !controller.dead { flightControls }
                 Glass3DStick { x, y in controller.setStick(x, y) }
             }
             Spacer()
@@ -33,8 +34,11 @@ struct Glass3DPlayHUD: View {
         }
     }
 
-    /// Portrait: vitals left and the shoulder row right above; the move
-    /// stick, look stick and face diamond along the bottom.
+    /// Portrait (v1.89): the two sticks on opposite edges — move stick in
+    /// the bottom-left corner, look stick against the right edge above the
+    /// face diamond — so thumbs never meet in the middle (they sat side by
+    /// side on a 400-point-wide phone). Vitals left and the skill row right
+    /// stay above.
     private var portraitLayout: some View {
         VStack(spacing: 10) {
             HStack(alignment: .bottom, spacing: 8) {
@@ -43,9 +47,20 @@ struct Glass3DPlayHUD: View {
                 if !controller.dead { shoulderRow(size: 42) }
             }
             HStack(alignment: .bottom, spacing: 8) {
-                Glass3DStick(onVector: { x, y in controller.setStick(x, y) }, size: 108)
-                Spacer(minLength: 0)
-                if controller.dead { reviveButton } else { rightHalf(face: 52, stick: 88) }
+                VStack(alignment: .leading, spacing: 10) {
+                    if !controller.dead { flightControls }
+                    Glass3DStick(onVector: { x, y in controller.setStick(x, y) }, size: 116)
+                }
+                Spacer(minLength: 24)
+                if controller.dead { reviveButton } else {
+                    VStack(alignment: .trailing, spacing: 12) {
+                        HStack(alignment: .center, spacing: 10) {
+                            lockButton(size: 40)
+                            lookStick(size: 84)
+                        }
+                        faceDiamond(size: 50)
+                    }
+                }
             }
         }
     }
@@ -88,6 +103,42 @@ struct Glass3DPlayHUD: View {
             }
             .padding(.bottom, stick * 0.45)
         }
+    }
+
+    /// v1.89 flight: the on/off button (D-pad up on a controller), and while
+    /// flying, hold-to-climb and hold-to-sink buttons beside it.
+    private var flightControls: some View {
+        HStack(spacing: 8) {
+            Glass3DRoundButton(symbol: controller.flying ? "arrow.down.to.line" : "bird",
+                               title: controller.flying ? L10n.t("降落", "Land") : L10n.t("飞行", "Fly"),
+                               size: 44, ring: .none, live: controller.live, id: "glass3d-flight", cap: .up) { controller.toggleFlight() }
+            if controller.flying {
+                Glass3DHoldButton(symbol: "chevron.up", title: L10n.t("上升", "Climb"), id: "glass3d-fly-up") { controller.setLift($0 ? 1 : 0) }
+                Glass3DHoldButton(symbol: "chevron.down", title: L10n.t("下降", "Sink"), id: "glass3d-fly-down") { controller.setLift($0 ? -1 : 0) }
+            }
+        }
+    }
+
+    /// The face diamond on its own (portrait puts the look stick above it).
+    private func faceDiamond(size: CGFloat) -> some View {
+        let side = CGFloat(SpatialPadHUDLayout.diamondSide(size: Double(size)))
+        let face = SpatialPadHUDLayout.actions(SpatialPadHUDLayout.face, mapping: pads.mapping)
+        return RPGGlassGroup(spacing: 8) {
+            ZStack(alignment: .topLeading) {
+                ForEach(Array(face.enumerated()), id: \.offset) { _, slot in
+                    if let c = SpatialPadHUDLayout.faceCenter(slot.button, size: Double(size)) {
+                        padButton(slot.button, slot.action, size: size)
+                            .position(x: CGFloat(c.x), y: CGFloat(c.y))
+                    }
+                }
+            }
+            .frame(width: side, height: side)
+        }
+    }
+    /// The right-stick click (lock-on by default).
+    private func lockButton(size: CGFloat) -> some View {
+        let click = SpatialPadHUDLayout.stickClick
+        return padButton(click, pads.mapping.action(for: click, playing: true), size: size)
     }
 
     private func padButton(_ button: SpatialPadButton, _ action: SpatialPadAction?, size: CGFloat) -> some View {
@@ -146,9 +197,32 @@ struct Glass3DPadButton: View {
             }
         case .switchMode: PadVisual(symbol: "hammer", title: L10n.t("切换游玩 / 设计", "Play / Design"), id: "glass3d-pad-switch", ring: .none)
         case .switchPerspective: PadVisual(symbol: "square.grid.3x3.fill", title: L10n.t("切换像素 / 3D", "Pixel / 3D"), id: "glass3d-pad-perspective", ring: .none)
+        case .flight: PadVisual(symbol: controller.flying ? "arrow.down.to.line" : "bird", title: controller.flying ? L10n.t("降落", "Land") : L10n.t("飞行", "Fly"), id: "glass3d-pad-flight", ring: .none)
         case .flyUp, .flyDown, .backToCharacter, .straightDown:
             PadVisual(symbol: "circle.dotted", title: action.title, id: "glass3d-pad-\(action.key)", ring: .none, enabled: false)
         }
+    }
+}
+
+/// A round glass button that acts while held (flight climb / sink).
+struct Glass3DHoldButton: View {
+    let symbol: String
+    let title: String
+    let id: String
+    let onHold: (Bool) -> Void
+    @State private var held = false
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: 15, weight: .bold))
+            .frame(width: 44, height: 44).contentShape(Circle())
+            .hudGlass(.interactive, in: Circle())
+            .scaleEffect(held ? 0.9 : 1)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !held { held = true; onHold(true) } }
+                .onEnded { _ in held = false; onHold(false) })
+            .onDisappear { if held { held = false; onHold(false) } }
+            .accessibilityElement().accessibilityLabel(title).accessibilityAddTraits(.isButton)
+            .accessibilityAction { onHold(true); DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { onHold(false) } }
+            .accessibilityIdentifier(id)
     }
 }
 

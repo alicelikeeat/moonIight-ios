@@ -80,6 +80,7 @@ extension SpatialPadAction {
         case .flyDown: L10n.t("镜头下降", "Camera Down")
         case .backToCharacter: L10n.t("回到角色", "Back to Character")
         case .straightDown: L10n.t("俯视", "Look Straight Down")
+        case .flight: L10n.t("飞行（开 / 关）", "Flight (On / Off)")
         }
     }
 }

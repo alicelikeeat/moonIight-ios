@@ -139,6 +139,26 @@ struct SpatialInput: Equatable, Sendable {
     var dx = 0.0
     var dy = 0.0
     var jump = false
+    /// v1.89 flight: no gravity, faster, `lift` −1…1 climbs or sinks.
+    var flying = false
+    var lift = 0.0
+}
+
+/// Flight rules (v1.89): what it costs and how high it goes.
+enum SpatialFlight {
+    static let horizontalScale = 1.7
+    static let climbSpeed = 5.0
+    static let maximumAltitude = 48.0
+    /// Stamina needed to take off, and spent per second in the air.
+    static let takeOffStamina = 15
+    static let staminaPerSecond = 6.0
+    /// Stamina left after `seconds` in the air (never below 0).
+    static func stamina(_ stamina: Int, afterAirborne seconds: Double, carry: inout Double) -> Int {
+        guard seconds > 0, seconds.isFinite else { return stamina }
+        carry += seconds * staminaPerSecond
+        let whole = Int(carry); carry -= Double(whole)
+        return max(0, stamina - whole)
+    }
 }
 
 enum SpatialPhysics {
@@ -169,7 +189,8 @@ enum SpatialPhysics {
         let length = min(1, (input.dx * input.dx + input.dy * input.dy).squareRoot())
         if length > 0.01 {
             let raw = max(1e-9, (input.dx * input.dx + input.dy * input.dy).squareRoot())
-            let mx = input.dx / raw * length * walkSpeed * dt, my = input.dy / raw * length * walkSpeed * dt
+            let speed = walkSpeed * (input.flying ? SpatialFlight.horizontalScale : 1)
+            let mx = input.dx / raw * length * speed * dt, my = input.dy / raw * length * speed * dt
             player.facing = atan2(input.dy, input.dx) * 180 / .pi
             for (ax, ay) in [(mx, 0.0), (0.0, my)] where ax != 0 || ay != 0 {
                 let nx = min(Double(WorldGeometry.width) - 0.31, max(0.31, p.x + ax)), ny = min(Double(WorldGeometry.width) - 0.31, max(0.31, p.y + ay))
@@ -181,6 +202,23 @@ enum SpatialPhysics {
                     if step.height > p.z { p.z = step.height }
                 }
             }
+        }
+        if input.flying {
+            // Flight: the lift sets the vertical speed, no gravity; blocks
+            // still stop the body, the ground (or a roof) lands it.
+            let lift = input.lift.isFinite ? max(-1, min(1, input.lift)) : 0
+            player.verticalSpeed = lift * SpatialFlight.climbSpeed
+            var nz = min(SpatialFlight.maximumAltitude, p.z + player.verticalSpeed * dt)
+            if player.verticalSpeed > 0, let ceiling = geometry.ceiling(x: p.x, y: p.y, z: p.z), nz + SpatialGeometry.playerHeight > ceiling {
+                nz = max(p.z, ceiling - SpatialGeometry.playerHeight); player.verticalSpeed = 0
+            }
+            let floor = geometry.support(x: p.x, y: p.y, z: max(p.z, nz), stepUp: 0.05, falling: true)
+            if nz <= floor.height { nz = floor.height; player.grounded = true; if player.verticalSpeed < 0 { player.verticalSpeed = 0 } }
+            else { player.grounded = false }
+            p.z = nz
+            if player.grounded && floor.box?.groupID == nil { player.lastSafe = p }
+            player.position = p
+            return
         }
         // Jump and gravity.
         if input.jump && player.grounded { player.verticalSpeed = jumpSpeed; player.grounded = false }

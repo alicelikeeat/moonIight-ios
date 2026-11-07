@@ -32,6 +32,8 @@ enum SpatialPadAction: Equatable, Sendable {
     /// v1.86: pixel overhead ⇄ third-person 3D (hybrid world).
     case switchPerspective
     case flyUp, flyDown, backToCharacter, straightDown
+    /// v1.89: the player's flight on / off.
+    case flight
 }
 
 enum SpatialGamepad {
@@ -95,6 +97,7 @@ enum SpatialGamepad {
             case .rightShoulder: return .hotbar(1)
             case .leftTrigger: return .hotbar(2)
             case .rightTrigger: return .hotbar(3)
+            case .up: return .flight
             default: return nil
             }
         }
@@ -140,6 +143,7 @@ extension SpatialPadAction {
         case .flyDown: return "flyDown"
         case .backToCharacter: return "backToCharacter"
         case .straightDown: return "straightDown"
+        case .flight: return "flight"
         }
     }
     init?(key: String) {
@@ -147,7 +151,7 @@ extension SpatialPadAction {
         self = action
     }
     /// Actions that can be put on a button while playing / designing.
-    static let playActions: [SpatialPadAction] = [.jump, .attack, .skill, .dodge, .lock, .cameraBehind, .hotbar(0), .hotbar(1), .hotbar(2), .hotbar(3), .switchMode, .switchPerspective]
+    static let playActions: [SpatialPadAction] = [.jump, .attack, .skill, .dodge, .lock, .cameraBehind, .hotbar(0), .hotbar(1), .hotbar(2), .hotbar(3), .switchMode, .switchPerspective, .flight]
     static let designActions: [SpatialPadAction] = [.backToCharacter, .straightDown, .flyUp, .flyDown, .switchMode, .switchPerspective]
 }
 
