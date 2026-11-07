@@ -23,11 +23,6 @@ enum DemoLevel {
         var problems: [String] = []
     }
 
-    /// Where the field and the arena may go, relative to the spawn, in order of preference.
-    static let layouts: [(field: (Double, Double), arena: (Double, Double))] = [
-        ((36, 0), (-40, 0)), ((-36, 0), (40, 0)), ((0, -22), (36, -10)), ((30, -14), (-34, -14)), ((0, -20), (0, -40)),
-    ]
-
     static func stamp(onto world: inout SpatialWorld) -> Report {
         var report = Report()
         world.blocks.removeAll { $0.id.hasPrefix(prefix) }
@@ -38,22 +33,33 @@ enum DemoLevel {
         geometry.groundHoles = Set(world.groundHoles ?? [])
         let navigator = SpatialNavigator(geometry: geometry)
         let walkable = Set(navigator.reachable(from: spawn, climb: SpatialPhysics.stepUp, limit: 120_000).filter { $0.level == 0 }.map { $0.y * WorldGeometry.width + $0.x })
+        let width = WorldGeometry.width
         func open(_ x: Int, _ y: Int) -> Bool {
-            (12..<(WorldGeometry.width - 12)).contains(x) && (12..<(WorldGeometry.width - 12)).contains(y) && walkable.contains(y * WorldGeometry.width + x)
+            (8..<(width - 8)).contains(x) && (8..<(width - 8)).contains(y) && walkable.contains(y * width + x)
         }
-        func areaOpen(_ cx: Int, _ cy: Int, radius: Int) -> Bool {
-            for dy in -radius...radius { for dx in -radius...radius where dx * dx + dy * dy <= radius * radius { if !open(cx + dx, cy + dy) { return false } } }
-            return true
+        // Summed-area table of open cells: a square is all open in O(1).
+        var table = [Int](repeating: 0, count: (width + 1) * (width + 1))
+        for y in 0..<width { for x in 0..<width {
+            table[(y + 1) * (width + 1) + x + 1] = (open(x, y) ? 1 : 0) + table[y * (width + 1) + x + 1] + table[(y + 1) * (width + 1) + x] - table[y * (width + 1) + x]
+        }}
+        func squareOpen(_ cx: Int, _ cy: Int, _ r: Int) -> Bool {
+            let x0 = cx - r, y0 = cy - r, x1 = cx + r + 1, y1 = cy + r + 1
+            guard x0 >= 0, y0 >= 0, x1 <= width, y1 <= width else { return false }
+            let sum = table[y1 * (width + 1) + x1] - table[y0 * (width + 1) + x1] - table[y1 * (width + 1) + x0] + table[y0 * (width + 1) + x0]
+            return sum == (2 * r + 1) * (2 * r + 1)
         }
         let base = (x: Int(spawn.x.rounded(.down)), y: Int(spawn.y.rounded(.down)))
-        guard let layout = layouts.first(where: { l in
-            areaOpen(base.x + Int(l.field.0), base.y + Int(l.field.1), radius: 4) && areaOpen(base.x + Int(l.arena.0), base.y + Int(l.arena.1), radius: arenaRadius + 1)
-        }) else {
-            report.problems.append(L10n.t("出生点附近没有足够的空地放战斗区和 Boss 场地", "No open ground near the spawn for the battle field and the Boss arena"))
+        func distance(_ a: (x: Int, y: Int), _ b: (x: Int, y: Int)) -> Int { abs(a.x - b.x) + abs(a.y - b.y) }
+        // Every open spot, nearest to the spawn first (a fixed order: the same world gives the same level).
+        let spots = stride(from: 8, to: width - 8, by: 2).flatMap { y in stride(from: 8, to: width - 8, by: 2).map { x in (x: x, y: y) } }
+            .sorted { (distance($0, base), $0.y, $0.x) < (distance($1, base), $1.y, $1.x) }
+        let arenas = spots.filter { distance($0, base) >= 16 && squareOpen($0.x, $0.y, arenaRadius + 1) }
+        let fields = spots.filter { distance($0, base) >= 10 && squareOpen($0.x, $0.y, 4) }
+        guard let arena = arenas.first, let field = fields.first(where: { distance($0, arena) >= 22 && distance($0, base) < distance(arena, base) + 30 }) ?? fields.first(where: { distance($0, arena) >= 22 }) else {
+            report.problems.append(L10n.t("出生点附近没有足够的空地放战斗区和 Boss 场地（可走格子 \(walkable.count)）",
+                                          "No open ground near the spawn for the battle field and the Boss arena (\(walkable.count) walkable cells)"))
             return report
         }
-        let field = (x: base.x + Int(layout.field.0), y: base.y + Int(layout.field.1))
-        let arena = (x: base.x + Int(layout.arena.0), y: base.y + Int(layout.arena.1))
         report.field = SpatialVector(Double(field.x) + 0.5, Double(field.y) + 0.5, 0)
         report.arena = SpatialVector(Double(arena.x) + 0.5, Double(arena.y) + 0.5, 0)
 
