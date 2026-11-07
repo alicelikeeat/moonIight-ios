@@ -292,6 +292,11 @@ final class ScrollGestureTests: XCTestCase {
         print("Asset Director categories: \(summary.exists ? (summary.value as? String ?? "") : "n/a")")
         attach(app, name: "review-asset-director-analysed")
 
+        // Hand the analysed assets to the World Director (never swipe down in
+        // a sheet: at the top that closes it).
+        reveal("asset-director-use-all-for-director", in: app, "send to the World Director").tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "asset-director-picks").firstMatch.waitForExistence(timeout: 5))
+
         // The real accuracy check on the bundled CC0 files.
         reveal("asset-director-evaluate", in: app, "the evaluation button").tap()
         let evaluation = app.descendants(matching: .any).matching(identifier: "asset-director-evaluation").firstMatch
@@ -299,16 +304,10 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(evaluation.exists, "the evaluation reports")
         print("Asset Director evaluation: \(evaluation.value ?? "")")
         attach(app, name: "review-asset-director-evaluation")
-
-        // Hand the analysed assets to the World Director.
-        for _ in 0..<12 { app.swipeDown() }
-        reveal("asset-director-use-all-for-director", in: app, "send to the World Director").tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "asset-director-picks").firstMatch.waitForExistence(timeout: 5))
         waitForAny("asset-director-done", in: app, timeout: 5, "close the library").tap()
         waitForAny("glass3d-generate", in: app, timeout: 10, "the World Director button").tap()
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "world-director-smart-assets").firstMatch.waitForExistence(timeout: 10) ||
                       reveal("world-director-smart-assets", in: app, "the director lists the analysed assets").exists)
-        for _ in 0..<12 { app.swipeDown() }
         reveal("world-director-theme-crystalKingdom", in: app, "the crystal-city theme").tap()
         reveal("world-director-generate", in: app, "generate").tap()
         let apply = app.descendants(matching: .any).matching(identifier: "world-director-apply-0").firstMatch

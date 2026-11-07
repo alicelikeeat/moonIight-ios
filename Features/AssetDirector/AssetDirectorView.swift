@@ -242,7 +242,7 @@ struct AssetDirectorView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("asset-director-evaluation")
-                .accessibilityValue("samples=\(e.samples) top1=\(String(format: "%.3f", e.top1)) top3=\(String(format: "%.3f", e.top3)) fitted=\(cal.fitted)")
+                .accessibilityValue("samples=\(e.samples) top1=\(String(format: "%.3f", e.top1)) top3=\(String(format: "%.3f", e.top3)) fitted=\(cal.fitted) confusions=\(e.confusions.prefix(48).joined(separator: "; "))")
             }
         } header: { Text(L10n.t("准确率评测", "Accuracy check")) } footer: {
             Text(L10n.t("评测集是内置的 Kenney 角色（CC0）和 Poly Haven 贴图（CC0），只有角色与材质两类，样本少，不能代表所有素材。", "The set is the bundled Kenney characters (CC0) and Poly Haven textures (CC0): only two categories and few samples, not representative of all assets."))
