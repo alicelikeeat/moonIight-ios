@@ -8,8 +8,8 @@
 
 | 分支 | 状态 | 处理 |
 |---|---|---|
-| `claude/busy-ritchie-x38lh5` | 主开发线。包含 v1.86 全部内容，以及之后的 Xbox HUD、深度模型预编译、小组件、USDZ 转换器，和 AI Asset Director 的领域层。 | 继续在这里开发 |
-| `claude/v1.86-hybrid-regions` | 有 1 个提交 `5bfe689` 不在主开发线：区域旅行、区域存档、大陆地图（约 600 行）。它从 `8d5c239` 分出，早于月光水晶城。 | **必须合并**，不能互相覆盖。与主开发线在 6 个文件上冲突：`Glass3DController.swift`、`project.pbxproj`、`Tests/RPG/main.swift`、工作流、发布说明、控件清单。 |
+| `claude/busy-ritchie-x38lh5` | 主开发线。包含 v1.86 全部内容，以及之后的 Xbox HUD、深度模型预编译、小组件、USDZ 转换器，区域旅行合并和 AI Asset Director。 | 继续在这里开发 |
+| `claude/v1.86-hybrid-regions` | 有 1 个提交 `5bfe689` 不在主开发线：区域旅行、区域存档、大陆地图（约 600 行）。它从 `8d5c239` 分出，早于月光水晶城。 | 已于 `501c76a` 合并。原先与主开发线在 6 个文件上冲突：`Glass3DController.swift`、`project.pbxproj`、`Tests/RPG/main.swift`、工作流、发布说明、控件清单。 |
 | `main` | 落后主开发线 199 个提交 | 不作为开发基准 |
 
 可回滚基准：标签 `v1.86`（`b487015`）和提交 `42e2099`。
@@ -38,8 +38,7 @@
 
 | 能力 | 缺口 |
 |---|---|
-| AI Asset Director | 领域层、测试和世界导演接入已完成。设备端分析器、协调器和工作台界面**已写好，还没加入 App 目标**（提交 `62dc3a3`） |
-| 区域旅行 | 在另一个分支上，未合并 |
+| AI Asset Director | 已加入 App，端到端界面测试通过（导入、分析、低置信度待确认、手动纠错、交给世界导演生成并应用城镇）。模拟器不提供真实 Vision 结果，所以评测只用实测特征（47 个 CC0 样本，Top-1 95.7%，Top-3 100%）。真实 Vision 准确率、真机性能**未验证** |
 | 装备 | 只有 2D 版 `RPGEquipment`，3D 战斗不读取 |
 | 动画状态机 | 3D 角色有 `CharacterAnimationState` 和 `ActionClip`（2D 精灵动作）。没有混合、取消窗口和动作事件；骨骼动画只做到播放片段 |
 | 演出 | 2D 有 `RPGCutsceneView`；3D 只有技能视觉 `SkillVisual`，没有通用时间轴 |
@@ -97,8 +96,8 @@ AI Studio → 只产出经 ContentCompiler 校验的数据 → Assets / World
 
 ## 4. 执行顺序（每一步都可构建、可测试、可回滚）
 
-1. **合并区域旅行分支**（解决 6 处冲突，补上区域切换的角色状态测试）
-2. **完成 AI Asset Director**（把已写好的平台层加入目标，跑 UI 测试和真实评测）
+1. ✅ **合并区域旅行分支**（解决 6 处冲突，补上区域切换的角色状态测试）
+2. ✅ **完成 AI Asset Director**（平台层已加入目标，UI 测试和模拟器评测已通过；Vision 准确率待真机）
 3. **统一战斗规则**：2D 战斗改为调用 `SpatialCombat` 和 `SkillDefinition`，删除重复规则，加一致性测试
 4. **命令和事件层**：在 `RPGSession` 上建立 `GameCommand` 和类型化事件，`Glass3DController` 的编辑和战斗改走命令
 5. **剧情接入 3D**：`RPGStoryRuntime` 的条件和动作读取 3D 世界事件
