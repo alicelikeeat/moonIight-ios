@@ -272,7 +272,11 @@ final class ScrollGestureTests: XCTestCase {
             if element.exists && element.isHittable { break }
             if element.exists && element.frame.midY < window.midY { drag(220) } else { drag(-260) }
         }
-        if !(element.exists && element.isHittable) { attach(app, name: "review-missing-" + id); XCTFail(name) }
+        if !(element.exists && element.isHittable) {
+            attach(app, name: "review-missing-" + id)
+            print("Missing \(id):\n" + String(app.debugDescription.prefix(6000)))
+            XCTFail(name)
+        }
         return element
     }
 

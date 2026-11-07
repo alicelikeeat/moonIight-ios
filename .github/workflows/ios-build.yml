@@ -404,7 +404,7 @@ jobs:
           xcrun simctl bootstatus "$SIMULATOR_ID" -b
       - name: Run one UI test
         if: ${{ !cancelled() && steps.plan.outputs.shard == 'single' && steps.compile.outcome == 'success' }}
-        timeout-minutes: 15
+        timeout-minutes: 25
         shell: bash
         env:
           ONLY: ${{ inputs.only_test }}

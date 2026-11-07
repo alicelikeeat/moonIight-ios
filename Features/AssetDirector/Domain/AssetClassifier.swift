@@ -23,11 +23,14 @@ struct AssetPixelStats: Codable, Equatable, Sendable {
     var hardEdgeShare: Double
     /// How well opposite edges match (1 = seamless): textures tile.
     var tileability: Double
+    /// Height / width of the opaque part's bounding box (cut-outs only).
+    var opaqueAspect: Double? = nil
 
     static func measure(_ image: RasterImage) -> AssetPixelStats? {
         let w = image.width, h = image.height
         guard w >= 2, h >= 2, image.rgba.count >= w * h * 4 else { return nil }
         var transparent = 0, opaque = 0, gray = 0
+        var minX = w, maxX = -1, minY = h, maxY = -1
         var saturation = 0.0, brightness = 0.0
         var colours = Set<Int>()
         for i in 0..<(w * h) {
@@ -35,6 +38,8 @@ struct AssetPixelStats: Codable, Equatable, Sendable {
             let a = image.rgba[o + 3]
             if a < 128 { transparent += 1; continue }
             opaque += 1
+            let px = i % w, py = i / w
+            minX = min(minX, px); maxX = max(maxX, px); minY = min(minY, py); maxY = max(maxY, py)
             let r = Double(image.rgba[o]) / 255, g = Double(image.rgba[o + 1]) / 255, b = Double(image.rgba[o + 2]) / 255
             let mx = max(r, g, b), mn = min(r, g, b)
             let s = mx > 0 ? (mx - mn) / mx : 0
@@ -66,7 +71,8 @@ struct AssetPixelStats: Codable, Equatable, Sendable {
                                colourVariety: Double(colours.count) / n,
                                meanSaturation: saturation / n, meanBrightness: brightness / n,
                                grayscaleShare: Double(gray) / n, edgeEnergy: inner,
-                               hardEdgeShare: steps > 0 ? Double(hard) / Double(steps) : 0, tileability: tile)
+                               hardEdgeShare: steps > 0 ? Double(hard) / Double(steps) : 0, tileability: tile,
+                               opaqueAspect: transparent * 5 > w * h && maxX >= minX ? Double(maxY - minY + 1) / Double(maxX - minX + 1) : nil)
     }
 }
 
@@ -224,6 +230,9 @@ enum AssetClassifier {
                 add(c, label.score * (label.source == .cloud ? 1.2 : 1))
             }
         }
+        if s.visionSkipped == true {
+            evidence.append(L10n.t("此环境不能用 Vision 图像识别（模拟器只返回固定结果），只按像素、透明度、形状和尺寸判断", "Vision recognition is unavailable here (the simulator returns a fixed answer); judged by pixels, transparency, shape and size only"))
+        }
         let topLabels = strong.prefix(4).map { "\($0.name) \(Int($0.score * 100))%" }
         if !topLabels.isEmpty { evidence.append(L10n.t("识别标签：", "Labels: ") + topLabels.joined(separator: "、")) }
         if s.peopleCount > 0 { add(.character, 0.5, L10n.t("检测到 \(s.peopleCount) 个人物", "\(s.peopleCount) people detected")) }
@@ -234,9 +243,13 @@ enum AssetClassifier {
         case .image:
             if let p = s.pixel {
                 if alpha > 0.2 {
-                    // A cut-out: sprite or standee, never a tiling texture.
-                    add(.character, (raw[.character] ?? 0) > 0.2 ? 0.6 : 0.15)
-                    add(.prop, 0.2)
+                    // A cut-out: sprite or standee, never a tiling texture. Without
+                    // character labels its shape decides: upright figures are characters.
+                    if (raw[.character] ?? 0) > 0.2 { add(.character, 0.6) }
+                    else if let shape = p.opaqueAspect, shape >= 1.15 {
+                        add(.character, 0.5, L10n.t("透明背景里的直立轮廓（高宽比 \(String(format: "%.1f", shape))），像角色", "Upright outline on a transparent background (aspect \(String(format: "%.1f", shape))), like a character"))
+                    } else { add(.prop, 0.3) }
+                    add(.prop, 0.1)
                     evidence.append(L10n.t("透明背景 \(Int(alpha * 100))%：适合精灵 / 立牌", "Transparent background \(Int(alpha * 100))%: fits a sprite / standee"))
                     uses.append(.sprite)
                 } else if p.tileability > 0.7 && p.edgeEnergy > 0.005 {
@@ -253,7 +266,7 @@ enum AssetClassifier {
             uses.append(.palette)
         case .gif:
             let motion = s.motionEnergy ?? 0
-            if alpha > 0.2 && (raw[.character] ?? 0) + Double(s.peopleCount) > 0.15 {
+            if alpha > 0.2 && ((raw[.character] ?? 0) + Double(s.peopleCount) > 0.15 || (s.pixel?.opaqueAspect ?? 0) >= 1.15) {
                 add(.character, 0.9, L10n.t("透明背景的循环动画，像角色精灵", "Looping animation on a transparent background, like a character sprite"))
                 uses.append(.sprite)
             } else if alpha > 0.2 {

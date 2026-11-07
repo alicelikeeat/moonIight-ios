@@ -42,6 +42,16 @@ func assetDirectorTests() {
     check(portraitRecord.primaryCategory == .character && portraitRecord.recommendedUses.contains(.sprite), "a transparent character picture is a character sprite")
     check(portraitRecord.confidence?.kind == .modelScore, "uncalibrated scores are labelled as model scores, not accuracy")
 
+    var unlabelled = AssetSignals(mediaType: .image)
+    unlabelled.pixel = spriteStats; unlabelled.visionSkipped = true
+    let unlabelledRecord = record("sprite", .image, unlabelled)
+    check(spriteStats.opaqueAspect.map { $0 > 1.5 } == true && unlabelledRecord.categories.first == .character,
+          "without any labels an upright cut-out is judged a character by its shape (\(unlabelledRecord.candidates))")
+    check(unlabelledRecord.evidence.contains { $0.contains("Vision") }, "skipped recognition is stated in the evidence")
+    let wide = raster(32, 32) { x, y in abs(x - 16) < 12 && abs(y - 16) < 4 ? [200, 160, 80, 255] : [0, 0, 0, 0] }
+    var flat = AssetSignals(mediaType: .image); flat.pixel = AssetPixelStats.measure(wide)
+    check(record("coin", .image, flat).categories.first == .prop, "a wide cut-out without labels is a prop, not a character")
+
     var brick = AssetSignals(mediaType: .image)
     brick.pixel = checkerStats; brick.technical.pixelWidth = 1024; brick.technical.pixelHeight = 1024
     brick.labels = [AssetTag(name: "brick", score: 0.6, source: .vision), AssetTag(name: "wall", score: 0.4, source: .vision)]

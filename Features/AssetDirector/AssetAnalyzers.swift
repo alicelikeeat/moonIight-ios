@@ -52,7 +52,18 @@ enum VisualSemanticAnalyzer {
     }
 
     /// Vision's built-in classifier, people count and feature print on one image.
+    /// The simulator's Vision returns the same labels for every picture
+    /// ("outdoor / night_sky / sky" in CI), so it is not used there.
+    static var visionUsable: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return true
+        #endif
+    }
+
     static func vision(_ image: CGImage) -> (labels: [AssetTag], people: Int, print: [Float]?) {
+        guard visionUsable else { return ([], 0, nil) }
         let classify = VNClassifyImageRequest()
         let humans = VNDetectHumanRectanglesRequest()
         let feature = VNGenerateImageFeaturePrintRequest()
@@ -86,6 +97,7 @@ enum VisualSemanticAnalyzer {
             throw AssetAnalyzerError.unreadable(L10n.t("图片已损坏或尺寸为 0", "damaged picture or zero size"))
         }
         var s = AssetSignals(mediaType: .image)
+        s.visionSkipped = visionUsable ? nil : true
         s.technical.fileBytes = fileBytes
         s.technical.uniformType = CGImageSourceGetType(source) as String?
         s.technical.pixelWidth = width; s.technical.pixelHeight = height
@@ -140,6 +152,7 @@ enum VisualSemanticAnalyzer {
         let (size, rate, transform) = try await track.load(.naturalSize, .nominalFrameRate, .preferredTransform)
         let shown = size.applying(transform)
         var s = AssetSignals(mediaType: .video)
+        s.visionSkipped = visionUsable ? nil : true
         s.technical.fileBytes = fileBytes
         s.technical.pixelWidth = Int(abs(shown.width)); s.technical.pixelHeight = Int(abs(shown.height))
         s.technical.duration = duration; s.technical.frameRate = Double(rate)

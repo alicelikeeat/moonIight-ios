@@ -217,6 +217,8 @@ struct AssetSignals: Codable, Equatable, Sendable {
     /// Model: proportions and kind of mesh.
     var humanoidShape: Bool?
     var parseError: String?
+    /// True when image recognition could not be used (the simulator gives a fixed answer).
+    var visionSkipped: Bool? = nil
 }
 
 /// The analyzer that produced a record, for caching and re-analysis.
