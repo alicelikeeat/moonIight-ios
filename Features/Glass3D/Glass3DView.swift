@@ -214,6 +214,9 @@ struct Glass3DScreen: View {
             Button(L10n.t("取消", "Cancel"), role: .cancel) { controller.pickChoices = [] }
         }
         .statusBarHidden()
+        // A container that keeps its children: an identifier on the bare root
+        // made the whole screen one opaque element (tests and VoiceOver saw nothing inside).
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("glass3d-screen")
     }
 
