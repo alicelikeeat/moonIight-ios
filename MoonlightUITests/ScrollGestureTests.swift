@@ -244,6 +244,19 @@ final class ScrollGestureTests: XCTestCase {
     /// native glass layer, C one native glass per nearest cell, A the drawn
     /// texture), and a timed sample records a result. Functional only:
     /// simulator frame rates say nothing about iPhone performance.
+    /// An element by identifier, whatever type the system exposes it as
+    /// (glass containers can report buttons as other types).
+    @MainActor
+    private func waitForAny(_ id: String, in app: XCUIApplication, timeout: TimeInterval, _ name: String) -> XCUIElement {
+        let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
+        if !element.waitForExistence(timeout: timeout) {
+            attach(app, name: "review-missing-" + id)
+            print("Missing \(id):\n" + app.debugDescription)
+            XCTFail(name)
+        }
+        return element
+    }
+
     /// Widget taps are moonlight:// links: each one lands where it says,
     /// including straight into the 3D world from another page.
     @MainActor
@@ -253,9 +266,9 @@ final class ScrollGestureTests: XCTestCase {
         app.open(URL(string: "moonlight://search")!)
         XCTAssertTrue(app.scrollViews["feed-scroll-discover"].waitForExistence(timeout: 10), "search opens 发现")
         app.open(URL(string: "moonlight://world3d")!)
-        XCTAssertTrue(app.buttons["glass3d-settings"].waitForExistence(timeout: 30), "world3d opens the 3D world")
+        _ = waitForAny("glass3d-settings", in: app, timeout: 40, "world3d opens the 3D world")
         attach(app, name: "review-widget-link-world3d")
-        app.buttons["glass3d-close"].tap()
+        waitForAny("glass3d-close", in: app, timeout: 5, "the 3D world has a back button").tap()
         XCTAssertTrue(app.buttons["rpg-glass-world"].waitForExistence(timeout: 10), "closing it leaves the sandbox open")
         app.open(URL(string: "moonlight://sandbox")!)
         XCTAssertTrue(app.buttons["rpg-glass-world"].waitForExistence(timeout: 10), "sandbox stays in the sandbox")
@@ -272,16 +285,12 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(enter.waitForExistence(timeout: 15))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: enter)], timeout: 20), .completed)
         enter.tap()
-        let settings = app.buttons["glass3d-settings"]
-        XCTAssertTrue(settings.waitForExistence(timeout: 20), "the 3D world opens")
-        settings.tap()
-        let place = app.buttons["glass3d-place-town"]
-        XCTAssertTrue(place.waitForExistence(timeout: 5)); place.tap()
+        waitForAny("glass3d-settings", in: app, timeout: 40, "the 3D world opens").tap()
+        waitForAny("glass3d-place-town", in: app, timeout: 5, "the ⋯ panel offers 月光水晶城").tap()
 
         // Face buttons follow the controller: attack on X, jump on A, dodge on B, skill on Y.
         for (id, cap) in [("glass3d-attack", "X"), ("glass3d-jump", "A"), ("glass3d-roll", "B"), ("glass3d-skill", "Y")] {
-            let button = app.buttons[id]
-            XCTAssertTrue(button.waitForExistence(timeout: 10), "\(id) on the HUD")
+            let button = waitForAny(id, in: app, timeout: 10, "\(id) on the HUD")
             XCTAssertTrue(button.label.hasSuffix("· " + cap), "\(id) is labelled with its Xbox button: \(button.label)")
         }
         XCTAssertTrue(app.descendants(matching: .any)["glass3d-look-stick"].exists)
@@ -291,13 +300,13 @@ final class ScrollGestureTests: XCTestCase {
         attach(app, name: "review-glass3d-golden-3d")
         XCTAssertGreaterThanOrEqual(colourVariety(spatial.image), 6, "the 3D view draws the town")
 
-        app.buttons["glass3d-perspective-switch"].tap()
+        waitForAny("glass3d-perspective-switch", in: app, timeout: 5, "the view switch").tap()
         sleep(3)
         let pixel = app.screenshot()
         attach(app, name: "review-glass3d-golden-pixel")
         XCTAssertGreaterThanOrEqual(colourVariety(pixel.image), 6, "the pixel view draws the town, not a blank screen")
 
-        app.buttons["glass3d-perspective-switch"].tap()
+        waitForAny("glass3d-perspective-switch", in: app, timeout: 5, "the view switch").tap()
         sleep(2)
         attach(app, name: "review-glass3d-golden-3d-again")
     }
