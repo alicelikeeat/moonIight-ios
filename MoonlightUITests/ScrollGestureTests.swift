@@ -268,9 +268,12 @@ final class ScrollGestureTests: XCTestCase {
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
         }
-        for _ in 0..<14 {
+        // Lazy rows above the viewport do not exist: after scrolling one way
+        // without finding it, scroll back the other way.
+        for i in 0..<16 {
             if element.exists && element.isHittable { break }
-            if element.exists && element.frame.midY < window.midY { drag(220) } else { drag(-260) }
+            if element.exists { if element.frame.midY < window.midY { drag(220) } else { drag(-260) } }
+            else { drag(i < 7 ? -260 : 260) }
         }
         if !(element.exists && element.isHittable) {
             attach(app, name: "review-missing-" + id)
@@ -306,6 +309,19 @@ final class ScrollGestureTests: XCTestCase {
         print("Asset Director categories: \(summary.exists ? (summary.value as? String ?? "") : "n/a")")
         attach(app, name: "review-asset-director-analysed")
 
+        // Low confidence waits for the user: confirm one by hand (the
+        // correction flow) and it becomes usable.
+        if (summary.value as? String ?? "").contains("glass-material=none") {
+            reveal("asset-row-glass-material", in: app, "the glass material row").tap()
+            waitForAny("asset-detail-category", in: app, timeout: 10, "the category picker").tap()
+            let material = app.buttons.matching(NSPredicate(format: "label == '材质' OR label == 'Materials'")).firstMatch
+            XCTAssertTrue(material.waitForExistence(timeout: 5), "the picker lists 材质"); material.tap()
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+            let confirmed = NSPredicate(format: "value CONTAINS 'glass-material=material+:automatic:100'")
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: confirmed, object: summary)], timeout: 10), .completed, "the correction is kept: \(summary.value ?? "")")
+            print("Asset Director after correction: \(summary.value ?? "")")
+        }
+
         // Hand the analysed assets to the World Director (never swipe down in
         // a sheet: at the top that closes it).
         reveal("asset-director-use-all-for-director", in: app, "send to the World Director").tap()
@@ -320,9 +336,9 @@ final class ScrollGestureTests: XCTestCase {
         attach(app, name: "review-asset-director-evaluation")
         waitForAny("asset-director-done", in: app, timeout: 5, "close the library").tap()
         waitForAny("glass3d-generate", in: app, timeout: 10, "the World Director button").tap()
-        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "world-director-smart-assets").firstMatch.waitForExistence(timeout: 10) ||
-                      reveal("world-director-smart-assets", in: app, "the director lists the analysed assets").exists)
+        // The theme list sits above the assets: pick it first.
         reveal("world-director-theme-crystalKingdom", in: app, "the crystal-city theme").tap()
+        XCTAssertTrue(reveal("world-director-smart-assets", in: app, "the director lists the analysed assets").exists)
         reveal("world-director-generate", in: app, "generate").tap()
         let apply = app.descendants(matching: .any).matching(identifier: "world-director-apply-0").firstMatch
         for _ in 0..<60 where !apply.exists { sleep(3) }
