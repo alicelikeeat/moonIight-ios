@@ -270,6 +270,7 @@ final class ScrollGestureTests: XCTestCase {
         }
         // Lazy rows above the viewport do not exist: after scrolling one way
         // without finding it, scroll back the other way.
+        _ = element.waitForExistence(timeout: 4)
         for i in 0..<16 {
             if element.exists && element.isHittable { break }
             if element.exists { if element.frame.midY < window.midY { drag(220) } else { drag(-260) } }
@@ -297,7 +298,8 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: enter)], timeout: 20), .completed)
         enter.tap()
         waitForAny("glass3d-settings", in: app, timeout: 40, "the 3D world opens").tap()
-        reveal("glass3d-asset-director", in: app, "the ⋯ panel offers the Asset Director").tap()
+        // Never drag here: a drag on the 3D scene closes the ⋯ panel.
+        waitForAny("glass3d-asset-director", in: app, timeout: 30, "the ⋯ panel offers the Asset Director").tap()
         waitForAny("asset-director-import-fixtures", in: app, timeout: 10, "the test-asset import").tap()
 
         // Every asset analysed (none queued or running), within two minutes.
