@@ -286,7 +286,10 @@ final class ScrollGestureTests: XCTestCase {
         _ = waitForAny("glass3d-settings", in: app, timeout: 40, "world3d opens the 3D world")
         attach(app, name: "review-widget-link-world3d")
         waitForAny("glass3d-close", in: app, timeout: 5, "the 3D world has a back button").tap()
-        XCTAssertTrue(app.scrollViews["feed-scroll-discover"].waitForExistence(timeout: 10), "leaving returns to the page it came from")
+        // Leaving lands on an ordinary page again (bottom bar back, 3D gone).
+        XCTAssertTrue(app.buttons["navigation-sandbox"].waitForExistence(timeout: 10), "leaving returns to the app's pages")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                                      object: app.descendants(matching: .any).matching(identifier: "glass3d-screen").firstMatch)], timeout: 10), .completed)
         app.open(URL(string: "moonlight://sandbox")!)
         _ = waitForAny("glass3d-settings", in: app, timeout: 40, "the sandbox link opens the 3D world too")
     }
