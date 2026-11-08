@@ -61,6 +61,10 @@ struct Glass3DDiagnosticsView: View {
             "memoryMB=" + (RPGMemoryMetrics.footprintMB.map { String(format: "%.0f", $0) } ?? "?") + " thermal=\(thermal) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled)",
             "region=\(controller.regionTitle)",
         ]
+        // v1.91: the character runtime (instances, deformations so far, LOD switches, cached bodies, incidents).
+        let c = controller.characters.runtime.stats
+        lines.append("characters=\(c.instances) deformations=\(c.deformations) skipped=\(c.skipped) lod0/1/2=\(c.lodCounts.map(String.init).joined(separator: "/")) cachedBodies=\(c.cachedBodies) incidents=\(controller.characters.runtime.incidents.count)")
+        for incident in controller.characters.runtime.incidents.suffix(3) { lines.append("incident \(incident.owner) \(incident.motion): \(incident.reason)") }
         #if targetEnvironment(simulator)
         lines.append(L10n.t("运行在模拟器上：数据不代表 iPhone", "Running in the simulator: not representative of an iPhone"))
         #endif

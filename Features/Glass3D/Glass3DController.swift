@@ -1770,6 +1770,58 @@ struct Glass3DPending {
         return text
     }
 
+    /// Demo C: a generated or imported model through the character pipeline —
+    /// analyse it, keep or map its rig, check it, then place it as an NPC.
+    /// Returns what happened (the route, or why it stopped and how to fix it).
+    func placeModelCharacter(_ manifest: Generated3DManifest) async -> String {
+        let store = Generated3DStore.shared
+        guard let meshURL = store.meshURL(manifest) else { return L10n.t("模型文件不存在", "The model file is missing") }
+        let assets = RiggingAssetStore(folder: Generated3DStore.folder("Rigs"))
+        let id = manifest.id
+        let loaded = await Task.detached(priority: .userInitiated) { () -> (GeneratedMesh?, (RiggedCharacter, SkinInfluences)?) in
+            let mesh = (try? Data(contentsOf: meshURL)).flatMap(GeneratedMeshCodec.decode)
+            guard let saved = try? assets.load(id) else { return (mesh, nil) }
+            let rigMesh = saved.0.optimizedMeshFile != nil ? (try? Data(contentsOf: assets.optimizedMeshURL(id))).flatMap(GeneratedMeshCodec.decode) : mesh
+            return (rigMesh, saved)
+        }.value
+        guard let mesh = loaded.0.map(FiniteMesh.repaired) else { return L10n.t("模型文件无法读取", "The model file cannot be read") }
+        var rig: (SkeletonDefinition, SkinInfluences, Bool)? = loaded.1.map { (LegacyRigAdapter.upgrade($0.0), $0.1, $0.0.clips.contains { $0.keyframes != nil }) }
+        if rig == nil, let legacy = await Generate3DRigging.load(manifest), let converted = LegacyRigAdapter.convert(legacy.0, skin: legacy.1, vertexCount: mesh.vertexCount) {
+            rig = (converted.skeleton, converted.skin, false)
+        }
+        let facts = AutoFitFacts(input: manifest.geometry == .imported ? .glb : .generatedMesh, humanoid: manifest.humanoidDetected ? 0.8 : 0.2,
+                                 hasSkeleton: rig != nil, hasWeights: rig != nil, hasAnimation: rig?.2 ?? false,
+                                 complete3D: manifest.geometry != .depthRelief, reliefOnly: manifest.geometry == .depthRelief)
+        let plan = CharacterAutoFit.plan(facts)
+        var lines = [L10n.t("路线 \(plan.route.letter)：", "Route \(plan.route.letter): ") + plan.reasons.joined(separator: " ")]
+        guard plan.route != .notHumanoid else { return lines.joined(separator: "\n") }
+        guard let rig else {
+            lines.append(L10n.t("它还没有骨骼。请在「AI 生成 3D 模型」里打开它，点「自动绑骨」（路线 B），完成后再放入世界。",
+                                "It has no rig yet. Open it in AI 3D Models and tap Auto Rig (route B), then place it again."))
+            return lines.joined(separator: "\n")
+        }
+        let check = CharacterValidator.validate(mesh: mesh, skeleton: rig.0, skin: rig.1, motions: MotionLibrary.standard)
+        guard check.ok else {
+            lines.append(L10n.t("没有通过检查，未放入世界：", "Failed its checks; not placed: ") + check.errors.map(\.message).prefix(3).joined(separator: "; "))
+            return lines.joined(separator: "\n")
+        }
+        var template = CharacterTemplate(id: "model:" + id, name: String(manifest.name.prefix(64)))
+        template.mode = .generated; template.generatedModelID = id; template.height = 1.7
+        let r = world.player.facing * .pi / 180, p = world.player.position
+        let at = SpatialVector(p.x + cos(r) * 3, p.y + sin(r) * 3, p.z)
+        edit(L10n.t("放置模型角色", "Place Model Character")) { w in
+            var list = w.characters ?? []
+            if let i = list.firstIndex(where: { $0.id == template.id }) { list[i] = template } else { list.append(template) }
+            w.characters = list
+            var c = CreatureEntity(id: "npc:" + String(UUID().uuidString.prefix(8)), kind: .neutral, position: at, home: at, health: 40, maxHealth: 40, damage: 0)
+            c.characterID = template.id
+            w.creatures.append(c)
+        }
+        resetCreatureBrains()
+        lines.append(L10n.t("检查通过（\(check.issues.count) 个提醒），已放在玩家前面；通用动作已按它的骨骼重定向。", "Checks passed (\(check.issues.count) notes); placed in front of the player with the shared motions retargeted to its skeleton."))
+        return lines.joined(separator: "\n")
+    }
+
     /// For UI tests and diagnostics: what the character runtime is doing.
     var characterProbe: String {
         let stats = characters.runtime.stats

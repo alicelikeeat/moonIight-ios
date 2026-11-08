@@ -131,3 +131,20 @@ func characterSystemTests() {
     check(SkinCodec.decode(Data("SKI1".utf8) + Data([1, 0, 0, 0])) == nil, "package: a truncated weights file is refused")
     print("RPG character system: legacy rig, \(OutfitPiece.catalog.count) outfit pieces, \(EquipmentItem.catalog.count) items, validator and packages checked")
 }
+
+/// Auto-fit routes: analysed first, then A–E, never forcing a human rig.
+func characterAutoFitTests() {
+    func route(_ f: AutoFitFacts) -> AutoFitRoute { CharacterAutoFit.plan(f).route }
+    check(route(AutoFitFacts(input: .glb, humanoid: 0.9, hasSkeleton: true, hasWeights: true, hasAnimation: true, complete3D: true)) == .keepRig, "auto-fit A: a rigged model keeps its rig")
+    check(route(AutoFitFacts(input: .usdz, humanoid: 0.85, complete3D: true)) == .autoRig, "auto-fit B: an unrigged complete mesh is auto-rigged")
+    check(route(AutoFitFacts(input: .glb, humanoid: 0.8, hasSkeleton: true, complete3D: true)) == .autoRig, "auto-fit B: a skeleton without weights gets solved weights")
+    let photo = CharacterAutoFit.plan(AutoFitFacts(input: .photo, personVisible: true))
+    check(photo.route == .baseBodyFromImage && photo.inferred && photo.needsConfirmation, "auto-fit C: a person photo fits the base body, marked inferred and confirmed")
+    check(route(AutoFitFacts(input: .generatedMesh, humanoid: 0.8, reliefOnly: true)) == .baseBodyFromImage, "auto-fit C: a humanoid relief becomes a base-body character")
+    check(route(AutoFitFacts(input: .multiView)) == .reconstructThenRig, "auto-fit D: several views are rebuilt, then rigged")
+    let dog = CharacterAutoFit.plan(AutoFitFacts(input: .glb, humanoid: 0.1, complete3D: true))
+    check(dog.route == .notHumanoid && dog.steps.isEmpty && !dog.reasons.isEmpty, "auto-fit E: a non-humanoid is refused with a reason")
+    check(route(AutoFitFacts(input: .photo, personVisible: false)) == .notHumanoid, "auto-fit E: a picture without a whole person is not forced onto a body")
+    check(CharacterAutoFit.plan(AutoFitFacts(input: .usdz, humanoid: 0.5, complete3D: true)).needsConfirmation, "auto-fit: a doubtful humanoid needs the user's confirmation")
+    print("RPG auto-fit: routes A–E")
+}

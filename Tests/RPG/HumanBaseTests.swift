@@ -86,6 +86,16 @@ func humanBaseTests() {
         check(c.headRatio > s.headRatio + 0.05 && c.legRatio < s.legRatio - 0.05 && t.legRatio > s.legRatio,
               "HumanBase: the chibi has a big head and short legs, the tall one long legs (head \(c.headRatio)/\(s.headRatio), legs \(c.legRatio)/\(s.legRatio)/\(t.legRatio))")
     }
+    // Fitting measured proportions (a photo) back onto HumanBase.
+    if let target = ratios["chibi"], let tall = ratios["tall"] {
+        for (name, goal) in [("chibi", target), ("tall", tall)] {
+            let fitted = HumanShape.fitting(goal)
+            if let back = HumanBase.build(fitted, lod: 2)?.bodyShape {
+                check(abs(back.legRatio - goal.legRatio) < 0.02 && abs(back.headRatio - goal.headRatio) < 0.02 && abs(back.armRatio - goal.armRatio) < 0.03,
+                      "HumanBase: measured \(name) proportions are matched (legs \(back.legRatio)/\(goal.legRatio), head \(back.headRatio)/\(goal.headRatio), arms \(back.armRatio)/\(goal.armRatio))")
+            }
+        }
+    }
     let wild = HumanShape(height: .nan, build: 9, legLength: -4, headSize: .infinity).clamped
     check(wild.height == 1.75 && wild.build == 1 && wild.legLength == 0.55 && wild.headSize == 1, "HumanBase: impossible parameters are clamped")
     print("RPG HumanBase: \(asset.vertexCount) vertices, \(asset.joints.count) joints, LOD triangles \(asset.lods.map(\.triangleCount))")

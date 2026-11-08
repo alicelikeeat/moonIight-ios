@@ -61,6 +61,39 @@ struct HumanShape: Codable, Equatable, Sendable {
     }
 }
 
+extension HumanShape {
+    /// HumanBase parameters for measured proportions (a photo fit): bone
+    /// lengths and head size solved against the neutral body's own ratios,
+    /// girths mapped onto the build channels. Unmeasured values stay neutral.
+    static func fitting(_ target: BodyShape, measured: Set<String> = ["head", "legs", "arms", "shoulders", "hips", "chest", "waist"],
+                        asset: HumanBaseAsset? = HumanBaseAsset.shared) -> HumanShape {
+        var shape = HumanShape(height: target.clamped.height)
+        guard let base = asset.flatMap({ HumanBase.build(.standard, lod: 2, asset: $0) })?.bodyShape else { return shape.clamped }
+        let t = target.clamped
+        // Two passes: a change of one length shifts the others' ratios a little.
+        for _ in 0..<2 {
+            guard let now = asset.flatMap({ HumanBase.build(shape, lod: 2, asset: $0) })?.bodyShape else { break }
+            if measured.contains("legs"), now.legRatio > 0.05 {
+                // legs' = f·L / (f·L + rest): solve for f, from the current body.
+                let L = now.legRatio, want = t.legRatio
+                shape.legLength *= (want * (1 - L)) / max(0.01, (1 - want) * L)
+            }
+            if measured.contains("head"), now.headRatio > 0.02 {
+                let H = now.headRatio, want = t.headRatio
+                shape.headSize *= (want * (1 - H)) / max(0.01, (1 - want) * H)
+            }
+            if measured.contains("arms"), now.armRatio > 0.05 { shape.armLength *= t.armRatio / now.armRatio }
+            shape = shape.clamped
+        }
+        if measured.contains("shoulders") { shape.shoulders = (t.shoulderWidth / max(0.05, base.shoulderWidth) - 1) / 0.12 }
+        if measured.contains("hips") { shape.hips = (t.hipWidth / max(0.05, base.hipWidth) - 1) / 0.15 }
+        let girth = ((measured.contains("chest") ? t.chest : 1) + (measured.contains("waist") ? t.waist : 1)) / 2
+        shape.build = (girth - 1) / 0.3
+        if measured.contains("waist") { shape.waist = (t.waist - 1) / 0.4 }
+        return shape.clamped
+    }
+}
+
 /// One shaped body at one level of detail.
 struct HumanBody: Sendable {
     var shape: HumanShape

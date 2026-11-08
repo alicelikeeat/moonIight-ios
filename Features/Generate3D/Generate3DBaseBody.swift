@@ -36,14 +36,15 @@ enum BaseBodyCharacterPipeline {
             backImage = image; backPhoto = photo
         }
         progress(L10n.t("套用通用底模", "Fitting the universal base body"), 0.45)
-        let model = BaseBody.build(fit.shape)
+        // v1.91: the real HumanBase body (MakeHuman, CC0) when its file is there; the tube body otherwise.
+        let model = HumanBase.build(HumanShape.fitting(fit.shape, measured: Set(fit.measured)))?.model ?? BaseBody.build(fit.shape)
         let painted = BaseBodyPaint.paint(model, front: frontPhoto, back: backPhoto)
         try Task.checkCancellation()
         progress(L10n.t("制作贴图", "Making the texture"), 0.7)
         guard let atlas = atlas(front: frontImage, back: backImage) else { throw Generate3DError.saveFailed("texture") }
 
-        var notes = [L10n.t("识别到完整人物，已套用通用底模（\(model.mesh.vertexCount) 顶点、27 关节，权重由底模直接给出）。",
-                            "A whole person was found, so the universal base body was used (\(model.mesh.vertexCount) vertices, 27 joints, weights given by the base body).")]
+        var notes = [L10n.t("识别到完整人物，已套用通用底模（\(model.mesh.vertexCount) 顶点、\(model.skeleton.joints.count) 个关节，权重由底模直接给出）。",
+                            "A whole person was found, so the universal base body was used (\(model.mesh.vertexCount) vertices, \(model.skeleton.joints.count) joints, weights given by the base body).")]
         notes.append(L10n.t(String(format: "按照片估计的体型：腿长占身高 %.0f%%，肩宽 %.0f%%，头部 %.0f%%（身高按 1.7 米设定）。", fit.shape.legRatio * 100, fit.shape.shoulderWidth * 100, fit.shape.headRatio * 100),
                             String(format: "Proportions from the photo: legs %.0f%% of the height, shoulders %.0f%%, head %.0f%% (height set to 1.7 m).", fit.shape.legRatio * 100, fit.shape.shoulderWidth * 100, fit.shape.headRatio * 100)))
         if !fit.defaulted.isEmpty {

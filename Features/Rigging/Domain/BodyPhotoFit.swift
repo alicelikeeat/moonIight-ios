@@ -143,7 +143,10 @@ enum BodyPhotoFit {
         let mirror: Float
 
         init?(model: BaseBodyModel, photo: BodyPhoto) {
-            let j = BaseBody.joints(model.shape)
+            // The model's own joints (the tube body and HumanBase alike).
+            var j: [JointTag: SIMD3<Float>] = [:]
+            let world = model.skeleton.worldRest
+            for (i, joint) in model.skeleton.joints.enumerated() where joint.semanticTag != .other { j[joint.semanticTag] = world[i].origin }
             guard let shoulders = photo.mid(.leftShoulder, .rightShoulder), let hips = photo.mid(.leftHip, .rightHip),
                   let ms = j[.rightUpperArm], let ml = j[.leftUpperArm], let ht = j[.rightThigh] else { return nil }
             let modelShoulders = SIMD2((ms.x + ml.x) / 2, ms.y), modelHips = SIMD2(Float(0), ht.y)

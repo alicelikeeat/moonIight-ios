@@ -192,6 +192,16 @@ struct CharacterWorkbenchView: View {
                 Text(L10n.t("\(library.damaged.count) 个角色文件损坏，已跳过（其他角色不受影响）", "\(library.damaged.count) damaged character files skipped (the others are fine)")).font(.caption).foregroundStyle(.orange)
             }
         }
+        Section(L10n.t("从 AI 3D 模型或导入的模型创建", "From an AI 3D model or an imported model")) {
+            let models = Generated3DStore.shared.models.filter { $0.humanoidDetected || $0.geometry == .imported }
+            if models.isEmpty { Text(L10n.t("还没有人形模型（可在「AI 生成 3D 模型」里生成或导入）", "No humanoid models yet (make or import one in AI 3D Models)")).foregroundStyle(.secondary) }
+            ForEach(models.prefix(12), id: \.id) { m in
+                Button { Task { message = await controller.placeModelCharacter(m); page = .export } } label: {
+                    LabeledContent(m.name, value: m.geometry.title).lineLimit(1)
+                }
+                .accessibilityIdentifier("workbench-model-" + m.id)
+            }
+        }
         Section(L10n.t("底模", "Base body")) {
             LabeledContent(L10n.t("来源", "Source"), value: "MakeHuman hm08 · CC0")
             LabeledContent(L10n.t("顶点 / 关节", "Vertices / joints"), value: "\(HumanBaseAsset.shared?.vertexCount ?? 0) / \(HumanBaseAsset.shared?.joints.count ?? 0)")
