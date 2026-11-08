@@ -21,22 +21,28 @@ func baseBodyTransferTests() {
     // The target: the same body with its arms raised to a T-pose.
     let source = BaseBody.build(truth)
     var pose = SkeletonPose.rest(source.skeleton)
-    guard let r = source.skeleton.index(.rightUpperArm), let l = source.skeleton.index(.leftUpperArm), let hand = source.skeleton.index(.rightHand) else {
-        check(false, "transfer: arm joints exist"); return
+    // Raise each arm to the shoulder's height: search the axis and angle
+    // (joint frames are not world-aligned, so neither is known up front).
+    for (upper, handTag) in [(JointTag.rightUpperArm, JointTag.rightHand), (.leftUpperArm, .leftHand)] {
+        guard let u = source.skeleton.index(upper), let hand = source.skeleton.index(handTag) else { check(false, "transfer: arm joints exist"); return }
+        var best: (miss: Float, axis: Int, angle: Float) = (.infinity, 0, 0)
+        for axis in 0..<3 {
+            for step in -18...18 {
+                var trial = pose; trial.rotations[u][axis] = Float(step) * .pi / 36
+                let w = trial.world(source.skeleton)
+                // Level and still out to the side (not raised forward).
+                let miss = abs(w[hand].origin.y - w[u].origin.y) + abs(w[hand].origin.z - w[u].origin.z)
+                if miss < best.miss { best = (miss, axis, Float(step) * .pi / 36) }
+            }
+        }
+        pose.rotations[u][best.axis] = best.angle
     }
-    var best: (Float, Float) = (-.infinity, 0)
-    for sign: Float in [1, -1] {
-        var trial = pose; trial.rotations[r].z = .pi / 4 * sign; trial.rotations[l].z = -.pi / 4 * sign
-        let y = trial.world(source.skeleton)[hand].origin.y
-        if y > best.0 { best = (y, sign) }
-    }
-    pose.rotations[r].z = .pi / 4 * best.1; pose.rotations[l].z = -.pi / 4 * best.1
     let world = pose.world(source.skeleton)
     let posed = SkinWeightSolver.deform(source.mesh, skin: source.skin, matrices: pose.skinning(source.skeleton))
     var target = GeneratedMesh(positions: posed.positions, normals: posed.normals, uvs: source.mesh.uvs, indices: source.mesh.indices)
     var positions: [JointTag: SIMD3<Float>] = [:]
     for (i, joint) in source.skeleton.joints.enumerated() { positions[joint.semanticTag] = world[i].origin }
-    check(abs((positions[.rightHand]?.y ?? 0) - (positions[.rightUpperArm]?.y ?? 9)) < 0.05 * truth.height, "transfer: the target holds its arms level (T-pose)")
+    check(abs((positions[.rightHand]?.y ?? 0) - (positions[.rightUpperArm]?.y ?? 9)) < 0.05 * truth.height, "transfer: the target holds its arms level (T-pose; hand \(positions[.rightHand] ?? .zero), shoulder \(positions[.rightUpperArm] ?? .zero))")
     let targetSkeleton = SkeletonBuilder.build(JointEstimate(positions: positions, confidence: positions.mapValues { _ in 1 }, pose: .tPose, humanoid: 1, notes: []))
 
     func agreement(_ mesh: GeneratedMesh, _ skeleton: SkeletonDefinition) -> (all: Float, arms: Float, skin: SkinInfluences?) {
