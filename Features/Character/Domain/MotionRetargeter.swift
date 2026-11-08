@@ -175,7 +175,7 @@ enum CharacterIK {
         for side in ["right", "left"] {
             guard let hip = skeleton.index(JointTag(rawValue: side + "Thigh") ?? .other), let knee = skeleton.index(JointTag(rawValue: side + "Shin") ?? .other),
                   let ankle = skeleton.index(JointTag(rawValue: side + "Foot") ?? .other) else { continue }
-            let p = MotionPose.positions(out, skeleton: skeleton)
+            let p = RigPoser.positions(out, skeleton: skeleton)
             guard let g = ground(p[ankle]) else { continue }
             let want = SIMD3(p[ankle].x, g + bindAnkle, p[ankle].z)
             let gap = want.y - p[ankle].y
@@ -190,8 +190,8 @@ enum CharacterIK {
     /// Head (and a little of the chest) turned toward a point, within limits.
     static func lookAt(_ sample: MotionSample, skeleton: SkeletonDefinition, target: SIMD3<Float>, weight: Float = 1) -> MotionSample {
         guard let head = skeleton.index(.head) else { return sample }
-        let p = MotionPose.positions(sample, skeleton: skeleton)
-        let world = skeleton.worldTransforms(local: MotionPose.locals(sample, skeleton: skeleton))
+        let p = RigPoser.positions(sample, skeleton: skeleton)
+        let world = skeleton.worldTransforms(local: RigPoser.locals(sample, skeleton: skeleton))
         let forward = cUnit(world[head].direction(SIMD3(0, 0, 1)), fallback: SIMD3(0, 0, 1))
         let want = cUnit(target - p[head], fallback: forward)
         let full = Quat.between(forward, want)

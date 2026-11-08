@@ -20,7 +20,7 @@ func motionSystemTests() {
     // On the real body: arms hang at idle, the walk alternates the feet, the slash goes across the front.
     guard let body = HumanBase.build(.standard) else { check(false, "motion: HumanBase available"); return }
     let sk = body.skeleton
-    func at(_ id: String, _ t: Float) -> [SIMD3<Float>] { MotionPose.positions(MotionLibrary.motion(id)!.sample(at: t, legLength: MotionPose.legLength(sk)), skeleton: sk) }
+    func at(_ id: String, _ t: Float) -> [SIMD3<Float>] { RigPoser.positions(MotionLibrary.motion(id)!.sample(at: t, legLength: RigPoser.legLength(sk)), skeleton: sk) }
     let r = { (tag: JointTag) in sk.index(tag)! }
     let idle = at("idle", 0.5)
     check(idle[r(.rightHand)].y < idle[r(.rightUpperArm)].y - 0.35 && idle[r(.leftHand)].y < idle[r(.leftUpperArm)].y - 0.35, "motion: idle arms hang at the sides")
@@ -37,7 +37,7 @@ func motionSystemTests() {
     check(rolled[r(.head)].y > 1.4 && rollMid[r(.head)].y < 1.0, "motion: the roll tucks low and comes back upright")
     var finite = true
     for m in library { for t in stride(from: Float(0), through: m.duration, by: m.duration / 6) {
-        let mats = MotionPose.skinning(m.sample(at: t, legLength: 0.9), skeleton: sk)
+        let mats = RigPoser.skinning(m.sample(at: t, legLength: 0.9), skeleton: sk)
         let moved = SkinWeightSolver.deform(body.mesh, skin: body.skin, matrices: mats)
         if !moved.positions.allSatisfy(\.isFinite) { finite = false }
     } }
@@ -46,7 +46,7 @@ func motionSystemTests() {
     // The same motions on three different bodies.
     for shape in [HumanShape.tall, .chibi] {
         guard let other = HumanBase.build(shape) else { continue }
-        let p = MotionPose.positions(MotionLibrary.motion("idle")!.sample(at: 0.5), skeleton: other.skeleton)
+        let p = RigPoser.positions(MotionLibrary.motion("idle")!.sample(at: 0.5), skeleton: other.skeleton)
         let s = other.skeleton
         check(p[s.index(.rightHand)!].y < p[s.index(.rightUpperArm)!].y - 0.15, "motion: idle arms hang on the \(shape.height) m body too")
     }
@@ -55,7 +55,7 @@ func motionSystemTests() {
     let aBody = BaseBody.build(.standard)
     if let idleMotion = MotionLibrary.motion("idle"), let walkMotion = MotionLibrary.motion("walk") {
         let (onA, report) = MotionRetargeter.retarget(idleMotion, from: sk, to: aBody.skeleton)
-        let pa = MotionPose.positions(onA.sample(at: 0.5), skeleton: aBody.skeleton)
+        let pa = RigPoser.positions(onA.sample(at: 0.5), skeleton: aBody.skeleton)
         let s = aBody.skeleton
         let handDown = cUnit(pa[s.index(.rightHand)!] - pa[s.index(.rightUpperArm)!])
         let srcDown = cUnit(idle[r(.rightHand)] - idle[r(.rightUpperArm)])
@@ -63,11 +63,11 @@ func motionSystemTests() {
         check(report.bindCorrection > 30 && report.missingInTarget.contains { $0.hasPrefix("ext.") } && report.coverage < 1 && report.coverage > 0,
               "motion: the report names the bind difference (\(Int(report.bindCorrection))°) and the joints the rig lacks")
         let (walkOnA, _) = MotionRetargeter.retarget(walkMotion, from: sk, to: s)
-        let w = MotionPose.positions(walkOnA.sample(at: 0.26, legLength: MotionPose.legLength(s)), skeleton: s)
+        let w = RigPoser.positions(walkOnA.sample(at: 0.26, legLength: RigPoser.legLength(s)), skeleton: s)
         check(w[s.index(.rightFoot)!].z - w[s.index(.leftFoot)!].z > 0.1, "motion: the retargeted walk still steps right foot forward")
         // Same bind: retargeting changes nothing.
         let (same, _) = MotionRetargeter.retarget(walkMotion, from: sk, to: sk)
-        let a = MotionPose.positions(walkMotion.sample(at: 0.4), skeleton: sk), b = MotionPose.positions(same.sample(at: 0.4), skeleton: sk)
+        let a = RigPoser.positions(walkMotion.sample(at: 0.4), skeleton: sk), b = RigPoser.positions(same.sample(at: 0.4), skeleton: sk)
         check(zip(a, b).allSatisfy { cLength($0 - $1) < 0.005 }, "motion: retargeting onto the same skeleton keeps the motion")
     }
 
@@ -79,12 +79,12 @@ func motionSystemTests() {
             let pose = oldWalk.pose(s, at: 0.3)
             return s.joints.indices.map { s.joints[$0].rest * RigXform.euler(pose.rotations[$0] * (.pi / 180)) }
         }()).map(\.origin)
-        let viaNew = MotionPose.positions(converted.sample(at: 0.3, legLength: 0), skeleton: s)
+        let viaNew = RigPoser.positions(converted.sample(at: 0.3, legLength: 0), skeleton: s)
         check(zip(viaOld, viaNew).allSatisfy { cLength($0 - $1) < 0.01 }, "motion: a converted MotionClip poses the rig exactly like the original")
     }
     let rigWave = RigClip(id: "wave", name: "Wave", period: 1.2, channels: [.init(bone: .rightUpperArm, axis: [0, 0, 1], amplitude: 0.4), .init(bone: .torso, axis: [0, 1, 0], amplitude: 0.1)])
     let fromRig = MotionAdapters.from(rigWave)
-    check(fromRig.valid && Set(fromRig.tracks.map(\.joint)) == ["rightUpperArm", "spine1"] && fromRig.source == .rig10, "motion: a 10-bone RigClip maps onto the standard joints")
+    check(fromRig.valid && Set(fromRig.tracks.map(\.joint)) == ["rightUpperArm", "pelvis"] && fromRig.source == .rig10, "motion: a 10-bone RigClip maps onto the standard joints")
     let picture = MotionAdapters.timing(of: ActionClip(bindingIDs: ["a"], speed: 2, loop: false, eventTime: 0.4, length: 0.8), action: .attack)
     check(abs(picture.duration - 0.4) < 1e-4 && picture.events.first?.kind == .hit && abs((picture.phases?.hit ?? 0) - 0.2) < 1e-4, "motion: picture clip timing becomes phases and a hit event")
 
@@ -106,11 +106,11 @@ func motionSystemTests() {
     check(fast == slow && fast.filter { $0.hasSuffix("#attack1.hit") }.count == 1, "motion: the hit fires exactly once at 60 and at 7 updates a second (\(fast), \(slow))")
     check(play(fps: 30, seconds: 0.8, combo: 3).contains { $0.hasSuffix("#attack3.hit") }, "motion: combo step 3 plays the third attack")
     // Upper-body attack while running keeps the legs running.
-    var c = CharacterAnimationController(legLength: MotionPose.legLength(sk))
+    var c = CharacterAnimationController(legLength: RigPoser.legLength(sk))
     var lastFeet: Float = 0, legsMoved = false
     for i in 0..<30 {
         let pose = c.update(AnimationInput(speed: c.runSpeed, action: .attack, actionStarted: 0, combo: 1, clock: Double(i) / 60)).pose
-        let p = MotionPose.positions(pose, skeleton: sk)
+        let p = RigPoser.positions(pose, skeleton: sk)
         let feet = p[r(.rightFoot)].z - p[r(.leftFoot)].z
         if i > 0 && abs(feet - lastFeet) > 0.004 { legsMoved = true }
         lastFeet = feet
@@ -121,7 +121,7 @@ func motionSystemTests() {
     // Death holds its last pose.
     var d = CharacterAnimationController(legLength: 0.9)
     let late = d.update(AnimationInput(action: .death, actionStarted: 0, clock: 5)).pose
-    let lateP = MotionPose.positions(late, skeleton: sk)
+    let lateP = RigPoser.positions(late, skeleton: sk)
     check(lateP[r(.pelvis)].y < 0.4, "motion: a dead character stays down")
 
     // Combo state machine: chaining inside the window, back to one outside.
@@ -144,12 +144,12 @@ func motionSystemTests() {
         let end = mid + q2.rotate(q1.rotate(SIMD3(0, -0.5, -0.02)))
         check(cLength(end - SIMD3(0.2, 0.3, 0.3)) < 0.01, "motion: two-bone IK reaches its target (\(end))")
     } else { check(false, "motion: two-bone IK solves") }
-    let standing = MotionLibrary.motion("idle")!.sample(at: 0, legLength: MotionPose.legLength(sk))
+    let standing = MotionLibrary.motion("idle")!.sample(at: 0, legLength: RigPoser.legLength(sk))
     let raised = CharacterIK.plantFeet(standing, skeleton: sk, ground: { _ in 0.08 })
-    let before = MotionPose.positions(standing, skeleton: sk), after = MotionPose.positions(raised, skeleton: sk)
+    let before = RigPoser.positions(standing, skeleton: sk), after = RigPoser.positions(raised, skeleton: sk)
     check(after[r(.rightFoot)].y > before[r(.rightFoot)].y + 0.06 && abs(after[r(.pelvis)].y - before[r(.pelvis)].y) < 1e-4,
           "motion: foot IK lifts the feet onto a step without moving the hips")
     let tooHigh = CharacterIK.plantFeet(standing, skeleton: sk, ground: { _ in 0.9 })
-    check(MotionPose.positions(tooHigh, skeleton: sk)[r(.rightFoot)] == before[r(.rightFoot)], "motion: an unreachable floor leaves the pose as animated")
+    check(RigPoser.positions(tooHigh, skeleton: sk)[r(.rightFoot)] == before[r(.rightFoot)], "motion: an unreachable floor leaves the pose as animated")
     print("RPG motion: \(library.count) motions, retargeting, controller, combo and IK checked")
 }

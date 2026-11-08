@@ -188,7 +188,7 @@ struct UniversalMotion: Codable, Equatable, Identifiable, Sendable {
 
 // MARK: Skeleton application
 
-enum MotionPose {
+enum RigPoser {
     /// Local joint transforms for a sample: bind rest × rotation (rest
     /// rotations are identity on Moonlight rigs, so rotations act in the
     /// parent's bind frame), the root offset on the root joint.
@@ -256,7 +256,8 @@ enum MotionAdapters {
     /// The 10-bone rig's semantic map onto the standard joints.
     static func joint(for bone: RigBone) -> JointTag {
         switch bone {
-        case .torso: .spine1
+        // The old torso bone is the root of the 10-bone rig (legs hang from it), like the pelvis.
+        case .torso: .pelvis
         case .head: .head
         case .rightUpperArm: .rightUpperArm
         case .rightForearm: .rightForearm
@@ -278,11 +279,9 @@ enum MotionAdapters {
             let channels = clip.channels.filter { $0.bone == bone && $0.axis.count == 3 }
             guard !channels.isEmpty else { continue }
             let rotations = times.map { t -> Quat in
+                // As RigPose: channels compose in order, the phase is in radians.
                 var q = Quat.identity
-                for c in channels {
-                    let angle = c.bias + c.amplitude * sin(2 * .pi * (c.frequency * t / max(0.01, clip.period) + c.phase))
-                    q = Quat(axis: SIMD3(c.axis[0], c.axis[1], c.axis[2]), angle: angle) * q
-                }
+                for c in channels { q = q * Quat(axis: SIMD3(c.axis[0], c.axis[1], c.axis[2]), angle: clip.angle(c, at: t)) }
                 return q
             }
             motion.tracks.append(JointTrack(joint: joint(for: bone).rawValue, times: times, rotations: rotations))
