@@ -21,18 +21,18 @@ func baseBodyTransferTests() {
     // The target: the same body with its arms raised to a T-pose.
     let source = BaseBody.build(truth)
     var pose = SkeletonPose.rest(source.skeleton)
-    // Raise each arm to the shoulder's height: search the axis and angle
+    // Raise each arm to the shoulder's height: search the axis and angle (degrees)
     // (joint frames are not world-aligned, so neither is known up front).
     for (upper, handTag) in [(JointTag.rightUpperArm, JointTag.rightHand), (.leftUpperArm, .leftHand)] {
         guard let u = source.skeleton.index(upper), let hand = source.skeleton.index(handTag) else { check(false, "transfer: arm joints exist"); return }
         var best: (miss: Float, axis: Int, angle: Float) = (.infinity, 0, 0)
         for axis in 0..<3 {
             for step in -18...18 {
-                var trial = pose; trial.rotations[u][axis] = Float(step) * .pi / 36
+                var trial = pose; trial.rotations[u][axis] = Float(step) * 5
                 let w = trial.world(source.skeleton)
                 // Level and still out to the side (not raised forward).
                 let miss = abs(w[hand].origin.y - w[u].origin.y) + abs(w[hand].origin.z - w[u].origin.z)
-                if miss < best.miss { best = (miss, axis, Float(step) * .pi / 36) }
+                if miss < best.miss { best = (miss, axis, Float(step) * 5) }
             }
         }
         pose.rotations[u][best.axis] = best.angle
