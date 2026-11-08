@@ -117,6 +117,17 @@ AI Studio → 只产出经 ContentCompiler 校验的数据 → Assets / World
 - 建模页接入：照片、Apple 图像、视频最清晰帧、多张照片（正面＋背面）里有完整人物 → `BaseBodyCharacterPipeline` 生成自带骨骼的 360° 人物（`Geometry.baseBody`）；否则沿用原路线。文字生成本来就自带骨骼；导入、多视角和本地模型通过自动绑骨借用底模权重。
 - 尚未完成：视频动作捕捉；衣服、头发的独立网格；真实照片在真机上的效果验证。
 
+### 4.2 通用角色系统 MUCS（v1.91）
+
+详见 `docs/CHARACTER_SYSTEM.md`（审计结果、格式规范、验证范围和未完成清单）。要点：
+
+- **HumanBase**：MakeHuman hm08（CC0）真实人体网格，由 `tools/humanbase/build_humanbase.py` 生成中性 T-Pose 人台；13 380 顶点，LOD0/1/2 = 19 500 / 7 800 / 1 950 三角形；60 个关节（27 标准 + 33 扩展）；18 个体型通道 + 骨骼长度和头身比例缩放，关节随形体重新计算。
+- **统一动作**：`UniversalMotion`（四种旧格式都能转入），25 个标准动作，`CharacterAnimationController`（速度混合、上半身分层、事件按世界时钟只触发一次），`MotionRetargeter`（按骨骼方向换算，处理 A/T-Pose 差异），`CharacterIK`。
+- **外观**：材质描述（六种风格）、贴身服装层（从身体表面生成、带身体权重）、挂点装备。
+- **资产**：`CharacterPackage`（版本化、原子保存、不覆盖新格式、底模角色不重复存网格）；`CharacterValidator` 在角色进入世界前检查。
+- **运行**：`CharacterRuntime` 统一渲染底模角色和已绑骨的 AI 模型（每个角色自己的动作状态和变形网格，按距离选 LOD 和更新频率，异常姿态退回上一帧并记录）。玩家使用新角色时，伤害在动作的命中帧按世界时钟结算。
+- **入口**：3D 世界 ⋯ 菜单「角色工作台」。
+
 ## 5. 兼容要求
 
 - `WorldState` 只做可选字段扩展。每次 schema 变化都要有「旧存档加载 → 保存 → 再加载」测试

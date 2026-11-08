@@ -101,6 +101,11 @@ struct CharacterWorkbenchView: View {
             Picker(L10n.t("页面", "Page"), selection: $page) { ForEach(Page.allCases) { Text($0.title).tag($0) } }
                 .pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 8)
                 .accessibilityIdentifier("workbench-pages")
+            // Results stay visible whichever page is open (not at the bottom of a long form).
+            if let message {
+                Text(message).font(.callout).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 6)
+                    .accessibilityIdentifier("workbench-message")
+            }
             Form { pageContent }
         }
         .navigationTitle(L10n.t("角色工作台", "Character Workbench"))
@@ -334,7 +339,6 @@ struct CharacterWorkbenchView: View {
                 Button(L10n.t("删除这个角色", "Delete this character"), role: .destructive) { library.delete(packageID); self.packageID = nil }
             }
         }
-        if let message { Section { Text(message).font(.callout).accessibilityIdentifier("workbench-message") } }
         Section(L10n.t("角色包", "Character package")) {
             Text(L10n.t("角色以 CharacterPackage 保存（Manifest、骨骼、动作、材质、挂点、检查报告）。底模角色不重复保存网格，由通用底模和体型参数重建。",
                         "Characters are saved as a CharacterPackage (manifest, skeleton, motions, materials, sockets, check report). Base-body characters store no mesh of their own; it is rebuilt from the base body and the shape.")).font(.caption).foregroundStyle(.secondary)
