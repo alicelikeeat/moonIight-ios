@@ -556,8 +556,12 @@ final class ScrollGestureTests: XCTestCase {
         sleep(2)
         attach(app, name: "review-humanbase-tpose")
         // The bare mannequin is light grey on a dark backdrop: look for it in the preview itself.
-        let shot = preview.screenshot().image
-        let figure = lightShare(shot)
+        // The 3D view can still be blank right after the sheet opens: give it a few seconds.
+        var shot = preview.screenshot().image
+        var figure = lightShare(shot)
+        for _ in 0..<10 where !(figure > 0.02 && figure < 0.6) {
+            sleep(1); shot = preview.screenshot().image; figure = lightShare(shot)
+        }
         print("Base-body preview: frame \(preview.frame), image \(shot.size), light share \(figure), colours \(colourVariety(shot)), samples \(pixelSamples(shot))")
         XCTAssertTrue(figure > 0.02 && figure < 0.6, "the mannequin is drawn in the preview (light share \(figure))")
         app.buttons["远景"].tap()
