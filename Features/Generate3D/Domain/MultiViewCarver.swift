@@ -82,6 +82,47 @@ enum MultiViewCarver {
         return Crop(x0: x0, y0: y0, w: x1 - x0 + 1, h: y1 - y0 + 1)
     }
 
+    /// How well opposite photos agree (IoU of front vs mirrored back, left vs
+    /// mirrored right, on their crops); the lowest pair, nil without a pair.
+    static func agreement(_ photos: [PhotoView: ViewPhoto], crops: [PhotoView: Crop]) -> Float? {
+        var lowest: Float?
+        for (a, b) in [(PhotoView.front, PhotoView.back), (.left, .right)] {
+            guard let pa = photos[a], let pb = photos[b], let ca = crops[a], let cb = crops[b] else { continue }
+            // Both outlines on a 64-cell grid; a cell only disagrees when the
+            // other outline has nothing within one cell (pixel-wide differences
+            // on thin limbs are not misalignment).
+            let n = 64
+            func grid(_ p: ViewPhoto, _ c: Crop, mirrored: Bool) -> [Bool] {
+                var g = [Bool](repeating: false, count: n * n)
+                for j in 0..<n { for i in 0..<n {
+                    let u = (Float(i) + 0.5) / Float(n), v = (Float(j) + 0.5) / Float(n)
+                    let x = c.x0 + Int((mirrored ? 1 - u : u) * Float(c.w - 1)), y = c.y0 + Int(v * Float(c.h - 1))
+                    g[j * n + i] = p.mask[y * p.width + x] >= 0.5
+                } }
+                return g
+            }
+            let ga = grid(pa, ca, mirrored: false), gb = grid(pb, cb, mirrored: true)
+            func near(_ g: [Bool], _ i: Int, _ j: Int) -> Bool {
+                for dj in -1...1 { for di in -1...1 {
+                    let x = i + di, y = j + dj
+                    if x >= 0, x < n, y >= 0, y < n, g[y * n + x] { return true }
+                } }
+                return false
+            }
+            var union = 0, missed = 0
+            for j in 0..<n { for i in 0..<n {
+                let x = ga[j * n + i], y = gb[j * n + i]
+                guard x || y else { continue }
+                union += 1
+                if (x && !near(gb, i, j)) || (y && !near(ga, i, j)) { missed += 1 }
+            } }
+            guard union > 0 else { continue }
+            let score = 1 - Float(missed) / Float(union)
+            lowest = min(lowest ?? score, score)
+        }
+        return lowest
+    }
+
     static func build(_ photos: [PhotoView: ViewPhoto], options: Options = Options(), cancelled: () -> Bool = { false }) throws -> MultiViewResult {
         guard let front = photos[.front] else { throw MultiViewError.needsFront }
         var crops: [PhotoView: Crop] = [:]
@@ -100,13 +141,23 @@ enum MultiViewCarver {
         else { Z = X * options.thickness; notes.append(L10n.t("没有侧面照片：厚度按轮廓推测", "No side photo: thickness guessed from the outline")) }
         Z = max(0.05, Z)
 
+        // v1.92: the outline tolerance follows how well opposite photos agree.
+        // Front and mirrored back (left and mirrored right) show the same
+        // outline; when they match, the photos are aligned and the full
+        // tolerance would only fatten thin parts.
+        let agreement = MultiViewCarver.agreement(photos, crops: crops)
+        let t = options.tolerance * (agreement.map { min(1, max(0.15, (1 - $0) / 0.08)) } ?? 1)
+        if let agreement, agreement >= 0.95 {
+            notes.append(L10n.t(String(format: "正反面轮廓吻合 %.0f%%：按精确对齐处理", agreement * 100), String(format: "Opposite outlines agree %.0f%%: treated as aligned", agreement * 100)))
+        }
+
         // Mask lookup in a view's crop (u, v in 0…1, v down) with tolerance.
         func inside(_ view: PhotoView, _ u: Float, _ v: Float) -> Bool {
             guard let p = photos[view], let c = crops[view] else { return true }
-            let t = options.tolerance
             guard u >= -t, u <= 1 + t, v >= -t, v <= 1 + t else { return false }
-            let r = max(1, Int(t * Float(max(c.w, c.h))))
+            let r = Int(t * Float(max(c.w, c.h)))
             let cx = c.x0 + Int(min(1, max(0, u)) * Float(c.w - 1)), cy = c.y0 + Int(min(1, max(0, v)) * Float(c.h - 1))
+            if r == 0 { return p.mask[cy * p.width + cx] >= 0.5 }
             for dy in stride(from: -r, through: r, by: r) { for dx in stride(from: -r, through: r, by: r) {
                 let x = min(p.width - 1, max(0, cx + dx)), y = min(p.height - 1, max(0, cy + dy))
                 if p.mask[y * p.width + x] >= 0.5 { return true }
@@ -140,10 +191,53 @@ enum MultiViewCarver {
             // Each part is about as deep as it is wide where it is (√h is
             // close to the distance to the outline), so arms stay thin.
             let h = DepthRefine.inflation(occupied, width: nx, height: ny)
-            let half = h.map { 0.8 * $0.squareRoot() / Float(ny) }
+            // v1.92: 1.6 (was 0.8): the reconstruction benchmark showed bodies
+            // carved from front and back at about a third of their real depth.
+            // Its best was 2.0 on human bodies; 1.6 keeps most of the gain
+            // without inflating flatter objects as much.
+            let half = h.map { 1.6 * $0.squareRoot() / Float(ny) }
             halfDepth = half
             Z = 2 * (half.max() ?? 0.05) + 2 / Float(ny)
             nz = max(8, Int((Float(N) * Z).rounded()))
+        }
+
+        // v1.92: with a side photo, each part is only as deep as its own
+        // thickness. A side view alone gives every part at one height the
+        // depth of the deepest one (outstretched arms become slabs as deep as
+        // the chest); the front outline says how thick each part is, and the
+        // side photo says how deep the thickest part of that row really is.
+        var window: [SIMD2<Float>]? = nil
+        let sideViews = [PhotoView.left, .right].filter { photos[$0] != nil }
+        if halfDepth == nil, !sideViews.isEmpty {
+            var occupied = [Bool](repeating: false, count: nx * ny)
+            for j in 0..<ny { for i in 0..<nx {
+                let x = (Float(i) + 0.5) / Float(nx) * X - X / 2, y = (Float(j) + 0.5) / Float(ny)
+                let (u, v) = project(.front, x, y, 0)
+                occupied[j * nx + i] = inside(.front, u, v)
+            } }
+            let thickness = DepthRefine.inflation(occupied, width: nx, height: ny).map { $0.squareRoot() }
+            var w = [SIMD2<Float>](repeating: SIMD2(0, -1), count: nx * ny)
+            let voxel = Z / Float(nz)
+            for j in 0..<ny {
+                let y = (Float(j) + 0.5) / Float(ny)
+                // The side photos' depth range at this height.
+                var lo = Float.infinity, hi = -Float.infinity
+                for k in 0..<nz {
+                    let z = (Float(k) + 0.5) / Float(nz) * Z - Z / 2
+                    if sideViews.allSatisfy({ view in let (u, v) = project(view, 0, y, z); return inside(view, u, v) }) { lo = min(lo, z); hi = max(hi, z) }
+                }
+                guard lo <= hi else { continue }
+                let rowMax = (0..<nx).map { thickness[j * nx + $0] }.max() ?? 0
+                guard rowMax > 0 else { continue }
+                let centre = (lo + hi) / 2, half = (hi - lo) / 2
+                for i in 0..<nx where occupied[j * nx + i] {
+                    // Thinner parts fall off with the square of their relative
+                    // thickness (the benchmark's best of 1, 1.5, 2 and 3 short of
+                    // over-fitting), plus a voxel, and never under two voxels.
+                    w[j * nx + i] = SIMD2(centre, max(2 * voxel, half * pow(thickness[j * nx + i] / rowMax, 2) + voxel))
+                }
+            }
+            window = w
         }
 
         // Carve (padded by one empty voxel all round, so the surface closes).
@@ -156,6 +250,7 @@ enum MultiViewCarver {
             for j in 0..<ny { for i in 0..<nx {
                 let x = (Float(i) + 0.5) / Float(nx) * X - X / 2, y = (Float(j) + 0.5) / Float(ny), z = (Float(k) + 0.5) / Float(nz) * Z - Z / 2
                 if let halfDepth, abs(z) > halfDepth[j * nx + i] { continue }
+                if let window { let w = window[j * nx + i]; if abs(z - w.x) > w.y { continue } }
                 var keep = true
                 for view in photos.keys {
                     let (u, v) = project(view, x, y, z)

@@ -22,11 +22,14 @@ func reconstructionBenchmarkTests() {
         check(ReconstructionBenchmark.iou(body.mesh, body.mesh) > 0.99 && ReconstructionBenchmark.chamfer(body.mesh, body.mesh) < 1e-4
               && (ReconstructionBenchmark.jointError(body, body) ?? 1) < 1e-5, "benchmark: a body scored against itself is perfect")
     }
+    // Floors (v1.92 scores on the Mac runner, with a little room): a change
+    // that makes a method worse fails here. Raise them as methods improve.
     if let fit = summary[.photoFit], let neutral = summary[.neutral], let fj = fit.jointError, let nj = neutral.jointError {
-        check(fj < nj, "benchmark: one photo's fit beats the neutral body on joints (\(fj) vs \(nj))")
-        check(fit.iou > neutral.iou, "benchmark: one photo's fit beats the neutral body on outline (\(fit.iou) vs \(neutral.iou))")
+        check(fj < nj && fit.iou > neutral.iou, "benchmark: one photo's fit beats the neutral body (joints \(fj) vs \(nj), IoU \(fit.iou) vs \(neutral.iou))")
+        check(fit.iou >= 0.82 && fj <= 0.011, "benchmark: photo fit holds IoU ≥ 0.82 and joint error ≤ 0.011 (\(fit.iou), \(fj))")
     } else { check(false, "benchmark: fit and neutral scores exist") }
     if let two = summary[.carve2], let four = summary[.carve4] {
-        check(four.iou >= two.iou - 0.01, "benchmark: side photos do not make carving worse (\(four.iou) vs \(two.iou))")
+        check(four.iou > two.iou, "benchmark: side photos make carving better (\(four.iou) vs \(two.iou))")
+        check(two.iou >= 0.72 && four.iou >= 0.77, "benchmark: carving holds IoU ≥ 0.72 from two photos and ≥ 0.77 from four (\(two.iou), \(four.iou))")
     }
 }

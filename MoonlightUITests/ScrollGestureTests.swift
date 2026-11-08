@@ -329,6 +329,27 @@ final class ScrollGestureTests: XCTestCase {
 
     /// Distinct colours (quantised to 3 bits per channel) on a 16×16 grid
     /// over the middle of the screen, away from the HUD. A blank view gives 1–2.
+    /// Share of clearly light pixels (luma above 0.45) on a 24 × 24 grid.
+    private func lightShare(_ image: UIImage) -> Double {
+        guard let cg = image.cgImage else { return 0 }
+        let width = cg.width, height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn, width > 0, height > 0 else { return 0 }
+        var light = 0
+        for gy in 0..<24 { for gx in 0..<24 {
+            let x = (width - 1) * gx / 23, y = (height - 1) * gy / 23, o = (y * width + x) * 4
+            let luma = 0.299 * Double(pixels[o]) + 0.587 * Double(pixels[o + 1]) + 0.114 * Double(pixels[o + 2])
+            if luma > 0.45 * 255 { light += 1 }
+        } }
+        return Double(light) / 576
+    }
+
     private func colourVariety(_ image: UIImage) -> Int {
         guard let cg = image.cgImage else { return 0 }
         let width = cg.width, height = cg.height
@@ -506,12 +527,14 @@ final class ScrollGestureTests: XCTestCase {
         enterSandbox(app)
         openMore("glass3d-human-base", in: app)
         _ = waitForAny("humanbase-view", in: app, timeout: 20, "the base-body page opens")
-        _ = waitForAny("workbench-preview", in: app, timeout: 10, "the preview")
+        let preview = waitForAny("workbench-preview", in: app, timeout: 10, "the preview")
         let tpose = app.buttons["T-Pose（绑定姿态）"]
         XCTAssertTrue(tpose.waitForExistence(timeout: 10) && tpose.isSelected, "it opens in the T-pose")
         sleep(2)
         attach(app, name: "review-humanbase-tpose")
-        XCTAssertGreaterThanOrEqual(colourVariety(app.screenshot().image), 6, "the mannequin is drawn")
+        // The bare mannequin is light grey on a dark backdrop: look for it in the preview itself.
+        let figure = lightShare(preview.screenshot().image)
+        XCTAssertTrue(figure > 0.02 && figure < 0.6, "the mannequin is drawn in the preview (light share \(figure))")
         app.buttons["远景"].tap()
         let lod = waitForAny("humanbase-lod-label", in: app, timeout: 10, "the detail label")
         let far = NSPredicate { _, _ in lod.label.contains("远景") || ((lod.value as? String) ?? "").contains("远景") }

@@ -37,7 +37,8 @@ enum BaseBodyCharacterPipeline {
         }
         progress(L10n.t("套用通用底模", "Fitting the universal base body"), 0.45)
         // v1.91: the real HumanBase body (MakeHuman, CC0) when its file is there; the tube body otherwise.
-        let model = HumanBase.build(HumanShape.fitting(fit.shape, measured: Set(fit.measured)))?.model ?? BaseBody.build(fit.shape)
+        // v1.92: the photo's proportions are calibrated to the base body's own measures first.
+        let model = HumanBase.build(HumanShape.fromPhoto(fit))?.model ?? BaseBody.build(fit.shape)
         let painted = BaseBodyPaint.paint(model, front: frontPhoto, back: backPhoto)
         try Task.checkCancellation()
         progress(L10n.t("制作贴图", "Making the texture"), 0.7)

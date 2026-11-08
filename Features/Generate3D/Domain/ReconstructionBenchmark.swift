@@ -54,90 +54,9 @@ enum ReconstructionBenchmark {
         ]
     }
 
-    // MARK: Pictures
-
-    static let photoSize = 192
-    /// Narrow field of view: close to the orthographic photos the carver assumes.
-    static func camera(yaw: Float, pitch: Float = 0) -> RasterCamera { RasterCamera(yaw: yaw, pitch: pitch, fieldOfView: 10, margin: 1.1, lighting: true) }
-
-    /// A mesh moved and scaled into the unit cube (the rasteriser's frame).
-    struct Frame { var centre: SIMD3<Float>; var scale: Float }
-    static func frame(_ mesh: GeneratedMesh) -> Frame {
-        let b = mesh.bounds
-        let lo = SIMD3(b.min[0], b.min[1], b.min[2]), hi = SIMD3(b.max[0], b.max[1], b.max[2])
-        let extent = hi - lo
-        return Frame(centre: (lo + hi) / 2, scale: 1 / max(1e-4, max(extent.x, max(extent.y, extent.z))))
-    }
-    static func normalised(_ mesh: GeneratedMesh, _ f: Frame) -> [Float] {
-        var p = mesh.positions
-        for i in stride(from: 0, to: p.count, by: 3) {
-            p[i] = (p[i] - f.centre.x) * f.scale; p[i + 1] = (p[i + 1] - f.centre.y) * f.scale; p[i + 2] = (p[i + 2] - f.centre.z) * f.scale
-        }
-        return p
-    }
-
-    /// Model yaw that shows each side to the camera (the camera looks down −z;
-    /// the body faces +z and its left is +x).
-    static func yaw(_ view: PhotoView) -> Float {
-        switch view { case .front: 0; case .back: .pi; case .left: -.pi / 2; case .right: .pi / 2; case .top, .bottom: 0 }
-    }
-
-    static func photo(_ mesh: GeneratedMesh, positions: [Float], view: PhotoView) -> ViewPhoto {
-        let image = ModelRasterizer.render(mesh, positions: positions, texture: nil, colors: nil, camera: camera(yaw: yaw(view)),
-                                           width: photoSize, height: photoSize, supersample: 2)
-        let mask = stride(from: 3, to: image.rgba.count, by: 4).map { Float(image.rgba[$0]) / 255 }
-        return ViewPhoto(width: image.width, height: image.height, mask: mask, image: image)
-    }
-
-    /// Where a point of the normalised model lands in a front picture, in
-    /// pixels (the rasteriser's own projection, pitch 0).
-    static func project(_ p: SIMD3<Float>, size: Int = photoSize) -> SIMD2<Float> {
-        let c = camera(yaw: 0)
-        let f = 1 / tan(c.fieldOfView * .pi / 360)
-        let distance = 0.5 * c.margin * f + 0.6
-        let zc = max(0.01, distance - p.z)
-        return SIMD2((p.x * f / zc * 0.5 + 0.5) * Float(size), (0.5 - p.y * f / zc * 0.5) * Float(size))
-    }
-
-    /// What Vision would report for the front picture: 19 body points (from
-    /// the true joints) and the outline (from the mask). Units: picture
-    /// heights, y up.
-    static func bodyPhoto(_ body: HumanBody, frame: Frame, front: ViewPhoto) -> BodyPhoto {
-        let world = body.skeleton.worldRest
-        func joint(_ id: String) -> SIMD3<Float>? {
-            guard let i = body.skeleton.joints.firstIndex(where: { $0.jointID == id }) else { return nil }
-            return (world[i].origin - frame.centre) * frame.scale
-        }
-        let size = Float(front.height)
-        func point(_ p: SIMD3<Float>?) -> BodyPhoto.Point? {
-            guard let p else { return nil }
-            let px = project(p, size: front.height)
-            return BodyPhoto.Point(x: px.x / size, y: (size - px.y) / size, confidence: 1)
-        }
-        var points: [PhotoJoint: BodyPhoto.Point] = [:]
-        let pairs: [(PhotoJoint, String)] = [
-            (.leftEye, "ext.leftEye"), (.rightEye, "ext.rightEye"),
-            (.leftShoulder, "leftUpperArm"), (.rightShoulder, "rightUpperArm"), (.leftElbow, "leftForearm"), (.rightElbow, "rightForearm"),
-            (.leftWrist, "leftHand"), (.rightWrist, "rightHand"), (.root, "pelvis"), (.leftHip, "leftThigh"), (.rightHip, "rightThigh"),
-            (.leftKnee, "leftShin"), (.rightKnee, "rightShin"), (.leftAnkle, "leftFoot"), (.rightAnkle, "rightFoot"),
-        ]
-        for (photoJoint, id) in pairs { points[photoJoint] = point(joint(id)) }
-        // Vision's neck sits on the shoulder line; the nose half way up the head, in front.
-        if let l = joint("leftUpperArm"), let r = joint("rightUpperArm") { points[.neck] = point((l + r) / 2) }
-        if let head = joint("head"), let top = joint("headEnd") { points[.nose] = point((head + top) / 2 + SIMD3(0, 0, 0.05)) }
-        var outline: [BodyPhoto.Row] = []
-        for y in 0..<front.height {
-            var spans: [SIMD2<Float>] = []
-            var start: Int?
-            for x in 0...front.width {
-                let on = x < front.width && front.mask[y * front.width + x] >= 0.5
-                if on, start == nil { start = x }
-                if !on, let s = start { spans.append(SIMD2(Float(s) / size, Float(x) / size)); start = nil }
-            }
-            outline.append(BodyPhoto.Row(y: (size - Float(y) - 0.5) / size, spans: spans))
-        }
-        return BodyPhoto(points: points, outline: outline, aspect: Float(front.width) / Float(front.height))
-    }
+    static func camera(yaw: Float, pitch: Float = 0) -> RasterCamera { SyntheticPhoto.camera(yaw: yaw, pitch: pitch) }
+    static func frame(_ mesh: GeneratedMesh) -> SyntheticPhoto.Frame { SyntheticPhoto.frame(mesh) }
+    static func normalised(_ mesh: GeneratedMesh, _ f: SyntheticPhoto.Frame) -> [Float] { SyntheticPhoto.normalised(mesh, f) }
 
     // MARK: Scores
 
@@ -212,7 +131,7 @@ enum ReconstructionBenchmark {
             let truthFrame = frame(truth.mesh)
             let truthPositions = normalised(truth.mesh, truthFrame)
             var photos: [PhotoView: ViewPhoto] = [:]
-            for view in [PhotoView.front, .back, .left, .right] { photos[view] = photo(truth.mesh, positions: truthPositions, view: view) }
+            for view in [PhotoView.front, .back, .left, .right] { photos[view] = SyntheticPhoto.photo(truth.mesh, positions: truthPositions, view: view) }
             for method in methods {
                 let start = Date()
                 var mesh: GeneratedMesh?
@@ -223,9 +142,9 @@ enum ReconstructionBenchmark {
                     var shape = HumanShape.standard; shape.height = subject.shape.height
                     body = HumanBase.build(shape, lod: 1)
                 case .photoFit:
-                    let fit = BodyPhotoFit.shape(bodyPhoto(truth, frame: truthFrame, front: photos[.front]!), height: subject.shape.height)
+                    let fit = BodyPhotoFit.shape(SyntheticPhoto.bodyPhoto(truth, frame: truthFrame, front: photos[.front]!), height: subject.shape.height)
                     if !fit.usable { failure = "fit not usable: " + fit.defaulted.joined(separator: ",") }
-                    body = HumanBase.build(HumanShape.fitting(fit.shape, measured: Set(fit.measured)), lod: 1)
+                    body = HumanBase.build(HumanShape.fromPhoto(fit), lod: 1)
                 case .carve2, .carve4:
                     let views: [PhotoView] = method == .carve2 ? [.front, .back] : [.front, .back, .left, .right]
                     do { mesh = try MultiViewCarver.build(photos.filter { views.contains($0.key) }).mesh } catch { failure = "\(error)" }
