@@ -1,0 +1,545 @@
+{
+ "source": "MakeHuman hm08 default skeleton (CC0 1.0), commit a8bc2d54ff0ac92e78ff71431b1023eda42bf482",
+ "joints": [
+  {
+   "name": "pelvis",
+   "parent": null,
+   "position": [
+    0.0,
+    0.93929,
+    0.0052
+   ]
+  },
+  {
+   "name": "spine",
+   "parent": "pelvis",
+   "position": [
+    0.0,
+    1.00558,
+    -0.02692
+   ]
+  },
+  {
+   "name": "spine1",
+   "parent": "spine",
+   "position": [
+    0.0,
+    1.07546,
+    -0.01066
+   ]
+  },
+  {
+   "name": "chest",
+   "parent": "spine1",
+   "position": [
+    -0.0,
+    1.15462,
+    -0.00884
+   ]
+  },
+  {
+   "name": "neck",
+   "parent": "chest",
+   "position": [
+    0.0,
+    1.49093,
+    0.00539
+   ]
+  },
+  {
+   "name": "head",
+   "parent": "neck",
+   "position": [
+    -0.0,
+    1.59731,
+    0.04671
+   ]
+  },
+  {
+   "name": "headEnd",
+   "parent": "head",
+   "position": [
+    0.0,
+    1.75338,
+    0.03939
+   ]
+  },
+  {
+   "name": "rightClavicle",
+   "parent": "chest",
+   "position": [
+    -0.02398,
+    1.41589,
+    0.0228
+   ]
+  },
+  {
+   "name": "rightUpperArm",
+   "parent": "rightClavicle",
+   "position": [
+    -0.17933,
+    1.39198,
+    0.02037
+   ]
+  },
+  {
+   "name": "rightForearm",
+   "parent": "rightUpperArm",
+   "position": [
+    -0.4347,
+    1.39198,
+    0.02037
+   ]
+  },
+  {
+   "name": "rightHand",
+   "parent": "rightForearm",
+   "position": [
+    -0.68634,
+    1.39198,
+    0.02037
+   ]
+  },
+  {
+   "name": "rightHandEnd",
+   "parent": "rightHand",
+   "position": [
+    -0.87499,
+    1.34248,
+    0.02908
+   ]
+  },
+  {
+   "name": "rightThigh",
+   "parent": "pelvis",
+   "position": [
+    -0.10692,
+    0.91293,
+    0.0052
+   ]
+  },
+  {
+   "name": "rightShin",
+   "parent": "rightThigh",
+   "position": [
+    -0.15027,
+    0.50063,
+    0.03942
+   ]
+  },
+  {
+   "name": "rightFoot",
+   "parent": "rightShin",
+   "position": [
+    -0.19044,
+    0.07293,
+    0.02392
+   ]
+  },
+  {
+   "name": "rightToe",
+   "parent": "rightFoot",
+   "position": [
+    -0.20291,
+    0.02703,
+    0.15826
+   ]
+  },
+  {
+   "name": "rightToeEnd",
+   "parent": "rightToe",
+   "position": [
+    -0.20561,
+    0.01364,
+    0.20222
+   ]
+  },
+  {
+   "name": "leftClavicle",
+   "parent": "chest",
+   "position": [
+    0.02398,
+    1.41589,
+    0.0228
+   ]
+  },
+  {
+   "name": "leftUpperArm",
+   "parent": "leftClavicle",
+   "position": [
+    0.17933,
+    1.39198,
+    0.02037
+   ]
+  },
+  {
+   "name": "leftForearm",
+   "parent": "leftUpperArm",
+   "position": [
+    0.4347,
+    1.39198,
+    0.02037
+   ]
+  },
+  {
+   "name": "leftHand",
+   "parent": "leftForearm",
+   "position": [
+    0.68634,
+    1.39198,
+    0.02037
+   ]
+  },
+  {
+   "name": "leftHandEnd",
+   "parent": "leftHand",
+   "position": [
+    0.87499,
+    1.34248,
+    0.02908
+   ]
+  },
+  {
+   "name": "leftThigh",
+   "parent": "pelvis",
+   "position": [
+    0.10692,
+    0.91293,
+    0.0052
+   ]
+  },
+  {
+   "name": "leftShin",
+   "parent": "leftThigh",
+   "position": [
+    0.15027,
+    0.50063,
+    0.03942
+   ]
+  },
+  {
+   "name": "leftFoot",
+   "parent": "leftShin",
+   "position": [
+    0.19044,
+    0.07293,
+    0.02392
+   ]
+  },
+  {
+   "name": "leftToe",
+   "parent": "leftFoot",
+   "position": [
+    0.20291,
+    0.02703,
+    0.15826
+   ]
+  },
+  {
+   "name": "leftToeEnd",
+   "parent": "leftToe",
+   "position": [
+    0.20561,
+    0.01364,
+    0.20222
+   ]
+  },
+  {
+   "name": "ext.jaw",
+   "parent": "head",
+   "position": [
+    0.0,
+    1.60408,
+    0.05951
+   ]
+  },
+  {
+   "name": "ext.rightEye",
+   "parent": "head",
+   "position": [
+    -0.03047,
+    1.63811,
+    0.12453
+   ]
+  },
+  {
+   "name": "ext.rightFinger1.1",
+   "parent": "rightHand",
+   "position": [
+    -0.72271,
+    1.38674,
+    0.0496
+   ]
+  },
+  {
+   "name": "ext.rightFinger1.2",
+   "parent": "ext.rightFinger1.1",
+   "position": [
+    -0.73133,
+    1.36421,
+    0.07145
+   ]
+  },
+  {
+   "name": "ext.rightFinger1.3",
+   "parent": "ext.rightFinger1.2",
+   "position": [
+    -0.7547,
+    1.34419,
+    0.09407
+   ]
+  },
+  {
+   "name": "ext.rightFinger2.1",
+   "parent": "rightHand",
+   "position": [
+    -0.79166,
+    1.38225,
+    0.0579
+   ]
+  },
+  {
+   "name": "ext.rightFinger2.2",
+   "parent": "ext.rightFinger2.1",
+   "position": [
+    -0.81667,
+    1.37352,
+    0.06423
+   ]
+  },
+  {
+   "name": "ext.rightFinger2.3",
+   "parent": "ext.rightFinger2.2",
+   "position": [
+    -0.8371,
+    1.36098,
+    0.06849
+   ]
+  },
+  {
+   "name": "ext.rightFinger3.1",
+   "parent": "rightHand",
+   "position": [
+    -0.79355,
+    1.38691,
+    0.03043
+   ]
+  },
+  {
+   "name": "ext.rightFinger3.2",
+   "parent": "ext.rightFinger3.1",
+   "position": [
+    -0.82644,
+    1.37318,
+    0.02893
+   ]
+  },
+  {
+   "name": "ext.rightFinger3.3",
+   "parent": "ext.rightFinger3.2",
+   "position": [
+    -0.85203,
+    1.35927,
+    0.02945
+   ]
+  },
+  {
+   "name": "ext.rightFinger4.1",
+   "parent": "rightHand",
+   "position": [
+    -0.78948,
+    1.38729,
+    0.00954
+   ]
+  },
+  {
+   "name": "ext.rightFinger4.2",
+   "parent": "ext.rightFinger4.1",
+   "position": [
+    -0.81807,
+    1.37631,
+    0.00289
+   ]
+  },
+  {
+   "name": "ext.rightFinger4.3",
+   "parent": "ext.rightFinger4.2",
+   "position": [
+    -0.84091,
+    1.36406,
+    -0.00063
+   ]
+  },
+  {
+   "name": "ext.rightFinger5.1",
+   "parent": "rightHand",
+   "position": [
+    -0.78108,
+    1.38236,
+    -0.01065
+   ]
+  },
+  {
+   "name": "ext.rightFinger5.2",
+   "parent": "ext.rightFinger5.1",
+   "position": [
+    -0.80009,
+    1.37283,
+    -0.01788
+   ]
+  },
+  {
+   "name": "ext.rightFinger5.3",
+   "parent": "ext.rightFinger5.2",
+   "position": [
+    -0.81305,
+    1.36354,
+    -0.02196
+   ]
+  },
+  {
+   "name": "ext.leftEye",
+   "parent": "head",
+   "position": [
+    0.03047,
+    1.63811,
+    0.12453
+   ]
+  },
+  {
+   "name": "ext.leftFinger1.1",
+   "parent": "leftHand",
+   "position": [
+    0.72271,
+    1.38674,
+    0.0496
+   ]
+  },
+  {
+   "name": "ext.leftFinger1.2",
+   "parent": "ext.leftFinger1.1",
+   "position": [
+    0.73133,
+    1.36421,
+    0.07145
+   ]
+  },
+  {
+   "name": "ext.leftFinger1.3",
+   "parent": "ext.leftFinger1.2",
+   "position": [
+    0.7547,
+    1.34419,
+    0.09407
+   ]
+  },
+  {
+   "name": "ext.leftFinger2.1",
+   "parent": "leftHand",
+   "position": [
+    0.79166,
+    1.38225,
+    0.0579
+   ]
+  },
+  {
+   "name": "ext.leftFinger2.2",
+   "parent": "ext.leftFinger2.1",
+   "position": [
+    0.81667,
+    1.37352,
+    0.06423
+   ]
+  },
+  {
+   "name": "ext.leftFinger2.3",
+   "parent": "ext.leftFinger2.2",
+   "position": [
+    0.8371,
+    1.36098,
+    0.06849
+   ]
+  },
+  {
+   "name": "ext.leftFinger3.1",
+   "parent": "leftHand",
+   "position": [
+    0.79355,
+    1.38691,
+    0.03043
+   ]
+  },
+  {
+   "name": "ext.leftFinger3.2",
+   "parent": "ext.leftFinger3.1",
+   "position": [
+    0.82644,
+    1.37318,
+    0.02893
+   ]
+  },
+  {
+   "name": "ext.leftFinger3.3",
+   "parent": "ext.leftFinger3.2",
+   "position": [
+    0.85203,
+    1.35927,
+    0.02945
+   ]
+  },
+  {
+   "name": "ext.leftFinger4.1",
+   "parent": "leftHand",
+   "position": [
+    0.78948,
+    1.38729,
+    0.00954
+   ]
+  },
+  {
+   "name": "ext.leftFinger4.2",
+   "parent": "ext.leftFinger4.1",
+   "position": [
+    0.81807,
+    1.37631,
+    0.00289
+   ]
+  },
+  {
+   "name": "ext.leftFinger4.3",
+   "parent": "ext.leftFinger4.2",
+   "position": [
+    0.84091,
+    1.36406,
+    -0.00063
+   ]
+  },
+  {
+   "name": "ext.leftFinger5.1",
+   "parent": "leftHand",
+   "position": [
+    0.78108,
+    1.38236,
+    -0.01065
+   ]
+  },
+  {
+   "name": "ext.leftFinger5.2",
+   "parent": "ext.leftFinger5.1",
+   "position": [
+    0.80009,
+    1.37283,
+    -0.01788
+   ]
+  },
+  {
+   "name": "ext.leftFinger5.3",
+   "parent": "ext.leftFinger5.2",
+   "position": [
+    0.81305,
+    1.36354,
+    -0.02196
+   ]
+  }
+ ]
+}

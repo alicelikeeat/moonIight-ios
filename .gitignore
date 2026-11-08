@@ -4,3 +4,4 @@ DerivedData/
 *.xcuserstate
 Resources/DepthModel/DepthAnythingV2SmallF16.mlpackage/Data/com.apple.CoreML/weights/weight.bin
 Resources/DepthModel/DepthAnythingV2SmallF16.mlmodelc/
+tools/humanbase/.cache/

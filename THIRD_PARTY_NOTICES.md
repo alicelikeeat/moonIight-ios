@@ -15,6 +15,16 @@ CC0 作品已进入公有领域，可自由使用、修改、分发和商用，�
 
 CC0 works are in the public domain: free to use, change, share and sell, no credit required. Licence texts: `LICENSE-Kenney.txt`, `LICENSE-PolyHaven.txt` in the same folder.
 
+## 通用角色底模 / Universal character base body（`Resources/HumanBase/`）
+
+| 素材 | 作者 | 授权 | 来源 |
+|---|---|---|---|
+| MakeHuman hm08 基础网格、默认骨骼、默认蒙皮权重和体型 target（由 `tools/humanbase/build_humanbase.py` 处理成中性 T-Pose 人台、三级 LOD 和 18 个体型通道） | MakeHuman 项目（Data Collection AB、Joel Palmius、Jonas Hauquier 等） | CC0 1.0 | https://github.com/makehumancommunity/makehuman（提交 `a8bc2d5`） |
+
+只使用 MakeHuman 的素材（CC0），不包含其 AGPL 程序代码。授权原文见 `Resources/HumanBase/LICENSE-MakeHuman-CC0.md`，来源和构建方法见 `Resources/HumanBase/SOURCE.md`。
+
+Only MakeHuman's assets (CC0) are used, none of its AGPL program code. Licence text: `Resources/HumanBase/LICENSE-MakeHuman-CC0.md`; source and build steps: `Resources/HumanBase/SOURCE.md`.
+
 ## 本地 AI 模型 / On-device AI model（`Resources/DepthModel/`）
 
 | 模型 | 作者 | 授权 | 来源 |

@@ -150,9 +150,30 @@ struct RigJoint: Codable, Equatable, Identifiable, Sendable {
     var semanticTag: JointTag
     /// 0…1: how sure the estimator was about this joint's position.
     var confidence: Float
+    /// v1.91: where the joint came from (nil in rigs saved before v1.91).
+    var source: JointSource? = nil
+    /// v1.91: free-form extension data (e.g. "finger": "index").
+    var meta: [String: String]? = nil
     var id: String { jointID }
 
+    /// The same joint on the other side of the body ("right…" ↔ "left…"), by id.
+    var mirrorID: String? {
+        for (a, b) in [("right", "left"), ("left", "right")] {
+            if let r = jointID.range(of: a) { return jointID.replacingCharacters(in: r, with: b) }
+        }
+        return nil
+    }
+    /// Extension joints (fingers, jaw, eyes, accessories) beyond the 27 standard ones.
+    var isExtension: Bool { semanticTag == .other }
+
     var rest: RigXform { RigXform(matrix: restTransform) ?? .identity }
+}
+
+/// Where a joint came from: authored by hand (the base body), estimated
+/// from a mesh, mapped from an older rig, or filled in by a rule. A filled-in
+/// joint never counts as a recognised one.
+enum JointSource: String, Codable, Sendable {
+    case authored, estimated, legacyMapped, inferred, imported
 }
 
 enum SkeletonError: Error, Equatable {
