@@ -136,9 +136,25 @@ enum RiggingPipeline {
         var results = MotionValidator.run(context, clips: clips)
         lap("motionTest"); try check()
 
+        var repairs: [String] = []
+        // v1.90: a humanoid borrows the universal base body's weights (posed
+        // onto its joints) when they move at least as cleanly as the solved ones.
+        if skeletonOverride == nil, estimate.humanoid >= 0.6,
+           let borrowed = BaseBodyTransfer.weights(for: framed.mesh, skeleton: skeleton),
+           borrowed.valid(jointCount: skeleton.joints.count, vertexCount: framed.mesh.vertexCount) {
+            try check()
+            let trial = MotionValidator.context(framed.mesh, skeleton: skeleton, skin: borrowed)
+            let retest = MotionValidator.run(trial, clips: clips)
+            let fails = { (r: [DiagnosticResult]) in r.filter { $0.status == .fail }.count }
+            let tears = { (r: [DiagnosticResult]) in r.map { $0.metrics["tearShare"] ?? 0 }.reduce(0, +) }
+            if fails(retest) < fails(results) || (fails(retest) == fails(results) && tears(retest) <= tears(results) * 1.05 + 1e-6) {
+                skin = borrowed; context = trial; results = retest
+                repairs.append(L10n.t("使用通用底模的骨骼权重（动作测试不比自动计算差）", "Uses the universal base body's weights (moves at least as cleanly as solved weights)"))
+            }
+            lap("baseBody")
+        }
         // Automatic repair: relax weights around the joints that stretch
         // most in failing motions; keep only if the results improve.
-        var repairs: [String] = []
         progress(.repair, 0)
         for (index, clip) in clips.enumerated() where results[index].status == .fail && (results[index].metrics["tearShare"] ?? 0) > 0.002 {
             try check()
