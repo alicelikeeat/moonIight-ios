@@ -3369,6 +3369,7 @@ cinematicTests()
 demoLevelTests()
 flightTests()
 finiteMeshTests()
+try baseBodyTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.
