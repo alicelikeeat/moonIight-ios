@@ -48,3 +48,19 @@ func flightTests() {
     check(SpatialFlight.stamina(3, afterAirborne: 10, carry: &carry) == 0, "flight: stamina never goes below 0")
     print("RPG flight: climb, hover, cruise, walls, landing, stamina")
 }
+
+/// Bad vertices never reach a mesh (a NaN can black out a phone's frame).
+func finiteMeshTests() {
+    var positions: [Float] = [1, 2, 3, .nan, 0, 0, 5, 5, .infinity, 20_000, 0, 0]
+    var normals: [Float] = [0, 1, 0, 0, 0, 0, .nan, 1, 0, 0, 0, 1]
+    let rest: [Float] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], restN: [Float] = [0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0]
+    let fixed = FiniteMesh.repair(positions: &positions, normals: &normals, restPositions: rest, restNormals: restN)
+    check(fixed == 3 && positions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], "mesh: broken and runaway positions go back to the rest pose")
+    check(normals == [0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1], "mesh: zero and NaN normals take the rest normal, good ones stay")
+    var bare: [Float] = [.nan, .nan, .nan], bareN: [Float] = [.nan, 0, 0]
+    FiniteMesh.repair(positions: &bare, normals: &bareN, restPositions: [], restNormals: [])
+    check(bare == [0, 0, 0] && bareN == [0, 1, 0], "mesh: with no rest pose a bad vertex becomes the origin, facing up")
+    check(FiniteMesh.loopTime(2.5, period: 1) == 0.5 && FiniteMesh.loopTime(2.5, period: 0) == 0 && FiniteMesh.loopTime(.nan, period: 1) == 0 && FiniteMesh.loopTime(3, period: .nan) == 0,
+          "mesh: a zero or broken clip period plays the first frame instead of NaN")
+    print("RPG mesh: finite vertices")
+}

@@ -169,7 +169,13 @@ enum Generate3DRigging {
             let q = a * p * w + b * p * (1 - w), m = a * n * w + b * n * (1 - w)
             deformedPositions[i] = SIMD3(q.x, q.y, q.z)
             let normal = SIMD3(m.x, m.y, m.z)
-            deformedNormals[i] = simd_length(normal) > 0 ? simd_normalize(normal) : SIMD3(0, 0, 1)
+            let length = simd_length(normal)
+            deformedNormals[i] = length.isFinite && length > 0 ? normal / length : SIMD3(0, 0, 1)
+            // No NaN reaches the GPU: one bad vertex can black out the frame on a phone.
+            let d = deformedPositions[i]
+            if !(d.x.isFinite && d.y.isFinite && d.z.isFinite) || abs(d.x) > FiniteMesh.limit || abs(d.y) > FiniteMesh.limit || abs(d.z) > FiniteMesh.limit {
+                deformedPositions[i] = SIMD3(p.x, p.y, p.z)
+            }
         }
         write()
     }

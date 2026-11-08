@@ -75,7 +75,7 @@ import UIKit
                 let skeleton = rigged.character.skeleton, height = skeleton.height
                 for (clipID, player) in model.players {
                     guard let clip = MotionClip.resolve(clipID, in: rigged.character.clips) else { continue }
-                    let pose = clip.pose(skeleton, at: clock.truncatingRemainder(dividingBy: clip.period), height: height)
+                    let pose = clip.pose(skeleton, at: FiniteMesh.loopTime(clock, period: clip.period), height: height)
                     let deformed = SkinWeightSolver.deform(model.mesh, skin: rigged.skin, matrices: pose.skinning(skeleton))
                     player.update(positions: deformed.positions, normals: deformed.normals)
                 }
@@ -84,7 +84,7 @@ import UIKit
             guard let rig = model.rig else { continue }
             for (clipID, mesh) in model.animated {
                 let clip = rig.package.clips.first { $0.id == clipID }
-                mesh.pose(clip, time: clip.map { clock.truncatingRemainder(dividingBy: $0.period) } ?? 0)
+                mesh.pose(clip, time: clip.map { FiniteMesh.loopTime(clock, period: $0.period) } ?? 0)
             }
         }
     }
@@ -108,7 +108,10 @@ import UIKit
                 guard let rigMesh, rigMesh.vertexCount == saved.0.vertexCount else { return (source, nil) }
                 return (rigMesh, saved)
             }.value
-            guard let mesh = found.0 else { self.failed.insert(id); return }
+            // Bad vertices from a generated file would poison its bounds (and the
+            // character's scale) and can black out the frame on a phone.
+            guard let raw = found.0 else { self.failed.insert(id); return }
+            let mesh = FiniteMesh.repaired(raw)
             var rig: (package: RigPackage, skin: SkinWeights)?
             if found.1 == nil, let saved = await Generate3DRigging.load(manifest), saved.1.count == mesh.vertexCount { rig = (saved.0, saved.1) }
             var material = UnlitMaterial()
@@ -116,6 +119,7 @@ import UIKit
                 material.color = .init(tint: .white, texture: .init(texture))
             }
             let bounds = mesh.bounds
+            guard (bounds.max[1] - bounds.min[1]).isFinite, bounds.min[1].isFinite else { self.failed.insert(id); return }
             self.loaded[id] = Loaded(mesh: mesh, height: bounds.max[1] - bounds.min[1], minY: bounds.min[1], material: material, rig: rig,
                                      rigged: found.1.map { (character: $0.0, skin: $0.1) })
         }

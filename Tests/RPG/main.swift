@@ -3368,6 +3368,7 @@ try contentCompilerTests()
 cinematicTests()
 demoLevelTests()
 flightTests()
+finiteMeshTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.

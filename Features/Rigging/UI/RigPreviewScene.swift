@@ -36,7 +36,10 @@ import simd
     }
 
     func update(positions: [Float], normals: [Float]) {
-        let uvs = mesh.uvs, n = mesh.vertexCount
+        // No NaN reaches the GPU: one bad vertex can black out the frame on a phone.
+        var positions = positions, normals = normals
+        FiniteMesh.repair(positions: &positions, normals: &normals, restPositions: mesh.positions, restNormals: mesh.normals)
+        let uvs = mesh.uvs, n = min(mesh.vertexCount, positions.count / 3, normals.count / 3)
         lowLevel.withUnsafeMutableBytes(bufferIndex: 0) { raw in
             let target = raw.bindMemory(to: Vertex.self)
             for i in 0..<n {

@@ -739,3 +739,52 @@ enum PixelMath {
         return nearness.map { $0.isFinite && min(63, Int(($0 - lo) / (hi - lo) * 63)) > best ? 1 : 0 }
     }
 }
+
+// MARK: Finite vertices (v1.89)
+
+/// A single NaN or infinite vertex can turn a whole frame black on the phone
+/// (RealityKit's post-processing spreads it); the simulator shows nothing.
+/// Deformed and loaded vertices go through here before they reach a mesh.
+enum FiniteMesh {
+    /// Anything farther than this from the origin is treated as broken.
+    static let limit: Float = 10_000
+
+    /// Positions / normals (xyz triples) with every bad vertex put back to
+    /// `rest`; a bad normal with no usable rest becomes (0, 1, 0). Returns
+    /// how many vertices were repaired.
+    @discardableResult
+    static func repair(positions: inout [Float], normals: inout [Float], restPositions: [Float], restNormals: [Float]) -> Int {
+        var repaired = 0
+        let count = min(positions.count, normals.count) / 3
+        func ok(_ a: Float, _ b: Float, _ c: Float) -> Bool { a.isFinite && b.isFinite && c.isFinite && abs(a) < limit && abs(b) < limit && abs(c) < limit }
+        for v in 0..<count {
+            let i = v * 3
+            var fixed = false
+            if !ok(positions[i], positions[i + 1], positions[i + 2]) {
+                let hasRest = restPositions.count > i + 2 && ok(restPositions[i], restPositions[i + 1], restPositions[i + 2])
+                positions[i] = hasRest ? restPositions[i] : 0; positions[i + 1] = hasRest ? restPositions[i + 1] : 0; positions[i + 2] = hasRest ? restPositions[i + 2] : 0
+                fixed = true
+            }
+            if !ok(normals[i], normals[i + 1], normals[i + 2]) || (normals[i] == 0 && normals[i + 1] == 0 && normals[i + 2] == 0) {
+                let hasRest = restNormals.count > i + 2 && ok(restNormals[i], restNormals[i + 1], restNormals[i + 2]) && !(restNormals[i] == 0 && restNormals[i + 1] == 0 && restNormals[i + 2] == 0)
+                normals[i] = hasRest ? restNormals[i] : 0; normals[i + 1] = hasRest ? restNormals[i + 1] : 1; normals[i + 2] = hasRest ? restNormals[i + 2] : 0
+                fixed = true
+            }
+            if fixed { repaired += 1 }
+        }
+        return repaired
+    }
+
+    /// A loaded mesh with bad vertices repaired (no rest pose to fall back on).
+    static func repaired(_ mesh: GeneratedMesh) -> GeneratedMesh {
+        var copy = mesh
+        repair(positions: &copy.positions, normals: &copy.normals, restPositions: [], restNormals: [])
+        return copy
+    }
+
+    /// Time within a looping clip; a zero or broken period plays its first frame.
+    static func loopTime(_ clock: Float, period: Float) -> Float {
+        guard period.isFinite, period > 0.0001, clock.isFinite else { return 0 }
+        return clock.truncatingRemainder(dividingBy: period)
+    }
+}
