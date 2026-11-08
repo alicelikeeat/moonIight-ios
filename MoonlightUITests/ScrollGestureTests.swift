@@ -497,6 +497,33 @@ final class ScrollGestureTests: XCTestCase {
         waitCharacters(app, "back in 3D, still running", timeout: 15) { $0["view"] == "spatial" && $0["playerRuntime"] == "1" }
     }
 
+    /// The base body has its own page (⋯ menu): the bare mannequin, its
+    /// three levels of detail and its joints by body region.
+    @MainActor
+    func testHumanBasePageShowsTheMannequin() {
+        executionTimeAllowance = 600
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        enterSandbox(app)
+        openMore("glass3d-human-base", in: app)
+        _ = waitForAny("humanbase-view", in: app, timeout: 20, "the base-body page opens")
+        let status = waitForAny("workbench-preview", in: app, timeout: 10, "the preview")
+        XCTAssertTrue((status.value as? String ?? "").contains("T-Pose"), "it opens in the T-pose: \(status.value ?? "")")
+        sleep(2)
+        attach(app, name: "review-humanbase-tpose")
+        XCTAssertGreaterThanOrEqual(colourVariety(app.screenshot().image), 6, "the mannequin is drawn")
+        app.buttons["远景"].tap()
+        let lod = waitForAny("humanbase-lod-label", in: app, timeout: 10, "the detail label")
+        let far = NSPredicate { _, _ in lod.label.contains("远景") || ((lod.value as? String) ?? "").contains("远景") }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: far, object: nil)], timeout: 10), .completed, "the far level is shown: \(lod.label)")
+        app.buttons["精细"].tap()
+        waitForAny("humanbase-region-leftFingers", in: app, timeout: 10, "the left-finger region").tap()
+        _ = waitForAny("humanbase-region-joints", in: app, timeout: 10, "the region's joints")
+        sleep(1)
+        attach(app, name: "review-humanbase-left-fingers")
+        waitForAny("humanbase-close", in: app, timeout: 5, "close the page").tap()
+        XCTAssertTrue(waitForAny("glass3d-perspective-switch", in: app, timeout: 10, "back in the world").exists)
+    }
+
     /// A phone showed a black world after an AI model was picked as a
     /// creature's look in design mode: walk the same steps and check that
     /// both views still draw something after each one.

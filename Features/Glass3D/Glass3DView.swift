@@ -342,8 +342,10 @@ struct Glass3DScreen: View {
                 moreRow("pencil.and.list.clipboard", L10n.t("剧情编辑器", "Story Editor")) { sandboxSheet = .storyEditor }.accessibilityIdentifier("glass3d-story-editor")
                 moreRow("globe", L10n.t("世界与存档", "Worlds & Saves")) { sandboxSheet = .worlds }.accessibilityIdentifier("glass3d-worlds")
                 moreHeader(L10n.t("编辑器", "Editors"))
-                moreRow("figure.stand", L10n.t("角色工作台（通用底模）", "Character Workbench (base body)")) { sandboxSheet = .workbench }
+                moreRow("figure.stand", L10n.t("角色工作台", "Character Workbench")) { sandboxSheet = .workbench }
                     .accessibilityIdentifier("glass3d-character-workbench")
+                moreRow("figure.arms.open", L10n.t("通用底模", "Base Body")) { sandboxSheet = .humanBase }
+                    .accessibilityIdentifier("glass3d-human-base")
                 moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
                 moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
                 moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
@@ -478,7 +480,7 @@ struct Glass3DScreen: View {
 
     // MARK: Sandbox pages (story, worlds, diagnostics, settings)
 
-    enum SandboxSheet: String, Identifiable { case story, storyEditor, diagnostics, worlds, appSettings, workbench; var id: String { rawValue } }
+    enum SandboxSheet: String, Identifiable { case story, storyEditor, diagnostics, worlds, appSettings, workbench, humanBase; var id: String { rawValue } }
 
     @ViewBuilder private func sandboxPage(_ sheet: SandboxSheet) -> some View {
         switch sheet {
@@ -498,6 +500,8 @@ struct Glass3DScreen: View {
             NavigationStack { SandboxWorldsView(session: session) }
         case .workbench:
             NavigationStack { CharacterWorkbenchView(controller: controller) }
+        case .humanBase:
+            NavigationStack { HumanBaseView(openWorkbench: { sandboxSheet = .workbench }) }
         case .appSettings:
             NavigationStack {
                 SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { sandboxSheet = nil }.accessibilityIdentifier("world-app-settings-close") } }

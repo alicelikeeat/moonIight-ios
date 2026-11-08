@@ -2,8 +2,8 @@ import SwiftUI
 import RealityKit
 
 // v1.91: the Character Workbench, in the 3D world's ⋯ menu. One live 3D
-// preview (drag to turn, pinch to zoom) and seven pages: base body,
-// appearance, skeleton, motions, equipment, tests, export. Every change can
+// preview (drag to turn, pinch to zoom) and seven pages: characters,
+// base body, appearance, motions, equipment, tests, export. Every change can
 // be undone; nothing replaces a saved character without a confirmation.
 
 @available(iOS 18.0, *)
@@ -17,7 +17,14 @@ import RealityKit
     @Published var distance: Float = 3.2 { didSet { place() } }
     @Published var motion: UniversalMotion?
     @Published var bindPose = false
-    @Published var showSkeleton = false { didSet { runtime.showSkeleton = showSkeleton; needsPose = true } }
+    @Published var showSkeleton = false { didSet { runtime.showSkeleton = showSkeleton; needsPose = true; refreshLook() } }
+    /// The base body alone: no outfit or gear, a plain mannequin material
+    /// (see-through while the joints are shown).
+    @Published var bare = false { didSet { if bare != oldValue { refreshLook() } } }
+    /// Level of detail held in the preview (0 full, 1, 2).
+    @Published var lod = 0 { didSet { runtime.useLOD(Self.owner, lod); needsPose = true } }
+    @Published var highlighted: Set<String> = [] { didSet { runtime.highlightedJoints = highlighted; needsPose = true } }
+    private var look = CharacterAppearance()
     @Published private(set) var lastDeformMilliseconds: Double = 0
     private var height: Float = 1.75
     private var time: Float = 0
@@ -44,15 +51,26 @@ import RealityKit
 
     /// Shows (or reshapes) the character.
     func show(_ look: CharacterAppearance) {
-        height = look.shape.clamped.height
-        if runtime.has(Self.owner) { runtime.setAppearance(Self.owner, look) }
-        else if let entity = runtime.entity(owner: Self.owner, source: .humanBase(look)) {
+        self.look = look
+        let shown = displayed(look)
+        height = shown.shape.clamped.height
+        if runtime.has(Self.owner) { runtime.setAppearance(Self.owner, shown) }
+        else if let entity = runtime.entity(owner: Self.owner, source: .humanBase(shown)) {
             // The runtime turns bodies to face +x (the world's forward); face the camera here.
             entity.orientation = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
             pivot.addChild(entity)
         }
+        runtime.useLOD(Self.owner, lod)
         place()
         needsPose = true
+    }
+
+    private func refreshLook() { if runtime.has(Self.owner) { show(look) } }
+
+    static let mannequinColor = SIMD3<Float>(0.78, 0.76, 0.72)
+    private func displayed(_ look: CharacterAppearance) -> CharacterAppearance {
+        guard bare else { return look }
+        return CharacterAppearance(shape: look.shape, skin: .preset(showSkeleton ? .glass : .pbr, color: Self.mannequinColor))
     }
 
     func tick(_ dt: Float) {
@@ -69,11 +87,11 @@ import RealityKit
 @available(iOS 18.0, *)
 struct CharacterWorkbenchView: View {
     enum Page: String, CaseIterable, Identifiable {
-        case base, look, skeleton, motion, equipment, tests, export
+        case character, base, look, motion, equipment, tests, export
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .base: L10n.t("底模", "Base"); case .look: L10n.t("外观", "Look"); case .skeleton: L10n.t("骨骼", "Skeleton")
+            case .character: L10n.t("角色", "Character"); case .base: L10n.t("底模", "Base"); case .look: L10n.t("外观", "Look")
             case .motion: L10n.t("动作", "Motion"); case .equipment: L10n.t("装备", "Gear"); case .tests: L10n.t("测试", "Tests"); case .export: L10n.t("导出", "Export")
             }
         }
@@ -83,7 +101,7 @@ struct CharacterWorkbenchView: View {
     @ObservedObject private var library = CharacterLibrary.shared
     @StateObject private var scene = WorkbenchScene()
     @Environment(\.dismiss) private var dismiss
-    @State private var page = Page.base
+    @State private var page = Page.character
     @State private var draft = CharacterAppearance.presets[0].1
     @State private var name = CharacterAppearance.presets[0].0
     @State private var packageID: String?
@@ -92,12 +110,10 @@ struct CharacterWorkbenchView: View {
     @State private var motionTest: String?
     @State private var message: String?
     @State private var confirmOverwrite = false
-    @State private var dragStart: Float?
-    @State private var zoomStart: Float?
 
     var body: some View {
         VStack(spacing: 0) {
-            preview
+            CharacterPreview(scene: scene, status: statusLine)
             Picker(L10n.t("页面", "Page"), selection: $page) { ForEach(Page.allCases) { Text($0.title).tag($0) } }
                 .pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 8)
                 .accessibilityIdentifier("workbench-pages")
@@ -118,6 +134,11 @@ struct CharacterWorkbenchView: View {
             }
         }
         .onAppear { scene.show(draft) }
+        .onChange(of: page) { _, now in
+            // The base page shows the bare base body; other pages the dressed character at full detail.
+            scene.bare = now == .base
+            if now != .base { scene.lod = 0; scene.highlighted = [] }
+        }
         .confirmationDialog(L10n.t("覆盖已保存的角色？", "Replace the saved character?"), isPresented: $confirmOverwrite, titleVisibility: .visible) {
             Button(L10n.t("覆盖保存", "Replace"), role: .destructive) { save(force: true) }.accessibilityIdentifier("workbench-confirm-overwrite")
         }
@@ -127,49 +148,19 @@ struct CharacterWorkbenchView: View {
 
     // MARK: Preview
 
-    private var preview: some View {
-        RealityView { content in
-            content.camera = .virtual
-            content.add(scene.root)
-            let scene = scene
-            scene.updates = content.subscribe(to: SceneEvents.Update.self) { event in
-                MainActor.assumeIsolated { scene.tick(Float(event.deltaTime)) }
-            }
-        }
-        .frame(height: 280)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .padding(.horizontal, 12).padding(.top, 8)
-        .gesture(DragGesture(minimumDistance: 1).onChanged { value in
-            let start = dragStart ?? scene.yaw
-            dragStart = start
-            scene.yaw = start + Float(value.translation.width) * 0.01
-        }.onEnded { _ in dragStart = nil })
-        .simultaneousGesture(MagnifyGesture().onChanged { value in
-            let start = zoomStart ?? scene.distance
-            zoomStart = start
-            scene.distance = start / Float(max(0.3, value.magnification))
-        }.onEnded { _ in zoomStart = nil })
-        .overlay(alignment: .bottomLeading) {
-            Text(statusLine).font(.caption2.monospacedDigit()).padding(6).background(.ultraThinMaterial, in: Capsule()).padding(18)
-                .accessibilityIdentifier("workbench-status")
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L10n.t("角色预览，左右拖动旋转，双指缩放", "Character preview; drag to turn, pinch to zoom"))
-        .accessibilityIdentifier("workbench-preview")
-    }
-
     private var statusLine: String {
         let m = scene.bindPose ? L10n.t("绑定姿态", "Bind pose") : (scene.motion?.name ?? L10n.t("待机", "Idle"))
-        return "\(name) · \(m) · \(String(format: "%.1f", scene.lastDeformMilliseconds)) ms"
+        let detail = page == .base ? " · " + HumanBasePanel.lodLabel(scene.lod) : ""
+        return "\(name) · \(m) · \(String(format: "%.1f", scene.lastDeformMilliseconds)) ms" + detail
     }
 
     // MARK: Pages
 
     @ViewBuilder private var pageContent: some View {
         switch page {
+        case .character: characterPage
         case .base: basePage
         case .look: lookPage
-        case .skeleton: skeletonPage
         case .motion: motionPage
         case .equipment: equipmentPage
         case .tests: testsPage
@@ -177,7 +168,7 @@ struct CharacterWorkbenchView: View {
         }
     }
 
-    @ViewBuilder private var basePage: some View {
+    @ViewBuilder private var characterPage: some View {
         Section(L10n.t("从预设开始", "Start from a preset")) {
             ForEach(Array(CharacterAppearance.presets.enumerated()), id: \.offset) { index, preset in
                 Button { change { $0 = preset.1 }; name = preset.0; packageID = nil } label: {
@@ -207,10 +198,19 @@ struct CharacterWorkbenchView: View {
                 .accessibilityIdentifier("workbench-model-" + m.id)
             }
         }
-        Section(L10n.t("底模", "Base body")) {
-            LabeledContent(L10n.t("来源", "Source"), value: "MakeHuman hm08 · CC0")
-            LabeledContent(L10n.t("顶点 / 关节", "Vertices / joints"), value: "\(HumanBaseAsset.shared?.vertexCount ?? 0) / \(HumanBaseAsset.shared?.joints.count ?? 0)")
-            LabeledContent("LOD", value: (HumanBaseAsset.shared?.lods.map { "\($0.triangleCount)" } ?? []).joined(separator: " / "))
+    }
+
+    /// The base body itself (the same panel as the ⋯ menu's base-body page),
+    /// shown bare, plus this character's shape.
+    @ViewBuilder private var basePage: some View {
+        HumanBasePanel(scene: scene)
+        Section(L10n.t("这个角色的体型", "This character's shape")) {
+            LabeledContent(L10n.t("身高", "Height"), value: String(format: "%.2f m", draft.shape.height))
+            Button(L10n.t("体型恢复中性（可撤销）", "Reset to the neutral shape (undoable)")) { change { $0.shape = .standard } }
+                .disabled(draft.shape == .standard)
+                .accessibilityIdentifier("workbench-shape-reset")
+            Text(L10n.t("底模页只显示人台，服装、装备和皮肤在其他页面里仍然保留。体型在「外观」页调整。", "This page shows only the mannequin; the outfit, gear and skin are kept on the other pages. Adjust the shape on the Look page."))
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -259,22 +259,6 @@ struct CharacterWorkbenchView: View {
                     Label("\(piece.slot.title) · \(piece.name)", systemImage: worn ? "checkmark.circle.fill" : "circle")
                 }
                 .accessibilityIdentifier("workbench-outfit-" + piece.id)
-            }
-        }
-    }
-
-    @ViewBuilder private var skeletonPage: some View {
-        Section {
-            Toggle(L10n.t("显示关节", "Show joints"), isOn: $scene.showSkeleton).accessibilityIdentifier("workbench-show-joints")
-            Toggle(L10n.t("T-Pose（绑定姿态）", "T-pose (bind pose)"), isOn: Binding(get: { scene.bindPose }, set: { scene.bindPose = $0; scene.restart() }))
-                .accessibilityIdentifier("workbench-tpose")
-        }
-        if let s = scene.runtime.skeleton(WorkbenchScene.owner) {
-            Section(L10n.t("\(s.joints.count) 个关节：27 个标准 + \(s.joints.filter(\.isExtension).count) 个扩展", "\(s.joints.count) joints: 27 standard + \(s.joints.filter(\.isExtension).count) extensions")) {
-                ForEach(s.joints, id: \.jointID) { j in
-                    LabeledContent(j.semanticTag == .other ? j.jointID : j.semanticTag.title, value: (j.source?.rawValue ?? "-") + (j.mirrorID.map { " ↔ " + $0 } ?? ""))
-                        .font(.caption)
-                }
             }
         }
     }

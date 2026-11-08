@@ -31,9 +31,10 @@ was built, the formats, and — separately — what is verified where.
 | Appearance, outfit shells, equipment, materials | `Domain/CharacterAppearance.swift` | ✅ |
 | Validator, CharacterPackage, store | `Domain/CharacterPackage.swift` | ✅ |
 | Auto-fit routes A–E | `Domain/CharacterAutoFit.swift` | ✅ `characterAutoFitTests` |
-| RealityKit runtime | `CharacterRuntime.swift` | compiled; simulator UI test |
-| Packages in the app | `CharacterLibrary.swift` | compiled; simulator UI test |
-| Character Workbench | `CharacterWorkbenchView.swift` | compiled; simulator UI test |
+| RealityKit runtime | `CharacterRuntime.swift` | ✅ simulator UI test (run 437) |
+| Packages in the app | `CharacterLibrary.swift` | ✅ simulator UI test (run 437) |
+| Character Workbench | `CharacterWorkbenchView.swift` | ✅ simulator UI test (run 437) |
+| Base-body page (⋯ menu, and the workbench's 底模 page) | `HumanBaseView.swift`, `Domain/BodyRegion.swift` | regions ✅ `humanBaseTests`; page: `testHumanBasePageShowsTheMannequin` |
 
 ## 3. HumanBase
 
@@ -116,7 +117,8 @@ head look-at within limits.
 | Outfits follow the body, sword stays in the hand | ✅ | — | not yet |
 | Validator refuses NaN / bad index / bad weights / joint loops / bad binds / bad motions | ✅ | — | — |
 | Packages round-trip, refuse newer formats, survive damage | ✅ | — | — |
-| Workbench → player → three demo characters → timed hits → pixel view and back | — | see `testCharacterWorkbenchPlayerDemoCastAndCombat` | not yet |
+| Workbench → player → three demo characters → timed hits → pixel view and back | — | ✅ `testCharacterWorkbenchPlayerDemoCastAndCombat` (run 437) | not yet |
+| Base-body page: T-pose mannequin, three LODs, joints by region | regions ✅ | `testHumanBasePageShowsTheMannequin` | not yet |
 | 60 FPS with 10 characters, memory, heat | — | — | **not measured** |
 
 ## 7. Not finished (honest list)

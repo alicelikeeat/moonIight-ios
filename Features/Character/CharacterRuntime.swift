@@ -51,6 +51,7 @@ enum CharacterSource: Sendable {
         /// A rigged model's own picture (loaded by the caller, kept across LODs).
         var texture: RealityKit.Material?
         var facesCamera = false
+        var shownHighlight: Set<String> = []
         init(owner: String, source: CharacterSource, skeleton: SkeletonDefinition, controller: CharacterAnimationController) {
             self.owner = owner; self.source = source; self.skeleton = skeleton; self.controller = controller
             root.name = "character:" + owner
@@ -68,6 +69,8 @@ enum CharacterSource: Sendable {
     private(set) var stats = Stats()
     /// Show joints as small spheres (workbench).
     var showSkeleton = false
+    /// Joints drawn larger and in another colour (the base-body view's selected region).
+    var highlightedJoints: Set<String> = []
 
     static let lodDistances: [Float] = [7, 20]
     static let maxCachedBodies = 12
@@ -166,6 +169,13 @@ enum CharacterSource: Sendable {
         return result.events
     }
 
+    /// Holds an owner at one level of detail (the base-body view compares them).
+    func useLOD(_ owner: String, _ lod: Int) {
+        guard let instance = instances[owner], (0...2).contains(lod), lod != instance.lod else { return }
+        setLOD(instance, lod)
+    }
+    func lod(_ owner: String) -> Int { instances[owner]?.lod ?? -1 }
+
     /// Poses an owner directly (workbench preview: a chosen motion and time, or the bind pose).
     func pose(_ owner: String, motion: UniversalMotion?, time: Float) {
         guard let instance = instances[owner] else { return }
@@ -208,6 +218,15 @@ enum CharacterSource: Sendable {
             return e
         }()
         for (i, child) in holder.children.enumerated() where i < world.count { child.position = world[i].origin }
+        if instance.shownHighlight != highlightedJoints {
+            instance.shownHighlight = highlightedJoints
+            let plain = UnlitMaterial(color: .systemYellow), marked = UnlitMaterial(color: .systemPink)
+            for (i, child) in holder.children.enumerated() where i < instance.skeleton.joints.count {
+                let on = highlightedJoints.contains(instance.skeleton.joints[i].jointID)
+                (child as? ModelEntity)?.model?.materials = [on ? marked : plain]
+                child.scale = on ? [2, 2, 2] : [1, 1, 1]
+            }
+        }
         holder.isEnabled = showSkeleton
     }
 

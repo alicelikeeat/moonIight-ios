@@ -98,5 +98,11 @@ func humanBaseTests() {
     }
     let wild = HumanShape(height: .nan, build: 9, legLength: -4, headSize: .infinity).clamped
     check(wild.height == 1.75 && wild.build == 1 && wild.legLength == 0.55 && wild.headSize == 1, "HumanBase: impossible parameters are clamped")
+    // The base-body view groups every joint into one body region.
+    let regions = Dictionary(grouping: body.skeleton.joints, by: { BodyRegion.of($0.jointID) }).mapValues(\.count)
+    let expected: [BodyRegion: Int] = [.torso: 5, .head: 5, .leftArm: 5, .rightArm: 5, .leftFingers: 15, .rightFingers: 15, .leftLeg: 5, .rightLeg: 5]
+    check(regions == expected, "HumanBase: the 60 joints fall into 8 body regions (\(regions.map { "\($0.key.rawValue)=\($0.value)" }.sorted()))")
+    check(Set(body.skeleton.joints.map(BodyRegion.title)).count == 60 && !body.skeleton.joints.contains { BodyRegion.title($0).hasPrefix("ext.") },
+          "HumanBase: every joint has its own readable name")
     print("RPG HumanBase: \(asset.vertexCount) vertices, \(asset.joints.count) joints, LOD triangles \(asset.lods.map(\.triangleCount))")
 }
