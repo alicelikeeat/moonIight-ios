@@ -95,7 +95,9 @@ enum SemanticAssetLibrary {
     }
 
     static func sorted(_ state: AssetLibraryState) -> [AssetIntelligenceRecord] {
-        state.records.values.sorted { $0.createdAt == $1.createdAt ? $0.assetID < $1.assetID : $0.createdAt > $1.createdAt }
+        state.records.values.sorted { (a: AssetIntelligenceRecord, b: AssetIntelligenceRecord) -> Bool in
+            a.createdAt == b.createdAt ? a.assetID < b.assetID : a.createdAt > b.createdAt
+        }
     }
 
     static func search(_ q: AssetQuery, in state: AssetLibraryState) -> [AssetIntelligenceRecord] {

@@ -417,7 +417,9 @@ enum ArtStyleMatcher {
         for (id, v) in items where !used.contains(id) {
             var group = [id]; used.insert(id)
             for (other, w) in items where !used.contains(other) {
-                let d = (zip(v, w).map { ($0 - $1) * ($0 - $1) }.reduce(0, +) / Double(v.count)).squareRoot()
+                var squares: Double = 0
+                for (a, b) in zip(v, w) { let e: Double = a - b; squares += e * e }
+                let d = (squares / Double(v.count)).squareRoot()
                 if d <= threshold { group.append(other); used.insert(other) }
             }
             if group.count >= 2 { groups.append(group) }

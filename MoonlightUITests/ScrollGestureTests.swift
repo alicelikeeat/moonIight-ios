@@ -160,16 +160,6 @@ final class ScrollGestureTests: XCTestCase {
     /// An element by identifier, whatever type the system exposes it as
     /// (glass containers can report buttons as other types).
     @MainActor
-    /// Forms are lazy: rows below the fold do not exist until scrolled to.
-    @MainActor
-    private func reveal(_ id: String, in app: XCUIApplication, _ name: String) -> XCUIElement {
-        let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
-        let form = app.collectionViews.firstMatch
-        for _ in 0..<8 where !(element.exists && element.isHittable) {
-            if form.exists { form.swipeUp(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
-        }
-        return waitForAny(id, in: app, timeout: 5, name)
-    }
     private func waitForAny(_ id: String, in app: XCUIApplication, timeout: TimeInterval, _ name: String) -> XCUIElement {
         let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
         if !element.waitForExistence(timeout: timeout) {
