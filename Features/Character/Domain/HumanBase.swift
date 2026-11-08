@@ -87,13 +87,14 @@ struct HumanBody: Sendable {
 }
 
 enum HumanBase {
+    private enum Part: Sendable { case torso, arm, leg }
     /// Joints scaled along their bone by a length factor, and the child that bone points at.
-    private static let lengthJoints: [(String, String, KeyPath<HumanShape, Float>)] = [
-        ("spine", "spine1", \.torsoLength), ("spine1", "chest", \.torsoLength), ("chest", "neck", \.torsoLength),
-        ("rightUpperArm", "rightForearm", \.armLength), ("rightForearm", "rightHand", \.armLength),
-        ("leftUpperArm", "leftForearm", \.armLength), ("leftForearm", "leftHand", \.armLength),
-        ("rightThigh", "rightShin", \.legLength), ("rightShin", "rightFoot", \.legLength),
-        ("leftThigh", "leftShin", \.legLength), ("leftShin", "leftFoot", \.legLength),
+    private static let lengthJoints: [(String, String, Part)] = [
+        ("spine", "spine1", .torso), ("spine1", "chest", .torso), ("chest", "neck", .torso),
+        ("rightUpperArm", "rightForearm", .arm), ("rightForearm", "rightHand", .arm),
+        ("leftUpperArm", "leftForearm", .arm), ("leftForearm", "leftHand", .arm),
+        ("rightThigh", "rightShin", .leg), ("rightShin", "rightFoot", .leg),
+        ("leftThigh", "leftShin", .leg), ("leftShin", "leftFoot", .leg),
     ]
     /// Joints that grow with the head.
     private static let headJoints: Set<String> = ["head", "headEnd", "ext.jaw", "ext.rightEye", "ext.leftEye"]
@@ -113,9 +114,10 @@ enum HumanBase {
         // 2. Bone lengths and head size: a scale per joint, blended by the weights.
         var scale = [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)](repeating: (SIMD3(1, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 0, 1)), count: j.count)
         func index(_ name: String) -> Int? { asset.jointIndex(name) }
-        for (name, child, path) in lengthJoints {
+        for (name, child, part) in lengthJoints {
             guard let a = index(name), let b = index(child) else { continue }
-            let f = shape[keyPath: path]
+            let f: Float
+            switch part { case .torso: f = shape.torsoLength; case .arm: f = shape.armLength; case .leg: f = shape.legLength }
             guard f != 1 else { continue }
             let d = cUnit(j[b] - j[a])
             // I + (f − 1) d dᵀ, as columns.

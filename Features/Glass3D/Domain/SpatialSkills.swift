@@ -112,6 +112,8 @@ struct CharacterAnimationState: Equatable, Sendable {
     var queued: CharacterAction?
     var queuedLength = 0.6
     var effectFired = false
+    /// v1.91: step of the three-hit combo the current attack is (1…3).
+    var combo = 1
 }
 
 /// What the state machine reports while stepping: the clip's effect moment
@@ -156,6 +158,8 @@ enum CharacterAnimator {
         if action.oneShot { state.queued = action; state.queuedLength = length }
     }
     private static func start(_ state: inout CharacterAnimationState, _ action: CharacterAction, clock: Double, length: Double) {
+        // An attack started while an attack is still playing (its cancel window) chains the combo.
+        if action == .attack { state.combo = ComboRules.next(current: state.combo, chained: state.action == .attack && clock - state.started < state.length) }
         state.action = action; state.started = clock; state.length = max(0.05, length.isFinite ? length : 0.6); state.effectFired = false
         if state.queued == action { state.queued = nil }
     }

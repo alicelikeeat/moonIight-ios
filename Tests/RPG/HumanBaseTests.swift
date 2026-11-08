@@ -43,9 +43,16 @@ func humanBaseTests() {
     }
     check(sums && body.skin.valid(jointCount: body.skeleton.joints.count, vertexCount: m.vertexCount), "HumanBase: four weights per vertex summing to 1")
     // Weights follow anatomy: the fingertips move with the fingers, the shins with the shins.
-    let lowest = (0..<m.vertexCount).min { m.positions[$0 * 3 + 1] < m.positions[$1 * 3 + 1] }!
-    let leftmost = (0..<m.vertexCount).min { m.positions[$0 * 3] < m.positions[$1 * 3] }!
-    func strongest(_ v: Int) -> String { body.skeleton.joints[Int((0..<4).max { body.skin.weights[v * 4 + $0] < body.skin.weights[v * 4 + $1] }.map { body.skin.joints[v * 4 + $0] }!)].jointID }
+    var lowest = 0, leftmost = 0
+    for v in 0..<m.vertexCount {
+        if m.positions[v * 3 + 1] < m.positions[lowest * 3 + 1] { lowest = v }
+        if m.positions[v * 3] < m.positions[leftmost * 3] { leftmost = v }
+    }
+    func strongest(_ v: Int) -> String {
+        var best = 0
+        for k in 1..<4 where body.skin.weights[v * 4 + k] > body.skin.weights[v * 4 + best] { best = k }
+        return body.skeleton.joints[Int(body.skin.joints[v * 4 + best])].jointID
+    }
     check(["rightFoot", "rightToe", "leftFoot", "leftToe"].contains(strongest(lowest)) && strongest(leftmost).hasPrefix("ext.rightFinger"),
           "HumanBase: the soles follow the feet, the right fingertip follows a right finger (\(strongest(lowest)), \(strongest(leftmost)))")
 
@@ -65,7 +72,12 @@ func humanBaseTests() {
         check(built.mesh.indices == body.mesh.indices && built.skin == body.skin, "HumanBase: \(name) keeps the topology and weights")
         // Joints sit inside the reshaped body: each hand joint is near hand vertices.
         if let hand = built.skeleton.position(.rightHand) {
-            let near = (0..<built.mesh.vertexCount).map { v in cLength(SIMD3(built.mesh.positions[v * 3], built.mesh.positions[v * 3 + 1], built.mesh.positions[v * 3 + 2]) - hand) }.min() ?? 9
+            var near: Float = 9
+            let pos = built.mesh.positions
+            for v in 0..<built.mesh.vertexCount {
+                let q = SIMD3<Float>(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2])
+                near = min(near, cLength(q - hand))
+            }
             check(near < 0.04 * shape.height, "HumanBase: \(name) wrist joint stays in the wrist (\(near) m from the surface)")
         }
         ratios[name] = built.bodyShape
