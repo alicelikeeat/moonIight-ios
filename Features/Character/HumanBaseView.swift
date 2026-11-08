@@ -43,7 +43,6 @@ struct CharacterPreview: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(L10n.t("角色预览，左右拖动旋转，双指缩放", "Character preview; drag to turn, pinch to zoom"))
-        .accessibilityValue(status)
         .accessibilityIdentifier("workbench-preview")
     }
 }

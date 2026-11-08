@@ -160,6 +160,16 @@ final class ScrollGestureTests: XCTestCase {
     /// An element by identifier, whatever type the system exposes it as
     /// (glass containers can report buttons as other types).
     @MainActor
+    /// Forms are lazy: rows below the fold do not exist until scrolled to.
+    @MainActor
+    private func reveal(_ id: String, in app: XCUIApplication, _ name: String) -> XCUIElement {
+        let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
+        let form = app.collectionViews.firstMatch
+        for _ in 0..<8 where !(element.exists && element.isHittable) {
+            if form.exists { form.swipeUp(velocity: .slow) } else { app.swipeUp(velocity: .slow) }
+        }
+        return waitForAny(id, in: app, timeout: 5, name)
+    }
     private func waitForAny(_ id: String, in app: XCUIApplication, timeout: TimeInterval, _ name: String) -> XCUIElement {
         let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
         if !element.waitForExistence(timeout: timeout) {
@@ -460,10 +470,10 @@ final class ScrollGestureTests: XCTestCase {
         sleep(1)
         attach(app, name: "review-workbench-walk")
         app.buttons["导出"].tap()
-        waitForAny("workbench-use-as-player", in: app, timeout: 10, "use as player").tap()
+        reveal("workbench-use-as-player", in: app, "use as player").tap()
         let used = waitForAny("workbench-message", in: app, timeout: 30, "the player message")
         XCTAssertTrue(used.label.contains("玩家现在使用"), "the player wears the character: \(used.label)")
-        waitForAny("workbench-place-demo", in: app, timeout: 10, "the demo cast button").tap()
+        reveal("workbench-place-demo", in: app, "the demo cast button").tap()
         let placed = NSPredicate { _, _ in (app.descendants(matching: .any)["workbench-message"].label).contains("三位演示角色") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: placed, object: nil)], timeout: 60), .completed,
                        "the three demo characters are placed: \(app.descendants(matching: .any)["workbench-message"].label)")
@@ -506,8 +516,9 @@ final class ScrollGestureTests: XCTestCase {
         enterSandbox(app)
         openMore("glass3d-human-base", in: app)
         _ = waitForAny("humanbase-view", in: app, timeout: 20, "the base-body page opens")
-        let status = waitForAny("workbench-preview", in: app, timeout: 10, "the preview")
-        XCTAssertTrue((status.value as? String ?? "").contains("T-Pose"), "it opens in the T-pose: \(status.value ?? "")")
+        _ = waitForAny("workbench-preview", in: app, timeout: 10, "the preview")
+        let tpose = app.buttons["T-Pose（绑定姿态）"]
+        XCTAssertTrue(tpose.waitForExistence(timeout: 10) && tpose.isSelected, "it opens in the T-pose")
         sleep(2)
         attach(app, name: "review-humanbase-tpose")
         XCTAssertGreaterThanOrEqual(colourVariety(app.screenshot().image), 6, "the mannequin is drawn")
@@ -516,8 +527,8 @@ final class ScrollGestureTests: XCTestCase {
         let far = NSPredicate { _, _ in lod.label.contains("远景") || ((lod.value as? String) ?? "").contains("远景") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: far, object: nil)], timeout: 10), .completed, "the far level is shown: \(lod.label)")
         app.buttons["精细"].tap()
-        waitForAny("humanbase-region-leftFingers", in: app, timeout: 10, "the left-finger region").tap()
-        _ = waitForAny("humanbase-region-joints", in: app, timeout: 10, "the region's joints")
+        reveal("humanbase-region-leftFingers", in: app, "the left-finger region").tap()
+        _ = reveal("humanbase-region-joints", in: app, "the region's joints")
         sleep(1)
         attach(app, name: "review-humanbase-left-fingers")
         waitForAny("humanbase-close", in: app, timeout: 5, "close the page").tap()

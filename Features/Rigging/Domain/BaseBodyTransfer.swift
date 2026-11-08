@@ -152,9 +152,13 @@ enum BaseBodyTransfer {
         // The four strongest joints per vertex, summing to 1.
         var skin = SkinInfluences(count: mesh.vertexCount)
         for v in 0..<mesh.vertexCount {
-            let row = (0..<jointCount).map { (j: $0, w: dense[v * jointCount + $0]) }.filter { $0.w > 1e-4 && $0.w.isFinite }
-                .sorted { $0.w > $1.w }.prefix(SkinInfluences.maxInfluences)
-            let total = row.reduce(0) { $0 + $1.w }
+            var candidates: [(j: Int, w: Float)] = []
+            for j in 0..<jointCount {
+                let w: Float = dense[v * jointCount + j]
+                if w > 1e-4 && w.isFinite { candidates.append((j: j, w: w)) }
+            }
+            let row = candidates.sorted { $0.w > $1.w }.prefix(SkinInfluences.maxInfluences)
+            let total: Float = row.reduce(Float(0)) { $0 + $1.w }
             if total <= 0 {
                 // Nothing near: the pelvis carries it (never a vertex without a joint).
                 skin.joints[v * 4] = UInt8(skeleton.index(.pelvis) ?? 0); skin.weights[v * 4] = 1; continue
