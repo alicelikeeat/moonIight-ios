@@ -3377,6 +3377,7 @@ humanBaseTests()
 motionSystemTests()
 characterSystemTests()
 characterAutoFitTests()
+characterPreviews()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.
