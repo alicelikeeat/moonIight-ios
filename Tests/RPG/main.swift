@@ -3370,6 +3370,7 @@ demoLevelTests()
 flightTests()
 finiteMeshTests()
 try baseBodyTests()
+bodyPhotoFitTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.
