@@ -29,13 +29,13 @@ enum CharacterSource: Sendable {
     struct Incident: Equatable, Sendable { var owner: String; var motion: String; var reason: String; var date: Date }
     struct Stats: Equatable, Sendable { var instances = 0; var deformations = 0; var skipped = 0; var cachedBodies = 0; var lodCounts = [0, 0, 0] }
 
-    private final class Layer {
+    @MainActor private final class Layer {
         let player: SkinnedMeshPlayer
         let skin: SkinInfluences
         let entity: ModelEntity
         init(player: SkinnedMeshPlayer, skin: SkinInfluences, entity: ModelEntity) { self.player = player; self.skin = skin; self.entity = entity }
     }
-    private final class Instance {
+    @MainActor private final class Instance {
         let owner: String
         var source: CharacterSource
         let root = Entity()

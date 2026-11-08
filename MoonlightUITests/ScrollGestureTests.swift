@@ -417,6 +417,85 @@ final class ScrollGestureTests: XCTestCase {
         attach(app, name: "review-demo-level")
     }
 
+    /// The character runtime's DEBUG probe (player runtime, instances, timed hits, view).
+    @MainActor
+    private func characterProbe(_ app: XCUIApplication) -> [String: String] {
+        let probe = app.descendants(matching: .any).matching(identifier: "glass3d-character-probe").firstMatch
+        return Dictionary((probe.value as? String ?? "").split(separator: ";").compactMap { item in
+            let pair = item.split(separator: "=", maxSplits: 1); guard pair.count == 2 else { return nil }; return (String(pair[0]), String(pair[1]))
+        }, uniquingKeysWith: { a, _ in a })
+    }
+    @MainActor
+    private func waitCharacters(_ app: XCUIApplication, _ name: String, timeout: TimeInterval = 20, _ condition: @escaping ([String: String]) -> Bool) {
+        let probe = app.descendants(matching: .any).matching(identifier: "glass3d-character-probe").firstMatch
+        let met = NSPredicate { _, _ in condition(self.characterProbe(app)) }
+        let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: met, object: probe)], timeout: timeout)
+        XCTAssertEqual(result, .completed, "\(name): \(probe.exists ? (probe.value as? String ?? "") : "no probe")")
+    }
+
+    /// Universal characters end to end in the simulator: build one in the
+    /// workbench, check it, play as it, place the three demo characters
+    /// (one base body, one motion set, three builds), fight with hits timed
+    /// by the motion, and switch views — the same instance keeps running and
+    /// nothing is recorded as an incident.
+    @MainActor
+    func testCharacterWorkbenchPlayerDemoCastAndCombat() {
+        executionTimeAllowance = 900
+        let app = launch(discover: false, flags: ["--rpg-ui-tests", "--rpg-reset-world"])
+        enterSandbox(app)
+        openMore("glass3d-character-workbench", in: app)
+        _ = waitForAny("character-workbench", in: app, timeout: 20, "the workbench opens")
+        waitForAny("workbench-preset-0", in: app, timeout: 15, "the first preset").tap()
+        sleep(2)
+        attach(app, name: "review-workbench-standard")
+        app.buttons["测试"].tap()
+        waitForAny("workbench-validate", in: app, timeout: 10, "the check button").tap()
+        let result = waitForAny("workbench-validation-result", in: app, timeout: 60, "the check result")
+        XCTAssertTrue(result.label.contains("通过"), "the base-body character passes its checks: \(result.label)")
+        let motions = waitForAny("workbench-motion-test", in: app, timeout: 60, "the motion test")
+        XCTAssertTrue(motions.label.contains("全部可以播放"), "every motion plays on it: \(motions.label)")
+        app.buttons["动作"].tap()
+        waitForAny("workbench-motion-attack3", in: app, timeout: 10, "the third attack in the motion list").tap()
+        sleep(1)
+        attach(app, name: "review-workbench-attack3")
+        app.buttons["导出"].tap()
+        waitForAny("workbench-use-as-player", in: app, timeout: 10, "use as player").tap()
+        let used = waitForAny("workbench-message", in: app, timeout: 30, "the player message")
+        XCTAssertTrue(used.label.contains("玩家现在使用"), "the player wears the character: \(used.label)")
+        waitForAny("workbench-place-demo", in: app, timeout: 10, "the demo cast button").tap()
+        let placed = NSPredicate { _, _ in (app.descendants(matching: .any)["workbench-message"].label).contains("三位演示角色") }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: placed, object: nil)], timeout: 60), .completed,
+                       "the three demo characters are placed: \(app.descendants(matching: .any)["workbench-message"].label)")
+        waitForAny("workbench-close", in: app, timeout: 10, "close the workbench").tap()
+
+        waitCharacters(app, "the player and three NPCs run on the character runtime", timeout: 40) {
+            $0["playerRuntime"] == "1" && $0["npcs"] == "3" && Int($0["instances"] ?? "0") ?? 0 >= 4 && Int($0["deformations"] ?? "0") ?? 0 > 10
+        }
+        sleep(2)
+        let spatial = app.screenshot()
+        attach(app, name: "review-characters-3d")
+        XCTAssertGreaterThanOrEqual(colourVariety(spatial.image), 6, "the 3D view draws the characters")
+
+        // Strikes: each lands on its motion's hit moment (counted by the runtime's timed hits).
+        let attack = waitForAny("glass3d-attack", in: app, timeout: 10, "the attack button")
+        for _ in 0..<4 { attack.tap(); usleep(450_000) }
+        waitCharacters(app, "strikes land on the motion's hit moment", timeout: 15) { Int($0["timedHits"] ?? "0") ?? 0 >= 2 && $0["incidents"] == "0" }
+        waitForAny("glass3d-roll", in: app, timeout: 5, "the dodge button").tap()
+
+        // The pixel view shows the same character instance; nothing restarts or breaks.
+        let before = Int(characterProbe(app)["deformations"] ?? "0") ?? 0
+        waitForAny("glass3d-perspective-switch", in: app, timeout: 5, "the view switch").tap()
+        waitCharacters(app, "the pixel view keeps the same running characters", timeout: 15) {
+            $0["view"] == "pixel" && $0["playerRuntime"] == "1" && (Int($0["deformations"] ?? "0") ?? 0) > before && $0["incidents"] == "0"
+        }
+        sleep(2)
+        let pixel = app.screenshot()
+        attach(app, name: "review-characters-pixel")
+        XCTAssertGreaterThanOrEqual(colourVariety(pixel.image), 6, "the pixel view draws the characters")
+        waitForAny("glass3d-perspective-switch", in: app, timeout: 5, "the view switch").tap()
+        waitCharacters(app, "back in 3D, still running", timeout: 15) { $0["view"] == "spatial" && $0["playerRuntime"] == "1" }
+    }
+
     /// A phone showed a black world after an AI model was picked as a
     /// creature's look in design mode: walk the same steps and check that
     /// both views still draw something after each one.
