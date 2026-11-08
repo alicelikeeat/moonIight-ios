@@ -24,8 +24,8 @@ What the build does (all of it is in this one file, so it can be edited):
      vertex and shares its weights and morphs); UV seams and open borders
      are kept, and joints with different weights are not merged across.
   7. Writes Resources/HumanBase/HumanBase.hbm (binary, read by
-     HumanBaseAsset.swift), HumanBase_LOD0.obj (editable in Blender) and
-     HumanBase_joints.json.
+     HumanBaseAsset.swift) and, for editing, tools/humanbase/editable/
+     HumanBase_LOD0.obj (opens in Blender) and HumanBase_joints.json.
 
 Run from the repository root:  python3 tools/humanbase/build_humanbase.py
 Needs Python 3.9+ and numpy. Takes a few minutes (pure Python simplifier).
@@ -45,6 +45,7 @@ RAW = f"https://raw.githubusercontent.com/makehumancommunity/makehuman/{COMMIT}/
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, ".cache")
 OUT = os.path.join(HERE, "..", "..", "Resources", "HumanBase")
+EDITABLE = os.path.join(HERE, "editable")
 BODY_VERTICES = 13380          # hm08: the body surface is vertices 0..13379
 LOD_TRIANGLES = [19500, 7800, 1950]
 TARGET_HEIGHT = 1.75           # metres, the reference body
@@ -587,7 +588,8 @@ def main():
     write_hbm(os.path.join(OUT, "HumanBase.hbm"), body, topw, top, joints, names, channel_data, lod_data, VT)
     nrm = normals(lods[0])
     render, out_tris = lod_data[0]
-    with open(os.path.join(OUT, "HumanBase_LOD0.obj"), "w") as f:
+    os.makedirs(EDITABLE, exist_ok=True)
+    with open(os.path.join(EDITABLE, "HumanBase_LOD0.obj"), "w") as f:
         f.write("# Moonlight HumanBase LOD0, neutral T-pose, metres, y up, faces +z.\n")
         f.write("# Built from the MakeHuman hm08 base mesh (CC0 1.0) by tools/humanbase/build_humanbase.py\n")
         for v, x in render:
@@ -598,7 +600,7 @@ def main():
             f.write("vn %.4f %.4f %.4f\n" % tuple(nrm[v]))
         for t in out_tris:
             f.write("f " + " ".join(f"{i + 1}/{i + 1}/{i + 1}" for i in t) + "\n")
-    with open(os.path.join(OUT, "HumanBase_joints.json"), "w") as f:
+    with open(os.path.join(EDITABLE, "HumanBase_joints.json"), "w") as f:
         json.dump({"source": "MakeHuman hm08 default skeleton (CC0 1.0), commit " + COMMIT,
                    "joints": [{"name": n, "parent": p, "position": [round(float(x), 5) for x in pos]} for n, p, pos in joints]}, f, indent=1)
     print("written", [len(r) for r, _ in lod_data], "render vertices;", [len(t) for _, t in lod_data], "triangles")

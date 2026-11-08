@@ -18,6 +18,8 @@
     surface vertices, 60 joints (27 standard + 15 finger joints per hand,
     jaw, two eyes), four weights per vertex, 18 shape channels, LOD0 19 500 /
     LOD1 7 800 / LOD2 1 950 triangles.
-  - `HumanBase_LOD0.obj` — the same LOD0 surface with UVs and normals, to
-    open in Blender or any 3D editor.
-  - `HumanBase_joints.json` — joint names, parents and positions.
+  - `tools/humanbase/editable/HumanBase_LOD0.obj` — the same LOD0 surface
+    with UVs and normals, to open in Blender or any 3D editor (kept out of
+    the app bundle).
+  - `tools/humanbase/editable/HumanBase_joints.json` — joint names, parents
+    and positions.

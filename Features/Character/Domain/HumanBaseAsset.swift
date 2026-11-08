@@ -151,14 +151,20 @@ struct ByteReader {
     mutating func u8(_ count: Int) throws -> [UInt8] { Array(try take(count)) }
     mutating func u16(_ count: Int) throws -> [UInt16] {
         let b = Array(try take(count * 2))
-        return (0..<count).map { UInt16(b[$0 * 2]) | UInt16(b[$0 * 2 + 1]) << 8 }
+        var out = [UInt16](repeating: 0, count: count)
+        for i in 0..<count { out[i] = UInt16(b[i * 2]) | (UInt16(b[i * 2 + 1]) << 8) }
+        return out
     }
     mutating func i16(_ count: Int) throws -> [Int16] { try u16(count).map { Int16(bitPattern: $0) } }
     mutating func f32(_ count: Int) throws -> [Float] {
         let b = Array(try take(count * 4))
-        return (0..<count).map { i in
-            Float(bitPattern: UInt32(b[i * 4]) | UInt32(b[i * 4 + 1]) << 8 | UInt32(b[i * 4 + 2]) << 16 | UInt32(b[i * 4 + 3]) << 24)
+        var out = [Float](repeating: 0, count: count)
+        for i in 0..<count {
+            let b0 = UInt32(b[i * 4]), b1 = UInt32(b[i * 4 + 1]) << 8
+            let b2 = UInt32(b[i * 4 + 2]) << 16, b3 = UInt32(b[i * 4 + 3]) << 24
+            out[i] = Float(bitPattern: b0 | b1 | b2 | b3)
         }
+        return out
     }
     mutating func string() throws -> String {
         let n = Int(try u32())
