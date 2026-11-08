@@ -329,6 +329,29 @@ final class ScrollGestureTests: XCTestCase {
 
     /// Distinct colours (quantised to 3 bits per channel) on a 16×16 grid
     /// over the middle of the screen, away from the HUD. A blank view gives 1–2.
+    /// A few RGB samples across the middle row and column (for logs).
+    private func pixelSamples(_ image: UIImage) -> String {
+        guard let cg = image.cgImage else { return "no image" }
+        let width = cg.width, height = cg.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        _ = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        var out: [String] = []
+        for k in 0..<7 {
+            let x = (width - 1) * (k + 1) / 8, y = height / 2, o = (y * width + x) * 4
+            out.append("\(pixels[o]),\(pixels[o + 1]),\(pixels[o + 2])")
+        }
+        for k in 0..<5 {
+            let x = width / 2, y = (height - 1) * (k + 1) / 6, o = (y * width + x) * 4
+            out.append("c\(pixels[o]),\(pixels[o + 1]),\(pixels[o + 2])")
+        }
+        return out.joined(separator: " ")
+    }
+
     /// Share of clearly light pixels (luma above 0.45) on a 24 × 24 grid.
     private func lightShare(_ image: UIImage) -> Double {
         guard let cg = image.cgImage else { return 0 }
@@ -533,7 +556,9 @@ final class ScrollGestureTests: XCTestCase {
         sleep(2)
         attach(app, name: "review-humanbase-tpose")
         // The bare mannequin is light grey on a dark backdrop: look for it in the preview itself.
-        let figure = lightShare(preview.screenshot().image)
+        let shot = preview.screenshot().image
+        let figure = lightShare(shot)
+        print("Base-body preview: frame \(preview.frame), image \(shot.size), light share \(figure), colours \(colourVariety(shot)), samples \(pixelSamples(shot))")
         XCTAssertTrue(figure > 0.02 && figure < 0.6, "the mannequin is drawn in the preview (light share \(figure))")
         app.buttons["远景"].tap()
         let lod = waitForAny("humanbase-lod-label", in: app, timeout: 10, "the detail label")
