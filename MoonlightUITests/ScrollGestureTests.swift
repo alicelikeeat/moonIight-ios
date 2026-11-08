@@ -455,9 +455,10 @@ final class ScrollGestureTests: XCTestCase {
         let motions = waitForAny("workbench-motion-test", in: app, timeout: 60, "the motion test")
         XCTAssertTrue(motions.label.contains("全部可以播放"), "every motion plays on it: \(motions.label)")
         app.buttons["动作"].tap()
-        waitForAny("workbench-motion-attack3", in: app, timeout: 10, "the third attack in the motion list").tap()
+        // The walk is near the top of the list (later motions need scrolling in the lazy form).
+        waitForAny("workbench-motion-walk", in: app, timeout: 10, "the walk in the motion list").tap()
         sleep(1)
-        attach(app, name: "review-workbench-attack3")
+        attach(app, name: "review-workbench-walk")
         app.buttons["导出"].tap()
         waitForAny("workbench-use-as-player", in: app, timeout: 10, "use as player").tap()
         let used = waitForAny("workbench-message", in: app, timeout: 30, "the player message")
