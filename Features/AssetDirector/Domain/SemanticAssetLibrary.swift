@@ -108,8 +108,12 @@ enum SemanticAssetLibrary {
             if let m = q.mediaType, r.mediaType != m { return false }
             if let u = q.use, !r.recommendedUses.contains(u) { return false }
             guard !words.isEmpty else { return true }
-            let hay = ([r.title.lowercased()] + r.allTagNames.map { $0.lowercased() } + r.styleTags + r.categories.map { $0.rawValue + " " + $0.title.lowercased() }
-                       + r.recommendedUses.map(\.rawValue)).joined(separator: " ")
+            var parts: [String] = [r.title.lowercased()]
+            parts += r.allTagNames.map { $0.lowercased() }
+            parts += r.styleTags
+            parts += r.categories.map { $0.rawValue + " " + $0.title.lowercased() }
+            parts += r.recommendedUses.map(\.rawValue)
+            let hay = parts.joined(separator: " ")
             return words.allSatisfy { hay.contains($0) }
         }
     }

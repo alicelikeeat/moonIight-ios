@@ -47,7 +47,11 @@ func baseBodyTransferTests() {
 
     func agreement(_ mesh: GeneratedMesh, _ skeleton: SkeletonDefinition) -> (all: Float, arms: Float, skin: SkinInfluences?) {
         guard let skin = BaseBodyTransfer.weights(for: mesh, skeleton: skeleton) else { return (0, 0, nil) }
-        func main(_ s: SkinInfluences, _ v: Int) -> UInt8 { (0..<4).max { s.weights[v * 4 + $0] < s.weights[v * 4 + $1] }.map { s.joints[v * 4 + $0] } ?? 255 }
+        func main(_ s: SkinInfluences, _ v: Int) -> UInt8 {
+            var best = 0
+            for k in 1..<4 where s.weights[v * 4 + k] > s.weights[v * 4 + best] { best = k }
+            return s.joints[v * 4 + best]
+        }
         var same = 0, armSame = 0, armTotal = 0
         for v in 0..<mesh.vertexCount {
             let match = main(skin, v) == main(source.skin, v)
