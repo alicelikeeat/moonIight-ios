@@ -98,7 +98,7 @@ private struct Glass3DCharacterForm: View {
         Form { Group {
             Section(L10n.t("外观", "Look")) {
                 TextField(L10n.t("名称", "Name"), text: $draft.name)
-                Picker(L10n.t("显示方式", "Display"), selection: $draft.mode) { ForEach(CharacterDisplayMode.allCases.filter { $0 != .generated || draft.mode == .generated }, id: \.self) { Text($0.title).tag($0) } }
+                Picker(L10n.t("显示方式", "Display"), selection: $draft.mode) { ForEach(CharacterDisplayMode.allCases.filter { ($0 != .generated || draft.mode == .generated) && ($0 != .standard || draft.mode == .standard) }, id: \.self) { Text($0.title).tag($0) } }
                 if draft.mode == .generated {
                     Text(L10n.t("来自「AI 生成 3D 模型」；绑定了骨骼的模型在世界里会按动作播放待机、行走、奔跑、挥手。", "From AI 3D Models; rigged models play idle, walk, run and wave in the world.")).font(.caption).foregroundStyle(.secondary)
                 }
@@ -492,7 +492,7 @@ struct Glass3DCharacterPreview: View {
         } else if let item = Self.media(template, controller: controller, store: store) {
             Glass3DMediaThumbnail(url: item.url, kind: item.kind, side: side, corner: corner)
         } else {
-            Image(systemName: template.mode == .model || template.mode == .generated ? "cube.fill" : "person.crop.rectangle.fill")
+            Image(systemName: template.mode == .standard ? "figure.stand" : template.mode == .model || template.mode == .generated ? "cube.fill" : "person.crop.rectangle.fill")
                 .font(.system(size: side * 0.4)).foregroundStyle(Color.accentColor)
                 .frame(width: side, height: side)
         }

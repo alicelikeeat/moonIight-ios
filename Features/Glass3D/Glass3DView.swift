@@ -244,6 +244,10 @@ struct Glass3DScreen: View {
                     Text("world").font(.system(size: 1)).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("glass3d-world-probe").accessibilityValue(Self.probe(session))
                 }
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    Text("characters").font(.system(size: 1)).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("glass3d-character-probe").accessibilityValue(controller.characterProbe)
+                }
             }
         }
         #endif
@@ -338,6 +342,8 @@ struct Glass3DScreen: View {
                 moreRow("pencil.and.list.clipboard", L10n.t("剧情编辑器", "Story Editor")) { sandboxSheet = .storyEditor }.accessibilityIdentifier("glass3d-story-editor")
                 moreRow("globe", L10n.t("世界与存档", "Worlds & Saves")) { sandboxSheet = .worlds }.accessibilityIdentifier("glass3d-worlds")
                 moreHeader(L10n.t("编辑器", "Editors"))
+                moreRow("figure.stand", L10n.t("角色工作台（通用底模）", "Character Workbench (base body)")) { sandboxSheet = .workbench }
+                    .accessibilityIdentifier("glass3d-character-workbench")
                 moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
                 moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
                 moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
@@ -472,7 +478,7 @@ struct Glass3DScreen: View {
 
     // MARK: Sandbox pages (story, worlds, diagnostics, settings)
 
-    enum SandboxSheet: String, Identifiable { case story, storyEditor, diagnostics, worlds, appSettings; var id: String { rawValue } }
+    enum SandboxSheet: String, Identifiable { case story, storyEditor, diagnostics, worlds, appSettings, workbench; var id: String { rawValue } }
 
     @ViewBuilder private func sandboxPage(_ sheet: SandboxSheet) -> some View {
         switch sheet {
@@ -490,6 +496,8 @@ struct Glass3DScreen: View {
             NavigationStack { Glass3DDiagnosticsView(controller: controller) }
         case .worlds:
             NavigationStack { SandboxWorldsView(session: session) }
+        case .workbench:
+            NavigationStack { CharacterWorkbenchView(controller: controller) }
         case .appSettings:
             NavigationStack {
                 SettingsView().toolbar { ToolbarItem(placement: .confirmationAction) { Button(L10n.t("完成", "Done")) { sandboxSheet = nil }.accessibilityIdentifier("world-app-settings-close") } }

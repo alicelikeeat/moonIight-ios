@@ -129,6 +129,8 @@ import UIKit
     var media: Glass3DMedia?
     /// AI-generated models (v1.69), animated when rigged.
     let generated = Glass3DGeneratedLooks()
+    /// v1.91: every rigged character (base-body characters and rigged AI models).
+    let runtime = CharacterRuntime()
     /// Directory of imported USDZ models.
     static var modelsFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
@@ -142,6 +144,7 @@ import UIKit
     @discardableResult
     func apply(_ template: CharacterTemplate?, to holder: Entity, ownerID: String, action: CharacterAction, direction: Int) -> Bool {
         guard let template else { remove(ownerID); return false }
+        if let shown = applyRuntime(template, to: holder, ownerID: ownerID) { return shown }
         let actionKey = template.mode == .generated ? RigClip.id(for: action) + (generated.isReady(template) ? "" : "-loading") : action.rawValue
         let key = "\(template.id)|\(template.mode.rawValue)|\(actionKey)|\(direction)|\(template.height)|\(template.aspect)|\(template.footAnchor)|\(template.opacity)"
         if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
@@ -159,7 +162,50 @@ import UIKit
         return true
     }
 
-    func remove(_ ownerID: String) { shown[ownerID]?.entity.removeFromParent(); shown[ownerID] = nil }
+    func remove(_ ownerID: String) { shown[ownerID]?.entity.removeFromParent(); shown[ownerID] = nil; runtime.remove(ownerID) }
+
+    /// v1.91: base-body characters and rigged AI models go through the
+    /// CharacterRuntime (real 3D bodies with their own animation). Nil:
+    /// not a runtime character, use the older paths.
+    private func applyRuntime(_ template: CharacterTemplate, to holder: Entity, ownerID: String) -> Bool? {
+        switch template.mode {
+        case .standard:
+            guard let id = template.characterID, let package = CharacterLibrary.shared.package(id) else { remove(ownerID); return false }
+            let look = package.appearance
+            let key = "\(template.id)|standard|\(id)|\(CharacterRuntime.key(look.shape))|\(look.outfit.joined(separator: ","))|\(look.equipment.joined(separator: ","))|\(look.skin.baseColor)|\(look.skin.style.rawValue)"
+            if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
+            remove(ownerID)
+            guard let entity = runtime.entity(owner: ownerID, source: .humanBase(look)) else { return false }
+            let wrapper = Entity(); wrapper.addChild(entity)
+            if template.shadow { wrapper.addChild(Self.shadow(radius: look.shape.height * 0.16)) }
+            holder.addChild(wrapper)
+            shown[ownerID] = Shown(key: key, entity: wrapper)
+            return true
+        case .generated:
+            guard let found = generated.runtimeSource(template) else { return nil }
+            let key = "\(template.id)|rigged|\(template.generatedModelID ?? "")|\(template.height)"
+            if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
+            remove(ownerID)
+            guard let entity = runtime.entity(owner: ownerID, source: found.source) else { return nil }
+            runtime.applyMaterial(ownerID, found.material)
+            let scale = Float(template.height) / max(0.01, found.height)
+            let wrapper = Entity()
+            let sized = Entity(); sized.scale = SIMD3(repeating: scale); sized.position = [0, -found.minY * scale, 0]
+            sized.addChild(entity); wrapper.addChild(sized)
+            if found.relief {
+                // A relief has no back: it keeps facing the camera, as before.
+                sized.components.set(BillboardComponent())
+                entity.orientation = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
+                runtime.setFacesCamera(ownerID)
+            }
+            if template.shadow { wrapper.addChild(Self.shadow(radius: Float(template.height) * 0.25)) }
+            holder.addChild(wrapper)
+            shown[ownerID] = Shown(key: key, entity: wrapper)
+            return true
+        default:
+            return nil
+        }
+    }
 
     private func billboard(_ template: CharacterTemplate, action: CharacterAction, direction: Int) -> Entity? {
         guard let clip = template.clip(action), !clip.bindingIDs.isEmpty,

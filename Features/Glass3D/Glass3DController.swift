@@ -434,7 +434,8 @@ struct Glass3DPending {
         }
         let occlusion = OcclusionManager.resolve(player: world.player.position, cameraEye: eye, mode: viewMode, buildings: world.hybrid?.occluders ?? [])
         renderer.applyOcclusion(hidden: occlusion.hidden, faded: occlusion.faded)
-        updateCharacters()
+        updateCharacters(eye: eye)
+        resolvePendingStrikes()
         characters.generated.tick(Float(dt))
         renderer.animate(clock: world.clock)
         // Native glass is its own layer over the 3D view: shown and redrawn
@@ -672,7 +673,12 @@ struct Glass3DPending {
     func requestAnimation(_ owner: String, _ action: CharacterAction, length: Double, template: CharacterTemplate? = nil) {
         var state = animations[owner] ?? CharacterAnimationState()
         let clip = (template ?? (owner == SpatialBattle.playerID ? playerTemplate : nil))?.clip(action)
-        let own = clip.map { $0.length / max(0.1, $0.speed) } ?? length
+        var own = clip.map { $0.length / max(0.1, $0.speed) } ?? length
+        // v1.91: a rigged character's one-shots last as long as their motion.
+        if characters.runtime.has(owner), action.oneShot {
+            let next = action == .attack ? ComboRules.next(current: state.combo, chained: state.action == .attack && world.clock - state.started < state.length) : 1
+            if let motion = MotionLibrary.motion(MotionLibrary.id(for: action, combo: next)) { own = Double(motion.duration / motion.speed) }
+        }
         CharacterAnimator.request(&state, action, clock: world.clock, length: own)
         animations[owner] = state
     }
@@ -700,7 +706,23 @@ struct Glass3DPending {
     }
 
     private var lastPlayerPosition = SpatialVector.zero
-    private func updateCharacters() {
+    private var lastCreaturePositions: [String: SpatialVector] = [:]
+    /// v1.91: a rigged character's per-frame input: its game state and the
+    /// world clock; the runtime only presents it.
+    private func driveRuntime(_ owner: String, at position: SpatialVector, speed: Double, grounded: Bool, facing: Double?, eye: SpatialVector) {
+        guard characters.runtime.has(owner) else { return }
+        let state = animations[owner] ?? CharacterAnimationState()
+        let input = AnimationInput(speed: Float(speed.isFinite ? speed : 0), direction: SIMD2(0, 1), grounded: grounded, action: state.action,
+                                   actionStarted: state.started, combo: state.combo, weaponReady: false, clock: world.clock)
+        let gap = position - eye
+        let distance = Float((gap.x * gap.x + gap.y * gap.y + gap.z * gap.z).squareRoot())
+        let events = characters.runtime.update(owner, input: input, cameraDistance: distance, visible: distance < 90, facingDegrees: facing.map { Float($0) })
+        if owner == SpatialBattle.playerID { runtimeEventsSeen += events.count }
+    }
+    /// Motion events the player's runtime character fired (diagnostics probe).
+    private(set) var runtimeEventsSeen = 0
+
+    private func updateCharacters(eye: SpatialVector) {
         let templates = world.characters ?? []
         guard !templates.isEmpty else { renderer.playerBodyVisible = true; return }
         stepAnimations()
@@ -711,6 +733,7 @@ struct Glass3DPending {
         let applied = characters.apply(playerTemplate, to: renderer.playerEntity, ownerID: SpatialBattle.playerID, action: playerState.action,
                                        direction: CharacterAnimator.direction(facing: world.player.facing, cameraYaw: camera.yaw, count: playerTemplate?.mode.directions ?? 1))
         renderer.playerBodyVisible = !applied
+        driveRuntime(SpatialBattle.playerID, at: world.player.position, speed: speed, grounded: world.player.grounded, facing: nil, eye: eye)
         for creature in world.creatures {
             guard let id = creature.characterID, let template = templates.first(where: { $0.id == id }), let holder = renderer.creatureEntity(creature.id) else { continue }
             requestAnimation(creature.id, CharacterAnimator.action(for: creature.state, moving: creature.state == .chase || creature.state == .wander || creature.state == .returning), length: 0.6, template: template)
@@ -718,6 +741,9 @@ struct Glass3DPending {
             let shown = characters.apply(template, to: holder, ownerID: creature.id, action: animations[creature.id]?.action ?? .idle,
                                          direction: CharacterAnimator.direction(facing: facing, cameraYaw: camera.yaw, count: template.mode.directions))
             renderer.setCreatureBodyVisible(creature.id, !shown)
+            let moved = (creature.position - (lastCreaturePositions[creature.id] ?? creature.position)).flatLength * 60
+            lastCreaturePositions[creature.id] = creature.position
+            driveRuntime(creature.id, at: creature.position, speed: moved, grounded: true, facing: facing, eye: eye)
         }
     }
 
@@ -744,7 +770,35 @@ struct Glass3DPending {
             renderer.punch(lunge: false)
         }
         stamina -= cost
-        let damage = RPGGear.attackDamage(base: kind == .strike ? 12 : 25, weapon: session.world.player.weapon)
+        var damage = RPGGear.attackDamage(base: kind == .strike ? 12 : 25, weapon: session.world.player.weapon)
+        // v1.91: a rigged character's hit lands on its motion's hit moment
+        // (the authoritative clock decides, once), with the combo's factor.
+        if characters.runtime.has(SpatialBattle.playerID), let state = animations[SpatialBattle.playerID] {
+            // Pressed during the wind-up (before the cancel window): the move did not restart.
+            guard state.started == world.clock, state.action == (kind == .strike ? .attack : .skill) else { stamina += cost; return }
+            let motion = MotionLibrary.motion(MotionLibrary.id(for: kind == .strike ? .attack : .skill, combo: state.combo))
+            if kind == .strike { damage = Int((Double(damage) * ComboRules.damageFactor(state.combo)).rounded()) }
+            pendingStrikes.append(PendingStrike(kind: kind, damage: damage, due: state.started + Double(motion?.phases?.hit ?? 0)))
+            session.applySpatialVitals(health: health, stamina: stamina, shardDelta: 0)
+            return
+        }
+        strike(kind, damage: damage)
+    }
+
+    /// v1.91: strikes waiting for their motion's hit moment.
+    private struct PendingStrike { var kind: SpatialCombat.Attack; var damage: Int; var due: Double }
+    private var pendingStrikes: [PendingStrike] = []
+    private(set) var timedHits = 0
+    private func resolvePendingStrikes() {
+        guard !pendingStrikes.isEmpty else { return }
+        let due = pendingStrikes.filter { world.clock >= $0.due }
+        pendingStrikes.removeAll { world.clock >= $0.due }
+        guard mode == .play, health > 0 else { pendingStrikes.removeAll(); return }
+        for s in due { timedHits += 1; strike(s.kind, damage: s.damage) }
+    }
+
+    /// Applies a strike or skill at the player's current place and facing.
+    private func strike(_ kind: SpatialCombat.Attack, damage: Int) {
         let before = world.creatures
         let hits = SpatialCombat.attack(kind, from: world.player.position, facing: world.player.facing, damage: damage, creatures: &world.creatures, geometry: staticGeometry.moved(frames: world.groupFrames(pivots: pivots, clock: world.clock)))
         var shards = 0
@@ -766,6 +820,10 @@ struct Glass3DPending {
         guard mode == .play, health > 0, localCooldowns.roll <= 0, stamina >= 18 else { return }
         localCooldowns.roll = 1.2; stamina -= 18; invulnerable = 0.35
         requestAnimation(SpatialBattle.playerID, .dodge, length: 0.4)
+        // v1.91: a rigged character is untouchable for its motion's whole active phase.
+        if characters.runtime.has(SpatialBattle.playerID), let motion = MotionLibrary.motion(MotionLibrary.id(for: .dodge, moving: stick.x * stick.x + stick.y * stick.y > 0.04)), let phases = motion.phases {
+            invulnerable = Double(phases.activeEnd)
+        }
         effects.burst(.smoke, at: world.player.position + SpatialVector(0, 0, 0.3), seconds: 0.3, clock: world.clock, quality: quality)
         renderer.punch(lunge: true)
         let radians = world.player.facing * .pi / 180
@@ -1657,6 +1715,68 @@ struct Glass3DPending {
         }
     }
     func setPlayerCharacter(_ id: String?) { edit(L10n.t("主角外观", "Player Look")) { w in w.playerCharacterID = id } }
+
+    // MARK: Base-body characters (v1.91)
+
+    /// The world template for a character package (created or refreshed);
+    /// with `asPlayer` the player wears it. Returns the template id.
+    @discardableResult
+    func useStandardCharacter(_ package: CharacterPackage, asPlayer: Bool) -> String {
+        let id = "standard:" + package.manifest.id
+        var t = CharacterTemplate(id: String(id.prefix(128)), name: String(package.manifest.name.prefix(64)))
+        t.mode = .standard; t.characterID = package.manifest.id
+        t.height = Double(package.appearance.shape.clamped.height)
+        t.colliderHeight = max(0.3, min(20, t.height * 0.9)); t.colliderRadius = 0.3
+        edit(asPlayer ? L10n.t("主角外观", "Player Look") : L10n.t("保存角色 ", "Save Character ") + t.name) { w in
+            var list = w.characters ?? []
+            if let i = list.firstIndex(where: { $0.id == t.id }) { list[i] = t } else { list.append(t) }
+            w.characters = list
+            if asPlayer { w.playerCharacterID = t.id }
+        }
+        return t.id
+    }
+
+    /// A character as a peaceful NPC a few steps in front of the player.
+    func placeStandardCharacter(_ package: CharacterPackage, sideways: Double = 0) {
+        let template = useStandardCharacter(package, asPlayer: false)
+        let r = world.player.facing * .pi / 180, side = r + .pi / 2
+        let p = world.player.position
+        let at = SpatialVector(p.x + cos(r) * 3 + cos(side) * sideways, p.y + sin(r) * 3 + sin(side) * sideways, p.z)
+        edit(L10n.t("放置角色", "Place Character")) { w in
+            var c = CreatureEntity(id: "npc:" + String(UUID().uuidString.prefix(8)), kind: .neutral, position: at, home: at, health: 40, maxHealth: 40, damage: 0)
+            c.characterID = template
+            w.creatures.append(c)
+        }
+        resetCreatureBrains()
+    }
+
+    /// Demo B: the three preset characters (standard, tall, chibi), saved once
+    /// and placed side by side in front of the player. Returns a notice.
+    @discardableResult
+    func placeDemoCharacters() -> String {
+        var placed = 0
+        for (index, preset) in CharacterAppearance.presets.enumerated() {
+            let id = "demo-\(index)"
+            if CharacterLibrary.shared.package(id) == nil, let p = CharacterPackage.humanBase(id: id, name: preset.0, appearance: preset.1) {
+                if let error = CharacterLibrary.shared.save(p) { return error }
+            }
+            guard let p = CharacterLibrary.shared.package(id) else { continue }
+            placeStandardCharacter(p, sideways: Double(index - 1) * 1.6)
+            placed += 1
+        }
+        let text = placed == 3 ? L10n.t("三位演示角色已放在前面：同一个底模、同一套动作，不同体型和外观", "Three demo characters stand in front of you: one base body, one set of motions, three builds and looks")
+                               : L10n.t("没有找到通用底模文件，无法放置演示角色", "The base body file is missing; the demo characters could not be placed")
+        notice = text
+        return text
+    }
+
+    /// For UI tests and diagnostics: what the character runtime is doing.
+    var characterProbe: String {
+        let stats = characters.runtime.stats
+        return "playerRuntime=\(characters.runtime.has(SpatialBattle.playerID) ? 1 : 0);instances=\(stats.instances);deformations=\(stats.deformations);timedHits=\(timedHits)"
+            + ";events=\(runtimeEventsSeen);incidents=\(characters.runtime.incidents.count);view=\(viewMode == .pixelRPG ? "pixel" : "spatial");combo=\(animations[SpatialBattle.playerID]?.combo ?? 0)"
+            + ";npcs=\(world.creatures.filter { $0.id.hasPrefix("npc:") }.count)"
+    }
 
     /// Clears the world in one undoable step (see `SpatialWorld.cleared`).
     func clearWorld() {

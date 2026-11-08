@@ -73,7 +73,7 @@ enum LegacyRigAdapter {
             while slots.count < 4 { slots.append((255, 0)) }
             for s in slots { joints.append(s.0); weights.append(s.1) }
         }
-        let motions = package.clips.map(MotionAdapters.from)
+        let motions = package.clips.map { MotionAdapters.from($0) }
         let notes = [L10n.t("旧版 10 骨骼角色已映射到标准骨骼：\(16) 个关节来自原骨骼，\(inferred.count) 个按规则补齐（标记为推断）。原文件未改动。",
                             "Old ten-bone character mapped to the standard skeleton: 16 joints from the original, \(inferred.count) placed by rule (marked inferred). The original files are unchanged.")]
         return LegacyConversion(skeleton: skeleton, skin: SkinInfluences(joints: joints, weights: weights), motions: motions, inferred: inferred, notes: notes)

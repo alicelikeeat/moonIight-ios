@@ -19,6 +19,8 @@ import UIKit
         var staticMesh: MeshResource?
         var animated: [String: AnimatedRegionMesh] = [:]
         var players: [String: SkinnedMeshPlayer] = [:]
+        /// v1.91: a depth relief (front only): shown facing the camera.
+        var relief = false
     }
     private var loaded: [String: Loaded] = [:]
     private var loading: Set<String> = []
@@ -26,6 +28,22 @@ import UIKit
     private var clock: Float = 0, sinceUpdate: Float = 0
 
     func isReady(_ template: CharacterTemplate) -> Bool { template.generatedModelID.map { loaded[$0] != nil } ?? false }
+
+    /// v1.91: a loaded rigged model as a CharacterRuntime source (27-joint
+    /// rigs as they are, ten-bone rigs through LegacyRigAdapter), with its
+    /// material, size and whether it is a front-only relief. Nil while loading
+    /// or for unrigged models (those keep the static path).
+    func runtimeSource(_ template: CharacterTemplate) -> (source: CharacterSource, material: RealityKit.Material, height: Float, minY: Float, relief: Bool)? {
+        guard let id = template.generatedModelID, let model = loaded[id] else { return nil }
+        if let rigged = model.rigged {
+            let own = rigged.character.clips.filter { $0.keyframes != nil }.map { MotionAdapters.from($0) }
+            return (.rigged(mesh: model.mesh, skeleton: LegacyRigAdapter.upgrade(rigged.character), skin: rigged.skin, motions: own), model.material, model.height, model.minY, model.relief)
+        }
+        if let rig = model.rig, let converted = LegacyRigAdapter.convert(rig.package, skin: rig.skin, vertexCount: model.mesh.vertexCount) {
+            return (.rigged(mesh: model.mesh, skeleton: converted.skeleton, skin: converted.skin, motions: []), model.material, model.height, model.minY, model.relief)
+        }
+        return nil
+    }
 
     /// Entity for a template, or nil while loading / when the model is gone.
     func entity(_ template: CharacterTemplate, action: CharacterAction) -> Entity? {
@@ -121,7 +139,7 @@ import UIKit
             let bounds = mesh.bounds
             guard (bounds.max[1] - bounds.min[1]).isFinite, bounds.min[1].isFinite else { self.failed.insert(id); return }
             self.loaded[id] = Loaded(mesh: mesh, height: bounds.max[1] - bounds.min[1], minY: bounds.min[1], material: material, rig: rig,
-                                     rigged: found.1.map { (character: $0.0, skin: $0.1) })
+                                     rigged: found.1.map { (character: $0.0, skin: $0.1) }, relief: manifest.geometry == .depthRelief)
         }
     }
 
