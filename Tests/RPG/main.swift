@@ -3372,6 +3372,7 @@ finiteMeshTests()
 try baseBodyTests()
 bodyPhotoFitTests()
 baseBodyTransferTests()
+baseBodyPaintTests()
 usdzExportTests()
 do {
     // v1.86 travel between continent regions.

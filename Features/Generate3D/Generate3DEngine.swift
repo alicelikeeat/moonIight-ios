@@ -551,7 +551,7 @@ enum VideoReconstructionPipeline {
     }
 
     func existing(hash: String, quality: GenerationQuality, back: DepthMeshBuilder.BackStyle = .flat) -> Generated3DManifest? {
-        models.first { $0.sourceHash == hash && $0.quality == quality && $0.geometry == .depthRelief && ($0.backStyle ?? .flat) == back }
+        models.first { $0.sourceHash == hash && ($0.geometry == .baseBody || ($0.quality == quality && $0.geometry == .depthRelief && ($0.backStyle ?? .flat) == back)) }
     }
 
     func url(_ folder: String, _ file: String?) -> URL? { file.map { Self.folder(folder).appendingPathComponent($0) } }
@@ -822,6 +822,13 @@ enum Generate3DExport {
             do {
                 let hash = (try? await Task.detached { try MediaImportIndex.sha256(of: url) }.value) ?? UUID().uuidString
                 if let existing = store.existing(hash: hash, quality: quality, back: back) { phase = .finished(existing.id); return }
+                // v1.90: a whole person → the universal base body (360°, rigged).
+                let person = Task.detached(priority: .userInitiated) { try await BaseBodyCharacterPipeline.run(front: url, back: nil, progress: progress) }
+                if let built = try await withTaskCancellationHandler(operation: { try await person.value }, onCancel: { person.cancel() }) {
+                    progress(L10n.t("保存", "Saving"), 0.95)
+                    let manifest = try await store.storeBaseBody(built, name: name, sourceName: name, hash: hash)
+                    phase = .finished(manifest.id); return
+                }
                 let job = Task.detached(priority: .userInitiated) { try await ImageGenerationPipeline.run(url, quality: quality, back: back, progress: progress) }
                 let output = try await withTaskCancellationHandler { try await job.value } onCancel: { job.cancel() }
                 progress(L10n.t("保存", "Saving"), 0.95)

@@ -503,8 +503,11 @@ struct Generated3DManifest: Codable, Hashable, Identifiable, Sendable {
         case procedural
         /// v1.74: carved from 2–6 photos taken around the subject.
         case multiView
+        /// v1.90: the universal base body fitted to a person photo (360°, rigged).
+        case baseBody
         var title: String {
             switch self {
+            case .baseBody: L10n.t("通用底模人物（按照片体型和贴图，完整 360°，自带骨骼）", "Base-body person (shape and paint from the photo, 360°, rigged)")
             case .procedural: L10n.t("文字生成的 3D 角色（完整 360°，自带骨骼）", "3D character from text (full 360°, rigged)")
             case .multiView: L10n.t("多张照片建模（按轮廓雕刻的 360° 模型）", "Model from several photos (360°, carved from outlines)")
             case .imported: L10n.t("导入的 3D 模型", "Imported 3D model")

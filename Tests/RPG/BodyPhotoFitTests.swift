@@ -81,3 +81,49 @@ func bodyPhotoFitTests() {
     }
     print("RPG photo fit: shapes recovered, front and back painted")
 }
+
+/// The painted body: one mesh, front photo on the left half, back on the right,
+/// no triangle stretched across the two, weights carried along.
+func baseBodyPaintTests() {
+    let model = BaseBody.build(.standard)
+    let j = BaseBody.joints(model.shape)
+    let scale: Float = 0.8 / model.shape.height, origin = SIMD2<Float>(0.375, 0.1)
+    func photo(back: Bool) -> BodyPhoto {
+        func project(_ p: SIMD3<Float>) -> SIMD2<Float> { origin + SIMD2(back ? -p.x : p.x, p.y) * scale }
+        let map: [(PhotoJoint, JointTag)] = [(.leftShoulder, .leftUpperArm), (.rightShoulder, .rightUpperArm), (.leftElbow, .leftForearm), (.rightElbow, .rightForearm),
+                                             (.leftWrist, .leftHand), (.rightWrist, .rightHand), (.leftHip, .leftThigh), (.rightHip, .rightThigh),
+                                             (.leftKnee, .leftShin), (.rightKnee, .rightShin), (.leftAnkle, .leftFoot), (.rightAnkle, .rightFoot)]
+        var points: [PhotoJoint: BodyPhoto.Point] = [:]
+        for (pj, tag) in map { if let p = j[tag] { let q = project(p); points[pj] = .init(x: q.x, y: q.y, confidence: 0.9) } }
+        return BodyPhoto(points: points, outline: [], aspect: 0.75, back: back)
+    }
+    for back in [nil, photo(back: true)] {
+        let painted = BaseBodyPaint.paint(model, front: photo(back: false), back: back)
+        let m = painted.mesh
+        check(m.valid && m.uvs.count == m.vertexCount * 2 && painted.source.count == m.vertexCount && m.triangleCount == model.mesh.triangleCount,
+              "body paint: a valid mesh with the base body's triangles and a UV per vertex")
+        check(painted.skin.valid(jointCount: model.skeleton.joints.count, vertexCount: m.vertexCount), "body paint: the weights come along with every duplicated vertex")
+        check(m.vertexCount >= model.mesh.vertexCount && m.vertexCount < model.mesh.vertexCount * 2, "body paint: only the seam is duplicated (\(model.mesh.vertexCount) → \(m.vertexCount))")
+        var crossing = 0, frontLeft = 0, frontTotal = 0
+        for t in 0..<m.triangleCount {
+            let us = (0..<3).map { m.uvs[Int(m.indices[t * 3 + $0]) * 2] }
+            if us.contains(where: { $0 < 0.5 }) && us.contains(where: { $0 > 0.5 }) { crossing += 1 }
+        }
+        for (i, s) in painted.source.enumerated() where model.vertices[s].front && painted.source.filter({ $0 == s }).count == 1 {
+            frontTotal += 1; if m.uvs[i * 2] <= 0.5 { frontLeft += 1 }
+        }
+        check(crossing == 0, "body paint: no triangle spans both halves of the atlas (\(crossing))")
+        check(frontTotal > 0 && frontLeft * 100 >= frontTotal * 95, "body paint: the front of the body reads the front photo (\(frontLeft)/\(frontTotal))")
+        check(painted.unpainted == 0, "body paint: every vertex gets a spot (\(painted.unpainted) left blank)")
+        // Same pose as the base body: posing the painted mesh moves it like the base.
+        if let raise = MotionClip.library.first(where: { $0.id == "raiseArms" }) {
+            let mats = raise.pose(model.skeleton, at: raise.period * 0.5).skinning(model.skeleton)
+            let a = SkinWeightSolver.deform(model.mesh, skin: model.skin, matrices: mats).positions
+            let b = SkinWeightSolver.deform(m, skin: painted.skin, matrices: mats).positions
+            var worst: Float = 0
+            for (i, s) in painted.source.enumerated() { for k in 0..<3 { worst = max(worst, abs(a[s * 3 + k] - b[i * 3 + k])) } }
+            check(worst < 1e-5, "body paint: the painted body moves exactly like the base body")
+        }
+    }
+    print("RPG body paint: front and back halves, seam split, weights kept")
+}

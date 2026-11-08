@@ -115,12 +115,14 @@ enum BodyPhotoFit {
     /// Where in the photo each base-body vertex is: (u, v) in 0…1 with v
     /// DOWN from the top (image convention), or nil for a vertex that photo
     /// does not show (the back of the body in a front photo, and so on).
-    static func uvs(_ model: BaseBodyModel, photo: BodyPhoto) -> [SIMD2<Float>?] {
+    /// `everywhere`: also place the vertices facing away (used where a
+    /// triangle straddles front and back and needs both ends from one photo).
+    static func uvs(_ model: BaseBodyModel, photo: BodyPhoto, everywhere: Bool = false) -> [SIMD2<Float>?] {
         guard let mapper = Mapper(model: model, photo: photo) else { return Array(repeating: nil, count: model.mesh.vertexCount) }
         return (0..<model.mesh.vertexCount).map { i in
             let info = model.vertices[i]
             // A front photo paints what faces the camera; a back photo the rest.
-            guard info.front != photo.back else { return nil }
+            guard everywhere || info.front != photo.back else { return nil }
             let p = SIMD3(model.mesh.positions[i * 3], model.mesh.positions[i * 3 + 1], model.mesh.positions[i * 3 + 2])
             guard let spot = mapper.place(p, info: info) else { return nil }
             return SIMD2(min(1, max(0, spot.x / photo.aspect)), min(1, max(0, 1 - spot.y)))

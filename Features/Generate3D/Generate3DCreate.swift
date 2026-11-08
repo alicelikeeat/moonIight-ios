@@ -312,8 +312,15 @@ struct MultiViewCard: View {
         Task {
             defer { busy = false }
             do {
-                let result = try await Task.detached(priority: .userInitiated) { try MultiViewPipeline.run(selected) }.value
-                let manifest = try await store.storeMultiView(result, name: L10n.t("多视角模型", "Multi-view model"))
+                // v1.90: a whole person in front (and back) → the universal base body.
+                let manifest: Generated3DManifest
+                if let front = selected[.front],
+                   let built = try await Task.detached(priority: .userInitiated, operation: { try await BaseBodyCharacterPipeline.run(front: front, back: selected[.back], progress: { _, _ in }) }).value {
+                    manifest = try await store.storeBaseBody(built, name: L10n.t("照片人物", "Photo person"), sourceName: selected.keys.map(\.title).joined(separator: "+"), hash: "views:" + UUID().uuidString)
+                } else {
+                    let result = try await Task.detached(priority: .userInitiated) { try MultiViewPipeline.run(selected) }.value
+                    manifest = try await store.storeMultiView(result, name: L10n.t("多视角模型", "Multi-view model"))
+                }
                 for url in selected.values { try? FileManager.default.removeItem(at: url) }
                 files = [:]; thumbs = [:]
                 onCreated(manifest)
