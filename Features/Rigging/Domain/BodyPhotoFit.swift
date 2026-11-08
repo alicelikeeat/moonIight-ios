@@ -70,9 +70,11 @@ enum BodyPhotoFit {
         let feetSeen = photo.point(.leftAnkle) != nil || photo.point(.rightAnkle) != nil
         let centre = (shoulders.x + hips.x) / 2
 
-        // Head: from the top of the outline to the chin (a little above the neck point).
+        // Head: from the top of the outline to the chin. Vision's neck point
+        // sits on the shoulder line; the chin is about 6% of the height above it
+        // (as on the base body), never closer than 6% to the top.
         let neck = photo.point(.neck) ?? shoulders
-        let chin = neck.y + (top - neck.y) * 0.18
+        let chin = min(neck.y + 0.06 * tall, top - 0.06 * tall)
         shape.headRatio = (top - chin) / tall; measured.append("head")
         if let l = photo.point(.leftShoulder), let r = photo.point(.rightShoulder) {
             shape.shoulderWidth = abs(l.x - r.x) / tall; measured.append("shoulders")
