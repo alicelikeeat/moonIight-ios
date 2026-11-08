@@ -23,11 +23,15 @@ func bodyPhotoFitTests() {
         for t in 0..<m.triangleCount {
             func v(_ k: Int) -> SIMD3<Float> { let i = Int(m.indices[t * 3 + k]) * 3; return SIMD3(m.positions[i], m.positions[i + 1], m.positions[i + 2]) }
             let a = v(0), b = v(1), c = v(2)
-            for u in stride(from: Float(0), through: 1, by: 0.25) { for w in stride(from: Float(0), through: 1 - u, by: 0.25) { samples.append(project(a + (b - a) * u + (c - a) * w)) } }
+            for u in stride(from: Float(0), through: 1, by: 0.0625) { for w in stride(from: Float(0), through: 1 - u, by: 0.0625) { samples.append(project(a + (b - a) * u + (c - a) * w)) } }
         }
+        // Bucket by row (0.005 apart) so each row reads only nearby samples.
+        var buckets: [Int: [SIMD2<Float>]] = [:]
+        for p in samples { buckets[Int((p.y / 0.005).rounded()), default: []].append(p) }
         var rows: [BodyPhoto.Row] = []
         for y in stride(from: Float(0.08), through: 0.92, by: 0.005) {
-            let xs = samples.filter { abs($0.y - y) <= 0.004 }.map(\.x).sorted()
+            let k = Int((y / 0.005).rounded())
+            let xs = ((buckets[k - 1] ?? []) + (buckets[k] ?? []) + (buckets[k + 1] ?? [])).filter { abs($0.y - y) <= 0.004 }.map(\.x).sorted()
             var spans: [SIMD2<Float>] = []
             for x in xs { if let last = spans.last, x - last.y < 0.012 { spans[spans.count - 1].y = x } else { spans.append(SIMD2(x, x)) } }
             rows.append(.init(y: y, spans: spans))
