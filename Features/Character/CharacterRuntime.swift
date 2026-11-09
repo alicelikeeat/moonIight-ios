@@ -27,7 +27,7 @@ enum CharacterSource: Sendable {
 @available(iOS 18.0, *)
 @MainActor final class CharacterRuntime {
     struct Incident: Equatable, Sendable { var owner: String; var motion: String; var reason: String; var date: Date }
-    struct Stats: Equatable, Sendable { var instances = 0; var deformations = 0; var skipped = 0; var cachedBodies = 0; var lodCounts = [0, 0, 0] }
+    struct Stats: Equatable, Sendable { var instances = 0; var deformations = 0; var skipped = 0; var cachedBodies = 0; var lodCounts = [0, 0, 0]; var deferred = 0 }
 
     @MainActor private final class Layer {
         let player: SkinnedMeshPlayer
@@ -257,6 +257,14 @@ enum CharacterSource: Sendable {
         // Near: 30 updates a second; middle: 15; far: 8.
         let interval = lod == 0 ? 1.0 / 30 : lod == 1 ? 1.0 / 15 : 1.0 / 8
         guard input.clock - instance.lastDeform >= interval || instance.lastDeform < 0 || input.clock < instance.lastDeform else { return result.events }
+        // v1.93: a main-thread budget. Skinning runs on the main thread; past the budget a
+        // character waits for a later frame (the player at least every 0.1 s, everyone at
+        // least once a second), so touches and the rest of the frame keep their time.
+        if overBudget(), instance.lastDeform >= 0, input.clock >= instance.lastDeform {
+            let waited = input.clock - instance.lastDeform
+            let mustRun = owner == SpatialBattle.playerID ? waited >= 0.1 : waited >= 1
+            if !mustRun { stats.deferred += 1; return result.events }
+        }
         instance.lastDeform = input.clock
         deform(instance, result.pose, motion: input.action.rawValue)
         return result.events
@@ -279,7 +287,19 @@ enum CharacterSource: Sendable {
         deform(instance, sample, motion: motion?.id ?? "bind")
     }
 
+    /// Share of wall time skinning may take, over a quarter-second window.
+    static let busyShare = 0.4, busyWindow = 0.25
+    private var windowStart = CFAbsoluteTimeGetCurrent()
+    private var windowSpent = 0.0
+    private func overBudget() -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - windowStart > Self.busyWindow { windowStart = now; windowSpent = 0 }
+        return windowSpent > Self.busyWindow * Self.busyShare
+    }
+
     private func deform(_ instance: Instance, _ sample: MotionSample, motion: String) {
+        let started = CFAbsoluteTimeGetCurrent()
+        defer { windowSpent += CFAbsoluteTimeGetCurrent() - started }
         var pose = sample
         var matrices = RigPoser.skinning(pose, skeleton: instance.skeleton)
         if !matrices.allSatisfy(\.finite) {
