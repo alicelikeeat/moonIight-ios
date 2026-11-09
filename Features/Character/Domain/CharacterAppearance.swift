@@ -121,6 +121,24 @@ struct EquipmentItem: Codable, Equatable, Identifiable, Sendable {
     static func find(_ id: String) -> EquipmentItem? { catalog.first { $0.id == id } }
 }
 
+/// v1.92: a painted skin for any base body: the photo measurements (front
+/// and, when there is one, back) and the texture atlas made from them (front
+/// on the left half, back on the right). The body is repainted from these for
+/// every shape and level of detail, so one skin fits every base.
+struct CharacterSkin: Codable, Equatable, Sendable {
+    enum Source: String, Codable, Sendable {
+        case photo, video, sheet, multiView
+        var title: String {
+            switch self { case .photo: L10n.t("照片", "Photo"); case .video: L10n.t("视频", "Video"); case .sheet: L10n.t("设定图", "Character sheet"); case .multiView: L10n.t("多张照片", "Several photos") }
+        }
+    }
+    var source: Source
+    var front: BodyPhoto
+    var back: BodyPhoto?
+    /// Atlas file in the character package (Textures/).
+    var atlas = "skin.jpg"
+}
+
 /// The whole look: body shape, skin material, outfit and equipment.
 struct CharacterAppearance: Codable, Equatable, Sendable {
     /// v1.92: the base body this character starts from (BaseBodyCatalog id; nil = the neutral mannequin).
@@ -129,6 +147,8 @@ struct CharacterAppearance: Codable, Equatable, Sendable {
     var skin = CharacterMaterialProfile.preset(.pbr, color: SIMD3(0.86, 0.72, 0.62))
     var outfit: [String] = []
     var equipment: [String] = []
+    /// v1.92: a painted skin (photo, video frame or character sheet); nil = the plain material.
+    var painted: CharacterSkin? = nil
 
     var pieces: [OutfitPiece] { outfit.compactMap(OutfitPiece.find) }
     var items: [EquipmentItem] { equipment.compactMap(EquipmentItem.find) }

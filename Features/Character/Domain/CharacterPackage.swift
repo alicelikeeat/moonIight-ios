@@ -161,6 +161,8 @@ struct CharacterPackage: Equatable, Sendable {
     /// Custom geometry only (LOD meshes and their weights).
     var meshes: [GeneratedMesh] = []
     var skins: [SkinInfluences] = []
+    /// v1.92: images by file name (Textures/), e.g. a painted skin's atlas.
+    var textures: [String: Data] = [:]
 
     var motions: [UniversalMotion] { motionIDs.compactMap(MotionLibrary.motion) + customMotions }
 
@@ -204,7 +206,7 @@ struct CharacterPackageStore: Sendable {
         }
         let temp = folder.appendingPathComponent(".tmp-" + UUID().uuidString, isDirectory: true)
         defer { try? fm.removeItem(at: temp) }
-        for sub in ["Skeleton", "Motions", "Equipment", "Diagnostics", "Meshes", "Skin", "Preview"] {
+        for sub in ["Skeleton", "Motions", "Equipment", "Diagnostics", "Meshes", "Skin", "Preview", "Textures"] {
             try fm.createDirectory(at: temp.appendingPathComponent(sub), withIntermediateDirectories: true)
         }
         let e = Self.encoder
@@ -216,6 +218,11 @@ struct CharacterPackageStore: Sendable {
         try e.encode(package.validation).write(to: temp.appendingPathComponent("Diagnostics/Validation.json"))
         for (i, mesh) in package.meshes.enumerated() { try GeneratedMeshCodec.encode(mesh).write(to: temp.appendingPathComponent("Meshes/LOD\(i).m3dg")) }
         for (i, skin) in package.skins.enumerated() { try SkinCodec.encode(skin).write(to: temp.appendingPathComponent("Skin/LOD\(i).skin")) }
+        for (name, data) in package.textures {
+            // Plain file names only (no folders, no tricks).
+            guard !name.isEmpty, name.count <= 64, !name.contains("/"), !name.hasPrefix(".") else { continue }
+            try data.write(to: temp.appendingPathComponent("Textures/" + name))
+        }
         if fm.fileExists(atPath: target.path) {
             _ = try fm.replaceItemAt(target, withItemAt: temp)
         } else {
@@ -247,8 +254,13 @@ struct CharacterPackageStore: Sendable {
             }
         }
         guard motions.custom.allSatisfy(\.valid) else { throw CharacterPackageError.damaged("Motions") }
+        var textures: [String: Data] = [:]
+        let textureFolder = base.appendingPathComponent("Textures")
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: textureFolder.path)) ?? [] where !name.hasPrefix(".") {
+            if let data = try? Data(contentsOf: textureFolder.appendingPathComponent(name)), data.count <= 32_000_000 { textures[name] = data }
+        }
         return CharacterPackage(manifest: manifest, appearance: appearance, skeleton: skeleton, motionIDs: motions.ids, customMotions: motions.custom,
-                                sockets: sockets, validation: validation, meshes: meshes, skins: skins)
+                                sockets: sockets, validation: validation, meshes: meshes, skins: skins, textures: textures)
     }
 
     /// Every readable package; damaged ones are reported, not fatal.
@@ -263,6 +275,9 @@ struct CharacterPackageStore: Sendable {
     }
 
     func delete(_ id: String) { try? FileManager.default.removeItem(at: url(id)) }
+
+    /// A texture file of a saved package (for RealityKit to load).
+    func textureURL(_ id: String, _ name: String) -> URL { url(id).appendingPathComponent("Textures/" + name) }
 }
 
 /// Binary weights: "SKI1", count, 4 joint bytes and 4 floats per vertex.

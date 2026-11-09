@@ -148,3 +148,44 @@ func characterAutoFitTests() {
     check(CharacterAutoFit.plan(AutoFitFacts(input: .usdz, humanoid: 0.5, complete3D: true)).needsConfirmation, "auto-fit: a doubtful humanoid needs the user's confirmation")
     print("RPG auto-fit: routes A–E")
 }
+
+/// v1.92: a skin painted onto any base and LOD, saved with its atlas.
+func characterSkinTests() {
+    guard let neutral = HumanBase.build(.standard) else { check(false, "skin: HumanBase available"); return }
+    // A synthetic front photo of the neutral body (its joints projected; no outline needed to paint).
+    let scale: Float = 0.8 / 1.75, origin = SIMD2<Float>(0.375, 0.1)
+    let map: [(PhotoJoint, JointTag)] = [(.leftShoulder, .leftUpperArm), (.rightShoulder, .rightUpperArm), (.leftElbow, .leftForearm), (.rightElbow, .rightForearm),
+                                         (.leftWrist, .leftHand), (.rightWrist, .rightHand), (.leftHip, .leftThigh), (.rightHip, .rightThigh),
+                                         (.leftKnee, .leftShin), (.rightKnee, .rightShin), (.leftAnkle, .leftFoot), (.rightAnkle, .rightFoot)]
+    var points: [PhotoJoint: BodyPhoto.Point] = [:]
+    for (pj, tag) in map { if let p = neutral.skeleton.position(tag) { let q = origin + SIMD2(p.x, p.y) * scale; points[pj] = .init(x: q.x, y: q.y, confidence: 0.9) } }
+    let front = BodyPhoto(points: points, outline: [], aspect: 0.75)
+    let skin = CharacterSkin(source: .photo, front: front, back: nil)
+    let back = try? JSONDecoder().decode(CharacterSkin.self, from: JSONEncoder().encode(skin))
+    check(back == skin, "skin: the photo measurements round-trip as JSON")
+    for entry in BaseBodyCatalog.builtins {
+        for lod in [0, 2] {
+            guard let shape = entry.shape, let body = HumanBase.build(shape, lod: lod) else { continue }
+            let painted = BaseBodyPaint.paint(body.model, front: front, back: nil)
+            check(painted.mesh.valid && painted.unpainted == 0 && painted.skin.valid(jointCount: body.skeleton.joints.count, vertexCount: painted.mesh.vertexCount)
+                  && painted.mesh.uvs.allSatisfy { $0 >= -0.001 && $0 <= 1.001 },
+                  "skin: one photo paints the \(entry.name) at LOD\(lod) (\(painted.mesh.vertexCount) vertices, \(painted.unpainted) blank)")
+        }
+    }
+    // A painted character saves with its atlas and loads it back.
+    var look = CharacterAppearance(); look.use(BaseBodyCatalog.builtin("humanbase.woman")!); look.painted = skin
+    let folder = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("skin-test-" + UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = CharacterPackageStore(folder: folder)
+    if var package = CharacterPackage.humanBase(id: "painted", name: "Painted", appearance: look) {
+        package.textures["skin.jpg"] = Data([0xFF, 0xD8, 0xFF, 1, 2, 3])
+        package.textures["../escape.jpg"] = Data([1])
+        do {
+            try store.save(package)
+            let loaded = try store.load("painted")
+            check(loaded.appearance.painted == skin && loaded.textures["skin.jpg"] == package.textures["skin.jpg"] && loaded.textures.count == 1,
+                  "skin: the painted character and its atlas load back (unsafe file names are refused)")
+        } catch { check(false, "skin: a painted character saves (\(error))") }
+    }
+    print("RPG skins: one photo paints all \(BaseBodyCatalog.builtins.count) bases at every LOD")
+}

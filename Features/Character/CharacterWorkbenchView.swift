@@ -46,7 +46,20 @@ import RealityKit
         place(); turn()
     }
 
-    private func place() { camera.look(at: [0, height * 0.5, 0], from: [0, height * 0.55, max(1, min(8, distance))], relativeTo: nil) }
+    // A giant (up to 6 m) is framed like an adult: the distance grows with the height.
+    private func place() { camera.look(at: [0, height * 0.5, 0], from: [0, height * 0.55, max(1, min(8, distance)) * max(1, height / 1.75)], relativeTo: nil) }
+
+    /// v1.92: a painted skin's texture (a saved character's Textures/ file).
+    private var skinURL: URL?
+    func applySkin(_ url: URL?) {
+        skinURL = url
+        guard let url else { return }
+        Task { @MainActor [weak self] in
+            guard let self, let texture = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)), self.skinURL == url else { return }
+            self.runtime.applySkinTexture(Self.owner, texture)
+            self.needsPose = true
+        }
+    }
     private func turn() { pivot.orientation = simd_quatf(angle: yaw, axis: [0, 1, 0]) }
 
     /// Shows (or reshapes) the character.
@@ -66,6 +79,9 @@ import RealityKit
     }
 
     private func refreshLook() { if runtime.has(Self.owner) { show(look) } }
+
+    /// A different kind of body (model base ↔ HumanBase): a new instance with the right motions.
+    func resetInstance() { runtime.remove(Self.owner) }
 
     static let mannequinColor = SIMD3<Float>(0.78, 0.76, 0.72)
     private func displayed(_ look: CharacterAppearance) -> CharacterAppearance {
@@ -180,7 +196,10 @@ struct CharacterWorkbenchView: View {
         Section(L10n.t("已保存的角色", "Saved characters")) {
             if library.packages.isEmpty { Text(L10n.t("还没有保存的角色", "No saved characters yet")).foregroundStyle(.secondary) }
             ForEach(library.packages, id: \.manifest.id) { p in
-                Button { change { $0 = p.appearance }; name = p.manifest.name; packageID = p.manifest.id } label: {
+                Button {
+                    change { $0 = p.appearance }; name = p.manifest.name; packageID = p.manifest.id
+                    scene.applySkin(p.appearance.painted.map { library.store.textureURL(p.manifest.id, $0.atlas) })
+                } label: {
                     LabeledContent(p.manifest.name, value: p.manifest.quality.rawValue)
                 }
             }
@@ -206,7 +225,10 @@ struct CharacterWorkbenchView: View {
         Section(L10n.t("底模库（选一个作为起点）", "Base bodies (pick one to start from)")) {
             ForEach(BaseBodyCatalog.builtins) { entry in
                 let chosen = (draft.base ?? BaseBodyCatalog.neutralID) == entry.id
-                Button { change { $0.use(entry) } } label: {
+                Button {
+                    if draft.base?.hasPrefix("model.") == true { scene.resetInstance() }
+                    change { $0.use(entry) }
+                } label: {
                     HStack {
                         Label(entry.name, systemImage: entry.symbol)
                         Spacer()
@@ -216,7 +238,26 @@ struct CharacterWorkbenchView: View {
                 }
                 .accessibilityIdentifier("workbench-base-" + entry.id)
             }
-            Text(L10n.t("所有底模共用同一套骨骼标准，动作、装备挂点和战斗判定都通用。", "Every base shares the one skeleton standard: motions, gear sockets and combat timing work on each."))
+            ForEach(library.modelBases) { entry in
+                let chosen = draft.base == entry.id
+                Button {
+                    Task {
+                        guard await scene.runtime.prepareModelBase(entry.id) else { message = L10n.t("这个模型底模无法加载（可能已删除）", "This model base cannot load (it may have been deleted)"); return }
+                        scene.resetInstance()
+                        change { $0.base = entry.id; $0.painted = nil }
+                    }
+                } label: {
+                    HStack {
+                        Label(entry.name, systemImage: entry.symbol)
+                        Spacer()
+                        Text(entry.category.title).font(.caption).foregroundStyle(.secondary)
+                        Image(systemName: chosen ? "checkmark.circle.fill" : "circle").foregroundStyle(chosen ? Color.accentColor : Color.secondary)
+                    }
+                }
+                .contextMenu { Button(L10n.t("从底模库移除", "Remove from the base library"), role: .destructive) { library.removeModelBase(entry.id) } }
+                .accessibilityIdentifier("workbench-base-" + entry.id)
+            }
+            Text(L10n.t("所有底模共用同一套骨骼标准，动作、装备挂点和战斗判定都通用。在「AI 生成 3D 模型」里打开任何已绑骨的模型（包括导入的 GLB、FBX、OBJ、USDZ 等），点「设为底模」就会出现在这里。", "Every base shares the one skeleton standard: motions, gear sockets and combat timing work on each. Open any rigged model in AI 3D Models (imported GLB, FBX, OBJ, USDZ and others too) and tap Make It a Base Body to add it here."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         HumanBasePanel(scene: scene)
@@ -363,7 +404,7 @@ struct CharacterWorkbenchView: View {
     private func package() -> CharacterPackage? {
         let id = packageID ?? UUID().uuidString
         guard var p = CharacterPackage.humanBase(id: id, name: name.isEmpty ? L10n.t("角色", "Character") : String(name.prefix(64)), appearance: draft) else { return nil }
-        if let old = library.package(id) { p.manifest.history = old.manifest.history + [.init(date: Date(), what: "edited")] }
+        if let old = library.package(id) { p.manifest.history = old.manifest.history + [.init(date: Date(), what: "edited")]; p.textures = old.textures }
         return p
     }
 

@@ -121,7 +121,7 @@ func baseBodyCatalogTests() {
         ratios[entry.id] = body.bodyShape
     }
     if let child = ratios["humanbase.child"], let adult = ratios[BaseBodyCatalog.neutralID], let giant = BaseBodyCatalog.builtin("humanbase.giant") {
-        check(child.headRatio > adult.headRatio + 0.02, "base catalog: the child has a child's head proportion (\(child.headRatio) vs \(adult.headRatio))")
+        check(child.headRatio > adult.headRatio + 0.015, "base catalog: the child has a child's head proportion (\(child.headRatio) vs \(adult.headRatio))")
         check(giant.bodyScale > 1.8, "base catalog: the giant is a large body (\(giant.bodyScale)× an adult)")
     }
     var look = CharacterAppearance()

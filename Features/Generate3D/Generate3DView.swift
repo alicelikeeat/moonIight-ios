@@ -107,6 +107,8 @@ struct Generate3DScreen: View {
 
     private var startButtons: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // v1.92: base bodies first — the recommended way to a rigged, animated character.
+            BaseBodyCharacterCard()
             AICharacterCard(store: store, tasks: tasks, quality: quality) { opened = $0 }
             LocalAIModelCard(store: store) { opened = $0 }
             MultiViewCard(store: store) { opened = $0 }
@@ -447,6 +449,7 @@ struct Generated3DDetailView: View {
     @State private var message: String?
     @State private var rigging = false
     @State private var workbench = false
+    @State private var baseMessage: String?
     // Claude motion design (online, opt-in).
     @State private var aiPrompt = ""
     @State private var aiKeyDraft = ""
@@ -886,6 +889,13 @@ struct Generated3DDetailView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // v1.92: any rigged model (made here or imported in any format) can become a base body.
+            Button {
+                let manifest = current
+                Task { baseMessage = await CharacterLibrary.shared.addModelBase(manifest) ?? L10n.t("已设为底模：在「底模角色」卡片和角色工作台的底模库里可以选它，通用动作、服装和装备都能用。", "Now a base body: pick it in the Base-Body Character card and in the workbench's base library; the shared motions, outfits and gear all apply.") }
+            } label: { Label(L10n.t("设为底模", "Make It a Base Body"), systemImage: "figure.stand.line.dotted.figure.stand") }
+                .buttonStyle(Glass3DChipStyle(tint: .purple)).accessibilityIdentifier("generate3d-make-base")
+            if let baseMessage { Text(baseMessage).font(.caption).accessibilityIdentifier("generate3d-base-message") }
             if let controller, current.meshFile != nil || current.usdzFile != nil {
                 Button { useAsCharacter(controller) } label: {
                     Label(current.rigFile != nil ? L10n.t("放进 3D 世界（带动作）", "Place in the 3D World (animated)") : L10n.t("放进 3D 世界", "Place in the 3D World"), systemImage: "mappin.and.ellipse")

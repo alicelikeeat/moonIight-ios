@@ -86,8 +86,12 @@ enum CharacterSource: Sendable {
         var library = MotionLibrary.standard
         switch source {
         case .humanBase(let look):
-            guard let body = body(look.shape, lod: 0) else { return nil }
+            guard let body = body(for: look, lod: 0) else { return nil }
             skeleton = body.skeleton
+            // A model base has its own bind pose: the shared motions are retargeted onto it.
+            if look.base?.hasPrefix("model.") == true, let base = HumanBaseAsset.shared.flatMap({ HumanBase.build(.standard, asset: $0) })?.skeleton {
+                library = MotionLibrary.standard.map { MotionRetargeter.retarget($0, from: base, to: skeleton).0 }
+            }
         case .rigged(let mesh, let s, let skin, let own):
             let check = CharacterValidator.validate(mesh: mesh, skeleton: s, skin: skin, humanoid: true)
             guard check.ok else {
@@ -122,7 +126,7 @@ enum CharacterSource: Sendable {
 
     /// New look for an existing instance (keeps its animation state).
     func setAppearance(_ owner: String, _ look: CharacterAppearance) {
-        guard let instance = instances[owner], case .humanBase = instance.source, let body = body(look.shape, lod: max(0, instance.lod)) else { return }
+        guard let instance = instances[owner], case .humanBase = instance.source, let body = body(for: look, lod: max(0, instance.lod)) else { return }
         instance.source = .humanBase(look)
         instance.skeleton = body.skeleton
         instance.controller.legLength = RigPoser.legLength(body.skeleton)
@@ -138,8 +142,54 @@ enum CharacterSource: Sendable {
         for layer in instance.layers { layer.entity.model?.materials = [material] }
     }
 
+    /// v1.92: a painted skin's texture on the body (outfit layers keep their own materials).
+    func applySkinTexture(_ owner: String, _ texture: TextureResource) {
+        guard let instance = instances[owner], let body = instance.layers.first else { return }
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: .white, texture: .init(texture))
+        m.roughness = .init(floatLiteral: 0.75)
+        instance.texture = m
+        body.entity.model?.materials = [m]
+    }
+
     /// The owner is turned by a billboard, not by its facing (front-only reliefs).
     func setFacesCamera(_ owner: String) { instances[owner]?.facesCamera = true }
+
+    // MARK: Model bases (v1.92)
+
+    private var modelBodies: [String: HumanBody] = [:]
+    private var modelMaterials: [String: RealityKit.Material] = [:]
+    /// A model base (AI 3D or imported model, rigged) ready to use; `material` is its own texture.
+    func registerModelBase(_ id: String, body: HumanBody, material: RealityKit.Material?) {
+        modelBodies[id] = body
+        if let material { modelMaterials[id] = material }
+    }
+    func hasModelBase(_ id: String) -> Bool { modelBodies[id] != nil }
+    private var loadingBases: Set<String> = []
+    /// Loads a model base ("model.<Generated3D id>") with its texture and registers it.
+    /// False when the model is gone or has no rig.
+    @discardableResult
+    func prepareModelBase(_ id: String) async -> Bool {
+        if modelBodies[id] != nil { return true }
+        guard id.hasPrefix("model."), !loadingBases.contains(id) else { return false }
+        loadingBases.insert(id); defer { loadingBases.remove(id) }
+        guard let loaded = await CharacterLibrary.loadModelBody(String(id.dropFirst(6))) else {
+            record(id, "-", L10n.t("模型底模无法加载（模型已删除或没有骨骼）", "The model base could not load (deleted, or no rig)"))
+            return false
+        }
+        var material: RealityKit.Material?
+        if let url = loaded.texture, let texture = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) {
+            var m = PhysicallyBasedMaterial(); m.baseColor = .init(tint: .white, texture: .init(texture)); m.roughness = .init(floatLiteral: 0.8)
+            material = m
+        }
+        registerModelBase(id, body: loaded.body, material: material)
+        return true
+    }
+    /// The body for a look: its model base when it has one, else HumanBase in its shape.
+    private func body(for look: CharacterAppearance, lod: Int) -> HumanBody? {
+        if let base = look.base, base.hasPrefix("model.") { return modelBodies[base] }
+        return body(look.shape, lod: lod)
+    }
 
     /// The skeleton an owner is posed with (workbench, sockets, IK).
     func skeleton(_ owner: String) -> SkeletonDefinition? { instances[owner]?.skeleton }
@@ -255,11 +305,19 @@ enum CharacterSource: Sendable {
         instance.lod = lod
         switch instance.source {
         case .humanBase(let look):
-            guard let body = body(look.shape, lod: lod) else { return }
+            guard let body = body(for: look, lod: lod) else { return }
             instance.skeleton = body.skeleton
-            addLayer(instance, mesh: body.mesh, skin: body.skin, material: material(look.skin))
+            if let skin = look.painted {
+                // v1.92: the body repainted from its skin photos for this shape and LOD (cached).
+                let key = (look.base ?? "") + Self.key(look.shape) + "|\(lod)|skin|\(skin.front.points.count)|\(skin.back != nil)|\(skin.atlas)"
+                let part = outfitCache[key] ?? { let p = BaseBodyPaint.paint(body.model, front: skin.front, back: skin.back); return SkinnedPart(mesh: p.mesh, skin: p.skin) }()
+                outfitCache[key] = part
+                addLayer(instance, mesh: part.mesh, skin: part.skin, material: instance.texture ?? material(CharacterMaterialProfile(baseColor: SIMD3(1, 1, 1), roughness: 0.8)))
+            } else {
+                addLayer(instance, mesh: body.mesh, skin: body.skin, material: look.base.flatMap { modelMaterials[$0] } ?? material(look.skin))
+            }
             for piece in look.pieces {
-                let key = Self.key(look.shape) + "|\(lod)|" + piece.id
+                let key = (look.base ?? "") + Self.key(look.shape) + "|\(lod)|" + piece.id
                 let part = outfitCache[key] ?? OutfitBuilder.build(piece, on: body)
                 if let part { outfitCache[key] = part; addLayer(instance, mesh: part.mesh, skin: part.skin, material: material(piece.material)) }
             }

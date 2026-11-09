@@ -172,10 +172,22 @@ import UIKit
         case .standard:
             guard let id = template.characterID, let package = CharacterLibrary.shared.package(id) else { remove(ownerID); return false }
             let look = package.appearance
-            let key = "\(template.id)|standard|\(id)|\(CharacterRuntime.key(look.shape))|\(look.outfit.joined(separator: ","))|\(look.equipment.joined(separator: ","))|\(look.skin.baseColor)|\(look.skin.style.rawValue)"
+            let key = "\(template.id)|standard|\(id)|\(CharacterRuntime.key(look.shape))|\(look.outfit.joined(separator: ","))|\(look.equipment.joined(separator: ","))|\(look.skin.baseColor)|\(look.skin.style.rawValue)|\(look.base ?? "")|\(look.painted?.atlas ?? "-")"
             if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
             remove(ownerID)
+            if let base = look.base, base.hasPrefix("model."), !runtime.hasModelBase(base) {
+                // v1.92: a model base loads in the background; the default body shows meanwhile.
+                Task { @MainActor [runtime] in await runtime.prepareModelBase(base) }
+                return false
+            }
             guard let entity = runtime.entity(owner: ownerID, source: .humanBase(look)) else { return false }
+            if let skin = look.painted {
+                // v1.92: the painted skin's texture, loaded off the frame.
+                let url = CharacterLibrary.shared.store.textureURL(id, skin.atlas)
+                Task { @MainActor [runtime] in
+                    if let texture = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) { runtime.applySkinTexture(ownerID, texture) }
+                }
+            }
             let wrapper = Entity(); wrapper.addChild(entity)
             if template.shadow { wrapper.addChild(Self.shadow(radius: look.shape.height * 0.16)) }
             holder.addChild(wrapper)

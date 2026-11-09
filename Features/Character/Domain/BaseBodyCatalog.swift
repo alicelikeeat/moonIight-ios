@@ -51,7 +51,7 @@ enum BaseBodyCatalog {
         BaseBodyEntry(id: "humanbase.man", name: L10n.t("男性", "Man"), kind: .builtin, category: .adult,
                       shape: HumanShape(height: 1.8, muscle: 0.3, gender: 1, shoulders: 0.3, faceSquare: 0.4), skin: SIMD3(0.82, 0.66, 0.54)),
         BaseBodyEntry(id: "humanbase.child", name: L10n.t("小孩", "Child"), kind: .builtin, category: .child,
-                      shape: HumanShape(height: 1.25, age: -1, headSize: 1.08, faceRound: 0.6), skin: SIMD3(0.95, 0.8, 0.7)),
+                      shape: HumanShape(height: 1.25, age: -1, headSize: 1.28, faceRound: 0.6), skin: SIMD3(0.95, 0.8, 0.7)),
         BaseBodyEntry(id: "humanbase.elder", name: L10n.t("老人", "Elder"), kind: .builtin, category: .elder,
                       shape: HumanShape(height: 1.64, build: 0.1, age: 1), skin: SIMD3(0.84, 0.72, 0.64)),
         BaseBodyEntry(id: "humanbase.giant", name: L10n.t("大型 Boss", "Giant Boss"), kind: .builtin, category: .giant,

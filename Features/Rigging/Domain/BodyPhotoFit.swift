@@ -16,10 +16,10 @@ enum PhotoJoint: String, CaseIterable, Codable, Sendable {
 /// One photo, measured. Coordinates: x right, y UP, both in units of the
 /// photo's height (x already multiplied by width / height), so distances
 /// are true proportions.
-struct BodyPhoto: Equatable, Sendable {
-    struct Point: Equatable, Sendable { var x: Float; var y: Float; var confidence: Float }
+struct BodyPhoto: Codable, Equatable, Sendable {
+    struct Point: Codable, Equatable, Sendable { var x: Float; var y: Float; var confidence: Float }
     /// The outline: per sampled row, the filled spans [x0, x1].
-    struct Row: Equatable, Sendable { var y: Float; var spans: [SIMD2<Float>] }
+    struct Row: Codable, Equatable, Sendable { var y: Float; var spans: [SIMD2<Float>] }
     var points: [PhotoJoint: Point]
     var outline: [Row]
     /// Width / height of the photo (to turn coordinates back into texture UVs).
