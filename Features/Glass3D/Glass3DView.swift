@@ -48,7 +48,9 @@ struct Glass3DScreen: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     /// The world stops while it cannot be seen (background, app switcher,
     /// AI 3D page in front) so the phone does not heat up.
-    private var worldSuspended: Bool { scenePhase != .active || generate3D }
+    /// v1.93: the world also pauses under the character workbench and the base-body page: their
+    /// own live previews need the main thread, and the world behind them is not being played.
+    private var worldSuspended: Bool { scenePhase != .active || generate3D || sandboxSheet == .workbench || sandboxSheet == .humanBase }
     /// v1.80: the scene is taken out of the 3D view only once a full-screen
     /// page fully covers it, and put back as soon as the page starts to
     /// close — the world is never shown black. Switching apps only pauses

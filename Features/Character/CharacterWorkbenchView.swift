@@ -92,10 +92,21 @@ import RealityKit
         return CharacterAppearance(shape: look.shape, skin: .preset(showSkeleton ? .glass : .pbr, color: Self.mannequinColor))
     }
 
+    /// Time since the last deformation. A playing motion is re-posed at most
+    /// 30 times a second, and never more often than twice the last
+    /// deformation's cost, so the preview leaves the main thread at least half
+    /// of its time for touches (a slow device or debug build stays usable).
+    private var sincePose: Float = 1
+
     func tick(_ dt: Float) {
-        if let motion, !bindPose { time += dt; needsPose = true; _ = motion }
+        sincePose += dt
+        if let motion, !bindPose { time += dt; needsPose = true; _ = motion
+            let gap = max(1 / 30, Float(lastDeformMilliseconds / 1000) * 2)
+            guard sincePose >= gap else { return }
+        }
         guard needsPose, runtime.has(Self.owner) else { return }
         needsPose = false
+        sincePose = 0
         let start = Date()
         runtime.pose(Self.owner, motion: bindPose ? nil : motion ?? MotionLibrary.motion("idle"), time: time)
         lastDeformMilliseconds = Date().timeIntervalSince(start) * 1000
