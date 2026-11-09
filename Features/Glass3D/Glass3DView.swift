@@ -26,6 +26,8 @@ struct Glass3DScreen: View {
     /// A sandbox page asked for from outside (search, shortcuts).
     @Binding private var page: RPGEntryPage?
     @State private var sandboxSheet: SandboxSheet?
+    /// Height of the 3D screen, so the ⋯ panel can end above the bottom bars.
+    @State private var screenHeight: CGFloat = 800
     @State private var importingPack = false
     @State private var generator = false
     @State private var classicGenerator = false
@@ -96,7 +98,8 @@ struct Glass3DScreen: View {
                         .onTapGesture { withAnimation(MoonGlassMotion.animation(.morph, reduceMotion: reduceMotion)) { showMore = false } }
                         .accessibilityHidden(true)
                 }
-                if controller.mode == .edit {
+                // v1.91: the rail would sit on top of the open ⋯ panel; it comes back when the panel closes.
+                if controller.mode == .edit, !showMore {
                     cameraRail
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: portrait ? .topTrailing : .leading)
                         .padding(.top, portrait ? 112 : 0).padding(.horizontal, 10)
@@ -130,6 +133,7 @@ struct Glass3DScreen: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { screenHeight = $0 }
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.mode)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: showsPanel)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: portrait)
@@ -381,10 +385,19 @@ struct Glass3DScreen: View {
             }
             .padding(8)
         }
-        .frame(maxHeight: 460)
-        .fixedSize(horizontal: false, vertical: true)
+        // A fixed height that always ends above the play HUD / design bars, and
+        // clipped to its glass: the rows scroll inside it instead of spilling out.
+        // (Before, fixedSize gave the list its full height, so it could not scroll.)
+        .frame(height: morePanelHeight)
+        .scrollBounceBehavior(.basedOnSize)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .hudGlass(.panel, radius: 22)
         .accessibilityIdentifier("glass3d-more-panel")
+    }
+    /// Room between the top bar and the bottom controls (design bars are taller than the play HUD).
+    private var morePanelHeight: CGFloat {
+        let top: CGFloat = 50 + 70, bottom: CGFloat = controller.mode == .edit ? 200 : 170
+        return max(220, min(620, screenHeight - top - bottom))
     }
     private func moreHeader(_ title: String) -> some View {
         Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
