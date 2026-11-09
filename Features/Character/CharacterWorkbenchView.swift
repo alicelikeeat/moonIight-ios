@@ -167,6 +167,8 @@ struct CharacterWorkbenchView: View {
         .confirmationDialog(L10n.t("覆盖已保存的角色？", "Replace the saved character?"), isPresented: $confirmOverwrite, titleVisibility: .visible) {
             Button(L10n.t("覆盖保存", "Replace"), role: .destructive) { save(force: true) }.accessibilityIdentifier("workbench-confirm-overwrite")
         }
+        // Unsaved edits are not lost to a stray downward swipe: Close is the way out.
+        .interactiveDismissDisabled(true)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("character-workbench")
     }
