@@ -164,6 +164,8 @@ final class ScrollGestureTests: XCTestCase {
         let element = app.descendants(matching: .any).matching(identifier: id).firstMatch
         if !element.waitForExistence(timeout: timeout) {
             attach(app, name: "review-missing-" + id)
+            let sheetProbe = app.descendants(matching: .any).matching(identifier: "glass3d-sheet-probe").firstMatch
+            print("SHEET_PROBE \(id): \(sheetProbe.exists ? (sheetProbe.value as? String ?? "?") : "absent")")
             print("Missing \(id):\n" + app.debugDescription)
             XCTFail(name)
         }
@@ -191,6 +193,8 @@ final class ScrollGestureTests: XCTestCase {
         }
         if !(element.exists && element.isHittable) {
             attach(app, name: "review-missing-" + id)
+            let sheetProbe = app.descendants(matching: .any).matching(identifier: "glass3d-sheet-probe").firstMatch
+            print("SHEET_PROBE \(id): \(sheetProbe.exists ? (sheetProbe.value as? String ?? "?") : "absent")")
             print("Missing \(id):\n" + String(app.debugDescription.prefix(6000)))
             XCTFail(name)
         }

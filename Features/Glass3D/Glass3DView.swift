@@ -26,6 +26,8 @@ struct Glass3DScreen: View {
     /// A sandbox page asked for from outside (search, shortcuts).
     @Binding private var page: RPGEntryPage?
     @State private var sandboxSheet: SandboxSheet?
+    /// Diagnostics (UI tests): how often this screen appeared.
+    @MainActor static var appearances = 0
     /// Height of the 3D screen, so the ⋯ panel can end above the bottom bars.
     @State private var screenHeight: CGFloat = 800
     @State private var importingPack = false
@@ -144,6 +146,7 @@ struct Glass3DScreen: View {
         }
         .environment(\.rpgHUDState, RPGHUDState(inCombat: controller.inCombat, editing: controller.mode == .edit, powerSave: controller.powerSaving))
         .onAppear {
+            Self.appearances += 1
             MoonlightOrientationDelegate.setSandboxLandscape(true)
             controller.renderer.media.resolve = { [weak store = model.mediaStore] id in
                 guard let item = store?.items.first(where: { $0.id == id }), let url = item.remoteURL, url.isFileURL else { return nil }
@@ -249,6 +252,11 @@ struct Glass3DScreen: View {
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     Text("world").font(.system(size: 1)).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
                         .accessibilityIdentifier("glass3d-world-probe").accessibilityValue(Self.probe(session))
+                }
+                TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                    Text("sheet").font(.system(size: 1)).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
+                        .accessibilityIdentifier("glass3d-sheet-probe")
+                        .accessibilityValue("sheet=\(sandboxSheet?.rawValue ?? "none");appeared=\(Self.appearances);workbenchClosed=\(CharacterWorkbenchView.closings);suspended=\(worldSuspended ? 1 : 0)")
                 }
                 TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                     Text("characters").font(.system(size: 1)).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)

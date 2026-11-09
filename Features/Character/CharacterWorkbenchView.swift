@@ -128,6 +128,8 @@ struct CharacterWorkbenchView: View {
     }
 
     @ObservedObject var controller: Glass3DController
+    /// Diagnostics (UI tests): how often the workbench went away.
+    @MainActor static var closings = 0
     @ObservedObject private var library = CharacterLibrary.shared
     @StateObject private var scene = WorkbenchScene()
     @Environment(\.dismiss) private var dismiss
@@ -170,6 +172,7 @@ struct CharacterWorkbenchView: View {
             }
         }
         .onAppear { scene.show(draft) }
+        .onDisappear { Self.closings += 1 }
         .onChange(of: page) { _, now in
             // The base page shows the bare base body; other pages the dressed character at full detail.
             scene.bare = now == .base
