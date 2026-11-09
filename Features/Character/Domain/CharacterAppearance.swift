@@ -149,6 +149,22 @@ struct CharacterAppearance: Codable, Equatable, Sendable {
     var equipment: [String] = []
     /// v1.92: a painted skin (photo, video frame or character sheet); nil = the plain material.
     var painted: CharacterSkin? = nil
+    /// v1.93: clothes, hair or shoes from an AI 3D / imported model, fitted on the body (nil in older saves).
+    var garments: [CustomGarment]? = nil
+
+    var garmentList: [CustomGarment] { garments ?? [] }
+    /// A fitted garment takes its slot: same-slot garments and built-in pieces come off; a full outfit replaces everything.
+    mutating func wear(_ garment: CustomGarment) {
+        var list = garmentList.filter { $0.id != garment.id && $0.slot != garment.slot && $0.slot != .full && garment.slot != .full }
+        list.append(garment)
+        garments = list
+        let freed = garment.slot.replaces
+        outfit.removeAll { OutfitPiece.find($0).map { freed.contains($0.slot) } ?? false }
+    }
+    mutating func takeOff(garment id: String) {
+        garments = garmentList.filter { $0.id != id }
+        if garments?.isEmpty == true { garments = nil }
+    }
 
     var pieces: [OutfitPiece] { outfit.compactMap(OutfitPiece.find) }
     var items: [EquipmentItem] { equipment.compactMap(EquipmentItem.find) }
@@ -158,6 +174,11 @@ struct CharacterAppearance: Codable, Equatable, Sendable {
         guard let piece = OutfitPiece.find(id) else { return }
         outfit.removeAll { OutfitPiece.find($0)?.slot == piece.slot }
         outfit.append(id)
+        // v1.93: a built-in piece takes the slot back from a fitted garment.
+        if garments != nil {
+            garments = garmentList.filter { $0.slot != .full && !$0.slot.replaces.contains(piece.slot) }
+            if garments?.isEmpty == true { garments = nil }
+        }
     }
     mutating func equip(_ id: String) {
         guard let item = EquipmentItem.find(id) else { return }

@@ -172,13 +172,23 @@ import UIKit
         case .standard:
             guard let id = template.characterID, let package = CharacterLibrary.shared.package(id) else { remove(ownerID); return false }
             let look = package.appearance
-            let key = "\(template.id)|standard|\(id)|\(CharacterRuntime.key(look.shape))|\(look.outfit.joined(separator: ","))|\(look.equipment.joined(separator: ","))|\(look.skin.baseColor)|\(look.skin.style.rawValue)|\(look.base ?? "")|\(look.painted?.atlas ?? "-")"
+            let key = "\(template.id)|standard|\(id)|\(CharacterRuntime.key(look.shape))|\(look.outfit.joined(separator: ","))|\(look.equipment.joined(separator: ","))|\(look.skin.baseColor)|\(look.skin.style.rawValue)|\(look.base ?? "")|\(look.painted?.atlas ?? "-")|\(look.garmentList.map { CharacterRuntime.garmentKey($0, look: look) }.joined(separator: ","))"
             if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
             remove(ownerID)
             if let base = look.base, base.hasPrefix("model."), !runtime.hasModelBase(base) {
                 // v1.92: a model base loads in the background; the default body shows meanwhile.
                 Task { @MainActor [runtime] in await runtime.prepareModelBase(base) }
                 return false
+            }
+            // v1.93: fitted garments' meshes come with the package; textures load off the frame.
+            for garment in look.garmentList where !runtime.hasGarment(garment.id) {
+                if let mesh = package.garments[garment.mesh].flatMap({ GeneratedMeshCodec.decode($0) }) { runtime.registerGarment(garment.id, mesh: mesh) }
+                if let texture = garment.texture {
+                    let url = CharacterLibrary.shared.store.textureURL(id, texture), gid = garment.id
+                    Task { @MainActor [runtime] in
+                        if let t = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) { runtime.applyGarmentTexture(gid, t) }
+                    }
+                }
             }
             guard let entity = runtime.entity(owner: ownerID, source: .humanBase(look)) else { return false }
             if let skin = look.painted {

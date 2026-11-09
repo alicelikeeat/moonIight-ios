@@ -26,6 +26,8 @@ import RealityKit
     @Published var highlighted: Set<String> = [] { didSet { runtime.highlightedJoints = highlighted; needsPose = true } }
     private var look = CharacterAppearance()
     @Published private(set) var lastDeformMilliseconds: Double = 0
+    /// Bumped when a garment's fit is ready (its notes and layer change).
+    @Published private(set) var garmentTick = 0
     private var height: Float = 1.75
     private var time: Float = 0
     private var needsPose = true
@@ -44,6 +46,7 @@ import RealityKit
         let fill = DirectionalLight(); fill.light.intensity = 900; fill.look(at: .zero, from: [-2, 1, -1], relativeTo: nil)
         root.addChild(key); root.addChild(fill)
         place(); turn()
+        runtime.onGarmentFitted = { [weak self] _ in self?.garmentTick += 1; self?.needsPose = true }
     }
 
     // A giant (up to 6 m) is framed like an adult: the distance grows with the height.
@@ -126,6 +129,12 @@ struct CharacterWorkbenchView: View {
     @State private var motionTest: String?
     @State private var message: String?
     @State private var confirmOverwrite = false
+    /// v1.93: garments added in this session (mesh files and textures for the package).
+    @State private var garmentData: [String: Data] = [:]
+    @State private var garmentTextures: [String: Data] = [:]
+    @State private var garmentSlot = CustomGarment.Slot.top
+    /// Slider values while dragging (applied when the drag ends: each fit takes a moment).
+    @State private var adjusting: [String: GarmentAdjust] = [:]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -197,6 +206,7 @@ struct CharacterWorkbenchView: View {
             if library.packages.isEmpty { Text(L10n.t("还没有保存的角色", "No saved characters yet")).foregroundStyle(.secondary) }
             ForEach(library.packages, id: \.manifest.id) { p in
                 Button {
+                    loadGarments(p)
                     change { $0 = p.appearance }; name = p.manifest.name; packageID = p.manifest.id
                     scene.applySkin(p.appearance.painted.map { library.store.textureURL(p.manifest.id, $0.atlas) })
                 } label: {
@@ -318,6 +328,111 @@ struct CharacterWorkbenchView: View {
                 .accessibilityIdentifier("workbench-outfit-" + piece.id)
             }
         }
+        garmentSection
+    }
+
+    // MARK: Garments from models (v1.93)
+
+    @ViewBuilder private var garmentSection: some View {
+        Section(L10n.t("AI 3D / 导入的服装（贴合到底模）", "Clothes from AI 3D or imported models (fitted to the base)")) {
+            ForEach(draft.garmentList) { g in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Label("\(g.slot.title) · \(g.name)", systemImage: "tshirt")
+                        Spacer()
+                        Button(role: .destructive) { change { $0.takeOff(garment: g.id) } } label: { Image(systemName: "xmark.circle") }
+                            .buttonStyle(.borderless).accessibilityLabel(L10n.t("脱下", "Take off")).accessibilityIdentifier("workbench-garment-remove-" + g.id)
+                    }
+                    garmentSlider(L10n.t("大小", "Size"), g, \.scale, 0.5...1.6)
+                    garmentSlider(L10n.t("上下", "Up / down"), g, \.lift, -0.3...0.3)
+                    garmentSlider(L10n.t("前后", "Forward / back"), g, \.forward, -0.2...0.2)
+                    HStack {
+                        Button(L10n.t("转 90°", "Turn 90°")) { setAdjust(g) { $0.quarterTurns += 1 } }
+                            .buttonStyle(.bordered).accessibilityIdentifier("workbench-garment-turn-" + g.id)
+                        Spacer()
+                        Text(scene.garmentTick >= 0 && scene.runtime.garmentNotes[g.id] == nil ? L10n.t("贴合中…", "Fitting…") : L10n.t("已贴合", "Fitted"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(Array((scene.runtime.garmentNotes[g.id] ?? []).enumerated()), id: \.offset) { _, note in Text(note).font(.caption2).foregroundStyle(.secondary) }
+                }
+            }
+            Picker(L10n.t("加到哪个部位", "Wear as"), selection: $garmentSlot) { ForEach(CustomGarment.Slot.allCases) { Text($0.title).tag($0) } }
+                .accessibilityIdentifier("workbench-garment-slot")
+            let models = Generated3DStore.shared.models
+            if models.isEmpty { Text(L10n.t("还没有模型（可在「AI 生成 3D 模型」里生成或导入）", "No models yet (make or import one in AI 3D Models)")).foregroundStyle(.secondary) }
+            ForEach(models.prefix(12), id: \.id) { m in
+                Button { addGarment(m) } label: { LabeledContent(m.name, value: m.geometry.title).lineLimit(1) }
+                    .accessibilityIdentifier("workbench-garment-add-" + m.id)
+            }
+            Text(L10n.t("身体始终是底模（布线干净、弯曲可靠），衣服、头发、鞋子可以是任何模型：自动放到对应部位、按袖子角度摆好底模手臂、推出体表、继承最近处的权重，再还原成 T-Pose，所以所有通用动作都能用。整件 AI 角色当「整套」穿也可以，但它自带的脸和手会盖住底模。",
+                        "The body is always a base body (clean topology, reliable bending); clothes, hair and shoes can be any model. Each is placed on its part of the body, the base's arms are posed to match its sleeves, it is pushed outside the skin, takes the nearest weights and returns to the T-pose, so every shared motion works. A whole AI character can be worn as a full outfit, but its own face and hands cover the base's."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func garmentSlider(_ title: String, _ g: CustomGarment, _ path: WritableKeyPath<GarmentAdjust, Float> & Sendable, _ range: ClosedRange<Float>) -> some View {
+        let value = (adjusting[g.id] ?? g.adjust)[keyPath: path]
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("\(title)  \(String(format: "%.2f", value))").font(.caption)
+            Slider(value: Binding(get: { (adjusting[g.id] ?? g.adjust)[keyPath: path] }, set: { v in var a = adjusting[g.id] ?? g.adjust; a[keyPath: path] = v; adjusting[g.id] = a }),
+                   in: range, onEditingChanged: { editing in
+                       guard !editing, let a = adjusting[g.id] else { return }
+                       adjusting[g.id] = nil
+                       setAdjust(g) { $0 = a }
+                   })
+        }
+    }
+
+    private func setAdjust(_ g: CustomGarment, _ edit: @escaping (inout GarmentAdjust) -> Void) {
+        change { look in
+            guard var list = look.garments, let i = list.firstIndex(where: { $0.id == g.id }) else { return }
+            edit(&list[i].adjust)
+            list[i].adjust = list[i].adjust.clamped
+            look.garments = list
+        }
+    }
+
+    /// A saved character's garments: meshes to the runtime, textures loaded.
+    private func loadGarments(_ p: CharacterPackage) {
+        for g in p.appearance.garmentList {
+            if let data = p.garments[g.mesh], let mesh = GeneratedMeshCodec.decode(data) { scene.runtime.registerGarment(g.id, mesh: mesh) }
+            if let texture = g.texture { loadGarmentTexture(g.id, library.store.textureURL(p.manifest.id, texture)) }
+        }
+    }
+    private func loadGarmentTexture(_ id: String, _ url: URL) {
+        Task { @MainActor in
+            if let t = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) { scene.runtime.applyGarmentTexture(id, t) }
+        }
+    }
+
+    private func addGarment(_ m: Generated3DManifest) {
+        let slot = garmentSlot, store = Generated3DStore.shared
+        guard let meshURL = store.meshURL(m) else { message = L10n.t("这个模型的文件不见了", "This model's file is missing"); return }
+        let textureURL = store.textureURL(m)
+        message = L10n.t("读取模型…", "Reading the model…")
+        Task {
+            let loaded = await Task.detached(priority: .userInitiated) { () -> (data: Data, mesh: GeneratedMesh, texture: Data?, simplified: Bool)? in
+                guard var mesh = (try? Data(contentsOf: meshURL)).flatMap({ GeneratedMeshCodec.decode($0) }).map({ FiniteMesh.repaired($0) }) else { return nil }
+                var simplified = false
+                if mesh.vertexCount > GarmentFit.maxVertices { mesh = MeshAnalyzer.simplified(mesh, targetTriangles: 50_000); simplified = true }
+                if mesh.normals.count != mesh.positions.count { mesh.computeNormals() }
+                guard mesh.vertexCount > 0, mesh.vertexCount <= GarmentFit.maxVertices else { return nil }
+                return (GeneratedMeshCodec.encode(mesh), mesh, textureURL.flatMap { try? Data(contentsOf: $0) }, simplified)
+            }.value
+            guard let loaded else { message = L10n.t("这个模型不能用作服装（文件损坏或太大）", "This model cannot be worn (damaged or too large)"); return }
+            let short = String(UUID().uuidString.prefix(8)).lowercased()
+            let meshName = "g-\(short).m3dg"
+            let ext = textureURL?.pathExtension.lowercased() ?? "jpg"
+            let textureName = loaded.texture == nil ? nil : "g-\(short)." + (ext.isEmpty ? "jpg" : ext)
+            garmentData[meshName] = loaded.data
+            if let t = loaded.texture, let textureName { garmentTextures[textureName] = t }
+            let garment = CustomGarment(id: "garment-" + short, name: String(m.name.prefix(40)), slot: slot, mesh: meshName, texture: textureName, sourceModelID: m.id)
+            scene.runtime.registerGarment(garment.id, mesh: loaded.mesh)
+            if let textureURL, loaded.texture != nil { loadGarmentTexture(garment.id, textureURL) }
+            change { $0.wear(garment) }
+            message = L10n.t("「\(garment.name)」作为\(slot.title)穿上，正在贴合到底模。", "“\(garment.name)” is worn as \(slot.title.lowercased()) and is being fitted to the base.")
+                + (loaded.simplified ? L10n.t("模型超过 6 万顶点，已先简化。", " The model had over 60,000 vertices and was simplified first.") : "")
+        }
     }
 
     @ViewBuilder private var motionPage: some View {
@@ -404,7 +519,14 @@ struct CharacterWorkbenchView: View {
     private func package() -> CharacterPackage? {
         let id = packageID ?? UUID().uuidString
         guard var p = CharacterPackage.humanBase(id: id, name: name.isEmpty ? L10n.t("角色", "Character") : String(name.prefix(64)), appearance: draft) else { return nil }
-        if let old = library.package(id) { p.manifest.history = old.manifest.history + [.init(date: Date(), what: "edited")]; p.textures = old.textures }
+        if let old = library.package(id) { p.manifest.history = old.manifest.history + [.init(date: Date(), what: "edited")]; p.textures = old.textures; p.garments = old.garments }
+        // v1.93: only the garments still worn, with their textures.
+        p.garments.merge(garmentData) { _, new in new }
+        p.textures.merge(garmentTextures) { _, new in new }
+        let worn = draft.garmentList
+        p.garments = p.garments.filter { name in worn.contains { $0.mesh == name.key } }
+        let garmentTextureNames = Set(garmentTextures.keys).union(p.textures.keys.filter { $0.hasPrefix("g-") })
+        p.textures = p.textures.filter { !garmentTextureNames.contains($0.key) || worn.contains { g in g.texture == $0.key } }
         return p
     }
 

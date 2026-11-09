@@ -163,6 +163,8 @@ struct CharacterPackage: Equatable, Sendable {
     var skins: [SkinInfluences] = []
     /// v1.92: images by file name (Textures/), e.g. a painted skin's atlas.
     var textures: [String: Data] = [:]
+    /// v1.93: fitted garments' source meshes by file name (Garments/, GeneratedMeshCodec).
+    var garments: [String: Data] = [:]
 
     var motions: [UniversalMotion] { motionIDs.compactMap(MotionLibrary.motion) + customMotions }
 
@@ -206,7 +208,7 @@ struct CharacterPackageStore: Sendable {
         }
         let temp = folder.appendingPathComponent(".tmp-" + UUID().uuidString, isDirectory: true)
         defer { try? fm.removeItem(at: temp) }
-        for sub in ["Skeleton", "Motions", "Equipment", "Diagnostics", "Meshes", "Skin", "Preview", "Textures"] {
+        for sub in ["Skeleton", "Motions", "Equipment", "Diagnostics", "Meshes", "Skin", "Preview", "Textures", "Garments"] {
             try fm.createDirectory(at: temp.appendingPathComponent(sub), withIntermediateDirectories: true)
         }
         let e = Self.encoder
@@ -220,8 +222,12 @@ struct CharacterPackageStore: Sendable {
         for (i, skin) in package.skins.enumerated() { try SkinCodec.encode(skin).write(to: temp.appendingPathComponent("Skin/LOD\(i).skin")) }
         for (name, data) in package.textures {
             // Plain file names only (no folders, no tricks).
-            guard !name.isEmpty, name.count <= 64, !name.contains("/"), !name.hasPrefix(".") else { continue }
+            guard Self.plainName(name) else { continue }
             try data.write(to: temp.appendingPathComponent("Textures/" + name))
+        }
+        for (name, data) in package.garments {
+            guard Self.plainName(name) else { continue }
+            try data.write(to: temp.appendingPathComponent("Garments/" + name))
         }
         if fm.fileExists(atPath: target.path) {
             _ = try fm.replaceItemAt(target, withItemAt: temp)
@@ -229,6 +235,8 @@ struct CharacterPackageStore: Sendable {
             try fm.moveItem(at: temp, to: target)
         }
     }
+
+    static func plainName(_ name: String) -> Bool { !name.isEmpty && name.count <= 64 && !name.contains("/") && !name.contains("\\") && !name.hasPrefix(".") }
 
     func load(_ id: String) throws -> CharacterPackage {
         let base = url(id)
@@ -259,8 +267,13 @@ struct CharacterPackageStore: Sendable {
         for name in (try? FileManager.default.contentsOfDirectory(atPath: textureFolder.path)) ?? [] where !name.hasPrefix(".") {
             if let data = try? Data(contentsOf: textureFolder.appendingPathComponent(name)), data.count <= 32_000_000 { textures[name] = data }
         }
+        var garments: [String: Data] = [:]
+        let garmentFolder = base.appendingPathComponent("Garments")
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: garmentFolder.path)) ?? [] where !name.hasPrefix(".") {
+            if let data = try? Data(contentsOf: garmentFolder.appendingPathComponent(name)), data.count <= 32_000_000 { garments[name] = data }
+        }
         return CharacterPackage(manifest: manifest, appearance: appearance, skeleton: skeleton, motionIDs: motions.ids, customMotions: motions.custom,
-                                sockets: sockets, validation: validation, meshes: meshes, skins: skins, textures: textures)
+                                sockets: sockets, validation: validation, meshes: meshes, skins: skins, textures: textures, garments: garments)
     }
 
     /// Every readable package; damaged ones are reported, not fatal.

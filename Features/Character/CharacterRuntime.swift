@@ -152,6 +152,49 @@ enum CharacterSource: Sendable {
         body.entity.model?.materials = [m]
     }
 
+    // MARK: Garments (v1.93)
+
+    private var garmentSources: [String: GeneratedMesh] = [:]
+    private var garmentMaterials: [String: RealityKit.Material] = [:]
+    private var garmentFits: [String: SkinnedPart] = [:]
+    private var fitting: Set<String> = []
+    private var failedFits: Set<String> = []
+    /// What the last fit of each garment reported (sleeve angle, pushed points).
+    private(set) var garmentNotes: [String: [String]] = [:]
+    /// Called when a garment's fit is ready (the workbench shows its notes).
+    var onGarmentFitted: ((String) -> Void)?
+
+    static func garmentKey(_ g: CustomGarment, look: CharacterAppearance) -> String {
+        let a = g.adjust.clamped
+        return g.id + "|" + (look.base ?? "") + key(look.shape) + String(format: "|%.3f|%.3f|%.3f|%d|%.1f|%.4f", a.scale, a.lift, a.forward, a.quarterTurns, a.armDrop ?? -1, a.gap)
+    }
+
+    /// A garment's source mesh (from its character package or a model); fitted when worn.
+    func registerGarment(_ id: String, mesh: GeneratedMesh) {
+        guard garmentSources[id] != mesh else { return }
+        garmentSources[id] = mesh
+        garmentFits = garmentFits.filter { !$0.key.hasPrefix(id + "|") }
+        failedFits = failedFits.filter { !$0.hasPrefix(id + "|") }
+        refresh(wearing: id)
+    }
+    func hasGarment(_ id: String) -> Bool { garmentSources[id] != nil }
+    func applyGarmentTexture(_ id: String, _ texture: TextureResource) {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: .white, texture: .init(texture))
+        m.roughness = .init(floatLiteral: 0.7)
+        garmentMaterials[id] = m
+        refresh(wearing: id)
+    }
+    private func refresh(wearing id: String) {
+        for instance in instances.values {
+            guard case .humanBase(let look) = instance.source, look.garmentList.contains(where: { $0.id == id }) else { continue }
+            let lod = max(0, instance.lod)
+            instance.lod = -1
+            setLOD(instance, lod)
+        }
+        onGarmentFitted?(id)
+    }
+
     /// The owner is turned by a billboard, not by its facing (front-only reliefs).
     func setFacesCamera(_ owner: String) { instances[owner]?.facesCamera = true }
 
@@ -320,6 +363,24 @@ enum CharacterSource: Sendable {
                 let key = (look.base ?? "") + Self.key(look.shape) + "|\(lod)|" + piece.id
                 let part = outfitCache[key] ?? OutfitBuilder.build(piece, on: body)
                 if let part { outfitCache[key] = part; addLayer(instance, mesh: part.mesh, skin: part.skin, material: material(piece.material)) }
+            }
+            // v1.93: garments from AI 3D / imported models, fitted off the main thread once per body.
+            for garment in look.garmentList {
+                let key = Self.garmentKey(garment, look: look)
+                if let part = garmentFits[key] {
+                    addLayer(instance, mesh: part.mesh, skin: part.skin, material: garmentMaterials[garment.id] ?? material(CharacterMaterialProfile(baseColor: garment.color, roughness: 0.7)))
+                } else if let source = garmentSources[garment.id], !fitting.contains(key), !failedFits.contains(key), let fitBody = self.body(for: look, lod: 0) {
+                    fitting.insert(key)
+                    let slot = garment.slot, adjust = garment.adjust, id = garment.id, owner = instance.owner
+                    Task { @MainActor [weak self] in
+                        let result = await Task.detached(priority: .userInitiated) { GarmentFit.fit(source, slot: slot, on: fitBody, adjust: adjust) }.value
+                        guard let self else { return }
+                        self.fitting.remove(key)
+                        if let result { self.garmentFits[key] = result.part; self.garmentNotes[id] = result.notes }
+                        else { self.failedFits.insert(key); self.record(owner, "-", L10n.t("服装无法贴合（模型为空、损坏或超过 6 万顶点）", "The garment could not be fitted (empty, damaged or over 60,000 vertices)")) }
+                        self.refresh(wearing: id)
+                    }
+                }
             }
             for item in look.items {
                 let resource = equipmentCache[item.id] ?? (try? Self.resource(EquipmentBuilder.mesh(item)))
