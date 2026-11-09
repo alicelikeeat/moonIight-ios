@@ -83,7 +83,12 @@ final class ScrollGestureTests: XCTestCase {
             Dictionary((probe.value as? String ?? "").split(separator: ";").compactMap { item in let p = item.split(separator: "="); guard p.count == 2, let n = Int(p[1]) else { return nil }; return (String(p[0]), n) }, uniquingKeysWith: { a, _ in a })
         }
         let active = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > 0 && (v["players"] ?? 99) <= 1 && (v["global"] ?? 99) <= 1 }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: probe)], timeout: 25), .completed)
+        let started = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: probe)], timeout: 25)
+        if started != .completed {
+            print("CUTSCENE_PROBE: \(probe.exists ? (probe.value as? String ?? "?") : "absent")")
+            attach(app, name: "review-missing-cutscene")
+        }
+        XCTAssertEqual(started, .completed)
         let frames = values()["frames"] ?? 0
         XCUIDevice.shared.press(.home); app.activate()
         let resumed = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > frames && v["muted"] == 1 && (v["global"] ?? 99) <= 1 }
