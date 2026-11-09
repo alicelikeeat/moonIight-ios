@@ -101,6 +101,13 @@ def neutral_and_channels(count):
     female, male = young("female"), young("male")
     neutral = 0.5 * female + 0.5 * male
 
+    def aged(age):  # neutral gender at another age (child / old), as MakeHuman does it
+        out = 0
+        for g in ("female", "male"):
+            ethnic = sum(target(f"macrodetails/{e}-{g}-{age}.target", count) for e in ("african", "asian", "caucasian")) / 3
+            out = out + 0.5 * (ethnic + target(f"macrodetails/universal-{g}-{age}-averagemuscle-averageweight.target", count))
+        return out - neutral
+
     def universal(variant):
         return sum(0.5 * (target(f"macrodetails/universal-{g}-young-{variant}.target", count)
                           - target(f"macrodetails/universal-{g}-young-averagemuscle-averageweight.target", count))
@@ -121,6 +128,8 @@ def neutral_and_channels(count):
         ("weight", universal("averagemuscle-minweight"), universal("averagemuscle-maxweight")),
         ("muscle", universal("minmuscle-averageweight"), universal("maxmuscle-averageweight")),
         ("gender", -gender, gender),
+        # v1.92: age, −1 child … +1 old (base bodies for children and elders).
+        ("age", aged("child"), aged("old")),
         ("shoulders", *pair("torso/torso-scale-horiz")),
         ("vshape", *pair("torso/torso-vshape")),
         ("hips", *pair("hip/hip-scale-horiz")),
@@ -469,6 +478,32 @@ def main():
         shifted = {k: JT[k] + JD[k] for k in JT}
         return {n: p - base[n] for n, _, p in moonlight_joints(skel, shifted)}
 
+    def pose_shape(Vx):
+        """A shaped A-pose body put into ITS OWN T-pose (joints and arm
+        directions re-solved for that shape): posed vertices and joints."""
+        Jx = joints_at(Vx)
+        Tx = tpose_transforms(skel, Jx)
+        Ax, tx = blend(weights_mh, Tx, count)
+        px = np.einsum("nij,nj->ni", Ax, Vx) + tx
+        JTx = {}
+        for name, info in skel["bones"].items():
+            R, t = Tx.get(info["parent"], (np.eye(3), np.zeros(3))) if info["parent"] else (np.eye(3), np.zeros(3))
+            JTx[info["head"]] = R @ Jx[info["head"]] + t
+            R2, t2 = Tx[name]
+            JTx[info["tail"]] = R2 @ Jx[info["tail"]] + t2
+        for key in Jx:
+            JTx.setdefault(key, Jx[key])
+        return px, {n: p for n, _, p in moonlight_joints(skel, JTx)}
+
+    base_joints = {n: p for n, _, p in joints}
+
+    def exact_delta(d):
+        """v1.92: a channel's T-pose delta as the difference of two posed
+        bodies, not a rotated A-pose delta (big changes such as a child's
+        proportions crease at the elbows otherwise)."""
+        px, jx = pose_shape(V + d)
+        return px - posed, {n: jx[n] - base_joints[n] for n in base_joints}
+
     # Units and placement: decimetres → metres, feet on y = 0, 1.75 m tall.
     body = posed[:BODY_VERTICES]
     floor = body[:, 1].min()
@@ -506,9 +541,11 @@ def main():
     for name, neg, pos in channels:
         sides = []
         for d in (neg, pos):
-            turned = np.einsum("nij,nj->ni", A, d)[:BODY_VERTICES] * k
-            jd = {n: v * k for n, v in joint_deltas(d).items()}
-            sides.append((turned, jd))
+            if not np.any(d):
+                sides.append((np.zeros((BODY_VERTICES, 3)), {n: np.zeros(3) for n in names}))
+                continue
+            dv, dj = exact_delta(d)
+            sides.append((dv[:BODY_VERTICES] * k, {n: v * k for n, v in dj.items()}))
         channel_data.append((name, sides))
 
     # Triangles (shorter diagonal), render vertices per (vertex, uv).

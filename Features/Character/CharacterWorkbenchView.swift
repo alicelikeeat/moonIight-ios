@@ -203,6 +203,22 @@ struct CharacterWorkbenchView: View {
     /// The base body itself (the same panel as the ⋯ menu's base-body page),
     /// shown bare, plus this character's shape.
     @ViewBuilder private var basePage: some View {
+        Section(L10n.t("底模库（选一个作为起点）", "Base bodies (pick one to start from)")) {
+            ForEach(BaseBodyCatalog.builtins) { entry in
+                let chosen = (draft.base ?? BaseBodyCatalog.neutralID) == entry.id
+                Button { change { $0.use(entry) } } label: {
+                    HStack {
+                        Label(entry.name, systemImage: entry.symbol)
+                        Spacer()
+                        Text(String(format: "%.2f m · %@", entry.shape?.height ?? 0, entry.category.title)).font(.caption).foregroundStyle(.secondary)
+                        Image(systemName: chosen ? "checkmark.circle.fill" : "circle").foregroundStyle(chosen ? Color.accentColor : Color.secondary)
+                    }
+                }
+                .accessibilityIdentifier("workbench-base-" + entry.id)
+            }
+            Text(L10n.t("所有底模共用同一套骨骼标准，动作、装备挂点和战斗判定都通用。", "Every base shares the one skeleton standard: motions, gear sockets and combat timing work on each."))
+                .font(.caption).foregroundStyle(.secondary)
+        }
         HumanBasePanel(scene: scene)
         Section(L10n.t("这个角色的体型", "This character's shape")) {
             LabeledContent(L10n.t("身高", "Height"), value: String(format: "%.2f m", draft.shape.height))

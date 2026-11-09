@@ -12,13 +12,15 @@ import Foundation
 
 /// Body parameters. Morph values are −1…1; lengths and head size are factors.
 struct HumanShape: Codable, Equatable, Sendable {
-    /// Metres, 0.8…2.4.
+    /// Metres, 0.6…6 (giants and bosses up to 6 m).
     var height: Float = 1.75
     /// −1 slim … +1 heavy.
     var build: Float = 0
     var muscle: Float = 0
     /// −1 feminine … +1 masculine (0: the neutral mannequin).
     var gender: Float = 0
+    /// v1.92: −1 child … 0 young adult … +1 elder (optional: older saves have none).
+    var age: Float? = nil
     var shoulders: Float = 0
     var hips: Float = 0
     /// Belly / waist girth.
@@ -45,7 +47,8 @@ struct HumanShape: Codable, Equatable, Sendable {
     var clamped: HumanShape {
         func c(_ v: Float, _ lo: Float, _ hi: Float, _ fallback: Float) -> Float { v.isFinite ? min(hi, max(lo, v)) : fallback }
         var s = self
-        s.height = c(height, 0.8, 2.4, 1.75)
+        s.height = c(height, 0.6, 6, 1.75)
+        if let a = age { s.age = c(a, -1, 1, 0) }
         for path in [\HumanShape.build, \.muscle, \.gender, \.shoulders, \.hips, \.waist, \.neck, \.hands, \.feet] { s[keyPath: path] = c(s[keyPath: path], -1, 1, 0) }
         for path in [\HumanShape.faceOval, \.faceRound, \.faceSquare] { s[keyPath: path] = c(s[keyPath: path], 0, 1, 0) }
         s.legLength = c(legLength, 0.55, 1.35, 1); s.armLength = c(armLength, 0.6, 1.3, 1); s.torsoLength = c(torsoLength, 0.7, 1.3, 1)
@@ -56,7 +59,7 @@ struct HumanShape: Codable, Equatable, Sendable {
     /// Morph channel values by the names in the HumanBase file.
     var channelValues: [String: Float] {
         let s = clamped
-        return ["weight": s.build, "muscle": s.muscle, "gender": s.gender, "shoulders": s.shoulders, "hips": s.hips, "belly": s.waist,
+        return ["weight": s.build, "muscle": s.muscle, "gender": s.gender, "age": s.age ?? 0, "shoulders": s.shoulders, "hips": s.hips, "belly": s.waist,
                 "neck": s.neck, "hands": s.hands, "feet": s.feet, "faceOval": s.faceOval, "faceRound": s.faceRound, "faceSquare": s.faceSquare]
     }
 }

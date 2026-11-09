@@ -62,7 +62,7 @@ struct HumanBasePanel: View {
     }
 
     static let channelTitles: [String: String] = [
-        "weight": L10n.t("胖瘦", "Weight"), "muscle": L10n.t("肌肉", "Muscle"), "gender": L10n.t("性别特征", "Gender"),
+        "weight": L10n.t("胖瘦", "Weight"), "age": L10n.t("年龄", "Age"), "muscle": L10n.t("肌肉", "Muscle"), "gender": L10n.t("性别特征", "Gender"),
         "shoulders": L10n.t("肩宽", "Shoulders"), "vshape": L10n.t("倒三角", "V shape"), "hips": L10n.t("臀宽", "Hips"),
         "belly": L10n.t("腹部", "Belly"), "neck": L10n.t("脖子", "Neck"), "upperArm": L10n.t("上臂", "Upper arm"),
         "lowerArm": L10n.t("前臂", "Forearm"), "upperLeg": L10n.t("大腿", "Thigh"), "lowerLeg": L10n.t("小腿", "Calf"),

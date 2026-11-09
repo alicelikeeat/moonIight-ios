@@ -3,8 +3,8 @@ import Foundation
 /// HumanBase: the shipped MakeHuman-based body loads, shapes and rigs.
 func humanBaseTests() {
     guard let asset = HumanBaseAsset.shared else { check(false, "HumanBase: the shipped file loads (Resources/HumanBase/HumanBase.hbm)"); return }
-    check(asset.vertexCount == 13_380 && asset.joints.count == 60 && asset.channels.count == 18 && asset.lods.count == 3,
-          "HumanBase: 13 380 surface vertices, 60 joints, 18 shape channels, 3 LODs (\(asset.vertexCount), \(asset.joints.count), \(asset.channels.count), \(asset.lods.count))")
+    check(asset.vertexCount == 13_380 && asset.joints.count == 60 && asset.channels.count == 19 && asset.lods.count == 3,
+          "HumanBase: 13 380 surface vertices, 60 joints, 19 shape channels, 3 LODs (\(asset.vertexCount), \(asset.joints.count), \(asset.channels.count), \(asset.lods.count))")
     let budgets = [20_000, 8_000, 2_000]
     check(zip(asset.lods, budgets).allSatisfy { $0.triangleCount <= $1 } && asset.lods[0].triangleCount > asset.lods[1].triangleCount && asset.lods[1].triangleCount > asset.lods[2].triangleCount,
           "HumanBase: LODs within 20k / 8k / 2k triangles (\(asset.lods.map(\.triangleCount)))")
@@ -105,4 +105,32 @@ func humanBaseTests() {
     check(Set(body.skeleton.joints.map(BodyRegion.title)).count == 60 && !body.skeleton.joints.contains { BodyRegion.title($0).hasPrefix("ext.") },
           "HumanBase: every joint has its own readable name")
     print("RPG HumanBase: \(asset.vertexCount) vertices, \(asset.joints.count) joints, LOD triangles \(asset.lods.map(\.triangleCount))")
+}
+
+/// v1.92: six built-in base bodies (neutral, woman, man, child, elder, giant boss).
+func baseBodyCatalogTests() {
+    var ratios: [String: BodyShape] = [:]
+    for entry in BaseBodyCatalog.builtins {
+        guard let shape = entry.shape, let body = HumanBase.build(shape) else { check(false, "base catalog: \(entry.id) builds"); continue }
+        do { try body.skeleton.validate() } catch { check(false, "base catalog: \(entry.id) skeleton validates (\(error))") }
+        let b = body.mesh.bounds
+        check(abs(b.max[1] - shape.height) < 0.03 && abs(b.min[1]) < 0.001 && body.mesh.positions.allSatisfy(\.isFinite),
+              "base catalog: \(entry.name) stands \(shape.height) m tall (\(b.max[1]))")
+        let ok = CharacterValidator.validate(mesh: body.mesh, skeleton: body.skeleton, skin: body.skin, motions: MotionLibrary.standard)
+        check(ok.ok, "base catalog: \(entry.name) passes the character checks (\(ok.errors.map(\.code)))")
+        ratios[entry.id] = body.bodyShape
+    }
+    if let child = ratios["humanbase.child"], let adult = ratios[BaseBodyCatalog.neutralID], let giant = BaseBodyCatalog.builtin("humanbase.giant") {
+        check(child.headRatio > adult.headRatio + 0.02, "base catalog: the child has a child's head proportion (\(child.headRatio) vs \(adult.headRatio))")
+        check(giant.bodyScale > 1.8, "base catalog: the giant is a large body (\(giant.bodyScale)× an adult)")
+    }
+    var look = CharacterAppearance()
+    look.wear("top.shirt")
+    look.use(BaseBodyCatalog.builtin("humanbase.elder")!)
+    check(look.base == "humanbase.elder" && look.shape.age == 1 && look.outfit == ["top.shirt"], "base catalog: switching base keeps the outfit")
+    // Older saves (no base, no age) still load.
+    let old = #"{"shape":{"height":1.7,"build":0,"muscle":0,"gender":0,"shoulders":0,"hips":0,"waist":0,"neck":0,"legLength":1,"armLength":1,"torsoLength":1,"headSize":1,"hands":0,"feet":0,"faceOval":0,"faceRound":0,"faceSquare":0},"skin":{"baseColor":[0.8,0.7,0.6],"metallic":0,"roughness":0.6,"opacity":1,"emission":[0,0,0],"emissionStrength":0,"style":"pbr"},"outfit":[],"equipment":[]}"#
+    let decoded = try? JSONDecoder().decode(CharacterAppearance.self, from: Data(old.utf8))
+    check(decoded?.base == nil && decoded?.shape.age == nil && decoded?.shape.height == 1.7, "base catalog: appearances saved before v1.92 still load")
+    print("RPG base catalog: \(BaseBodyCatalog.builtins.count) built-in bases")
 }

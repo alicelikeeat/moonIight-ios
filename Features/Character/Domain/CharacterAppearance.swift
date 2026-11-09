@@ -123,6 +123,8 @@ struct EquipmentItem: Codable, Equatable, Identifiable, Sendable {
 
 /// The whole look: body shape, skin material, outfit and equipment.
 struct CharacterAppearance: Codable, Equatable, Sendable {
+    /// v1.92: the base body this character starts from (BaseBodyCatalog id; nil = the neutral mannequin).
+    var base: String? = nil
     var shape = HumanShape.standard
     var skin = CharacterMaterialProfile.preset(.pbr, color: SIMD3(0.86, 0.72, 0.62))
     var outfit: [String] = []
@@ -141,6 +143,12 @@ struct CharacterAppearance: Codable, Equatable, Sendable {
         guard let item = EquipmentItem.find(id) else { return }
         equipment.removeAll { EquipmentItem.find($0)?.slot == item.slot }
         equipment.append(id)
+    }
+    /// Starts over from a base body: its shape and skin colour (outfit and gear stay).
+    mutating func use(_ entry: BaseBodyEntry) {
+        base = entry.id
+        if let shape = entry.shape { self.shape = shape }
+        skin.baseColor = entry.skin
     }
     mutating func remove(_ id: String) { outfit.removeAll { $0 == id }; equipment.removeAll { $0 == id } }
 

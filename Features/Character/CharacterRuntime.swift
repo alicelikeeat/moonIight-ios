@@ -244,7 +244,7 @@ enum CharacterSource: Sendable {
 
     static func key(_ shape: HumanShape) -> String {
         let s = shape.clamped
-        return [s.height, s.build, s.muscle, s.gender, s.shoulders, s.hips, s.waist, s.neck, s.legLength, s.armLength, s.torsoLength, s.headSize, s.hands, s.feet, s.faceOval, s.faceRound, s.faceSquare]
+        return [s.height, s.build, s.muscle, s.gender, s.age ?? 0, s.shoulders, s.hips, s.waist, s.neck, s.legLength, s.armLength, s.torsoLength, s.headSize, s.hands, s.feet, s.faceOval, s.faceRound, s.faceSquare]
             .map { String(format: "%.3f", $0) }.joined(separator: ",")
     }
 
