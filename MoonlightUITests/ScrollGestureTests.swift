@@ -557,10 +557,20 @@ final class ScrollGestureTests: XCTestCase {
         attach(app, name: "review-humanbase-tpose")
         // The bare mannequin is light grey on a dark backdrop: look for it in the preview itself.
         // The 3D view can still be blank right after the sheet opens: give it a few seconds.
-        var shot = preview.screenshot().image
+        // An element screenshot of a Metal view comes back blank white in the
+        // simulator; crop the preview out of a whole-screen screenshot instead.
+        func previewShot() -> UIImage {
+            let screen = app.screenshot().image
+            guard let cg = screen.cgImage else { return screen }
+            let k = CGFloat(cg.width) / screen.size.width
+            let f = preview.frame
+            let rect = CGRect(x: f.minX * k, y: f.minY * k, width: f.width * k, height: f.height * k).integral
+            return cg.cropping(to: rect).map { UIImage(cgImage: $0, scale: screen.scale, orientation: .up) } ?? screen
+        }
+        var shot = previewShot()
         var figure = lightShare(shot)
         for _ in 0..<10 where !(figure > 0.02 && figure < 0.6) {
-            sleep(1); shot = preview.screenshot().image; figure = lightShare(shot)
+            sleep(1); shot = previewShot(); figure = lightShare(shot)
         }
         print("Base-body preview: frame \(preview.frame), image \(shot.size), light share \(figure), colours \(colourVariety(shot)), samples \(pixelSamples(shot))")
         XCTAssertTrue(figure > 0.02 && figure < 0.6, "the mannequin is drawn in the preview (light share \(figure))")
