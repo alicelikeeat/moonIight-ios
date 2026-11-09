@@ -1432,6 +1432,10 @@ final class ScrollGestureTests: XCTestCase {
         let savedFolder = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", folderName)).firstMatch
         XCTAssertTrue(savedFolder.waitForExistence(timeout: 5))
         savedFolder.tap()
+        // The folder's cards appear a moment after it opens (relaunched app): wait before counting.
+        let firstCard = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-")).firstMatch
+        let shown = NSPredicate { _, _ in firstCard.exists && firstCard.isHittable }
+        _ = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: shown, object: nil)], timeout: 8)
         let restoredFolderCards = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@", "media-card-scroll-fixture-"))
             .allElementsBoundByIndex.filter(\.isHittable)
