@@ -86,8 +86,8 @@ enum BaseBodySkinPipeline {
         return (front.0, back?.0)
     }
 
-    /// The front and back figures of a character sheet.
-    static func sheet(_ data: Data) throws -> (front: CGImage, back: CGImage?) {
+    /// The front, back and side figures of a character sheet.
+    static func sheet(_ data: Data) throws -> (front: CGImage, back: CGImage?, side: CGImage?) {
         let analysis = try SheetPipeline.analyze(data)
         func crop(_ view: PhotoView) -> CGImage? {
             guard let panel = analysis.panels.first(where: { $0.view == view }) else { return nil }
@@ -97,6 +97,6 @@ enum BaseBodySkinPipeline {
             return analysis.image.cropping(to: rect)
         }
         guard let front = crop(.front) ?? analysis.panels.first.flatMap({ p in analysis.image.cropping(to: CGRect(x: p.x0, y: p.y0, width: p.w, height: p.h)) }) else { throw Failure.noPerson }
-        return (front, crop(.back))
+        return (front, crop(.back), crop(.left) ?? crop(.right))
     }
 }
