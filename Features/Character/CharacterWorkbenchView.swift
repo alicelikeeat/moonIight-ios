@@ -526,7 +526,7 @@ struct CharacterWorkbenchView: View {
         let worn = draft.garmentList
         p.garments = p.garments.filter { name in worn.contains { $0.mesh == name.key } }
         let garmentTextureNames = Set(garmentTextures.keys).union(p.textures.keys.filter { $0.hasPrefix("g-") })
-        p.textures = p.textures.filter { !garmentTextureNames.contains($0.key) || worn.contains { g in g.texture == $0.key } }
+        p.textures = p.textures.filter { entry in !garmentTextureNames.contains(entry.key) || worn.contains { $0.texture == entry.key } }
         return p
     }
 

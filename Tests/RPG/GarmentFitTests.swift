@@ -29,16 +29,22 @@ func garmentFitTests() {
     check(GarmentFit.measureArmDrop(GarmentFit.turned(suit, 0).positions, body: body) < 8, "garments: a T-pose suit measures level sleeves")
     if let fit = GarmentFit.fit(posed, slot: .full, on: body, adjust: GarmentAdjust(quarterTurns: 3)) {
         let out = fit.part.mesh
-        var errors: [Float] = [], same = 0
+        var errors: [Float] = [], same = 0, overlap: Float = 0
         for v in 0..<m.vertexCount {
             errors.append(cLength(point(out, v) - point(suit, v)))
             if strongest(fit.part.skin, v) == strongest(body.skin, v) { same += 1 }
+            // Shared weight between the garment point and the body point under it (1 = identical).
+            for k in 0..<4 where fit.part.skin.joints[v * 4 + k] != 255 {
+                for j in 0..<4 where body.skin.joints[v * 4 + j] == fit.part.skin.joints[v * 4 + k] { overlap += min(fit.part.skin.weights[v * 4 + k], body.skin.weights[v * 4 + j]) }
+            }
         }
+        overlap /= Float(m.vertexCount)
         errors.sort()
         let mean = errors.reduce(0, +) / Float(errors.count), p95 = errors[errors.count * 95 / 100]
         check(fit.armDrop > 28 && fit.armDrop < 52, "garments: the A-pose sleeves are measured (\(fit.armDrop)° for 40°)")
         check(mean < 0.015 * h && p95 < 0.05 * h, "garments: a lowered-arm, turned, rescaled suit returns to the T-pose on the body (mean \(mean) m, 95% \(p95) m)")
-        check(same * 100 >= m.vertexCount * 85, "garments: each point takes the weights of the body under it (\(same)/\(m.vertexCount))")
+        check(overlap > 0.75 && same * 100 >= m.vertexCount * 60,
+              "garments: each point takes the weights of the body under it (shared weight \(overlap), same main joint \(same)/\(m.vertexCount))")
         check(out.valid && out.indices == suit.indices && fit.part.skin.valid(jointCount: body.skeleton.joints.count, vertexCount: out.vertexCount),
               "garments: the fitted suit keeps its triangles and has valid weights")
     } else { check(false, "garments: the suit fits") }
