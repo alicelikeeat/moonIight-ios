@@ -92,7 +92,12 @@ final class ScrollGestureTests: XCTestCase {
         let frames = values()["frames"] ?? 0
         XCUIDevice.shared.press(.home); app.activate()
         let resumed = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > frames && v["muted"] == 1 && (v["global"] ?? 99) <= 1 }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: probe)], timeout: 25), .completed)
+        let back = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: probe)], timeout: 25)
+        if back != .completed {
+            print("CUTSCENE_RESUME_PROBE (frames before \(frames)): \(probe.exists ? (probe.value as? String ?? "?") : "absent")")
+            attach(app, name: "review-missing-cutscene-resume")
+        }
+        XCTAssertEqual(back, .completed)
         attach(app, name: "review-rpg-p10-authored-video")
         app.buttons["rpg-preview-close"].tap()
     }
