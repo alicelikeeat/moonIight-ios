@@ -167,6 +167,14 @@ import UIKit
     /// v1.91: base-body characters and rigged AI models go through the
     /// CharacterRuntime (real 3D bodies with their own animation). Nil:
     /// not a runtime character, use the older paths.
+    private var lastBuild = 0.0
+    private func mayBuild() -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastBuild >= 0.25 else { return false }
+        lastBuild = now
+        return true
+    }
+
     private func applyRuntime(_ template: CharacterTemplate, to holder: Entity, ownerID: String) -> Bool? {
         switch template.mode {
         case .standard:
@@ -174,6 +182,10 @@ import UIKit
             let look = package.appearance
             let key = "\(template.id)|standard|\(id)|\(CharacterRuntime.key(look.shape))|\(look.outfit.joined(separator: ","))|\(look.equipment.joined(separator: ","))|\(look.skin.baseColor)|\(look.skin.style.rawValue)|\(look.base ?? "")|\(look.painted?.atlas ?? "-")|\(look.garmentList.map { CharacterRuntime.garmentKey($0, look: look) }.joined(separator: ","))"
             if let current = shown[ownerID], current.key == key, current.entity.parent === holder { return true }
+            // v1.93: building a body (shape, outfit, garments) takes the main thread for a while;
+            // at most one every quarter second (the player first), so a world that comes back
+            // with several new characters stays responsive. Until then the old look stays.
+            if ownerID != SpatialBattle.playerID, !mayBuild() { return shown[ownerID]?.entity.parent === holder ? true : false }
             remove(ownerID)
             if let base = look.base, base.hasPrefix("model."), !runtime.hasModelBase(base) {
                 // v1.92: a model base loads in the background; the default body shows meanwhile.
