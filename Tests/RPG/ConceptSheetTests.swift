@@ -88,7 +88,7 @@ func conceptSheetTests() {
     let backView = ConceptViewRender.render(mesh, texture: nil, colors: frontBack, view: .back, width: 192, height: 288, supersample: 1)
     let left = ConceptViewRender.render(mesh, texture: nil, colors: leftSide, view: .left, width: 192, height: 288, supersample: 1)
     let right = ConceptViewRender.render(mesh, texture: nil, colors: leftSide, view: .right, width: 192, height: 288, supersample: 1)
-    check(share(front, 0) > 0.85 && share(backView, 2) > 0.85, "concept views: the front render shows the front, the back render the back (\(share(front, 0)), \(share(backView, 2)))")
+    check(share(front, 0) > 0.75 && share(backView, 2) > 0.75 && share(front, 2) < 0.1 && share(backView, 0) < 0.1, "concept views: the front render shows the front, the back render the back (\(share(front, 0)), \(share(backView, 2)))")
     check(share(left, 1) > 0.8 && share(right, 1) < 0.15, "concept views: the left render shows the character's left side (\(share(left, 1)), right \(share(right, 1)))")
     if let front, let box = ConceptViewRender.figureBox(front) {
         let cx = Float(box.x0 + box.x1) / 2
