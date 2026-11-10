@@ -183,6 +183,14 @@ enum PixelReader {
         return CGImageDestinationFinalize(destination) ? data as Data : nil
     }
 
+    static func png(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        return CGImageDestinationFinalize(destination) ? data as Data : nil
+    }
+    static func png(_ image: RasterImage) -> Data? { ModelAnimationExport.cgImage(image).flatMap { png($0) } }
+
     /// Image scaled so its longer side is at most `maxSide`.
     static func scaled(_ image: CGImage, maxSide: Int) -> CGImage? {
         let longer = max(image.width, image.height)

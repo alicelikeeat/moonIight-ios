@@ -53,13 +53,15 @@ import RealityKit
     private func place() { camera.look(at: [0, height * 0.5, 0], from: [0, height * 0.55, max(1, min(8, distance)) * max(1, height / 1.75)], relativeTo: nil) }
 
     /// v1.92: a painted skin's texture (a saved character's Textures/ file).
-    private var skinURL: URL?
-    func applySkin(_ url: URL?) {
-        skinURL = url
-        guard let url else { return }
+    private var skinKey: String?
+    /// v1.93: the full skin material (surface maps, skin shader where available).
+    func applySkin(package id: String, _ skin: CharacterSkin?) {
+        let key = skin.map { id + "|" + $0.atlas }
+        skinKey = key
+        guard let skin, let key else { return }
         Task { @MainActor [weak self] in
-            guard let self, let texture = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)), self.skinURL == url else { return }
-            self.runtime.applySkinTexture(Self.owner, texture)
+            guard let material = await CharacterShading.skin(package: id, skin), let self, self.skinKey == key else { return }
+            self.runtime.applySkinMaterial(Self.owner, material)
             self.needsPose = true
         }
     }
@@ -224,7 +226,7 @@ struct CharacterWorkbenchView: View {
                 Button {
                     loadGarments(p)
                     change { $0 = p.appearance }; name = p.manifest.name; packageID = p.manifest.id
-                    scene.applySkin(p.appearance.painted.map { library.store.textureURL(p.manifest.id, $0.atlas) })
+                    scene.applySkin(package: p.manifest.id, p.appearance.painted)
                 } label: {
                     LabeledContent(p.manifest.name, value: p.manifest.quality.rawValue)
                 }
@@ -412,12 +414,19 @@ struct CharacterWorkbenchView: View {
     private func loadGarments(_ p: CharacterPackage) {
         for g in p.appearance.garmentList {
             if let data = p.garments[g.mesh], let mesh = GeneratedMeshCodec.decode(data) { scene.runtime.registerGarment(g.id, mesh: mesh) }
-            if let texture = g.texture { loadGarmentTexture(g.id, library.store.textureURL(p.manifest.id, texture)) }
+            if g.texture != nil {
+                let id = p.manifest.id, runtime = scene.runtime
+                Task { @MainActor in if let m = await CharacterShading.garment(package: id, g) { runtime.applyGarmentMaterial(g.id, m) } }
+            }
         }
     }
-    private func loadGarmentTexture(_ id: String, _ url: URL) {
+    /// A new garment's material from files not yet in a package (colour plus surface maps).
+    private func loadGarmentMaterial(_ g: CustomGarment, color: URL, normal: URL?, roughness: URL?) {
+        let runtime = scene.runtime
         Task { @MainActor in
-            if let t = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) { scene.runtime.applyGarmentTexture(id, t) }
+            guard let c = await CharacterShading.load(color, semantic: .color) else { return }
+            let plain = CharacterShading.cloth(color: c, normal: await CharacterShading.load(normal, semantic: .normal), roughness: await CharacterShading.load(roughness, semantic: .raw))
+            runtime.applyGarmentMaterial(g.id, g.slot == .hair ? CharacterShading.hair(tint: .white, texture: c, fallback: plain) : plain)
         }
     }
 
@@ -427,13 +436,16 @@ struct CharacterWorkbenchView: View {
         let textureURL = store.textureURL(m)
         message = L10n.t("读取模型…", "Reading the model…")
         Task {
-            let loaded = await Task.detached(priority: .userInitiated) { () -> (data: Data, mesh: GeneratedMesh, texture: Data?, simplified: Bool)? in
+            let loaded = await Task.detached(priority: .userInitiated) { () -> (data: Data, mesh: GeneratedMesh, texture: Data?, simplified: Bool, normal: Data?, rough: Data?)? in
                 guard var mesh = (try? Data(contentsOf: meshURL)).flatMap({ GeneratedMeshCodec.decode($0) }).map({ FiniteMesh.repaired($0) }) else { return nil }
                 var simplified = false
                 if mesh.vertexCount > GarmentFit.maxVertices { mesh = MeshAnalyzer.simplified(mesh, targetTriangles: 50_000); simplified = true }
                 if mesh.normals.count != mesh.positions.count { mesh.computeNormals() }
                 guard mesh.vertexCount > 0, mesh.vertexCount <= GarmentFit.maxVertices else { return nil }
-                return (GeneratedMeshCodec.encode(mesh), mesh, textureURL.flatMap { try? Data(contentsOf: $0) }, simplified)
+                let texture = textureURL.flatMap { try? Data(contentsOf: $0) }
+                // v1.93: the texture's surface maps (detail normals, cloth roughness).
+                let maps = texture.flatMap { BaseBodySkinPipeline.image($0) }.flatMap { ModelAnimationExport.raster($0) }.map { SurfaceMaps.build($0) }
+                return (GeneratedMeshCodec.encode(mesh), mesh, texture, simplified, maps.flatMap { PixelReader.png($0.normal) }, maps.flatMap { PixelReader.png($0.roughness) })
             }.value
             guard let loaded else { message = L10n.t("这个模型不能用作服装（文件损坏或太大）", "This model cannot be worn (damaged or too large)"); return }
             let short = String(UUID().uuidString.prefix(8)).lowercased()
@@ -442,9 +454,18 @@ struct CharacterWorkbenchView: View {
             let textureName = loaded.texture == nil ? nil : "g-\(short)." + (ext.isEmpty ? "jpg" : ext)
             garmentData[meshName] = loaded.data
             if let t = loaded.texture, let textureName { garmentTextures[textureName] = t }
-            let garment = CustomGarment(id: "garment-" + short, name: String(m.name.prefix(40)), slot: slot, mesh: meshName, texture: textureName, sourceModelID: m.id)
+            var garment = CustomGarment(id: "garment-" + short, name: String(m.name.prefix(40)), slot: slot, mesh: meshName, texture: textureName, sourceModelID: m.id)
+            var mapURLs: [URL?] = [nil, nil]
+            for (i, (data, suffix)) in [(loaded.normal, "normal"), (loaded.rough, "rough")].enumerated() {
+                guard let data, textureName != nil else { continue }
+                let name = "g-\(short).\(suffix).png"
+                garmentTextures[name] = data
+                if i == 0 { garment.normal = name } else { garment.roughness = name }
+                let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                if (try? data.write(to: url)) != nil { mapURLs[i] = url }
+            }
             scene.runtime.registerGarment(garment.id, mesh: loaded.mesh)
-            if let textureURL, loaded.texture != nil { loadGarmentTexture(garment.id, textureURL) }
+            if let textureURL, loaded.texture != nil { loadGarmentMaterial(garment, color: textureURL, normal: mapURLs[0], roughness: mapURLs[1]) }
             change { $0.wear(garment) }
             message = L10n.t("「\(garment.name)」作为\(slot.title)穿上，正在贴合到底模。", "“\(garment.name)” is worn as \(slot.title.lowercased()) and is being fitted to the base.")
                 + (loaded.simplified ? L10n.t("模型超过 6 万顶点，已先简化。", " The model had over 60,000 vertices and was simplified first.") : "")
@@ -492,6 +513,9 @@ struct CharacterWorkbenchView: View {
                 }
             }
             if let motionTest { Text(motionTest).font(.caption).accessibilityIdentifier("workbench-motion-test") }
+        }
+        Section(L10n.t("材质", "Materials")) {
+            Text(CharacterShading.status).font(.caption).accessibilityIdentifier("workbench-shading-status")
         }
         Section(L10n.t("运行情况", "Runtime")) {
             LabeledContent(L10n.t("最近一次变形", "Last deformation"), value: String(format: "%.1f ms", scene.lastDeformMilliseconds))
@@ -542,7 +566,7 @@ struct CharacterWorkbenchView: View {
         let worn = draft.garmentList
         p.garments = p.garments.filter { name in worn.contains { $0.mesh == name.key } }
         let garmentTextureNames = Set(garmentTextures.keys).union(p.textures.keys.filter { $0.hasPrefix("g-") })
-        p.textures = p.textures.filter { entry in !garmentTextureNames.contains(entry.key) || worn.contains { $0.texture == entry.key } }
+        p.textures = p.textures.filter { entry in !garmentTextureNames.contains(entry.key) || worn.contains { [$0.texture, $0.normal, $0.roughness].contains(entry.key) } }
         return p
     }
 

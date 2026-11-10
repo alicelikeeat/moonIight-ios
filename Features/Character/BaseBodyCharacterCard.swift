@@ -261,6 +261,7 @@ struct BaseBodyCharacterCard: View {
                 let name = base.name + " · " + source.title
                 guard var package = CharacterPackage.humanBase(name: name, appearance: output.appearance) else { message = L10n.t("没有找到通用底模文件", "The base body file is missing"); return }
                 package.textures[output.appearance.painted?.atlas ?? "skin.jpg"] = output.atlas
+                package.textures.merge(output.maps) { _, new in new }
                 if let error = library.save(package) { message = error; return }
                 thumbnail = await Task.detached(priority: .utility) { Self.thumbnail(output) }.value
                 var notes = output.notes

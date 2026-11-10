@@ -80,8 +80,8 @@ struct OutfitPiece: Codable, Equatable, Identifiable, Sendable {
     var thickness: Float = 0.01
 
     static let catalog: [OutfitPiece] = [
-        OutfitPiece(id: "hair.short", slot: .hair, style: .shortHair, name: L10n.t("短发", "Short Hair"), material: .preset(.toon, color: SIMD3(0.18, 0.12, 0.09)), thickness: 0.014),
-        OutfitPiece(id: "hair.long", slot: .hair, style: .longHair, name: L10n.t("长发", "Long Hair"), material: .preset(.toon, color: SIMD3(0.55, 0.36, 0.2)), thickness: 0.018),
+        OutfitPiece(id: "hair.short", slot: .hair, style: .shortHair, name: L10n.t("短发", "Short Hair"), material: .preset(.pbr, color: SIMD3(0.18, 0.12, 0.09)), thickness: 0.014),
+        OutfitPiece(id: "hair.long", slot: .hair, style: .longHair, name: L10n.t("长发", "Long Hair"), material: .preset(.pbr, color: SIMD3(0.55, 0.36, 0.2)), thickness: 0.018),
         OutfitPiece(id: "top.shirt", slot: .top, style: .shirt, name: L10n.t("短袖上衣", "T-Shirt"), material: .preset(.pbr, color: SIMD3(0.25, 0.45, 0.8)), thickness: 0.008),
         OutfitPiece(id: "top.longSleeve", slot: .top, style: .longSleeve, name: L10n.t("长袖外套", "Long-Sleeve Jacket"), material: .preset(.pbr, color: SIMD3(0.55, 0.15, 0.2)), thickness: 0.012),
         OutfitPiece(id: "top.armor", slot: .top, style: .armor, name: L10n.t("胸甲", "Breastplate"), material: CharacterMaterialProfile(baseColor: SIMD3(0.7, 0.72, 0.78), metallic: 0.9, roughness: 0.3), thickness: 0.022),
@@ -137,6 +137,10 @@ struct CharacterSkin: Codable, Equatable, Sendable {
     var back: BodyPhoto?
     /// Atlas file in the character package (Textures/).
     var atlas = "skin.jpg"
+    /// v1.93: surface maps made from the atlas (Textures/): detail normals, roughness, skin mask.
+    var normal: String? = nil
+    var roughness: String? = nil
+    var mask: String? = nil
 }
 
 /// The whole look: body shape, skin material, outfit and equipment.

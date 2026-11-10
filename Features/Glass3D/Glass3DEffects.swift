@@ -195,19 +195,18 @@ import UIKit
             // v1.93: fitted garments' meshes come with the package; textures load off the frame.
             for garment in look.garmentList where !runtime.hasGarment(garment.id) {
                 if let mesh = package.garments[garment.mesh].flatMap({ GeneratedMeshCodec.decode($0) }) { runtime.registerGarment(garment.id, mesh: mesh) }
-                if let texture = garment.texture {
-                    let url = CharacterLibrary.shared.store.textureURL(id, texture), gid = garment.id
+                if garment.texture != nil {
+                    let g = garment
                     Task { @MainActor [runtime] in
-                        if let t = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) { runtime.applyGarmentTexture(gid, t) }
+                        if let material = await CharacterShading.garment(package: id, g) { runtime.applyGarmentMaterial(g.id, material) }
                     }
                 }
             }
             guard let entity = runtime.entity(owner: ownerID, source: .humanBase(look)) else { return false }
             if let skin = look.painted {
                 // v1.92: the painted skin's texture, loaded off the frame.
-                let url = CharacterLibrary.shared.store.textureURL(id, skin.atlas)
                 Task { @MainActor [runtime] in
-                    if let texture = try? await TextureResource(contentsOf: url, options: .init(semantic: .color)) { runtime.applySkinTexture(ownerID, texture) }
+                    if let material = await CharacterShading.skin(package: id, skin) { runtime.applySkinMaterial(ownerID, material) }
                 }
             }
             let wrapper = Entity(); wrapper.addChild(entity)

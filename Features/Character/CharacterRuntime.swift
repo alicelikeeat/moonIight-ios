@@ -144,12 +144,13 @@ enum CharacterSource: Sendable {
 
     /// v1.92: a painted skin's texture on the body (outfit layers keep their own materials).
     func applySkinTexture(_ owner: String, _ texture: TextureResource) {
+        applySkinMaterial(owner, CharacterShading.skin(color: texture, normal: nil, roughness: nil, mask: nil))
+    }
+    /// v1.93: a painted skin's full material (surface maps, skin shader where available).
+    func applySkinMaterial(_ owner: String, _ material: RealityKit.Material) {
         guard let instance = instances[owner], let body = instance.layers.first else { return }
-        var m = PhysicallyBasedMaterial()
-        m.baseColor = .init(tint: .white, texture: .init(texture))
-        m.roughness = .init(floatLiteral: 0.75)
-        instance.texture = m
-        body.entity.model?.materials = [m]
+        instance.texture = material
+        body.entity.model?.materials = [material]
     }
 
     // MARK: Garments (v1.93)
@@ -179,11 +180,24 @@ enum CharacterSource: Sendable {
     }
     func hasGarment(_ id: String) -> Bool { garmentSources[id] != nil }
     func applyGarmentTexture(_ id: String, _ texture: TextureResource) {
-        var m = PhysicallyBasedMaterial()
-        m.baseColor = .init(tint: .white, texture: .init(texture))
-        m.roughness = .init(floatLiteral: 0.7)
-        garmentMaterials[id] = m
+        applyGarmentMaterial(id, CharacterShading.cloth(color: texture, normal: nil, roughness: nil))
+    }
+    func applyGarmentMaterial(_ id: String, _ material: RealityKit.Material) {
+        garmentMaterials[id] = material
         refresh(wearing: id)
+    }
+
+    /// v1.93: hair with the strand-highlight shader where available (cached per colour).
+    private func hairMaterial(_ profile: CharacterMaterialProfile) -> RealityKit.Material {
+        let p = profile.clamped
+        let key = "hair|\(p.baseColor)|\(p.style.rawValue)"
+        if let cached = materialCache[key] { return cached }
+        let fallback = material(profile)
+        // Toon and pixel looks keep their flat material.
+        let made = (p.style == .toon || p.style == .pixel) ? fallback
+            : CharacterShading.hair(tint: UIColor(red: CGFloat(p.baseColor.x), green: CGFloat(p.baseColor.y), blue: CGFloat(p.baseColor.z), alpha: 1), fallback: fallback)
+        materialCache[key] = made
+        return made
     }
     private func refresh(wearing id: String) {
         for instance in instances.values {
@@ -382,13 +396,14 @@ enum CharacterSource: Sendable {
             for piece in look.pieces {
                 let key = (look.base ?? "") + Self.key(look.shape) + "|\(lod)|" + piece.id
                 let part = outfitCache[key] ?? OutfitBuilder.build(piece, on: body)
-                if let part { outfitCache[key] = part; addLayer(instance, mesh: part.mesh, skin: part.skin, material: material(piece.material)) }
+                if let part { outfitCache[key] = part; addLayer(instance, mesh: part.mesh, skin: part.skin, material: piece.slot == .hair ? hairMaterial(piece.material) : material(piece.material)) }
             }
             // v1.93: garments from AI 3D / imported models, fitted off the main thread once per body.
             for garment in look.garmentList {
                 let key = Self.garmentKey(garment, look: look)
                 if let part = garmentFits[key] {
-                    addLayer(instance, mesh: part.mesh, skin: part.skin, material: garmentMaterials[garment.id] ?? material(CharacterMaterialProfile(baseColor: garment.color, roughness: 0.7)))
+                    let plain = material(CharacterMaterialProfile(baseColor: garment.color, roughness: 0.7))
+                    addLayer(instance, mesh: part.mesh, skin: part.skin, material: garmentMaterials[garment.id] ?? (garment.slot == .hair ? hairMaterial(CharacterMaterialProfile(baseColor: garment.color, roughness: 0.6)) : plain))
                 } else if let source = garmentSources[garment.id], !fitting.contains(key), !failedFits.contains(key), let fitBody = self.body(for: look, lod: 0) {
                     fitting.insert(key)
                     let slot = garment.slot, adjust = garment.adjust, id = garment.id, owner = instance.owner

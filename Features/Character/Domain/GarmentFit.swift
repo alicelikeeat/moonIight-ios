@@ -62,6 +62,9 @@ struct CustomGarment: Codable, Equatable, Identifiable, Sendable {
     var mesh: String
     /// File in the package's Textures/ folder; nil: a plain colour.
     var texture: String?
+    /// Surface maps made from the texture (Textures/): detail normals and roughness.
+    var normal: String? = nil
+    var roughness: String? = nil
     var color = SIMD3<Float>(0.8, 0.8, 0.82)
     var adjust = GarmentAdjust()
     /// The AI 3D / imported model it came from.

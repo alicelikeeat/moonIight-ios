@@ -12,6 +12,8 @@ enum BaseBodySkinPipeline {
     struct Output: Sendable {
         var appearance: CharacterAppearance
         var atlas: Data
+        /// v1.93: surface maps by file name (Textures/).
+        var maps: [String: Data] = [:]
         var notes: [String]
     }
 
@@ -57,7 +59,16 @@ enum BaseBodySkinPipeline {
         notes.append(L10n.t("贴图是投影上去的，不是雕刻的形状；宽松衣服和长发会贴在身体上。", "The picture is projected, not sculpted; loose clothes and long hair lie on the body."))
         guard let atlas = BaseBodyCharacterPipeline.atlas(front: front, back: backImage), let cg = ModelAnimationExport.cgImage(atlas),
               let jpeg = PixelReader.jpeg(cg, quality: 0.88) else { throw Failure.unreadable }
-        return Output(appearance: appearance, atlas: jpeg, notes: notes)
+        // v1.93: skin and cloth apart (roughness), detail normals from the picture's shading.
+        let surface = SurfaceMaps.build(atlas)
+        var maps: [String: Data] = [:]
+        if let n = PixelReader.png(surface.normal), let r = PixelReader.png(surface.roughness), let m = PixelReader.png(surface.mask) {
+            maps = ["skin.normal.png": n, "skin.rough.png": r, "skin.mask.png": m]
+            appearance.painted?.normal = "skin.normal.png"; appearance.painted?.roughness = "skin.rough.png"; appearance.painted?.mask = "skin.mask.png"
+            notes.append(L10n.t(String(format: "按颜色分出皮肤（约占贴图 %.0f%%）和衣物：皮肤更光滑、带透光感，衣物更粗糙；细节凹凸由图片明暗推测（近似，不是真实形状）。", surface.skinShare * 100),
+                                String(format: "Skin (about %.0f%% of the texture) and clothes were told apart by colour: skin is smoother with a light-through glow, clothes rougher; fine relief is inferred from the picture's shading (an approximation, not real shape).", surface.skinShare * 100)))
+        }
+        return Output(appearance: appearance, atlas: jpeg, maps: maps, notes: notes)
     }
 
     static func image(_ url: URL) -> CGImage? { BaseBodyCharacterPipeline.load(url) }
