@@ -17,15 +17,21 @@ import UIKit
     /// Why the custom shaders are or are not in use (shown in the workbench).
     private(set) static var failure: String?
 
+    /// v1.93: off unless the user turns them on. The shaders run only on real devices and
+    /// have not been checked on one yet; a black world was reported on v1.92, where they were always on.
+    static let enabledKey = "character.customShaders"
+    static var enabled: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
+
     static var shadersAvailable: Bool {
         #if targetEnvironment(simulator)
         return false
         #else
-        return library != nil
+        return enabled && library != nil
         #endif
     }
 
     static var status: String {
+        if !enabled { return L10n.t("皮肤 / 头发着色器：已关闭（实验功能，尚未真机验收），使用标准 PBR 材质", "Skin / hair shaders: off (experimental, not yet accepted on a device); standard PBR materials are used") }
         if !shadersAvailable { return L10n.t("皮肤 / 头发着色器：本设备不可用（模拟器或缺少着色器库），使用标准 PBR 材质", "Skin / hair shaders: not available here (simulator or no shader library); standard PBR materials are used") }
         if let failure { return L10n.t("皮肤 / 头发着色器加载失败，使用标准 PBR：", "Skin / hair shaders failed to load; standard PBR is used: ") + failure }
         return L10n.t("皮肤着色器（透光近似）和头发着色器（发丝高光）已启用", "Skin shader (light-through approximation) and hair shader (strand highlight) are on")

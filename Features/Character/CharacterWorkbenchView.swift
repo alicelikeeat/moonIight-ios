@@ -148,6 +148,7 @@ struct CharacterWorkbenchView: View {
     @State private var garmentData: [String: Data] = [:]
     @State private var garmentTextures: [String: Data] = [:]
     @State private var garmentSlot = CustomGarment.Slot.top
+    @AppStorage(CharacterShading.enabledKey) private var customShaders = false
     /// Slider values while dragging (applied when the drag ends: each fit takes a moment).
     @State private var adjusting: [String: GarmentAdjust] = [:]
 
@@ -515,7 +516,10 @@ struct CharacterWorkbenchView: View {
             if let motionTest { Text(motionTest).font(.caption).accessibilityIdentifier("workbench-motion-test") }
         }
         Section(L10n.t("材质", "Materials")) {
+            Toggle(L10n.t("皮肤 / 头发着色器（实验）", "Skin / hair shaders (experimental)"), isOn: $customShaders).accessibilityIdentifier("workbench-shaders-toggle")
             Text(CharacterShading.status).font(.caption).accessibilityIdentifier("workbench-shading-status")
+            Text(L10n.t("改动后重新进入 3D 世界生效。如果打开后画面变黑或角色消失，请关掉它。", "Takes effect after re-entering the 3D world. If the picture goes black or characters vanish with it on, turn it off."))
+                .font(.caption2).foregroundStyle(.secondary)
         }
         Section(L10n.t("运行情况", "Runtime")) {
             LabeledContent(L10n.t("最近一次变形", "Last deformation"), value: String(format: "%.1f ms", scene.lastDeformMilliseconds))
