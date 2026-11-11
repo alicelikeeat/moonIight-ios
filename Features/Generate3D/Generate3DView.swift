@@ -110,6 +110,7 @@ struct Generate3DScreen: View {
             // v1.92: base bodies first — the recommended way to a rigged, animated character.
             BaseBodyCharacterCard()
             AICharacterCard(store: store, tasks: tasks, quality: quality) { opened = $0 }
+            MeshyCard(store: store) { opened = $0 }
             LocalAIModelCard(store: store) { opened = $0 }
             MultiViewCard(store: store) { opened = $0 }
             CharacterSheetCard(store: store) { opened = $0 }
