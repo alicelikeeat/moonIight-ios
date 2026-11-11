@@ -165,9 +165,23 @@ enum LocalServerClient {
         return data
     }
 
-    static func generate(_ config: LocalServerConfig, image: Data, progress: @escaping @Sendable (String, Double) -> Void) async throws -> Data {
+    /// `extra`: back / left / right views of the same subject. They are sent when the
+    /// server is 1.93 or later; the result says whether its backend used them.
+    static func generate(_ config: LocalServerConfig, image: Data, extra: [PhotoView: Data] = [:], usedViews: (@Sendable (Bool, String) -> Void)? = nil,
+                         progress: @escaping @Sendable (String, Double) -> Void) async throws -> Data {
         progress(L10n.t("上传图片到电脑", "Uploading the picture to the computer"), 0.05)
-        var job = try CloudRiggingProtocol.job(try await send(Image3DServerProtocol.create(config, image: image, mime: "image/jpeg", texture: true)))
+        var create = Image3DServerProtocol.create(config, image: image, mime: "image/jpeg", texture: true)
+        if !extra.isEmpty {
+            let info = try Image3DServerProtocol.healthInfo(try await send(Image3DServerProtocol.health(config)))
+            var views = extra; views[.front] = image
+            if Image3DServerProtocol.acceptsViews(info.version), let multi = Image3DServerProtocol.create(config, views: views, texture: true) {
+                create = multi
+                usedViews?(info.multiview == true, info.backend)
+            } else {
+                usedViews?(false, info.backend + " " + (info.version ?? "?"))
+            }
+        }
+        var job = try CloudRiggingProtocol.job(try await send(create))
         let started = Date()
         var attempt = 0
         do {
@@ -207,6 +221,8 @@ struct LocalAIModelCard: View {
     @State private var token = ""
     @State private var health: String?
     @State private var item: PhotosPickerItem?
+    /// v1.93: optional back and left views for the computer (in that order).
+    @State private var extraItems: [PhotosPickerItem] = []
     @State private var importing = false
     @State private var installed = TripoSROnDevice.installed
     @State private var resolution = 128
@@ -229,6 +245,14 @@ struct LocalAIModelCard: View {
                     ProgressView(value: fraction)
                 }
             } else {
+                if mode == .computer {
+                    PhotosPicker(selection: $extraItems, maxSelectionCount: 2, selectionBehavior: .ordered, matching: .images) {
+                        Label(extraItems.isEmpty ? L10n.t("可选：先选背面、左侧图（按顺序）", "Optional: first pick the back and left views (in order)") : L10n.t("已选 \(extraItems.count) 张附加视角", "\(extraItems.count) extra views chosen"), systemImage: "rectangle.3.group")
+                    }
+                    .font(.caption).accessibilityIdentifier("generate3d-local-extra-views")
+                    Text(L10n.t("多视角需要电脑端用 --backend hunyuan3d-mv 启动（服务 1.93 以上）；其他后端只用正面图。", "Several views need the computer started with --backend hunyuan3d-mv (server 1.93 or later); other backends use the front only."))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 PhotosPicker(selection: $item, matching: .images) { Label(L10n.t("选图片并生成", "Pick a Picture and Generate"), systemImage: "photo.badge.plus").frame(maxWidth: .infinity) }
                     .buttonStyle(.moonLiquidProminent).disabled(mode == .computer ? LocalServerConfig.parse(address, token: token) == nil : !(installed && TripoSROnDevice.deviceSupported))
                     .accessibilityIdentifier("generate3d-local-generate")
@@ -294,7 +318,7 @@ struct LocalAIModelCard: View {
     private func start(_ picked: PhotosPickerItem) {
         message = nil; progress.value = 0
         progress.stage = L10n.t("读取图片", "Reading the picture")
-        let mode = mode, resolution = resolution
+        let mode = mode, resolution = resolution, extraItems = mode == .computer ? extraItems : []
         if mode == .computer {
             UserDefaults.standard.set(address, forKey: LocalServerClient.urlKey)
             if !token.isEmpty { SecureSettings.write(token, account: LocalServerClient.tokenAccount) }
@@ -315,7 +339,13 @@ struct LocalAIModelCard: View {
                               let jpeg = PixelReader.jpeg(img, quality: 0.92) else { return data }
                         return jpeg
                     }.value
-                    let glb = try await LocalServerClient.generate(config, image: jpeg, progress: report)
+                    var extra: [PhotoView: Data] = [:]
+                    for (view, item) in zip([PhotoView.back, .left], extraItems) {
+                        if let raw = try? await item.loadTransferable(type: Data.self), let small = await Task.detached(operation: { MeshyClient.jpeg(raw) }).value { extra[view] = small }
+                    }
+                    let viewNote = ViewNote()
+                    let glb = try await LocalServerClient.generate(config, image: jpeg, extra: extra, usedViews: { used, backend in viewNote.set(used, backend) }, progress: report)
+                    if let note = viewNote.text(count: extra.count) { message = note }
                     let model = try await Task.detached { try Image3DServerProtocol.model(fromGLB: glb) }.value
                     manifest = try await store.storeMesh(model.mesh, texture: model.texture, encodedTexture: model.encodedTexture, name: L10n.t("电脑 AI 模型", "Computer AI model"),
                                                          sourceName: "Local 3D server", engine: "Moonlight Local 3D (computer)",
@@ -336,6 +366,19 @@ struct LocalAIModelCard: View {
                 message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
         }
+    }
+}
+
+/// What the server said about extra views (set from the request, read after it).
+final class ViewNote: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: (Bool, String)?
+    func set(_ used: Bool, _ backend: String) { lock.lock(); value = (used, backend); lock.unlock() }
+    func text(count: Int) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        guard count > 0, let value else { return nil }
+        return value.0 ? L10n.t("电脑端（\(value.1)）用了正面和 \(count) 张附加视角。", "The computer (\(value.1)) used the front and \(count) extra views.")
+                       : L10n.t("电脑端（\(value.1)）不支持多视角，只用了正面图。", "The computer (\(value.1)) does not take several views; only the front was used.")
     }
 }
 

@@ -51,5 +51,18 @@ func meshy3DTests() {
     check(status(200) == nil && status(401) == .unauthorized && status(402, #"{"message":"Insufficient credits"}"#) == .payment("Insufficient credits") && status(403) == .moderated
           && status(404) == .notFound && status(429) == .rateLimited && status(400, #"{"message":"Invalid image count"}"#) == .badRequest("Invalid image count") && status(503) == .server(503),
           "meshy: each HTTP error becomes its own message")
+    // v1.93: several views for the computer server.
+    if let config = LocalServerConfig.parse("192.168.1.20:8765", token: "t"),
+       let r = Image3DServerProtocol.create(config, views: [.front: jpeg, .back: jpeg, .left: Data(), .top: jpeg], texture: true),
+       let o = (try? JSONSerialization.jsonObject(with: r.httpBody ?? Data())) as? [String: Any], let views = o["views"] as? [String: String] {
+        check(Set(views.keys) == ["front", "back"] && views["front"] == jpeg.base64EncodedString() && r.value(forHTTPHeaderField: "Content-Type") == "application/json"
+              && r.url?.path == "/v1/image3d/jobs" && Image3DServerProtocol.create(config, views: [.back: jpeg], texture: true) == nil,
+              "local 3D: a multi-view job sends front, back, left and right as base64 JSON and needs a front")
+    } else { check(false, "local 3D: the multi-view request builds") }
+    check(Image3DServerProtocol.acceptsViews("1.93") && Image3DServerProtocol.acceptsViews("2.0") && !Image3DServerProtocol.acceptsViews("1.75") && !Image3DServerProtocol.acceptsViews(nil),
+          "local 3D: views are sent only to servers from 1.93 on")
+    let health = try? Image3DServerProtocol.healthInfo(Data(#"{"name":"Moonlight Local 3D","backend":"hunyuan3d-mv","version":"1.93","multiview":true}"#.utf8))
+    let old = try? Image3DServerProtocol.healthInfo(Data(#"{"name":"Moonlight Local 3D","backend":"triposr","version":"1.75"}"#.utf8))
+    check(health?.multiview == true && old?.multiview == nil && old?.backend == "triposr", "local 3D: the health reply says whether the backend uses every view; older servers still read")
     print("RPG meshy: requests and replies")
 }

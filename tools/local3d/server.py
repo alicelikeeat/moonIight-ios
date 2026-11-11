@@ -4,10 +4,15 @@
 The Moonlight app (AI 生成 3D → 电脑生成) uploads one picture over your
 local Wi-Fi and downloads a GLB. Runs one job at a time.
 
+Since 1.93 a job can carry several views of the same subject (front, back,
+left, right) as JSON; the hunyuan3d-mv backend uses them all, the others use
+the front.
+
 Backends (install the one you want, see README.md):
   triposr    TripoSR (VAST AI / Stability AI, MIT)  — fast, CUDA or CPU / Apple MPS
   hunyuan3d  Hunyuan3D-2 / 2mini (Tencent; Tencent Hunyuan Community License,
              not licensed in the EU, UK and South Korea) — shape + texture, CUDA
+  hunyuan3d-mv  Hunyuan3D-2mv (same licence) — shape from front + back + left views, CUDA
   dummy      a coloured cube, for checking the connection
 
 Usage:
@@ -16,6 +21,7 @@ Only use on a network you trust. Without --token anyone on the network can
 submit jobs.
 """
 import argparse
+import base64
 import io
 import json
 import socket
@@ -26,8 +32,8 @@ import traceback
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-VERSION = "1.75"
-MAX_UPLOAD = 25 * 1024 * 1024
+VERSION = "1.93"
+MAX_UPLOAD = 60 * 1024 * 1024
 
 
 # ---------------------------------------------------------------- GLB writer
@@ -83,8 +89,18 @@ def glb_bytes(vertices, faces, colors=None, uvs=None, texture_png=None):
 
 # ---------------------------------------------------------------- backends
 
+VIEW_NAMES = ("front", "back", "left", "right")
+
+
+def front_of(image_bytes, options):
+    """The front picture of a job (a multi-view job keeps its views in options)."""
+    views = options.get("views") or {}
+    return views.get("front", image_bytes)
+
+
 class DummyBackend:
     name = "dummy"
+    multiview = True
 
     def generate(self, image_bytes, options, progress, cancelled):
         for i in range(5):
@@ -94,7 +110,10 @@ class DummyBackend:
             time.sleep(0.2)
         v = [(x, y, z) for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]
         f = [(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6), (0, 1, 5), (0, 5, 4), (2, 6, 7), (2, 7, 3), (0, 4, 6), (0, 6, 2), (1, 3, 7), (1, 7, 5)]
-        c = [((x + 0.5), (y + 0.5), (z + 0.5)) for (x, y, z) in v]
+        # The cube is taller with every extra view, so a test can see they arrived.
+        tall = 1.0 + 0.5 * max(0, len(options.get("views") or {}) - 1)
+        v = [(x, y * tall, z) for (x, y, z) in v]
+        c = [((x + 0.5), (y / tall + 0.5), (z + 0.5)) for (x, y, z) in v]
         return glb_bytes(v, f, colors=c)
 
 
@@ -123,7 +142,7 @@ class TripoSRBackend:
         from PIL import Image
         from tsr.utils import remove_background, resize_foreground
         progress(0.05)
-        image = remove_background(Image.open(io.BytesIO(image_bytes)), self.rembg)
+        image = remove_background(Image.open(io.BytesIO(front_of(image_bytes, options))), self.rembg)
         image = resize_foreground(image, 0.85)
         a = np.array(image).astype(np.float32) / 255.0
         a = a[:, :, :3] * a[:, :, 3:4] + (1 - a[:, :, 3:4]) * 0.5
@@ -170,7 +189,7 @@ class Hunyuan3DBackend:
     def generate(self, image_bytes, options, progress, cancelled):
         from PIL import Image
         progress(0.05)
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+        image = Image.open(io.BytesIO(front_of(image_bytes, options))).convert("RGBA")
         image = self.rembg(image)
         progress(0.2)
         mesh = self.shape(image=image)[0]
@@ -179,6 +198,55 @@ class Hunyuan3DBackend:
         progress(0.6)
         if self.paint is not None and options.get("texture", True):
             mesh = self.paint(mesh, image=image)
+        progress(0.95)
+        out = io.BytesIO()
+        mesh.export(out, file_type="glb")
+        return out.getvalue()
+
+
+class Hunyuan3DMVBackend:
+    """Hunyuan3D-2mv (https://huggingface.co/tencent/Hunyuan3D-2mv): the shape
+    from front / left / back views, as in its model card; the texture from the
+    front view with the Hunyuan3D-2 paint pipeline when it is installed."""
+    name = "hunyuan3d-mv"
+    multiview = True
+
+    def __init__(self, args):
+        import torch
+        from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
+        from hy3dgen.rembg import BackgroundRemover
+        self.torch = torch
+        self.shape = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+            "tencent/Hunyuan3D-2mv", subfolder="hunyuan3d-dit-v2-mv", use_safetensors=True, device="cuda")
+        self.rembg = BackgroundRemover()
+        self.paint = None
+        if not args.no_texture:
+            try:
+                from hy3dgen.texgen import Hunyuan3DPaintPipeline
+                self.paint = Hunyuan3DPaintPipeline.from_pretrained("tencent/Hunyuan3D-2")
+            except Exception as e:
+                print("Texture pipeline unavailable, shapes only:", e)
+
+    def generate(self, image_bytes, options, progress, cancelled):
+        from PIL import Image
+        progress(0.05)
+        raw = dict(options.get("views") or {})
+        raw.setdefault("front", image_bytes)
+        views = {}
+        # The model card names front, left and back; a right view is passed too when given.
+        for name in VIEW_NAMES:
+            if name in raw:
+                views[name] = self.rembg(Image.open(io.BytesIO(raw[name])).convert("RGBA"))
+        if cancelled():
+            raise InterruptedError()
+        progress(0.2)
+        mesh = self.shape(image=views, num_inference_steps=30, octree_resolution=380, num_chunks=20000,
+                          generator=self.torch.manual_seed(12345), output_type="trimesh")[0]
+        if cancelled():
+            raise InterruptedError()
+        progress(0.65)
+        if self.paint is not None and options.get("texture", True):
+            mesh = self.paint(mesh, image=views["front"])
         progress(0.95)
         out = io.BytesIO()
         mesh.export(out, file_type="glb")
@@ -255,7 +323,8 @@ def make_handler(jobs, token):
         def do_GET(self):
             parts = self.path.rstrip("/").split("/")
             if self.path.startswith("/v1/health"):
-                return self.send_json(200, {"name": "Moonlight Local 3D", "backend": jobs.backend.name, "version": VERSION})
+                return self.send_json(200, {"name": "Moonlight Local 3D", "backend": jobs.backend.name, "version": VERSION,
+                                            "multiview": bool(getattr(jobs.backend, "multiview", False))})
             if not self.authorised():
                 return
             if self.path.startswith("/v1/image3d/jobs/"):
@@ -288,6 +357,20 @@ def make_handler(jobs, token):
                     options = json.loads(self.headers.get("X-Options", "{}"))
                 except ValueError:
                     options = {}
+                if not isinstance(options, dict):
+                    options = {}
+                options.pop("views", None)
+                if self.headers.get("Content-Type", "").split(";")[0].strip() == "application/json":
+                    # Several views: {"views": {"front": "<base64>", "back": ..., "left": ..., "right": ...}}
+                    try:
+                        sent = json.loads(image).get("views", {})
+                        views = {k: base64.b64decode(v, validate=True) for k, v in sent.items() if k in VIEW_NAMES and isinstance(v, str)}
+                    except (ValueError, AttributeError, TypeError):
+                        return self.send_json(400, {"message": "views must be base64 pictures"})
+                    if "front" not in views or not all(views.values()):
+                        return self.send_json(400, {"message": "a front view is required"})
+                    options["views"] = views
+                    image = views["front"]
                 return self.send_json(201, jobs.public(jobs.create(image, options)))
             if len(parts) > 5 and parts[5] == "cancel":
                 job = self.job(parts)
@@ -330,7 +413,7 @@ def lan_address():
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--backend", choices=["triposr", "hunyuan3d", "dummy"], default="triposr")
+    p.add_argument("--backend", choices=["triposr", "hunyuan3d", "hunyuan3d-mv", "dummy"], default="triposr")
     p.add_argument("--host", default="0.0.0.0")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--token", default="", help="require this token (enter it in the app)")
@@ -339,7 +422,7 @@ def main():
     p.add_argument("--mini", action="store_true", help="Hunyuan3D-2mini shape model (less GPU memory)")
     p.add_argument("--no-texture", action="store_true", help="Hunyuan3D: shapes only")
     args = p.parse_args()
-    backend = {"dummy": lambda: DummyBackend(), "triposr": lambda: TripoSRBackend(args), "hunyuan3d": lambda: Hunyuan3DBackend(args)}[args.backend]()
+    backend = {"dummy": lambda: DummyBackend(), "triposr": lambda: TripoSRBackend(args), "hunyuan3d": lambda: Hunyuan3DBackend(args), "hunyuan3d-mv": lambda: Hunyuan3DMVBackend(args)}[args.backend]()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(Jobs(backend), args.token))
     print("Moonlight Local 3D %s (%s)" % (VERSION, backend.name))
     print("In the app enter:  %s:%d%s" % (lan_address(), args.port, "   token: " + args.token if args.token else ""))

@@ -48,6 +48,8 @@ struct LocalServerHealth: Codable, Equatable, Sendable {
     var name: String
     var backend: String
     var version: String?
+    /// v1.93: the backend uses every view of a multi-view job (others use the front only).
+    var multiview: Bool?
 }
 
 enum Image3DServerProtocol {
@@ -66,6 +68,23 @@ enum Image3DServerProtocol {
         var r = request(c, "POST", "/v1/image3d/jobs", body: image, contentType: mime, timeout: 120)
         r.setValue(texture ? #"{"texture":true}"# : #"{"texture":false}"#, forHTTPHeaderField: "X-Options")
         return r
+    }
+    /// v1.93: several views of one subject (front required; back, left, right) as JSON.
+    /// Servers before 1.93 do not read it: check `LocalServerHealth.version` first.
+    static func create(_ c: LocalServerConfig, views: [PhotoView: Data], texture: Bool) -> URLRequest? {
+        guard let front = views[.front], !front.isEmpty else { return nil }
+        var sent: [String: String] = ["front": front.base64EncodedString()]
+        for view in [PhotoView.back, .left, .right] { if let data = views[view], !data.isEmpty { sent[view.rawValue] = data.base64EncodedString() } }
+        guard let body = try? JSONSerialization.data(withJSONObject: ["views": sent]) else { return nil }
+        var r = request(c, "POST", "/v1/image3d/jobs", body: body, contentType: "application/json", timeout: 180)
+        r.setValue(texture ? #"{"texture":true}"# : #"{"texture":false}"#, forHTTPHeaderField: "X-Options")
+        return r
+    }
+    /// Whether a server version reads multi-view jobs (1.93 and later).
+    static func acceptsViews(_ version: String?) -> Bool {
+        let parts = (version ?? "").split(separator: ".").compactMap { Int($0) }
+        guard parts.count >= 2 else { return false }
+        return parts[0] > 1 || (parts[0] == 1 && parts[1] >= 93)
     }
     static func status(_ c: LocalServerConfig, id: String) -> URLRequest { request(c, "GET", "/v1/image3d/jobs/" + CloudRiggingProtocol.escape(id)) }
     static func cancel(_ c: LocalServerConfig, id: String) -> URLRequest { request(c, "POST", "/v1/image3d/jobs/" + CloudRiggingProtocol.escape(id) + "/cancel") }
