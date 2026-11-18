@@ -264,11 +264,15 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "asset-director-picks").firstMatch.waitForExistence(timeout: 5))
 
         // The real accuracy check on the bundled CC0 files.
-        reveal("asset-director-evaluate", in: app, "the evaluation button").tap()
-        let evaluation = app.descendants(matching: .any).matching(identifier: "asset-director-evaluation").firstMatch
-        for _ in 0..<40 where !evaluation.exists { sleep(3); if !evaluation.exists { app.swipeUp() } }
-        XCTAssertTrue(evaluation.exists, "the evaluation reports")
-        print("Asset Director evaluation: \(evaluation.value ?? "")")
+        let evaluate = reveal("asset-director-evaluate", in: app, "the evaluation button")
+        evaluate.tap()
+        // Keep the evaluation row on screen while Vision processes the bundled files.
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == YES AND enabled == YES"), object: evaluate)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 180), .completed, "bundled asset evaluation finishes")
+        let evaluation = reveal("asset-director-evaluation", in: app, "the evaluation reports")
+        let report = evaluation.value as? String ?? ""
+        XCTAssertTrue(report.range(of: #"samples=[1-9][0-9]*"#, options: .regularExpression) != nil, "the report includes evaluated samples: \(report)")
+        print("Asset Director evaluation: \(report)")
         attach(app, name: "review-asset-director-evaluation")
         waitForAny("asset-director-done", in: app, timeout: 5, "close the library").tap()
         waitForAny("glass3d-generate", in: app, timeout: 10, "the World Director button").tap()
@@ -533,8 +537,11 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(used.label.contains("玩家现在使用"), "the player wears the character: \(used.label)")
         let exportTab = app.segmentedControls["workbench-pages"].buttons["导出"]
         exportTab.tap()
-        let selectedExport = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == YES"), object: exportTab)
-        XCTAssertEqual(XCTWaiter.wait(for: [selectedExport], timeout: 20), .completed, "export page selected")
+        let exportName = app.textFields["workbench-name"]
+        if !exportName.waitForExistence(timeout: 8) {
+            exportTab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(exportName.waitForExistence(timeout: 20), "the export page shows the character name field")
         reveal("workbench-place-demo", in: app, "the demo cast button").tap()
         let placed = NSPredicate { _, _ in (app.descendants(matching: .any)["workbench-message"].label).contains("三位演示角色") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: placed, object: nil)], timeout: 60), .completed,
