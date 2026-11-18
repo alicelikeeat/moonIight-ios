@@ -74,6 +74,7 @@ final class ScrollGestureTests: XCTestCase {
         let picker = app.buttons["rpg-node-media"]; guard revealListControl(picker, in: app) else { return }; picker.tap()
         let video = app.buttons["Scroll fixture 0"]; XCTAssertTrue(video.waitForExistence(timeout: 6)); video.tap()
         let loop = app.switches["rpg-node-loop"]; guard revealListControl(loop, in: app) else { return }; if loop.value as? String == "0" { loop.tap() }
+        XCTAssertEqual(loop.value as? String, "1", "the authored video loops before and after resume")
         let apply = app.buttons["rpg-node-apply"]; XCTAssertTrue(apply.waitForExistence(timeout: 6)); apply.tap()
         let preview = app.buttons["rpg-story-preview"]; guard revealListControl(preview, in: app) else { return }; preview.tap()
         XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout: 8)); app.buttons["rpg-preview-next"].tap()
@@ -190,10 +191,15 @@ final class ScrollGestureTests: XCTestCase {
         // Gentle drags in the middle of the screen: a swipe down at the top of a
         // sheet would close it, a drag only scrolls.
         func drag(_ dy: CGFloat) {
-            let inWorkbench = app.descendants(matching: .any)["character-workbench"].exists
-            let rightPane = inWorkbench && window.width > window.height
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: rightPane ? 0.78 : 0.5, dy: 0.55))
-            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
+            let form = app.descendants(matching: .any)["workbench-form"].firstMatch
+            if form.exists {
+                let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy < 0 ? 0.8 : 0.2))
+                let end = form.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy < 0 ? 0.2 : 0.8))
+                start.press(forDuration: 0.05, thenDragTo: end)
+            } else {
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+                start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
+            }
         }
         // Lazy rows above the viewport do not exist: after scrolling one way
         // without finding it, scroll back the other way.
@@ -576,7 +582,7 @@ final class ScrollGestureTests: XCTestCase {
         // An element screenshot of a Metal view comes back blank white in the
         // simulator; crop the preview out of a whole-screen screenshot instead.
         func previewShot() -> UIImage {
-            let screen = app.screenshot().image
+            let screen = XCUIScreen.main.screenshot().image
             guard let cg = screen.cgImage else { return screen }
             let k = CGFloat(cg.width) / screen.size.width
             let f = preview.frame

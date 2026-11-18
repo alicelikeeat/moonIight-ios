@@ -52,9 +52,9 @@ struct Glass3DScreen: View {
     /// AI 3D page in front) so the phone does not heat up.
     /// v1.93: the world also pauses under the character workbench and the base-body page: their
     /// own live previews need the main thread, and the world behind them is not being played.
-    private var worldSuspended: Bool { scenePhase != .active || generate3D || sandboxSheet == .workbench || sandboxSheet == .humanBase || sandboxSheet == .storyEditor || sandboxSheet == .story }
+    private var worldSuspended: Bool { scenePhase != .active || generate3D || rendersOwnScene }
+    private var rendersOwnScene: Bool { sandboxSheet == .workbench || sandboxSheet == .humanBase || sandboxSheet == .storyEditor || sandboxSheet == .story }
     /// v1.80: the scene is taken out of the 3D view only once a full-screen
-    /// page fully covers it, and put back as soon as the page starts to
     /// close — the world is never shown black. Switching apps only pauses
     /// (iOS stops drawing in the background by itself), so the last frame
     /// stays on screen and in the app switcher.
@@ -87,7 +87,7 @@ struct Glass3DScreen: View {
                 // The 3D view stays mounted; while hidden its scene is
                 // detached (nothing to draw) and a black cover sits on top.
                 // Re-creating the view on return could leave it empty (black).
-                Glass3DWorldView(controller: controller, hidden: worldDetached).ignoresSafeArea()
+                Glass3DWorldView(controller: controller, hidden: worldDetached || rendersOwnScene).ignoresSafeArea()
                     // One accessibility element for the whole scene: enumerating its
                     // thousands of entities timed out every accessibility snapshot
                     // (UI tests lost the whole 3D screen; VoiceOver met a wall of blocks).
@@ -151,7 +151,7 @@ struct Glass3DScreen: View {
                     .accessibilityAddTraits(.isModal)
                 }
             }
-            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.mode)
+            .accessibilityHidden(sandboxSheet != nil).animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.mode)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: showsPanel)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: portrait)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.selection.isEmpty)
