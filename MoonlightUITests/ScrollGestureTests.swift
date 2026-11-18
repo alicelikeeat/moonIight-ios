@@ -73,8 +73,13 @@ final class ScrollGestureTests: XCTestCase {
         let node = app.buttons["rpg-edit-node-media"]; guard revealListControl(node, in: app) else { return }; node.tap()
         let picker = app.buttons["rpg-node-media"]; guard revealListControl(picker, in: app) else { return }; picker.tap()
         let video = app.buttons["Scroll fixture 0"]; XCTAssertTrue(video.waitForExistence(timeout: 6)); video.tap()
-        let loop = app.switches["rpg-node-loop"]; guard revealListControl(loop, in: app) else { return }; if loop.value as? String == "0" { loop.tap() }
-        XCTAssertEqual(loop.value as? String, "1", "the authored video loops before and after resume")
+        let loop = app.switches["rpg-node-loop"]
+        guard revealListControl(loop, in: app) else { return }
+        if loop.value as? String == "0" {
+            loop.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
+        let looping = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: loop)
+        XCTAssertEqual(XCTWaiter.wait(for: [looping], timeout: 8), .completed, "the authored video loops before and after resume")
         let apply = app.buttons["rpg-node-apply"]; XCTAssertTrue(apply.waitForExistence(timeout: 6)); apply.tap()
         let preview = app.buttons["rpg-story-preview"]; guard revealListControl(preview, in: app) else { return }; preview.tap()
         XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout: 8)); app.buttons["rpg-preview-next"].tap()
