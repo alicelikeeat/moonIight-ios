@@ -205,7 +205,7 @@ struct CharacterWorkbenchView: View {
                 Text(message).font(.callout).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 6)
                     .accessibilityIdentifier("workbench-message")
             }
-            Form { pageContent }.accessibilityElement(children: .contain).accessibilityIdentifier("workbench-form")
+            Form { pageContent }.id(page).accessibilityElement(children: .contain).accessibilityIdentifier("workbench-form")
         }
     }
 

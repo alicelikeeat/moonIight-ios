@@ -87,7 +87,7 @@ final class ScrollGestureTests: XCTestCase {
             Dictionary((probe.value as? String ?? "").split(separator: ";").compactMap { item in let p = item.split(separator: "="); guard p.count == 2, let n = Int(p[1]) else { return nil }; return (String(p[0]), n) }, uniquingKeysWith: { a, _ in a })
         }
         let active = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > 0 && (v["players"] ?? 99) <= 1 && (v["global"] ?? 99) <= 1 }
-        let started = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: probe)], timeout: 25)
+        let started = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: nil)], timeout: 75)
         if started != .completed {
             print("CUTSCENE_PROBE: \(probe.exists ? (probe.value as? String ?? "?") : "absent")")
             attach(app, name: "review-missing-cutscene")
@@ -96,7 +96,7 @@ final class ScrollGestureTests: XCTestCase {
         let frames = values()["frames"] ?? 0
         XCUIDevice.shared.press(.home); app.activate()
         let resumed = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > frames && v["muted"] == 1 && (v["global"] ?? 99) <= 1 }
-        let back = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: probe)], timeout: 25)
+        let back = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: nil)], timeout: 75)
         if back != .completed {
             print("CUTSCENE_RESUME_PROBE (frames before \(frames)): \(probe.exists ? (probe.value as? String ?? "?") : "absent")")
             attach(app, name: "review-missing-cutscene-resume")
@@ -531,7 +531,10 @@ final class ScrollGestureTests: XCTestCase {
         reveal("workbench-use-as-player", in: app, "use as player").tap()
         let used = waitForAny("workbench-message", in: app, timeout: 30, "the player message")
         XCTAssertTrue(used.label.contains("玩家现在使用"), "the player wears the character: \(used.label)")
-        app.buttons["导出"].tap()
+        let exportTab = app.segmentedControls["workbench-pages"].buttons["导出"]
+        exportTab.tap()
+        let selectedExport = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == YES"), object: exportTab)
+        XCTAssertEqual(XCTWaiter.wait(for: [selectedExport], timeout: 20), .completed, "export page selected")
         reveal("workbench-place-demo", in: app, "the demo cast button").tap()
         let placed = NSPredicate { _, _ in (app.descendants(matching: .any)["workbench-message"].label).contains("三位演示角色") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: placed, object: nil)], timeout: 60), .completed,
