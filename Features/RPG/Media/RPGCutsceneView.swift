@@ -35,6 +35,7 @@ struct RPGCutsceneView:View {
     private let bindingID:String
     private var initial:Double
     private var activated=false
+    private var playing=false
     private var targets:[RPGMediaNode]=[]
     @Published private(set) var audible=false
     @Published private(set) var probe=""
@@ -66,6 +67,9 @@ struct RPGCutsceneView:View {
     }
     var seconds:Double{targets.first.map{media.position($0.binding.mediaID)} ?? initial}
     func activate(){
+        guard !playing else { return }
+        playing=true
+        lastProbe=0
         audible = !activated && targets.first?.binding.muted == false
         activated=true
         targets=targets.map{target in var binding=target.binding;binding.muted = !audible;return .init(ownerID:target.ownerID,binding:binding,role:target.role,sprite:target.sprite,region:target.region)}
@@ -77,8 +81,15 @@ struct RPGCutsceneView:View {
         targets=targets.map{target in var binding=target.binding;binding.muted = !audible;return .init(ownerID:target.ownerID,binding:binding,role:target.role,sprite:target.sprite,region:target.region)}
         media.install(world:world,targets:targets,scene:scene,active:true)
     }
-    func pause(){initial=seconds;audible=false;media.pause();scene.isPaused=true}
-    func shutdown(){media.stop();scene.isPaused=true}
+    func pause(){
+        guard playing else { return }
+        initial=seconds
+        playing=false
+        audible=false
+        media.pause()
+        scene.isPaused=true
+    }
+    func shutdown(){pause();media.stop();scene.isPaused=true}
 }
 
 @MainActor private final class RPGCutsceneScene: SKScene {

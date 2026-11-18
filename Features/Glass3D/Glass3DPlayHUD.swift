@@ -13,7 +13,38 @@ struct Glass3DPlayHUD: View {
         if portrait { portraitLayout } else { landscapeLayout }
     }
 
+    @AppStorage("moonlight.landscapeHUD") private var hudStyle = "auto"
+    @ObservedObject var gamepad: Glass3DGamepad
     @ObservedObject private var pads = SpatialPadMappingStore.shared
+
+    init(controller: Glass3DController, portrait: Bool, gamepad: Glass3DGamepad) {
+        self.controller = controller
+        self.portrait = portrait
+        self.gamepad = gamepad
+    }
+
+    private var touchActions: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            VStack(spacing: 4) {
+                lockButton(size: 44)
+                lookStick(size: 88)
+            }
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    touchButton(.jump, size: 46)
+                    touchButton(.skill, size: 46)
+                }
+                HStack(alignment: .bottom, spacing: 8) {
+                    touchButton(.dodge, size: 54)
+                    touchButton(.attack, size: 64)
+                }
+            }
+        }
+    }
+
+    private func touchButton(_ action: SpatialPadAction, size: CGFloat) -> some View {
+        Glass3DPadButton(controller: controller, live: controller.live, button: nil, action: action, size: size)
+    }
 
     /// Landscape: vitals and move stick left; shoulder row, face diamond and
     /// look stick right, placed like an Xbox controller's right half.
@@ -23,12 +54,18 @@ struct Glass3DPlayHUD: View {
                 Glass3DVitals(live: controller.live)
                 if !controller.dead { flightControls }
                 Glass3DStick { x, y in controller.setStick(x, y) }
+                    .opacity(gamepad.connectedName != nil && hudStyle != "touch" ? 0.45 : 1)
             }
             Spacer()
             if controller.dead { reviveButton } else {
                 VStack(alignment: .trailing, spacing: 10) {
                     shoulderRow(size: 44)
-                    rightHalf(face: 56, stick: 104)
+                        .opacity(controller.inCombat ? 1 : 0.78)
+                    if hudStyle == "pad" || (hudStyle == "auto" && gamepad.connectedName != nil) {
+                        rightHalf(face: 56, stick: 104)
+                    } else {
+                        touchActions
+                    }
                 }
             }
         }
@@ -89,6 +126,7 @@ struct Glass3DPlayHUD: View {
             VStack(spacing: 8) {
                 padButton(click, pads.mapping.action(for: click, playing: true), size: 42)
                 lookStick(size: stick)
+                    .opacity(gamepad.connectedName == nil ? 1 : 0.45)
             }
             RPGGlassGroup(spacing: 8) {
                 ZStack(alignment: .topLeading) {
@@ -164,12 +202,12 @@ struct Glass3DPlayHUD: View {
 struct Glass3DPadButton: View {
     @ObservedObject var controller: Glass3DController
     @ObservedObject var live: Glass3DLive
-    let button: SpatialPadButton
+    let button: SpatialPadButton?
     let action: SpatialPadAction?
     let size: CGFloat
 
     var body: some View {
-        let look = action.map(visual) ?? PadVisual(symbol: "circle.dotted", title: L10n.t("未设置", "Not set"), id: "glass3d-pad-\(button.cap)", ring: .none, enabled: false)
+        let look = action.map(visual) ?? PadVisual(symbol: "circle.dotted", title: L10n.t("未设置", "Not set"), id: "glass3d-pad-\(button?.cap ?? "empty")", ring: .none, enabled: false)
         Glass3DRoundButton(symbol: look.symbol, title: look.title, size: size, ring: look.ring, live: live, id: look.id, cap: button) {
             if let action { controller.perform(action) }
         }

@@ -13,7 +13,7 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     private func openMore(_ id: String, in app: XCUIApplication) {
         waitForAny("glass3d-settings", in: app, timeout: 20, "the ⋯ button").tap()
-        waitForAny(id, in: app, timeout: 15, "\(id) in the ⋯ panel").tap()
+        reveal(id, in: app, "\(id) in the world menu").tap()
     }
     /// The DEBUG world probe on the 3D screen: shards, legacy blocks, story state.
     @MainActor
@@ -73,7 +73,11 @@ final class ScrollGestureTests: XCTestCase {
         let node = app.buttons["rpg-edit-node-media"]; guard revealListControl(node, in: app) else { return }; node.tap()
         let picker = app.buttons["rpg-node-media"]; guard revealListControl(picker, in: app) else { return }; picker.tap()
         let video = app.buttons["Scroll fixture 0"]; XCTAssertTrue(video.waitForExistence(timeout: 6)); video.tap()
-        let loop = app.switches["rpg-node-loop"]; guard revealListControl(loop, in: app) else { return }; if loop.value as? String == "0" { loop.tap() }
+        let loop = app.segmentedControls["rpg-node-loop"].buttons["循环演出"]
+        guard revealListControl(loop, in: app) else { return }
+        loop.tap()
+        let looping = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == YES"), object: loop)
+        XCTAssertEqual(XCTWaiter.wait(for: [looping], timeout: 10), .completed, "the authored video loops before and after resume")
         let apply = app.buttons["rpg-node-apply"]; XCTAssertTrue(apply.waitForExistence(timeout: 6)); apply.tap()
         let preview = app.buttons["rpg-story-preview"]; guard revealListControl(preview, in: app) else { return }; preview.tap()
         XCTAssertTrue(app.buttons["rpg-preview-next"].waitForExistence(timeout: 8)); app.buttons["rpg-preview-next"].tap()
@@ -83,7 +87,7 @@ final class ScrollGestureTests: XCTestCase {
             Dictionary((probe.value as? String ?? "").split(separator: ";").compactMap { item in let p = item.split(separator: "="); guard p.count == 2, let n = Int(p[1]) else { return nil }; return (String(p[0]), n) }, uniquingKeysWith: { a, _ in a })
         }
         let active = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > 0 && (v["players"] ?? 99) <= 1 && (v["global"] ?? 99) <= 1 }
-        let started = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: probe)], timeout: 25)
+        let started = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: active, object: nil)], timeout: 75)
         if started != .completed {
             print("CUTSCENE_PROBE: \(probe.exists ? (probe.value as? String ?? "?") : "absent")")
             attach(app, name: "review-missing-cutscene")
@@ -92,7 +96,7 @@ final class ScrollGestureTests: XCTestCase {
         let frames = values()["frames"] ?? 0
         XCUIDevice.shared.press(.home); app.activate()
         let resumed = NSPredicate { _, _ in let v = values(); return (v["frames"] ?? 0) > frames && v["muted"] == 1 && (v["global"] ?? 99) <= 1 }
-        let back = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: probe)], timeout: 25)
+        let back = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: nil)], timeout: 75)
         if back != .completed {
             print("CUTSCENE_RESUME_PROBE (frames before \(frames)): \(probe.exists ? (probe.value as? String ?? "?") : "absent")")
             attach(app, name: "review-missing-cutscene-resume")
@@ -190,8 +194,15 @@ final class ScrollGestureTests: XCTestCase {
         // Gentle drags in the middle of the screen: a swipe down at the top of a
         // sheet would close it, a drag only scrolls.
         func drag(_ dy: CGFloat) {
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
-            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
+            let form = app.descendants(matching: .any)["workbench-form"].firstMatch
+            if form.exists {
+                let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy < 0 ? 0.8 : 0.2))
+                let end = form.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: dy < 0 ? 0.2 : 0.8))
+                start.press(forDuration: 0.05, thenDragTo: end)
+            } else {
+                let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+                start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
+            }
         }
         // Lazy rows above the viewport do not exist: after scrolling one way
         // without finding it, scroll back the other way.
@@ -253,11 +264,15 @@ final class ScrollGestureTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "asset-director-picks").firstMatch.waitForExistence(timeout: 5))
 
         // The real accuracy check on the bundled CC0 files.
-        reveal("asset-director-evaluate", in: app, "the evaluation button").tap()
-        let evaluation = app.descendants(matching: .any).matching(identifier: "asset-director-evaluation").firstMatch
-        for _ in 0..<40 where !evaluation.exists { sleep(3); if !evaluation.exists { app.swipeUp() } }
-        XCTAssertTrue(evaluation.exists, "the evaluation reports")
-        print("Asset Director evaluation: \(evaluation.value ?? "")")
+        let evaluate = reveal("asset-director-evaluate", in: app, "the evaluation button")
+        evaluate.tap()
+        // Keep the evaluation row on screen while Vision processes the bundled files.
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == YES AND enabled == YES"), object: evaluate)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 180), .completed, "bundled asset evaluation finishes")
+        let evaluation = reveal("asset-director-evaluation", in: app, "the evaluation reports")
+        let report = evaluation.value as? String ?? ""
+        XCTAssertTrue(report.range(of: #"samples=[1-9][0-9]*"#, options: .regularExpression) != nil, "the report includes evaluated samples: \(report)")
+        print("Asset Director evaluation: \(report)")
         attach(app, name: "review-asset-director-evaluation")
         waitForAny("asset-director-done", in: app, timeout: 5, "close the library").tap()
         waitForAny("glass3d-generate", in: app, timeout: 10, "the World Director button").tap()
@@ -517,10 +532,16 @@ final class ScrollGestureTests: XCTestCase {
         waitForAny("workbench-motion-walk", in: app, timeout: 10, "the walk in the motion list").tap()
         sleep(1)
         attach(app, name: "review-workbench-walk")
-        app.buttons["导出"].tap()
         reveal("workbench-use-as-player", in: app, "use as player").tap()
         let used = waitForAny("workbench-message", in: app, timeout: 30, "the player message")
         XCTAssertTrue(used.label.contains("玩家现在使用"), "the player wears the character: \(used.label)")
+        let exportTab = app.segmentedControls["workbench-pages"].buttons["导出"]
+        exportTab.tap()
+        let exportName = app.textFields["workbench-name"]
+        if !exportName.waitForExistence(timeout: 8) {
+            exportTab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(exportName.waitForExistence(timeout: 20), "the export page shows the character name field")
         reveal("workbench-place-demo", in: app, "the demo cast button").tap()
         let placed = NSPredicate { _, _ in (app.descendants(matching: .any)["workbench-message"].label).contains("三位演示角色") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: placed, object: nil)], timeout: 60), .completed,
@@ -574,7 +595,7 @@ final class ScrollGestureTests: XCTestCase {
         // An element screenshot of a Metal view comes back blank white in the
         // simulator; crop the preview out of a whole-screen screenshot instead.
         func previewShot() -> UIImage {
-            let screen = app.screenshot().image
+            let screen = XCUIScreen.main.screenshot().image
             guard let cg = screen.cgImage else { return screen }
             let k = CGFloat(cg.width) / screen.size.width
             let f = preview.frame

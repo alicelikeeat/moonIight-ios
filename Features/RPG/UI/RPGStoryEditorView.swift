@@ -96,13 +96,23 @@ private struct RPGStoryNodeEditor:View {
     @State private var loop=false
     @State private var muted=true
     @State private var selectedMedia=""
+    init(node: RPGStoryNode, nodes: [RPGStoryNode], media: [MediaEntry], bindings: [MediaBinding], save: @escaping (RPGStoryNode, MediaEntry?, Bool, Bool) -> Void) {
+        self._node = State(initialValue: node)
+        self.nodes = nodes
+        self.media = media
+        self.bindings = bindings
+        self.save = save
+        let binding = bindings.first { $0.id == node.mediaBindingID }
+        self._loop = State(initialValue: node.mediaLoop ?? binding?.loop ?? false)
+        self._muted = State(initialValue: node.mediaMuted ?? binding?.muted ?? true)
+    }
     var body:some View {
         Form { Group {
             properties; conditions; choices; actions; mediaSection
             }.listRowBackground(MoonLiquidRowBackground())
         }.moonLiquidList().navigationTitle("节点表单").buttonStyle(MoonGlassButtonStyle())
             .toolbar{ToolbarItem(placement:.confirmationAction){Button("应用"){applyChanges()}.accessibilityIdentifier("rpg-node-apply")}}
-            .onAppear{if let binding=bindings.first(where:{$0.id==node.mediaBindingID}){loop=node.mediaLoop ?? binding.loop;muted=node.mediaMuted ?? binding.muted}}
+
     }
 
     private func applyChanges(){
@@ -171,8 +181,11 @@ private struct RPGStoryNodeEditor:View {
                     Text("清除绑定").tag("clear")
                     ForEach(media.filter{$0.kind != .embed}){Text($0.title).tag($0.id)}
                 }.pickerStyle(.menu).accessibilityIdentifier("rpg-node-media")
-                HStack{Text("循环演出");Spacer();Toggle("循环演出",isOn:$loop).labelsHidden().frame(width:51,height:44).accessibilityIdentifier("rpg-node-loop")}
-                HStack{Text("静音");Spacer();Toggle("静音",isOn:$muted).labelsHidden().frame(width:51,height:44)}
+                Picker("播放方式", selection: $loop) {
+                    Text("播放一次").tag(false)
+                    Text("循环演出").tag(true)
+                }.pickerStyle(.segmented).accessibilityIdentifier("rpg-node-loop")
+                Toggle("静音", isOn: $muted).toggleStyle(.switch)
                 Text("节点文字同时作为字幕；用户可跳过，媒体缺失时仍能继续。").font(.caption)
             }
     }

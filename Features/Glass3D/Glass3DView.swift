@@ -29,7 +29,7 @@ struct Glass3DScreen: View {
     /// Diagnostics (UI tests): how often this screen appeared.
     @MainActor static var appearances = 0
     /// Height of the 3D screen, so the ⋯ panel can end above the bottom bars.
-    @State private var screenHeight: CGFloat = 800
+    @AppStorage("moonlight.landscapeHUD") private var hudStyle = "auto"
     @State private var importingPack = false
     @State private var generator = false
     @State private var classicGenerator = false
@@ -52,9 +52,9 @@ struct Glass3DScreen: View {
     /// AI 3D page in front) so the phone does not heat up.
     /// v1.93: the world also pauses under the character workbench and the base-body page: their
     /// own live previews need the main thread, and the world behind them is not being played.
-    private var worldSuspended: Bool { scenePhase != .active || generate3D || sandboxSheet == .workbench || sandboxSheet == .humanBase }
+    private var worldSuspended: Bool { scenePhase != .active || generate3D || rendersOwnScene }
+    private var rendersOwnScene: Bool { sandboxSheet == .workbench || sandboxSheet == .humanBase || sandboxSheet == .storyEditor || sandboxSheet == .story }
     /// v1.80: the scene is taken out of the 3D view only once a full-screen
-    /// page fully covers it, and put back as soon as the page starts to
     /// close — the world is never shown black. Switching apps only pauses
     /// (iOS stops drawing in the background by itself), so the last frame
     /// stays on screen and in the app switcher.
@@ -87,7 +87,7 @@ struct Glass3DScreen: View {
                 // The 3D view stays mounted; while hidden its scene is
                 // detached (nothing to draw) and a black cover sits on top.
                 // Re-creating the view on return could leave it empty (black).
-                Glass3DWorldView(controller: controller, hidden: worldDetached).ignoresSafeArea()
+                Glass3DWorldView(controller: controller, hidden: worldDetached || rendersOwnScene).ignoresSafeArea()
                     // One accessibility element for the whole scene: enumerating its
                     // thousands of entities timed out every accessibility snapshot
                     // (UI tests lost the whole 3D screen; VoiceOver met a wall of blocks).
@@ -96,12 +96,6 @@ struct Glass3DScreen: View {
                 Glass3DNativeGlassLayer(glass: controller.nativeGlass).ignoresSafeArea()
                 Glass3DGestureLayer(controller: controller).ignoresSafeArea()
                 Glass3DOverlay(glass: controller.nativeGlass, controller: controller).ignoresSafeArea()
-                if showMore {
-                    // Tapping anywhere else closes the ⋯ panel (and does not reach the world).
-                    Color.black.opacity(0.001).ignoresSafeArea()
-                        .onTapGesture { withAnimation(MoonGlassMotion.animation(.morph, reduceMotion: reduceMotion)) { showMore = false } }
-                        .accessibilityHidden(true)
-                }
                 // v1.91: the rail would sit on top of the open ⋯ panel; it comes back when the panel closes.
                 if controller.mode == .edit, !showMore {
                     cameraRail
@@ -116,7 +110,7 @@ struct Glass3DScreen: View {
                     blankWorldPrompt.padding(.bottom, 12)
                     travelPrompt.padding(.bottom, 12)
                     if controller.mode == .play {
-                        Glass3DPlayHUD(controller: controller, portrait: portrait).transition(.opacity)
+                        Glass3DPlayHUD(controller: controller, portrait: portrait, gamepad: controller.gamepad).transition(.opacity)
                     } else {
                         if portrait, showsPanel {
                             Glass3DPanel(controller: controller, store: model.mediaStore, onClose: { controller.selection = [] })
@@ -127,7 +121,9 @@ struct Glass3DScreen: View {
                     }
                 }
                 .padding(.horizontal, portrait ? 10 : 14).padding(.vertical, 8)
-                if !portrait, showsPanel {
+                .accessibilityHidden(showMore)
+                .allowsHitTesting(!showMore)
+                if !showMore, !portrait, showsPanel {
                     HStack {
                         Spacer()
                         Glass3DPanel(controller: controller, store: model.mediaStore, onClose: { controller.selection = [] })
@@ -136,9 +132,26 @@ struct Glass3DScreen: View {
                     .padding(.top, 66).padding(.bottom, 170).padding(.trailing, 14)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
+                if showMore {
+                    Color.black.opacity(0.38).ignoresSafeArea()
+                        .onTapGesture { showMore = false }
+                        .accessibilityHidden(true)
+                    VStack(spacing: 4) {
+                        HStack {
+                            Text(L10n.t("世界菜单", "World Menu")).font(.headline)
+                            Spacer()
+                            moreButton
+                        }
+                        .padding(.horizontal, 16)
+                        morePanel
+                    }
+                    .padding(8)
+                    .hudGlass(.panel, radius: 22)
+                    .padding(8)
+                    .accessibilityAddTraits(.isModal)
+                }
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { screenHeight = $0 }
-            .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.mode)
+            .accessibilityHidden(sandboxSheet != nil).animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.mode)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: showsPanel)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: portrait)
             .animation(MoonGlassMotion.animation(.panel, reduceMotion: reduceMotion), value: controller.selection.isEmpty)
@@ -315,14 +328,6 @@ struct Glass3DScreen: View {
             Glass3DStatsLine(live: controller.live)
         }
         .buttonStyle(.borderless)
-        .overlay(alignment: .topTrailing) {
-            if showMore {
-                morePanel
-                    .frame(width: 280)
-                    .padding(.top, 50)
-                    .transition(.scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity))
-            }
-        }
     }
 
     private var moreButton: some View {
@@ -333,7 +338,7 @@ struct Glass3DScreen: View {
                 .frame(width: 34, height: 34).contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel(L10n.t("设置", "Settings")).accessibilityIdentifier("glass3d-settings")
+        .accessibilityLabel(showMore ? L10n.t("关闭世界菜单", "Close World Menu") : L10n.t("世界菜单", "World Menu")).accessibilityIdentifier("glass3d-settings")
     }
 
     private func closeMore(then action: @escaping () -> Void) {
@@ -345,39 +350,56 @@ struct Glass3DScreen: View {
     private var morePanel: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                moreRow("scope", L10n.t("恢复默认视角", "Reset View")) { controller.resetCamera() }
-                moreRow("building.columns", L10n.t("放置月光水晶城", "Place Crystal Moon City")) { controller.placeGoldenCity() }
-                    .accessibilityIdentifier("glass3d-place-town")
-                moreRow("flag.checkered", L10n.t("演示关卡（城镇 + 战斗区 + Boss）", "Demo Level (Town + Battle + Boss)")) { controller.placeDemoLevel() }
-                    .accessibilityIdentifier("glass3d-place-demo")
-                moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
-                moreHeader(L10n.t("剧情与世界", "Story & Worlds"))
-                moreRow("book", L10n.t("剧情与任务", "Story & Quests")) { sandboxSheet = .story }.accessibilityIdentifier("glass3d-story")
-                moreRow("pencil.and.list.clipboard", L10n.t("剧情编辑器", "Story Editor")) { sandboxSheet = .storyEditor }.accessibilityIdentifier("glass3d-story-editor")
-                moreRow("globe", L10n.t("世界与存档", "Worlds & Saves")) { sandboxSheet = .worlds }.accessibilityIdentifier("glass3d-worlds")
-                moreHeader(L10n.t("编辑器", "Editors"))
-                moreRow("figure.stand", L10n.t("角色工作台", "Character Workbench")) { sandboxSheet = .workbench }
-                    .accessibilityIdentifier("glass3d-character-workbench")
-                moreRow("figure.arms.open", L10n.t("通用底模", "Base Body")) { sandboxSheet = .humanBase }
-                    .accessibilityIdentifier("glass3d-human-base")
-                moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
-                moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
-                moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
-                moreRow("square.and.arrow.down.on.square", L10n.t("导入内容包（JSON）", "Import Content Pack (JSON)")) { importingPack = true }
-                    .accessibilityIdentifier("glass3d-import-pack")
-                moreHeader(L10n.t("更多", "More"))
-                moreRow("cube.transparent", L10n.t("AI 生成 3D 模型", "AI 3D Models")) { generate3D = true }
-                moreRow("wand.and.stars", L10n.t("智能素材库", "Asset Director")) { assetDirector = true }
-                    .accessibilityIdentifier("glass3d-asset-director")
-                moreRow("checkmark.seal", L10n.t("素材来源与授权", "Credits & Licences")) { credits = true }
-                moreRow("trash", L10n.t("一键清空世界", "Clear World"), destructive: true) { confirmClear = true }
-                moreHeader(L10n.t("显示", "Display"))
-                moreRow("drop.halffull", L10n.t("玻璃外观（透明度与颜色）", "Glass Look (Clarity & Colour)")) { glassLook = true }
-                moreRow("gamecontroller", L10n.t("手柄按键映射（Xbox）", "Controller Mapping (Xbox)")) { padMapping = true }
-                moreRow("app.badge", L10n.t("App 图标", "App Icon")) { iconPicker = true }
-                moreRow("map", L10n.t("大陆地图（\(controller.regionTitle)）", "Continent Map (\(controller.regionTitle))")) { continent = true }
-                moreRow("speedometer", L10n.t("运行诊断", "Diagnostics")) { sandboxSheet = .diagnostics }.accessibilityIdentifier("glass3d-diagnostics")
-                moreRow("gearshape", L10n.t("应用设置", "App Settings")) { sandboxSheet = .appSettings }.accessibilityIdentifier("glass3d-app-settings")
+                moreHeader(L10n.t("冒险", "Adventure"))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], alignment: .leading, spacing: 2) {
+                    if controller.world.blocks.contains(where: { $0.id.hasPrefix(DemoLevel.prefix) }) {
+                        moreRow("play.fill", L10n.t("继续水晶城冒险", "Continue Crystal City Adventure")) { controller.mode = .play }
+                    } else {
+                        moreRow("flag.checkered", L10n.t("创建水晶城冒险关卡", "Create Crystal City Adventure")) { controller.placeDemoLevel() }
+                            .accessibilityIdentifier("glass3d-place-demo")
+                    }
+                    moreRow("book", L10n.t("剧情与任务", "Story & Quests")) { sandboxSheet = .story }.accessibilityIdentifier("glass3d-story")
+                    moreRow("map", L10n.t("大陆地图（\(controller.regionTitle)）", "Continent Map (\(controller.regionTitle))")) { continent = true }
+                }
+                moreHeader(L10n.t("角色", "Characters"))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], alignment: .leading, spacing: 2) {
+                    moreRow("figure.stand", L10n.t("角色工作台", "Character Workbench")) { sandboxSheet = .workbench }
+                        .accessibilityIdentifier("glass3d-character-workbench")
+                    moreRow("figure.arms.open", L10n.t("通用底模", "Base Body")) { sandboxSheet = .humanBase }
+                        .accessibilityIdentifier("glass3d-human-base")
+                    moreRow("person.crop.square", L10n.t("角色编辑器", "Character Editor")) { editor = .characters }
+                    moreRow("cube.transparent", L10n.t("AI 生成 3D 模型", "AI 3D Models")) { generate3D = true }
+                }
+                moreHeader(L10n.t("创造", "Create"))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], alignment: .leading, spacing: 2) {
+                    moreRow("building.columns", L10n.t("放置月光水晶城", "Place Crystal Moon City")) { controller.placeGoldenCity() }
+                        .accessibilityIdentifier("glass3d-place-town")
+                    moreRow("pencil.and.list.clipboard", L10n.t("剧情编辑器", "Story Editor")) { sandboxSheet = .storyEditor }.accessibilityIdentifier("glass3d-story-editor")
+                    moreRow("wand.and.rays", L10n.t("技能编辑器", "Skill Editor")) { editor = .skills }
+                    moreRow("crown", L10n.t("Boss 阶段编辑器", "Boss Phase Editor")) { editor = .bosses }
+                    moreRow("wand.and.stars", L10n.t("智能素材库", "Asset Director")) { assetDirector = true }
+                        .accessibilityIdentifier("glass3d-asset-director")
+                    moreRow("square.and.arrow.down.on.square", L10n.t("导入内容包（JSON）", "Import Content Pack (JSON)")) { importingPack = true }
+                        .accessibilityIdentifier("glass3d-import-pack")
+                }
+                moreHeader(L10n.t("世界", "World"))
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 12)], alignment: .leading, spacing: 2) {
+                    moreRow("globe", L10n.t("世界与存档", "Worlds & Saves")) { sandboxSheet = .worlds }.accessibilityIdentifier("glass3d-worlds")
+                    moreRow("square.and.arrow.down", L10n.t("保存世界", "Save World")) { controller.persist(force: true) }
+                    moreRow("scope", L10n.t("恢复默认视角", "Reset View")) { controller.resetCamera() }
+                    moreRow("drop.halffull", L10n.t("玻璃外观（透明度与颜色）", "Glass Look (Clarity & Colour)")) { glassLook = true }
+                    moreRow("gamecontroller", L10n.t("手柄按键映射（Xbox）", "Controller Mapping (Xbox)")) { padMapping = true }
+                    moreRow("app.badge", L10n.t("App 图标", "App Icon")) { iconPicker = true }
+                    moreRow("speedometer", L10n.t("运行诊断", "Diagnostics")) { sandboxSheet = .diagnostics }.accessibilityIdentifier("glass3d-diagnostics")
+                    moreRow("gearshape", L10n.t("应用设置", "App Settings")) { sandboxSheet = .appSettings }.accessibilityIdentifier("glass3d-app-settings")
+                    moreRow("checkmark.seal", L10n.t("素材来源与授权", "Credits & Licences")) { credits = true }
+                }
+                Picker(L10n.t("横屏操作布局", "Landscape Controls"), selection: $hudStyle) {
+                    Text(L10n.t("自动", "Auto")).tag("auto")
+                    Text(L10n.t("触屏", "Touch")).tag("touch")
+                    Text(L10n.t("手柄", "Gamepad")).tag("pad")
+                }
+                .pickerStyle(.segmented).padding(.horizontal, 8)
                 Toggle(L10n.t("3D 省电模式（更凉）", "3D Power Saver (cooler)"), isOn: $controller.powerSaver)
                     .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
                     .accessibilityIdentifier("glass3d-power-saver")
@@ -392,22 +414,12 @@ struct Glass3DScreen: View {
                     Toggle(L10n.t("启动时进入 3D 设计模式", "Open in 3D Design at Launch"), isOn: $openAtLaunch)
                 }
                 .font(.subheadline).padding(.horizontal, 10).padding(.vertical, 4)
+                moreRow("trash", L10n.t("一键清空世界", "Clear World"), destructive: true) { confirmClear = true }
             }
             .padding(8)
         }
-        // A fixed height that always ends above the play HUD / design bars, and
-        // clipped to its glass: the rows scroll inside it instead of spilling out.
-        // (Before, fixedSize gave the list its full height, so it could not scroll.)
-        .frame(height: morePanelHeight)
         .scrollBounceBehavior(.basedOnSize)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .hudGlass(.panel, radius: 22)
         .accessibilityIdentifier("glass3d-more-panel")
-    }
-    /// Room between the top bar and the bottom controls (design bars are taller than the play HUD).
-    private var morePanelHeight: CGFloat {
-        let top: CGFloat = 50 + 70, bottom: CGFloat = controller.mode == .edit ? 200 : 170
-        return max(220, min(620, screenHeight - top - bottom))
     }
     private func moreHeader(_ title: String) -> some View {
         Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
@@ -1347,7 +1359,8 @@ struct Glass3DOverlay: View {
             Color.clear.allowsHitTesting(false)
             if let point = glass.reticle {
                 Circle().strokeBorder(Color.red.opacity(0.9), lineWidth: 2.5).frame(width: 46, height: 46)
-                    .overlay(Circle().fill(Color.red).frame(width: 6, height: 6))
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.85), lineWidth: 1))
+                    .overlay(Circle().fill(Color.white).frame(width: 6, height: 6).shadow(radius: 1))
                     .hudGlass(.base, in: Circle())
                     .position(point).allowsHitTesting(false).accessibilityHidden(true)
             }
