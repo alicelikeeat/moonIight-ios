@@ -153,22 +153,27 @@ struct CharacterWorkbenchView: View {
     @State private var adjusting: [String: GarmentAdjust] = [:]
 
     var body: some View {
-        VStack(spacing: 0) {
-            CharacterPreview(scene: scene, status: statusLine)
-            Picker(L10n.t("页面", "Page"), selection: $page) { ForEach(Page.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 8)
-                .accessibilityIdentifier("workbench-pages")
-            // Results stay visible whichever page is open (not at the bottom of a long form).
-            if let message {
-                Text(message).font(.callout).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 6)
-                    .accessibilityIdentifier("workbench-message")
+        GeometryReader { geometry in
+            let wide = geometry.size.width > geometry.size.height
+            let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+            layout {
+                CharacterPreview(scene: scene, status: statusLine, height: wide ? max(80, geometry.size.height - 12) : min(280, geometry.size.height * 0.42))
+                    .frame(width: wide ? geometry.size.width * 0.53 : nil)
+                    .overlay(alignment: .topTrailing) {
+                        Button(L10n.t("看全身", "Full Body")) { scene.distance = 3.2 }
+                            .buttonStyle(.bordered).padding(16)
+                    }
+                editingControls
             }
-            Form { pageContent }
         }
         .navigationTitle(L10n.t("角色工作台", "Character Workbench"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button(L10n.t("关闭", "Close")) { dismiss() }.accessibilityIdentifier("workbench-close") }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(L10n.t("保存并设为玩家", "Save & Use as Player")) { use(asPlayer: true) }
+                    .accessibilityIdentifier("workbench-use-as-player")
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { applyUndo() } label: { Image(systemName: "arrow.uturn.backward") }
                     .disabled(undo.isEmpty).accessibilityLabel(L10n.t("撤销", "Undo")).accessibilityIdentifier("workbench-undo")
@@ -188,6 +193,20 @@ struct CharacterWorkbenchView: View {
         .interactiveDismissDisabled(true)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("character-workbench")
+    }
+
+    private var editingControls: some View {
+        VStack(spacing: 0) {
+            Picker(L10n.t("页面", "Page"), selection: $page) { ForEach(Page.allCases) { Text($0.title).tag($0) } }
+                .pickerStyle(.segmented).padding(.horizontal, 12).padding(.vertical, 8)
+                .accessibilityIdentifier("workbench-pages")
+            // Results stay visible whichever page is open (not at the bottom of a long form).
+            if let message {
+                Text(message).font(.callout).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 6)
+                    .accessibilityIdentifier("workbench-message")
+            }
+            Form { pageContent }
+        }
     }
 
     // MARK: Preview
@@ -532,7 +551,6 @@ struct CharacterWorkbenchView: View {
         Section {
             Button(packageID == nil ? L10n.t("保存为新角色", "Save as a new character") : L10n.t("保存修改", "Save changes")) { save(force: false) }
                 .accessibilityIdentifier("workbench-save")
-            Button(L10n.t("设为玩家角色", "Use as the player")) { use(asPlayer: true) }.accessibilityIdentifier("workbench-use-as-player")
             Button(L10n.t("放到世界里（NPC）", "Place in the world (NPC)")) { use(asPlayer: false) }.accessibilityIdentifier("workbench-place-npc")
             Button(L10n.t("放入三位演示角色", "Place the three demo characters")) { message = controller.placeDemoCharacters() }.accessibilityIdentifier("workbench-place-demo")
             if let packageID {
@@ -599,8 +617,10 @@ struct CharacterWorkbenchView: View {
     }
 
     private func use(asPlayer: Bool) {
-        if packageID == nil || library.package(packageID!) == nil { save(force: true) }
-        guard let id = packageID, let p = library.package(id) else { return }
+        guard let p = package() else { message = L10n.t("没有找到通用底模文件", "The base body file is missing"); return }
+        if let error = library.save(p) { message = error; return }
+        packageID = p.manifest.id
+        validation = p.validation
         if asPlayer { controller.useStandardCharacter(p, asPlayer: true); message = L10n.t("玩家现在使用「\(p.manifest.name)」", "The player now uses “\(p.manifest.name)”") }
         else { controller.placeStandardCharacter(p); message = L10n.t("「\(p.manifest.name)」已放在玩家前面", "“\(p.manifest.name)” stands in front of the player") }
     }

@@ -13,7 +13,7 @@ final class ScrollGestureTests: XCTestCase {
     @MainActor
     private func openMore(_ id: String, in app: XCUIApplication) {
         waitForAny("glass3d-settings", in: app, timeout: 20, "the ⋯ button").tap()
-        waitForAny(id, in: app, timeout: 15, "\(id) in the ⋯ panel").tap()
+        reveal(id, in: app, "\(id) in the world menu").tap()
     }
     /// The DEBUG world probe on the 3D screen: shards, legacy blocks, story state.
     @MainActor
@@ -190,7 +190,9 @@ final class ScrollGestureTests: XCTestCase {
         // Gentle drags in the middle of the screen: a swipe down at the top of a
         // sheet would close it, a drag only scrolls.
         func drag(_ dy: CGFloat) {
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            let inWorkbench = app.descendants(matching: .any)["character-workbench"].exists
+            let rightPane = inWorkbench && window.width > window.height
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: rightPane ? 0.78 : 0.5, dy: 0.55))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: dy)))
         }
         // Lazy rows above the viewport do not exist: after scrolling one way
@@ -517,10 +519,10 @@ final class ScrollGestureTests: XCTestCase {
         waitForAny("workbench-motion-walk", in: app, timeout: 10, "the walk in the motion list").tap()
         sleep(1)
         attach(app, name: "review-workbench-walk")
-        app.buttons["导出"].tap()
         reveal("workbench-use-as-player", in: app, "use as player").tap()
         let used = waitForAny("workbench-message", in: app, timeout: 30, "the player message")
         XCTAssertTrue(used.label.contains("玩家现在使用"), "the player wears the character: \(used.label)")
+        app.buttons["导出"].tap()
         reveal("workbench-place-demo", in: app, "the demo cast button").tap()
         let placed = NSPredicate { _, _ in (app.descendants(matching: .any)["workbench-message"].label).contains("三位演示角色") }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: placed, object: nil)], timeout: 60), .completed,
