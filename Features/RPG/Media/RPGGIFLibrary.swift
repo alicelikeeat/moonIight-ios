@@ -17,6 +17,7 @@ enum RPGGIFDecoder {
     static let maxBytes = 6 * 1024 * 1024
 
     static func decode(_ url: URL) -> RPGGIFFrames? {
+        guard !Task.isCancelled else { return nil }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
         return decode(source)
     }
@@ -30,6 +31,7 @@ enum RPGGIFDecoder {
                        kCGImageSourceShouldCacheImmediately: true] as CFDictionary
         var images: [CGImage] = [], delays: [Double] = [], cost = 0
         for index in 0..<count {
+            guard !Task.isCancelled else { return nil }
             guard let image = CGImageSourceCreateThumbnailAtIndex(source, index, options) else { continue }
             let bytes = image.bytesPerRow * image.height
             if cost + bytes > maxBytes { break }
